@@ -194,14 +194,14 @@ def make_run(case: Path, baseline_messages: list[dict], source_messages: list[di
         raise RuntimeError("The coordinated retained conversation's approved requirements differ from the original baseline")
 
     (run / "run.py").write_text(
-        "from dataclasses import replace\n"
+        "from unittest.mock import patch\n"
         "from pathlib import Path\n"
         "import sys\n"
         "sys.path.insert(0, str(Path.cwd()))\n"
-        "from workout_generator_pkg.deps import resolve_shell_deps\n"
         "from workout_generator_pkg.interactive_shell import main\n"
         "root = Path(__file__).resolve().parent\n"
-        "main(replace(resolve_shell_deps(), default_script_dir=lambda: str(root)))\n",
+        "with patch('workout_generator_pkg.cli._default_script_dir', lambda: str(root)):\n"
+        "    main()\n",
         encoding="utf-8")
     write_json(run / "test_config.json", {"conversationId": conversation_id,
         "sourceCase": str(case), "baselineCase": str(BASELINE), "createdAtUTC": utc_now()})
@@ -525,7 +525,8 @@ def refresh_approved_requirement_accounting(run: Path, conversation_id: str) -> 
             "originalSources": source_context,
         }, ensure_ascii=False)},
     ]
-    logger = ConversationLogger(str(run))
+    from workout_generator_pkg.paths import get_log_dir
+    logger = ConversationLogger(str(Path(get_log_dir(str(run))) / "requirement_refresh.log"))
     refresh_state = {"status": "running", "pid": os.getpid(), "startedAtUTC": utc_now(),
                      "conversationId": conversation_id, "stage": "real requirement-accounting extraction and independent review"}
     write_json(run / "requirement_refresh_process.json", refresh_state)
@@ -655,7 +656,8 @@ def repair_requirement_accounting(run: Path, conversation_id: str) -> tuple[bool
             "originalSources": sources,
         }, ensure_ascii=False)},
     ]
-    logger = ConversationLogger(str(run))
+    from workout_generator_pkg.paths import get_log_dir
+    logger = ConversationLogger(str(Path(get_log_dir(str(run))) / "requirement_repair.log"))
     refresh_state = {"status": "running", "pid": os.getpid(), "startedAtUTC": utc_now(),
                      "conversationId": conversation_id, "stage": "narrow metadata repair and independent source review"}
     write_json(run / "requirement_accounting_repair_process.json", refresh_state)

@@ -1,12 +1,11 @@
 import copy
-from collections import Counter
 
 from workout_generator_pkg import joint_planning
 from test_workout_generator_joint_prescriptions import prescription_case, two_recipe_order_case
 from test_workout_generator_joint_candidate_comparison import _candidate, _context, _requirements
 
 
-def test_economy_precedes_distribution_and_preserves_each_selected_weekly_dose(monkeypatch):
+def test_economy_precedes_distribution_and_preserves_weekly_training_doses(monkeypatch):
     equipment, requirements, sessions = prescription_case()
     requirements['objectiveOrder'] = ['workload_economy', 'distribution']
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 7, 'maximum': 12}
@@ -24,29 +23,24 @@ def test_economy_precedes_distribution_and_preserves_each_selected_weekly_dose(m
         day['exercises'].append(second)
 
     captured = []
-    original = joint_planning._lock_weekly_recipe_doses
+    original = joint_planning._lock_weekly_training_doses
 
-    def lock(features, chosen, options, days, roles):
-        doses = Counter()
-        for index, day, _, option in options:
-            for item in option['items']:
-                doses[item['definition_id']] += (chosen[index] * option['count']
-                    * days[day]['timesCompletedInAWeek'])
-        captured.append(+doses)
-        return original(features, chosen, options, days, roles)
+    def lock(features, chosen, options, days, roles, muscles):
+        original(features, chosen, options, days, roles, muscles)
+        captured.extend((label, lower, upper) for label, lower, upper, _, _ in features
+            if label[0] == 'training_dose_conservation')
 
-    monkeypatch.setattr(joint_planning, '_lock_weekly_recipe_doses', lock)
+    monkeypatch.setattr(joint_planning, '_lock_weekly_training_doses', lock)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
 
     assert result['feasible'], result
     assert not result['audit']['errors']
     assert result['audit']['weeklyWorkingSets'] == 7
-    doses = Counter()
-    for day in result['sessions']:
-        for item in day['exercises']:
-            doses[item['definition_id']] += item['numWorkSets'] * day['timesCompletedInAWeek']
-    assert captured == [doses]
-    economy, distribution = result['objectiveProgress'][:2]
+    assert (('training_dose_conservation', 'physical_sets'), 7, 7) in captured
+    assert (('training_dose_conservation', 'coverage', 'push'), 7, 7) in captured
+    assert (('training_dose_conservation', 'muscle', 'chest'), 7, 7) in captured
+    economy = result['objectiveProgress'][0]
+    distribution = next(stage for stage in result['objectiveProgress'] if stage['goal'] == 'distribution')
     assert economy['goal'] == 'workload_economy' and economy['value'] == 7
     assert distribution['goal'] == 'distribution' and distribution['weeklyDosesLocked'] is True
 

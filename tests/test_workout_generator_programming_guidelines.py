@@ -114,6 +114,43 @@ def test_canonical_order_repair_preserves_superset_dose_and_rest_slots():
     assert not is_canonical_execution_order_change(draft, changed_dose, stored['requirements'], equipment)
 
 
+def test_canonical_execution_order_is_idempotent_and_independent_of_input_permutation():
+    from workout_generator_pkg.programming_guidelines import audit_execution_rules
+
+    definitions = [
+        {'id': f'LIBRARY_{index}', 'exerciseCategory': 'MODERATE_COMPOUND',
+         'muscleGroups': [muscle], 'secondaryMuscleGroups': []}
+        for index, muscle in enumerate(('FRONT_QUADRICEPS', 'FRONT_CHEST', 'BACK_UPPER_BACK', 'BACK_GLUTEAL'))]
+    equipment = {'exerciseDefinitions': definitions, 'equipments': [], 'accessoryEquipments': []}
+    requirements = {'objectiveOrder': ['movement_overlap'],
+        'requiredCoverage': [{'key': 'priority', 'intent': 'development'}], 'executionRules': []}
+    items = [{'definition_id': definition['id'], 'numWorkSets': index + 2,
+        'satisfiesCoverage': ['priority'] if index in (0, 3) else [], 'superset': None}
+        for index, definition in enumerate(definitions)]
+
+    first = {'workouts': [{'name': 'Day', 'exercises': copy.deepcopy(items)}]}
+    second = {'workouts': [{'name': 'Day', 'exercises': list(reversed(copy.deepcopy(items)))}]}
+    canonical = canonical_execution_order_draft(first, requirements, equipment)
+    permuted_canonical = canonical_execution_order_draft(second, requirements, equipment)
+    canonical_order = [item['definition_id'] for item in canonical['workouts'][0]['exercises']]
+
+    assert canonical_order == [item['definition_id'] for item in
+        permuted_canonical['workouts'][0]['exercises']]
+    assert canonical_execution_order_draft(canonical, requirements, equipment) == canonical
+    plan = {'exercises': [{'id': f'EXERCISE_{index}',
+             **{key: value for key, value in definition.items() if key != 'id'},
+             'libraryDefinitionId': definition['id']}
+             for index, definition in enumerate(definitions)],
+        'workouts': [{'exerciseIds': [f'EXERCISE_{index}' for index in range(len(definitions))]}]}
+    plan['workouts'][0]['exerciseIds'] = [
+        next(f'EXERCISE_{index}' for index, definition in enumerate(definitions)
+             if definition['id'] == item['definition_id'])
+        for item in canonical['workouts'][0]['exercises']]
+    report = {'issues': [], 'errors': []}
+    audit_execution_rules(canonical, requirements, report, plan)
+    assert not [error for error in report['errors'] if error['code'] == 'execution_order']
+
+
 def test_fresh_two_set_policy_bounds_solver_domain_and_rejects_raw_single_set():
     equipment, _, stored, draft = case([])
     item = draft['workouts'][0]['exercises'][0]
@@ -134,6 +171,8 @@ def test_fresh_two_set_policy_bounds_solver_domain_and_rejects_raw_single_set():
 
 
 def test_superset_rules_use_actual_member_rests_and_treat_whole_group_as_one_block():
+    from test_workout_generator_planning_tools import capability_requirement_messages
+
     rules = [
         {'kind': 'straightSets', 'coverageKey': 'priority'},
         {'kind': 'order', 'before': 'priority', 'after': 'accessory'},
@@ -141,10 +180,11 @@ def test_superset_rules_use_actual_member_rests_and_treat_whole_group_as_one_blo
         {'kind': 'rest', 'coverageKey': None, 'context': 'supersetRound', 'minimumSeconds': 60, 'maximumSeconds': 90},
     ]
     equipment, _, stored, draft = case(rules)
+    messages = capability_requirement_messages(stored, equipment)
     a, b = draft['workouts'][0]['exercises']
     a.update(superset='pair', restBetweenSetsSeconds=0, restAfterSupersetExerciseSeconds=20)
     b.update(superset='pair', restBetweenSetsSeconds=0, restAfterSupersetExerciseSeconds=50)
-    failed = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    failed = audit_workout_plan(draft, equipment, messages)
     assert {e['code'] for e in failed['errors']} == {'execution_straightSets', 'execution_order', 'execution_rest'}
     rest_errors = [e for e in failed['errors'] if e['code'] == 'execution_rest']
     assert [e['actual'] for e in rest_errors] == [20, 50]
@@ -155,8 +195,46 @@ def test_superset_rules_use_actual_member_rests_and_treat_whole_group_as_one_blo
     c = copy.deepcopy(b)
     c.update(restAfterSupersetExerciseSeconds=90)
     draft['workouts'][0]['exercises'].append(c)
-    passed = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    passed = audit_workout_plan(draft, equipment, messages)
     assert passed['passed'], passed['errors']
+
+
+def test_zero_superset_transition_recovery_survives_validation_and_emission():
+    from test_workout_generator_planning_tools import capability_requirement_messages
+    from workout_generator_pkg.domain_ops import (
+        assemble_placeholder_workout_store, build_workout_structure, _materialize_exercise_definition,
+    )
+    from workout_generator_pkg.generation_audit import audit_workout_package
+    from workout_generator_pkg.plan_contract import validate_assembled_workout_contract
+    from workout_generator_pkg.programming_guidelines import render_execution_rule
+
+    transition = {'kind': 'rest', 'coverageKey': None, 'context': 'supersetTransition',
+        'minimumSeconds': 0, 'maximumSeconds': 0}
+    equipment, _, stored, draft = case([transition,
+        {'kind': 'rest', 'coverageKey': None, 'context': 'supersetRound',
+         'minimumSeconds': 60, 'maximumSeconds': 120}])
+    first, second = draft['workouts'][0]['exercises']
+    for item, recovery in ((first, 0), (second, 60)):
+        item.update(superset='pair', numWorkSets=2, restBetweenSetsSeconds=0,
+            restAfterSupersetExerciseSeconds=recovery, restAfterExerciseSeconds=0,
+            generateWarmUpSets=False)
+    result = audit_workout_plan(draft, equipment, capability_requirement_messages(stored, equipment))
+    assert result['passed'], result['errors']
+    plan = result['planIndex']
+    expected_rests = dict(zip(plan['workouts'][0]['exerciseIds'], (0, 60)))
+    assert plan['workouts'][0]['supersetGroups'][0]['restSecondsByExercise'] == expected_rests
+    package = assemble_placeholder_workout_store({}, {},
+        {item['id']: _materialize_exercise_definition(item) for item in plan['exercises']},
+        {day['id']: build_workout_structure(day) for day in plan['workouts']}, plan)
+    validate_assembled_workout_contract(plan, package)
+    components = json.loads(json.dumps(package))['workouts'][0]['workoutComponents']
+    assert len(components) == 1
+    assert components[0]['restSecondsByExercise'] == expected_rests
+    report = audit_workout_package(package, stored['requirements']['auditTargets'])
+    assert report['workouts'][0]['timing']['restSeconds'] == 60
+    assert report['workouts'][0]['timing']['transitionSeconds'] == 120
+    assert '0–0s prescribed recovery between superset partners' in render_execution_rule(transition)
+    assert 'Physical changeover and setup time are separate' in render_execution_rule(transition)
 
 
 @pytest.mark.parametrize('context,grouped', [('straightSets', False), ('supersetRound', True)])
@@ -236,24 +314,27 @@ def test_export_preserves_local_notes_without_adding_calibration_protocol():
 
 def test_default_setup_replaces_missing_value_and_explicit_estimate_reaches_final_uuid_audit():
     from workout_generator_pkg.generation_audit import audit_workout_package, plan_audit_package
+    from test_workout_generator_planning_tools import capability_requirement_messages
     equipment, _, stored, draft = case([])
     second = draft['workouts'][0]['exercises'][1]
     del second['setupSeconds']
-    defaulted = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    defaulted = audit_workout_plan(draft, equipment, capability_requirement_messages(stored, equipment))
     assert defaulted['passed']
     assert defaulted['submittedDraft']['workouts'][0]['exercises'][1]['setupSeconds'] == 60
-    assert defaulted['audit']['workouts'][0]['timing']['transitionSeconds'] == 60
+    assert defaulted['submittedDraft']['workouts'][0]['exercises'][0]['setupSeconds'] == 60
+    assert defaulted['audit']['workouts'][0]['timing']['transitionSeconds'] == 120
     second['setupSeconds'] = 120
-    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    result = audit_workout_plan(draft, equipment, capability_requirement_messages(stored, equipment))
     assert result['passed']
-    assert result['audit']['workouts'][0]['timing']['transitionSeconds'] == 120
+    assert result['audit']['workouts'][0]['timing']['transitionSeconds'] == 180
     package = plan_audit_package(result['planIndex'])
     for index, exercise in enumerate(package['workouts'][0]['workoutComponents']):
         exercise.pop('setupSeconds', None)
         exercise['id'] = f'converted-{index}'
     final = audit_workout_package(package, stored['requirements']['auditTargets'], setup_seconds_by_exercise={'converted-1': 120})
     assert final['workouts'][0]['estimatedSeconds'] == result['audit']['workouts'][0]['estimatedSeconds']
-    assert final['workouts'][0]['setupEstimates'][0]['basis'] == 'declared_estimate'
+    assert [item['basis'] for item in final['workouts'][0]['setupEstimates']] == [
+        'default_allowance', 'declared_estimate']
     invalid = audit_workout_package(package, stored['requirements']['auditTargets'], setup_seconds_by_exercise={'converted-1': -120})
     assert invalid['errors'][0]['code'] == 'invalid_setup_time'
 
@@ -378,7 +459,7 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
 ):
     from dataclasses import replace
     from workout_generator_pkg import cli
-    from workout_generator_pkg.deps import resolve_pipeline_deps
+    from workout_generator_pkg import generation_pipeline as pipeline
     from workout_generator_pkg.generation_pipeline import execute_workout_generation
     from test_workout_generator_planning_tools import approved_messages
     equipment, requirements, _, draft = case([])
@@ -398,18 +479,24 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
     if program_guidance:
         draft['programGuidance'] = program_guidance
     draft['workouts'][0]['exercises'][1]['setupSeconds'] = 120
-    messages = requirement_messages(stored)
-    monkeypatch.setattr(plan_review, 'chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
+    from test_workout_generator_planning_tools import capability_requirement_messages
+    from test_workout_generator_single_review import request_data, response_for
+    messages = capability_requirement_messages(stored, equipment)
+    if alias_renumbering:
+        messages[-1]['content'] = messages[-1]['content'].replace('LIBRARY_0', 'LIBRARY_1')
+    def respond(client, request, **options):
+        return json.dumps(response_for(request_data(request), options['output_schema'])), None, None
+    monkeypatch.setattr(plan_review, '_review_call', respond)
     result = plan_review.review_draft(None, audit_workout_plan(draft, equipment, messages), messages, equipment)
     assert result['passed']
-    messages = approved_messages(stored, result)
+    messages += approved_messages(stored, result)[len(requirement_messages(stored)): ]
     def forbidden(*a, **k):
         raise AssertionError('Approved canonical export must not use model repair or emission.')
     monkeypatch.setattr(cli, 'json_call_chat_max_with_loading', forbidden)
     monkeypatch.setattr(cli, 'json_call_reasoner_only_with_loading', forbidden)
-    deps = resolve_pipeline_deps()
+
     if final_mutation:
-        apply_schema = deps.apply_exercise_library_schema_v2
+        apply_schema = pipeline.apply_exercise_library_schema_v2
         def mutate_final(*args, **kwargs):
             final = apply_schema(*args, **kwargs)
             components = final['workouts'][0]['workoutComponents']
@@ -420,18 +507,14 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
             else:
                 components[0]['notes'] += ' Unreviewed advice.'
             return final
-        deps = replace(deps, apply_exercise_library_schema_v2=mutate_final)
-    emit_workout_structure = deps.emit_workout_structure
+        monkeypatch.setattr(pipeline, 'apply_exercise_library_schema_v2', mutate_final)
     if emitter_guidance:
-        def emit_with_unapproved_guidance(*args, **kwargs):
-            structure, conversation = emit_workout_structure(*args, **kwargs)
+        build_structure = pipeline.build_workout_structure
+        def build_with_unapproved_guidance(*args, **kwargs):
+            structure = build_structure(*args, **kwargs)
             structure['programGuidance'] = emitter_guidance
-            return structure, conversation
-        deps = replace(deps, emit_workout_structure=emit_with_unapproved_guidance)
-    validation_attempts = []
-    def validate(*args, **kwargs):
-        validation_attempts.append(kwargs['max_attempts'])
-        return deps.validate_and_repair_placeholder_json(*args, **kwargs)
+            return structure
+        monkeypatch.setattr(pipeline, 'build_workout_structure', build_with_unapproved_guidance)
     if fail_guidance_write:
         import builtins
         open_file = builtins.open
@@ -441,8 +524,7 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
             return open_file(path, *args, **kwargs)
         monkeypatch.setattr(builtins, 'open', fail_sidecar)
     exported = execute_workout_generation(None, messages, provided_equipment=equipment, script_dir=str(tmp_path),
-        force_use_reasoner=False, deps=replace(deps, test_connection=lambda *a, **k: (True, None),
-            validate_and_repair_placeholder_json=validate))
+        force_use_reasoner=False)
     if final_mutation:
         assert not exported['success']
         assert 'differs from the independently reviewed artifact' in exported['error']
@@ -451,7 +533,6 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
         assert not exported['success'] and 'sidecar write failed' in exported['error']
         return
     assert exported['success'], exported['error']
-    assert validation_attempts == [1]
     from pathlib import Path
     saved_workout = json.loads(Path(exported['filepath']).read_text(encoding='utf-8'))
     assert 'programGuidance' not in saved_workout
@@ -475,7 +556,7 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
     from workout_generator_pkg.generation_audit import render_plan_disclosures
     assert render_plan_disclosures(report, stored['requirements']['auditTargets']['weeklyEffectiveSets'],
         result['submittedDraft'], stored['requirements'].get('requiredCoverage', [])) in guidance
-    assert report['workouts'][0]['timing']['transitionSeconds'] == 120
+    assert report['workouts'][0]['timing']['transitionSeconds'] == 180
     # Planned time uses upper rep targets; emitted reps may take less work time.
     assert report['workouts'][0]['estimatedSeconds'] <= result['audit']['workouts'][0]['estimatedSeconds']
 
@@ -489,3 +570,34 @@ def test_directional_coverage_comparison_is_rendered_as_soft_source_backed_prefe
     assert 'lateral' in rendered and 'horizontal' in rendered
     assert 'at least as much exposure' in rendered
     assert 'not a fixed ratio or hard minimum' in rendered
+
+
+@pytest.mark.parametrize('superset', [None, 'PAIR'])
+def test_three_set_session_cap_audit_counts_repeated_exercise_blocks(superset):
+    from workout_generator_pkg.programming_guidelines import audit_execution_rules
+    equipment, requirements, _, draft = case([
+        {'kind': 'workSets', 'coverageKey': None, 'minimumSets': 2, 'maximumSets': 3}])
+    day = draft['workouts'][0]
+    for item in day['exercises']:
+        item.update(numWorkSets=2, superset=superset)
+    report = {'issues': [], 'errors': []}
+    audit_execution_rules(draft, requirements, report)
+    errors = [e for e in report['errors'] if e['code'] == 'execution_workSets']
+    assert len(errors) == 1
+    assert errors[0]['actual'] == 4 and errors[0]['maximum'] == 3
+    assert errors[0]['exerciseIndices'] == [0, 1]
+
+    day['exercises'].pop()
+    day['exercises'][0]['numWorkSets'] = 3
+    report = {'issues': [], 'errors': []}
+    audit_execution_rules(draft, requirements, report)
+    assert not report['errors']
+
+
+def test_initial_request_has_structured_three_set_cap():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    requirements = json.loads((root / 'docs/workout_generator_initial_requirements.json').read_text())
+    rules = [r for r in requirements['executionRules'] if r['kind'] == 'workSets']
+    assert rules == [{'kind': 'workSets', 'coverageKey': None, 'minimumSets': 2, 'maximumSets': 3}]
+    assert '2–3 working sets per session' in (root / 'docs/workout_generator_initial_request.md').read_text(encoding='utf-8')

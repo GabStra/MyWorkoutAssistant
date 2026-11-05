@@ -1,11 +1,13 @@
 import copy
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from workout_generator_pkg.planning_tools import (
-    PlanningInputError, audit_workout_plan, confirmed_draft, set_workout_requirements, planning_tool_failure,
+    PlanningInputError, audit_workout_plan, confirmed_draft, render_requirements,
+    set_workout_requirements, planning_tool_failure,
 )
 
 
@@ -34,6 +36,78 @@ def planning_case():
     return equipment, requirements, stored, draft
 
 
+def capability_requirement_messages(stored, equipment):
+    from workout_generator_pkg.planning_tools import library_fingerprint
+    messages = requirement_messages(stored)
+    messages.extend([
+        {'role': 'user', 'content': 'I can perform this exact unweighted push-up configuration.'},
+        {'role': 'assistant', 'tool_calls': [{'id': 'capability', 'function': {
+            'name': 'record_planning_decisions', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'capability', 'content': json.dumps({
+            'passed': True, 'decisionReview': {'passed': True}, 'decisions': {'DECISION_0': {
+                'topic': 'Synthetic fixture capability', 'choice': 'User confirms this exact configuration.',
+                'confirmedCapabilityReference': 'LIBRARY_0',
+                'capabilityLibraryFingerprint': library_fingerprint(equipment)}}})},
+    ])
+    return messages
+
+
+def test_rep_range_validation_reports_every_invalid_occurrence_with_field_only_repair_scope():
+    from workout_generator_pkg.planning_tools import build_draft_plan
+
+    equipment, requirements, _, draft = planning_case()
+    first = draft['workouts'][0]['exercises'][0]
+    draft['workouts'][0]['exercises'] = [copy.deepcopy(first) for _ in range(3)]
+    draft['workouts'][0]['exercises'][0]['minReps'] = None
+    draft['workouts'][0]['exercises'][2].update(minReps=12, maxReps=8)
+    with pytest.raises(PlanningInputError) as error:
+        build_draft_plan(draft, equipment, requirements)
+    assert error.value.code == 'invalid_rep_range'
+    assert [finding['path'] for finding in error.value.errors] == [
+        '/workouts/0/exercises/0', '/workouts/0/exercises/2']
+    for finding in error.value.errors:
+        assert finding['permittedPaths'] == {'exact': [finding['path'] + '/minReps',
+            finding['path'] + '/maxReps'], 'descendants': []}
+    assert draft['workouts'][0]['exercises'][1]['minReps'] == 8
+
+
+def test_initial_targets_are_soft_and_weekly_movement_coverage_precedes_practical_optimization():
+    from workout_generator_pkg.planning_tools import workout_requirements_tool
+
+    requirements = json.loads(Path('docs/workout_generator_initial_requirements.json').read_text(encoding='utf-8'))
+    assert 'Barbell Deadlift' in requirements['exerciseRestrictions']['excludeNameTerms']
+    target_muscles = set(requirements['auditTargets']['weeklyEffectiveSets'])
+    each_session = {rule['key'] for rule in requirements['requiredCoverage']
+        if rule['scope'] == 'eachSession'}
+    weekly_roles = {rule['key'] for rule in requirements['requiredCoverage']
+        if rule['scope'] == 'weekly'}
+    order = requirements['objectiveOrder']
+    rendered = render_requirements(requirements)
+    objective_schema = workout_requirements_tool({'equipments': [], 'accessoryEquipments': [],
+        'exerciseDefinitions': []})['function']['parameters']['properties']['objectiveOrder']
+
+    assert each_session == {'knee_dominant', 'posterior_chain', 'upper_push', 'upper_pull'}
+    assert not target_muscles & each_session
+    assert {'sagittal_plane', 'frontal_plane', 'transverse_plane', 'unilateral',
+            'lateral_movement', 'rotational_core'} <= weekly_roles
+    assert all(bounds == {'minimum': 0, 'maximum': None,
+        'preferredMinimum': 10, 'preferredMaximum': 15}
+        for bounds in requirements['auditTargets']['weeklyEffectiveSets'].values())
+    assert all('minimumWeeklySets' not in rule and 'minimumSessions' not in rule
+               for rule in requirements['requiredCoverage'])
+    assert order.index('volume_target') < order.index('duration_economy')
+    assert order.index('source_balance') < order.index('workload_economy')
+    assert order.index('role_concentration') < order.index('workload_economy')
+    assert order.index('distribution') < order.index('duration_economy')
+    assert order.index('distribution') < order.index('setup_economy')
+    assert {'execution_complementarity', 'balance_control'} <= set(objective_schema['items']['enum'])
+    assert 'balance_control prefers weekly presence of an already-required qualified exercise' in objective_schema['description']
+    assert 'Preferred weekly range' in rendered
+    assert 'Preferred ranges are soft goals' in rendered
+    assert 'each session, using direct primary-muscle work' not in rendered
+    assert requirements['auditTargets']['maximumSessionSeconds'] == 5400
+
+
 def test_reordering_promotes_code_default_setup_for_new_transition():
     from workout_generator_pkg.json_patching import apply_json_patch
     from workout_generator_pkg.planning_tools import compile_coordinated_repair
@@ -54,11 +128,11 @@ def test_reordering_promotes_code_default_setup_for_new_transition():
 
     compiled, _ = compile_coordinated_repair(arguments, task, draft)
     candidate = apply_json_patch(draft, compiled['patch'])
-    audited = audit_workout_plan(candidate, equipment, requirement_messages(stored))
+    audited = audit_workout_plan(candidate, equipment, capability_requirement_messages(stored, equipment))
 
     assert audited['passed']
     assert audited['submittedDraft']['workouts'][0]['exercises'][1]['setupSeconds'] == 60
-    assert audited['audit']['workouts'][0]['timing']['transitionSeconds'] == 60
+    assert audited['audit']['workouts'][0]['timing']['transitionSeconds'] == 90
 
 
 def requirement_messages(stored):
@@ -482,14 +556,17 @@ def test_legacy_requirements_can_extract_coverage_without_unfreezing_targets():
 
 def test_single_draft_audits_real_reps_rests_and_roles_then_renders():
     equipment, _, stored, draft = planning_case()
-    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    result = audit_workout_plan(draft, equipment, capability_requirement_messages(stored, equipment))
     assert result["passed"]
-    assert result["audit"]["workouts"][0]["estimatedSeconds"] == 810
+    assert result["audit"]["workouts"][0]["estimatedSeconds"] == 870
     assert result["audit"]["weeklyVolume"]["triceps"]["effective"] == 2.5
     assert "| 1 | Push-Up | 5 | 8–10 | Technical criteria (plan choice) | Chest | Triceps | 90s |" in result["preview"]
     assert 'Working-set acceptance (plan-selected technical criteria)' in result['planIndex']['exercises'][0]['notes']
-    assert "Estimated duration: 13.5 min" in result["preview"]
-    approved = confirmed_draft(approved_messages(stored, result), equipment)
+    assert "Estimated duration: 14.5 min" in result["preview"]
+    approved_input = approved_messages(stored, result)
+    approved_input[len(requirement_messages(stored)):len(requirement_messages(stored))] = (
+        capability_requirement_messages(stored, equipment)[len(requirement_messages(stored)):])
+    approved = confirmed_draft(approved_input, equipment)
     assert approved["planIndex"] == result["planIndex"]
     approved["planIndex"]["exercises"][0]["numWorkSets"] = 1
     assert result["planIndex"]["exercises"][0]["numWorkSets"] == 5
@@ -553,35 +630,6 @@ def test_prescriptions_have_unique_occurrence_ids_and_superset_rounds():
     assert not failed["passed"] and "shortest member" in failed["audit"]["issues"][0]
 
 
-def test_pipeline_uses_approved_draft_without_summarizing_or_replanning(tmp_path, monkeypatch):
-    from workout_generator_pkg.deps import resolve_pipeline_deps
-    from workout_generator_pkg.generation_pipeline import execute_workout_generation
-
-    equipment, _, stored, draft = planning_case()
-    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
-    from workout_generator_pkg.plan_review import review_draft
-    monkeypatch.setattr('workout_generator_pkg.plan_review.chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
-    result = review_draft(None, result, requirement_messages(stored), equipment)
-    messages = approved_messages(stored, result)
-    emitted = []
-
-    def no_planning(*_args, **_kwargs):
-        pytest.fail("The approved draft must not be summarized or replanned")
-
-    def emission(items, *_args, **_kwargs):
-        plan = items[0][1]["plan_index"]
-        emitted.append(plan)
-        assert plan["exercises"][0]["numWorkSets"] == 5
-        assert plan["exercises"][0]["maxReps"] == 10
-        assert plan["auditTargets"] == stored["requirements"]["auditTargets"]
-        raise RuntimeError("Stopped at emission checkpoint")
-
-    deps = replace(resolve_pipeline_deps(), test_connection=no_planning,
-                   hash_conversation=lambda *_: "hash", summarize_conversation=no_planning, generate_index=no_planning,
-                   save_generation_progress=lambda *_a, **_k: ("progress.json", 0), parallel_emit_items=emission)
-    exported = execute_workout_generation(None, messages, provided_equipment=equipment,
-                                         script_dir=str(tmp_path), deps=deps, force_use_reasoner=False)
-    assert emitted and "emission checkpoint" in exported["error"]
 
 
 def test_uuid_equipment_validation_keeps_original_identity_and_exact_total_loads():
@@ -626,7 +674,7 @@ def test_timed_draft_uses_real_interval_duration():
     item.update(numWorkSets=2, minReps=None, maxReps=None, durationSeconds=30, restBetweenSetsSeconds=60)
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert result["passed"]
-    assert result["audit"]["workouts"][0]["estimatedSeconds"] == 420
+    assert result["audit"]["workouts"][0]["estimatedSeconds"] == 480
     assert "| 2 | 30s | Technical criteria (plan choice) | — | — | 60s |" in result["preview"]
 
 
@@ -903,11 +951,11 @@ def test_shared_plan_contract_rejects_unrepresented_added_load_and_malformed_tar
 def test_planning_and_parallel_session_schemas_share_the_export_description_limit():
     from workout_generator_pkg.constants import JSON_SCHEMA
     from workout_generator_pkg.planning_tools import _DRAFT_SCHEMA
-    from workout_generator_pkg.session_drafting import PREPARE_WORKOUT_SESSIONS_TOOL
+    from workout_generator_pkg.session_drafting import _CANONICAL_PREPARATION_SCHEMA
     export = JSON_SCHEMA['$defs']['Workout']['properties']['description']
     planning = _DRAFT_SCHEMA['properties']['workouts']['items']['properties']['description']
     assert {key: value for key, value in planning.items() if key != 'description'} == export
-    assert PREPARE_WORKOUT_SESSIONS_TOOL['function']['parameters']['properties']['sessions']['items']['properties']['description'] == planning
+    assert _CANONICAL_PREPARATION_SCHEMA['properties']['sessions']['items']['properties']['description'] == planning
 
 
 def test_capped_text_rejection_explains_field_purpose_reserve_and_exact_budget():

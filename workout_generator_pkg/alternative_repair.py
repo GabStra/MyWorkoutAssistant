@@ -5,7 +5,7 @@ import json
 import re
 import threading
 
-from jsonschema import ValidationError
+from jsonschema import ValidationError, validate
 
 from .planning_tools import (
     _audit_coverage,
@@ -34,7 +34,8 @@ def _joint_repair_summary(receipt):
         'redistributionOptimization',
         'feasibilityDomainFingerprint',
         'knownPriorInfeasibility', 'knownInfeasibleDomainMatch',
-        'priorityExecution', 'priorityTradeoffs', 'demandDistribution')
+        'priorityExecution', 'priorityTradeoffs', 'demandDistribution',
+        'arrangementRefinement', 'executionEvaluation', 'jointModelStatus')
         if key in receipt}
     seen = set()
     examples = []
@@ -519,52 +520,24 @@ def _materialized_review_failure_snapshot(candidate, workouts, audit, review, pr
 
 def refresh_candidate_assessment(candidate, messages, equipment, history, allow_educated_load_guesses,
                                  client, logger=None, progress=None):
-    """Refresh only a saved alternative's stale assessment, preserving its candidate identity."""
+    """Audit the saved artifact under current authority and obtain one semantic review."""
     from .planning_decisions import resolved_decisions
-    from .plan_review import REVIEW_VERSION, review_draft
+    from .plan_review import review_draft
     from .planning_tools import (AUDIT_VERSION, library_fingerprint, render_draft,
         require_approved_requirements)
-    from .review_assessment import VERSION as ASSESSMENT_VERSION, validate_assessment
+    from .review_assessment import validate_assessment
 
     candidate = copy.deepcopy(candidate)
     candidate.pop('diagnosisDeadlineUTC', None)
     candidate.pop('repairDeadlineUTC', None)
     require_approved_requirements(messages)
     _, original_record = _latest_result(messages, 'set_workout_requirements')
+    candidate['resolvedDecisions'] = copy.deepcopy(resolved_decisions(messages))
     if not _fresh_binding(candidate, messages, original_record.get('requirements', {}), equipment, history,
-                          resolved_decisions(messages)):
+                          candidate['resolvedDecisions']):
         return {'status': 'unresolved', 'candidate': candidate,
             'reason': 'The saved alternative no longer matches the approved requirements, current draft, library, history, or decisions.'}
 
-    # Older pending snapshots discarded their receipt while retaining it on the tool result.
-    if candidate.get('reviewPending') and not candidate.get('review'):
-        call_names = {call.get('id'): call.get('function', {}).get('name')
-            for message in messages for call in message.get('tool_calls', [])}
-        for message in reversed(messages):
-            if message.get('role') != 'tool' or call_names.get(message.get('tool_call_id')) != 'repair_workout_alternative':
-                continue
-            try:
-                saved = json.loads(message.get('content') or '{}')
-            except (TypeError, ValueError):
-                continue
-            saved_candidate = saved.get('candidateSnapshot', {}) if isinstance(saved, dict) else {}
-            independent = saved.get('independentReview', {}) if isinstance(saved, dict) else {}
-            if (isinstance(saved_candidate, dict) and isinstance(independent, dict)
-                    and saved_candidate.get('repairCandidateId') == candidate['repairCandidateId']
-                    and isinstance(independent.get('submittedDraft'), dict)
-                    and independent['submittedDraft'].get('requirementsId') == candidate['requirementsId']
-                    and independent.get('allowEducatedLoadGuesses') == allow_educated_load_guesses
-                    and independent['submittedDraft'].get('workouts') == candidate['workouts']
-                    and independent['submittedDraft'].get('programGuidance', '') == candidate.get('programGuidance', '')
-                    and all(independent.get(key) == {'requirementsId': candidate['requirementsId'], 'libraryFingerprint': candidate['libraryFingerprint'],
-                        'historyFingerprint': candidate.get('trainingHistoryFingerprint'),
-                        'resolvedDecisions': candidate.get('resolvedDecisions', {})}.get(key) for key in (
-                        'requirementsId', 'libraryFingerprint', 'historyFingerprint', 'resolvedDecisions'))
-                    and isinstance(independent.get('review'), dict) and independent['review']):
-                candidate['review'] = copy.deepcopy(independent['review'])
-                candidate['reviewedDraftName'] = independent['submittedDraft']['name']
-                candidate['reviewVersion'] = candidate['review'].get('version')
-                break
     review_candidate = {**candidate,
         'name': candidate.get('reviewedDraftName', candidate.get('candidateName', candidate.get('name', 'Workout alternative')))}
     arguments, plan, audit, restrictions = _audit_candidate(review_candidate, candidate['workouts'], original_record,
@@ -606,9 +579,6 @@ def refresh_candidate_assessment(candidate, messages, equipment, history, allow_
     except (KeyError, TypeError, ValueError):
         return {'status': 'unresolved', 'candidate': candidate,
             'reason': 'The saved alternative assessment refresh did not produce a current validated receipt.'}
-    if receipt.get('version') != REVIEW_VERSION or receipt.get('assessment', {}).get('version') != ASSESSMENT_VERSION:
-        return {'status': 'unresolved', 'candidate': candidate,
-            'reason': 'The saved alternative assessment refresh returned stale review versions.'}
     candidate.pop('reviewPending', None)
     candidate.pop('reviewPendingReason', None)
 
@@ -667,6 +637,8 @@ def execute_repair(arguments, task, messages, equipment, history, allow_educated
     compiler_task = _alternative_compiler_task(candidate)
     proposal_context = {}
     try:
+        from .user_interaction import repair_workout_alternative_tool
+        validate(arguments, repair_workout_alternative_tool(candidate)['function']['parameters'])
         compiled, operation_refs = compile_coordinated_repair(
             compile_arguments, compiler_task, submission, proposal_context=proposal_context)
         scoped_task = copy.deepcopy(compiler_task)
@@ -692,6 +664,10 @@ def execute_repair(arguments, task, messages, equipment, history, allow_educated
             'submittedEdits': copy.deepcopy(active_edits),
             'errors': copy.deepcopy(failure.get('errors', [])),
             'reason': 'The alternative repair was rejected before materialization. Its candidate and complete active proposal remain saved; no feasibility or requirement conflict was established.'}
+        if getattr(error, 'code', None) == 'solver_menu_declined':
+            result['userQuestion'] = {
+                'question': 'No code-computed repair was selected. Which requirement or exercise choice should change before trying another candidate?',
+                'reason': str(error), 'options': []}
         attempted_edits = compile_arguments.get('edits')
         if attempted_edits != active_edits:
             result['rejectedAttemptEdits'] = copy.deepcopy(attempted_edits)

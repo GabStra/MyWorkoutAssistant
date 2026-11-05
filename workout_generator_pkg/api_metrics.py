@@ -76,10 +76,6 @@ def start_planning_budget(max_calls=64):
     _budget.set({'calls': 0, 'maxCalls': max_calls, 'lock': threading.Lock()})
 
 
-def remaining_request_timeout(timeout):
-    return timeout
-
-
 @contextmanager
 def api_metrics_scope(logger=None, stage=None, *, submission_id=None):
     """Attach a stage and logger to nested API calls without logging prompt data."""

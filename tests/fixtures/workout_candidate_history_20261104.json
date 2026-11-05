@@ -1,0 +1,367 @@
+{
+  "provenance": "Extracted unchanged observed setup and records from build/workout_cp_compiler_fresh_e2e_20261104/independent_review_corrections.json; candidate definitions from the retained backup. Execution context omitted for this setup comparison regression.",
+  "equipment": {
+    "equipments": [
+      {
+        "id": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+        "type": "WEIGHTVEST",
+        "name": "Weight Vest",
+        "availableWeights": [
+          {
+            "weight": 1.0
+          },
+          {
+            "weight": 2.0
+          },
+          {
+            "weight": 3.0
+          },
+          {
+            "weight": 4.0
+          },
+          {
+            "weight": 5.0
+          },
+          {
+            "weight": 6.0
+          },
+          {
+            "weight": 7.0
+          },
+          {
+            "weight": 8.0
+          },
+          {
+            "weight": 9.0
+          },
+          {
+            "weight": 10.0
+          },
+          {
+            "weight": 11.0
+          },
+          {
+            "weight": 12.0
+          },
+          {
+            "weight": 13.0
+          },
+          {
+            "weight": 14.0
+          },
+          {
+            "weight": 15.0
+          },
+          {
+            "weight": 16.0
+          },
+          {
+            "weight": 17.0
+          },
+          {
+            "weight": 18.0
+          },
+          {
+            "weight": 19.0
+          },
+          {
+            "weight": 20.0
+          }
+        ]
+      }
+    ],
+    "exerciseDefinitions": [
+      {
+        "id": "46b322a6-cee1-55eb-90ca-2df679f72999",
+        "name": "Weighted Vest Nordic Curl",
+        "exerciseType": "BODY_WEIGHT",
+        "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+        "bodyWeightPercentage": 100,
+        "requiredAccessoryEquipmentIds": [
+          "ef01a523-f4f3-4aa9-8e85-68fc08b73a49"
+        ]
+      },
+      {
+        "id": "11b82203-8248-54ce-9886-75b504e4d642",
+        "name": "Weighted Vest Pull-Up",
+        "exerciseType": "BODY_WEIGHT",
+        "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+        "bodyWeightPercentage": 100,
+        "requiredAccessoryEquipmentIds": [
+          "49405aae-8e6d-4364-8bd5-cb551fb97631"
+        ]
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "reference": "LIBRARY_20",
+      "definitionId": "11b82203-8248-54ce-9886-75b504e4d642",
+      "name": "Weighted Vest Pull-Up",
+      "status": "no_comparable_records",
+      "totalSessions": 0,
+      "sessions": [],
+      "otherSetupSessions": [],
+      "otherSetupSessionCount": 0,
+      "candidateContext": {
+        "exerciseType": "BODY_WEIGHT",
+        "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+        "requiredAccessoryNames": [
+          "Pull-Up Station"
+        ],
+        "equipment": {
+          "name": "Weight Vest",
+          "type": "WEIGHTVEST",
+          "source": "current_configuration"
+        },
+        "loadMeaning": "additional_bodyweight_load",
+        "bodyWeightPercentage": 100
+      },
+      "loadHeadroom": {
+        "latestSessionHeaviestLoadKg": null,
+        "maximumSelectableLoadKg": 20.0,
+        "highestObservedComparableLoad": null,
+        "nextHigherSelectableLoadKg": null,
+        "higherLoadOptionCount": 0,
+        "observedAtCurrentEquipmentMaximum": false,
+        "latestObservedLoadsNotSelectableNow": [],
+        "loadMeaning": "additional_bodyweight_load"
+      },
+      "relatedMovementHistory": [
+        {
+          "reference": "LIBRARY_96",
+          "definitionId": "52bdefb2-9475-5d2a-a8c4-06f6aaf2d73a",
+          "name": "Pull-Up",
+          "status": "no_comparable_records",
+          "totalSessions": 0,
+          "sessions": [],
+          "otherSetupSessions": [
+            {
+              "date": "2026-07-27",
+              "endReason": "FINISHED_EARLY",
+              "performances": [
+                {
+                  "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+                  "equipmentContext": {
+                    "name": "Weight Vest",
+                    "type": "WEIGHTVEST",
+                    "source": "set_snapshot",
+                    "loadConvention": "app_total"
+                  },
+                  "requiredAccessoryNames": [
+                    "Pull-Up Station"
+                  ],
+                  "requiredAccessoryEquipmentIds": [
+                    "49405aae-8e6d-4364-8bd5-cb551fb97631"
+                  ],
+                  "accessoryContextSource": "workout_occurrence_fallback",
+                  "bodyWeightPercentage": 100.0,
+                  "bodyWeightPercentageSource": "set_snapshot",
+                  "exerciseType": "BODY_WEIGHT",
+                  "record": {
+                    "setHistoryId": "9c682349-6be9-4037-a3ad-dcdbb86ccb98",
+                    "setType": "BodyWeightSetData",
+                    "actualReps": 7,
+                    "loadKg": 5.0,
+                    "loadMeaning": "additional_bodyweight_load",
+                    "recordedRelativeBodyWeightKg": 65.0,
+                    "recordedTotalResistanceKg": 70.0,
+                    "bodyWeightPercentageSnapshot": 100.0
+                  },
+                  "comparisonLimitations": [
+                    "recorded_equipment_differs_or_is_unresolved"
+                  ]
+                },
+                {
+                  "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+                  "equipmentContext": {
+                    "name": "Weight Vest",
+                    "type": "WEIGHTVEST",
+                    "source": "set_snapshot",
+                    "loadConvention": "app_total"
+                  },
+                  "requiredAccessoryNames": [
+                    "Pull-Up Station"
+                  ],
+                  "requiredAccessoryEquipmentIds": [
+                    "49405aae-8e6d-4364-8bd5-cb551fb97631"
+                  ],
+                  "accessoryContextSource": "workout_occurrence_fallback",
+                  "bodyWeightPercentage": 100.0,
+                  "bodyWeightPercentageSource": "set_snapshot",
+                  "exerciseType": "BODY_WEIGHT",
+                  "record": {
+                    "setHistoryId": "c62f7a91-fd45-4e4c-8319-de65a5c18e2c",
+                    "setType": "BodyWeightSetData",
+                    "actualReps": 7,
+                    "loadKg": 5.0,
+                    "loadMeaning": "additional_bodyweight_load",
+                    "recordedRelativeBodyWeightKg": 65.0,
+                    "recordedTotalResistanceKg": 70.0,
+                    "bodyWeightPercentageSnapshot": 100.0
+                  },
+                  "comparisonLimitations": [
+                    "recorded_equipment_differs_or_is_unresolved"
+                  ]
+                }
+              ]
+            }
+          ],
+          "otherSetupSessionCount": 17
+        }
+      ]
+    },
+    {
+      "reference": "LIBRARY_82",
+      "definitionId": "46b322a6-cee1-55eb-90ca-2df679f72999",
+      "name": "Weighted Vest Nordic Curl",
+      "status": "no_comparable_records",
+      "totalSessions": 0,
+      "sessions": [],
+      "otherSetupSessions": [],
+      "otherSetupSessionCount": 0,
+      "candidateContext": {
+        "exerciseType": "BODY_WEIGHT",
+        "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+        "requiredAccessoryNames": [
+          "Nordic Curl Setup"
+        ],
+        "equipment": {
+          "name": "Weight Vest",
+          "type": "WEIGHTVEST",
+          "source": "current_configuration"
+        },
+        "loadMeaning": "additional_bodyweight_load",
+        "bodyWeightPercentage": 100
+      },
+      "loadHeadroom": {
+        "latestSessionHeaviestLoadKg": null,
+        "maximumSelectableLoadKg": 20.0,
+        "highestObservedComparableLoad": null,
+        "nextHigherSelectableLoadKg": null,
+        "higherLoadOptionCount": 0,
+        "observedAtCurrentEquipmentMaximum": false,
+        "latestObservedLoadsNotSelectableNow": [],
+        "loadMeaning": "additional_bodyweight_load"
+      },
+      "relatedMovementHistory": [
+        {
+          "reference": "LIBRARY_249",
+          "definitionId": "c43df18d-b03e-5c4c-8554-c720c7b2ae19",
+          "name": "Nordic Hamstring Curl",
+          "status": "no_comparable_records",
+          "totalSessions": 0,
+          "sessions": [],
+          "otherSetupSessions": [
+            {
+              "date": "2026-06-09",
+              "endReason": "COMPLETED",
+              "performances": [
+                {
+                  "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+                  "equipmentContext": {
+                    "name": "Weight Vest",
+                    "type": "WEIGHTVEST",
+                    "source": "set_snapshot",
+                    "loadConvention": "app_total"
+                  },
+                  "requiredAccessoryNames": [
+                    "Nordic Curl Setup"
+                  ],
+                  "requiredAccessoryEquipmentIds": [
+                    "ef01a523-f4f3-4aa9-8e85-68fc08b73a49"
+                  ],
+                  "accessoryContextSource": "workout_occurrence_fallback",
+                  "bodyWeightPercentage": 100.0,
+                  "bodyWeightPercentageSource": "set_snapshot",
+                  "exerciseType": "BODY_WEIGHT",
+                  "record": {
+                    "setHistoryId": "d754d8e4-4482-4bef-99e4-13cb426b72ff",
+                    "setType": "BodyWeightSetData",
+                    "actualReps": 6,
+                    "loadKg": 18.0,
+                    "loadMeaning": "additional_bodyweight_load",
+                    "recordedRelativeBodyWeightKg": 65.0,
+                    "recordedTotalResistanceKg": 83.0,
+                    "bodyWeightPercentageSnapshot": 100.0
+                  },
+                  "comparisonLimitations": [
+                    "recorded_equipment_differs_or_is_unresolved",
+                    "bodyweight_percentage_changed"
+                  ]
+                },
+                {
+                  "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+                  "equipmentContext": {
+                    "name": "Weight Vest",
+                    "type": "WEIGHTVEST",
+                    "source": "set_snapshot",
+                    "loadConvention": "app_total"
+                  },
+                  "requiredAccessoryNames": [
+                    "Nordic Curl Setup"
+                  ],
+                  "requiredAccessoryEquipmentIds": [
+                    "ef01a523-f4f3-4aa9-8e85-68fc08b73a49"
+                  ],
+                  "accessoryContextSource": "workout_occurrence_fallback",
+                  "bodyWeightPercentage": 100.0,
+                  "bodyWeightPercentageSource": "set_snapshot",
+                  "exerciseType": "BODY_WEIGHT",
+                  "record": {
+                    "setHistoryId": "efe7fe90-d4df-4edd-8684-6d6149f34887",
+                    "setType": "BodyWeightSetData",
+                    "actualReps": 6,
+                    "loadKg": 18.0,
+                    "loadMeaning": "additional_bodyweight_load",
+                    "recordedRelativeBodyWeightKg": 65.0,
+                    "recordedTotalResistanceKg": 83.0,
+                    "bodyWeightPercentageSnapshot": 100.0
+                  },
+                  "comparisonLimitations": [
+                    "recorded_equipment_differs_or_is_unresolved",
+                    "bodyweight_percentage_changed"
+                  ]
+                },
+                {
+                  "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+                  "equipmentContext": {
+                    "name": "Weight Vest",
+                    "type": "WEIGHTVEST",
+                    "source": "set_snapshot",
+                    "loadConvention": "app_total"
+                  },
+                  "requiredAccessoryNames": [
+                    "Nordic Curl Setup"
+                  ],
+                  "requiredAccessoryEquipmentIds": [
+                    "ef01a523-f4f3-4aa9-8e85-68fc08b73a49"
+                  ],
+                  "accessoryContextSource": "workout_occurrence_fallback",
+                  "bodyWeightPercentage": 100.0,
+                  "bodyWeightPercentageSource": "set_snapshot",
+                  "exerciseType": "BODY_WEIGHT",
+                  "record": {
+                    "setHistoryId": "5840ff03-7871-434e-987e-0e1edfdce70d",
+                    "setType": "BodyWeightSetData",
+                    "actualReps": 6,
+                    "loadKg": 18.0,
+                    "loadMeaning": "additional_bodyweight_load",
+                    "recordedRelativeBodyWeightKg": 65.0,
+                    "recordedTotalResistanceKg": 83.0,
+                    "bodyWeightPercentageSnapshot": 100.0
+                  },
+                  "comparisonLimitations": [
+                    "recorded_equipment_differs_or_is_unresolved",
+                    "bodyweight_percentage_changed"
+                  ]
+                }
+              ]
+            }
+          ],
+          "otherSetupSessionCount": 6
+        }
+      ]
+    }
+  ]
+}

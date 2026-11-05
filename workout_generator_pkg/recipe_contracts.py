@@ -13,7 +13,8 @@ from jsonschema import validate, ValidationError
 from .api_client import chat_call
 from .api_metrics import api_metrics_scope, record_submission_rejection
 from .domain_ops import get_selectable_weights_for_exercise
-from .muscle_roles import REGIONAL_MUSCLE_LABELS
+from .exercise_contracts import execution_supporting_muscles, validate_setup_configuration
+from .muscle_roles import MUSCLE_LABELS, REGIONAL_MUSCLE_LABELS
 from .programming_demands import DEMAND_GROUPS
 from .parallel_work import parallel_proposals
 
@@ -21,20 +22,32 @@ from .parallel_work import parallel_proposals
 # These roles are derived from code-reviewed regional anatomy. They must not be
 # selected by a model from free-form movement interpretation.
 CODE_OWNED_REGIONAL_COVERAGE_ROLES = {'lateral_delt': 'deltoid_lateral'}
-CODE_OWNED_DIRECT_COVERAGE_ROLES = {'abs', 'calves'}
+CODE_OWNED_DIRECT_COVERAGE_ROLES = {
+    name.replace('lowerBack', 'lower_back') for name in MUSCLE_LABELS
+    if name not in REGIONAL_MUSCLE_LABELS
+}
 CODE_OWNED_COVERAGE_ROLES = set(CODE_OWNED_REGIONAL_COVERAGE_ROLES) | CODE_OWNED_DIRECT_COVERAGE_ROLES
 
 
 @lru_cache(maxsize=1)
 def _reviewed_exercise_annotations_by_definition():
-    annotations = json.loads(Path(__file__).with_name('exercise_family_annotations.json').read_text(encoding='utf-8'))
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'Duplicate reviewed exercise annotation key: {key}.')
+            result[key] = value
+        return result
+
+    annotations = json.loads(Path(__file__).with_name('exercise_family_annotations.json').read_text(encoding='utf-8'),
+        object_pairs_hook=unique_fields)
     by_definition = annotations.get('byDefinitionId')
     if set(annotations) != {'byDefinitionId'} or not isinstance(by_definition, dict):
         raise ValueError('Reviewed exercise annotations require a byDefinitionId object.')
     for definition_id, annotation in by_definition.items():
         UUID(definition_id)
         if not isinstance(annotation, dict) or set(annotation) - {
-                'exerciseFamilyId', 'source', 'basis', 'anatomy', 'programmingDemands'}:
+                'exerciseFamilyId', 'source', 'basis', 'anatomy', 'programmingDemands', 'execution'}:
             raise ValueError(f'Invalid reviewed exercise annotation for {definition_id}.')
         family_keys = {'exerciseFamilyId', 'source', 'basis'}
         present_family_keys = family_keys & set(annotation)
@@ -71,7 +84,43 @@ def _reviewed_exercise_annotations_by_definition():
                         or type(fact['present']) is not bool
                         or not isinstance(fact['source'], str) or not fact['source'].startswith('https://')):
                     raise ValueError(f'Invalid programmingDemands.{key} for {definition_id}.')
+        execution = annotation.get('execution')
+        if execution is not None:
+            execution_fields = {'limbMode', 'balanceControl', 'setMode', 'supportingMuscles', 'setupConfiguration'}
+            if (not isinstance(execution, dict)
+                    or set(execution) - (execution_fields | {'source', 'basis'})
+                    or not (set(execution) & execution_fields)):
+                raise ValueError(f'Invalid reviewed execution evidence for {definition_id}.')
+            if set(execution) - {'setupConfiguration'} and (
+                    not {'source', 'basis'} <= execution.keys()
+                    or not isinstance(execution['source'], str) or not execution['source'].startswith('https://')
+                    or not isinstance(execution['basis'], str) or not execution['basis'].strip()):
+                raise ValueError(f'Invalid reviewed execution source for {definition_id}.')
+            if ('limbMode' in execution
+                    and (not isinstance(execution['limbMode'], str)
+                         or execution['limbMode'] not in {'bilateral', 'unilateral', 'alternating'})):
+                raise ValueError(f'Invalid execution.limbMode for {definition_id}.')
+            if 'balanceControl' in execution and type(execution['balanceControl']) is not bool:
+                raise ValueError(f'Invalid execution.balanceControl for {definition_id}.')
+            if ('setMode' in execution
+                    and execution['setMode'] not in ('single_sequence', 'paired_sides')):
+                raise ValueError(f'Invalid execution.setMode for {definition_id}.')
+            if ('supportingMuscles' in execution
+                    and execution_supporting_muscles({'reviewedExecution': execution}) is None):
+                raise ValueError(f'Invalid execution.supportingMuscles for {definition_id}.')
+            if 'setupConfiguration' in execution:
+                validate_setup_configuration(execution['setupConfiguration'])
     return by_definition
+
+
+def _execution_for_definition(annotation, definition):
+    execution = annotation.get('execution')
+    if execution is not None and 'setupConfiguration' in execution:
+        resources = set(definition.get('requiredAccessoryEquipmentIds') or ())
+        if definition.get('equipmentId'):
+            resources.add(definition['equipmentId'])
+        validate_setup_configuration(execution['setupConfiguration'], resources)
+    return execution
 
 
 def _library_reference_map(equipment, references=None):
@@ -93,9 +142,11 @@ def canonical_qualified_roles(definition, proposed_roles, supported_roles):
     supported_roles = set(supported_roles or ())
     roles = set(proposed_roles or ()) & supported_roles
     from .generation_audit import MUSCLES
-    for role in CODE_OWNED_DIRECT_COVERAGE_ROLES:
+    muscle_role_keys = {name.replace('lowerBack', 'lower_back'): name for name in MUSCLE_LABELS
+                        if name not in REGIONAL_MUSCLE_LABELS}
+    for role, muscle in muscle_role_keys.items():
         roles.discard(role)
-        if role in supported_roles and set(definition.get('muscleGroups') or ()) & MUSCLES[role]:
+        if role in supported_roles and set(definition.get('muscleGroups') or ()) & MUSCLES[muscle]:
             roles.add(role)
     for role, region in CODE_OWNED_REGIONAL_COVERAGE_ROLES.items():
         roles.discard(role)
@@ -121,6 +172,7 @@ def reviewed_exercise_annotations(equipment, references=None):
         if annotation is None:
             unclassified.append(reference)
             continue
+        _execution_for_definition(annotation, by_reference[reference])
         annotations_by_reference[reference] = copy.deepcopy(annotation)
         if 'exerciseFamilyId' not in annotation:
             unclassified.append(reference)
@@ -142,6 +194,9 @@ def apply_reviewed_exercise_annotations(payload):
         for key in ('anatomy', 'programmingDemands'):
             if key in annotation:
                 definition[key] = copy.deepcopy(annotation[key])
+        execution = _execution_for_definition(annotation, definition)
+        if execution is not None:
+            definition['reviewedExecution'] = copy.deepcopy(execution)
         family_keys = {'exerciseFamilyId', 'source', 'basis'}
         if family_keys <= annotation.keys():
             definition['reviewedExerciseFamily'] = {
@@ -150,6 +205,29 @@ def apply_reviewed_exercise_annotations(payload):
                 'basis': annotation['basis'],
             }
     return result
+
+
+def reviewed_execution_properties(equipment, references=None):
+    """Resolve sourced execution facts; omitted facts stay unknown."""
+    by_reference, references = _library_reference_map(equipment, references)
+    by_definition = _reviewed_exercise_annotations_by_definition()
+    properties_by_reference, sources_by_reference, unclassified = {}, {}, []
+    for reference in references:
+        annotation = by_definition.get(by_reference[reference]['id'], {})
+        execution = _execution_for_definition(annotation, by_reference[reference])
+        if execution is None:
+            unclassified.append(reference)
+            continue
+        properties = {key: copy.deepcopy(execution[key]) for key in (
+            'limbMode', 'balanceControl', 'setMode', 'supportingMuscles', 'setupConfiguration') if key in execution}
+        if properties:
+            properties_by_reference[reference] = properties
+            if 'source' in execution:
+                sources_by_reference[reference] = {'source': execution['source'], 'basis': execution['basis']}
+        else:
+            unclassified.append(reference)
+    return {'propertiesByReference': properties_by_reference, 'sourcesByReference': sources_by_reference,
+            'unclassifiedReferences': unclassified}
 
 
 def _regional_anatomy_for_definition(definition):
@@ -223,7 +301,8 @@ def reviewed_exercise_family_evidence(equipment, references=None):
             'unclassifiedReferences': reviewed['unclassifiedReferences']}
 
 
-def recorded_evidence(messages, library_fingerprint, history_fingerprint):
+def recorded_evidence(messages, library_fingerprint, history_fingerprint, *, equipment=None):
+    from .training_history import merge_training_evidence
     calls = {call['id']: call['function']['name'] for message in messages for call in message.get('tool_calls', [])}
     evidence = {}
     if history_fingerprint is None:
@@ -237,7 +316,9 @@ def recorded_evidence(messages, library_fingerprint, history_fingerprint):
             continue
         if (isinstance(result, dict) and result.get('historyFingerprint') == history_fingerprint
                 and result.get('libraryFingerprint') == library_fingerprint):
-            evidence.update({item['definitionId']: item for item in result.get('exercises', [])})
+            for item in result.get('exercises', []):
+                identifier = item['definitionId']
+                evidence[identifier] = merge_training_evidence(evidence.get(identifier), item, equipment=equipment)
     return evidence
 
 
@@ -277,12 +358,15 @@ def progression_margin(item, capability):
             'maximumSelectableLoadKg': capability['maximumSelectableLoadKg']}
 
 
-def _recipe_context(prepared, requirements, ref):
+def _recipe_context(prepared, requirements, ref, *, source_messages=None):
     required_roles = requirements.get('requiredCoverage', [])
     semantic = [item for item in requirements.get('requirementAccounting', [])
         if item.get('enforcement') == 'semantic_check'
         and any(path.startswith('/requiredCoverage') for path in item.get('requirementPaths', []))]
-    available_sources = prepared.get('sourceMessages') or {}
+    from .planning_tools import source_message_context
+    # Coverage semantics follow approved policy; later setup/counting choices do not change movement roles.
+    available_sources = (source_message_context(source_messages) if source_messages is not None
+        else prepared.get('sourceMessages') or {})
     # Qualitative source authority must not depend on an optional paraphrase ledger.
     source_messages = copy.deepcopy(available_sources) if isinstance(available_sources, dict) else {}
     candidate = prepared['candidates'][ref]
@@ -365,7 +449,8 @@ def qualify_recipe_contracts(client, prepared, requirements, equipment, messages
         raise ValueError('Recipe candidates must contain each selected definition exactly once.')
     roles = {rule['key'] for rule in requirements['requirements'].get('requiredCoverage', [])}
     model_roles = roles - CODE_OWNED_COVERAGE_ROLES
-    recipe_contexts = {ref: _recipe_context(prepared, requirements['requirements'], ref) for ref in refs}
+    recipe_contexts = {ref: _recipe_context(prepared, requirements['requirements'], ref,
+        source_messages=requirements.get('sourceMessages')) for ref in refs}
     input_hashes = {ref: hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
         for ref, context in recipe_contexts.items()}
     identity = hashlib.sha256(json.dumps(input_hashes, sort_keys=True).encode()).hexdigest()
@@ -385,6 +470,15 @@ def qualify_recipe_contracts(client, prepared, requirements, equipment, messages
         contracts[ref] = {'definition_id': ref, 'satisfiesCoverage':
             canonical_qualified_roles(definitions[ref], assigned_roles, roles)}
     missing = [ref for ref in refs if ref not in contracts]
+    if missing:
+        from .repair_execution import incumbent_recipe_contracts
+
+        retained, conflicts = incumbent_recipe_contracts(messages, equipment,
+            planning_state.get('historyFingerprint'), {ref: input_hashes[ref] for ref in missing},
+            roles, definitions, {ref: recipe_contexts[ref]['reviewFeedback'] for ref in missing})
+        contracts.update(retained)
+        qualification_conflicts.extend(conflicts)
+        missing = [ref for ref in missing if ref not in contracts]
     if not roles:
         contracts.update({ref: {'definition_id': ref, 'satisfiesCoverage': []} for ref in missing})
         missing = []

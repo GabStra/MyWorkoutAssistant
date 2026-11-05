@@ -3,7 +3,12 @@
     "f0861ff6-c6c8-589a-beaf-4f5336f4befb": {
       "exerciseFamilyId": "30303e2d-bf30-5cab-b4c7-605726e50931",
       "source": "https://pubmed.ncbi.nlm.nih.gov/19002072/",
-      "basis": "The study directly compares barbell back and front squats. Shared squat-family identity does not establish equal loads, stimulus or personal capacity."
+      "basis": "The study directly compares barbell back and front squats. Shared squat-family identity does not establish equal loads, stimulus or personal capacity.",
+      "execution": {
+        "limbMode": "bilateral",
+        "source": "https://www.acefitness.org/resources/everyone/exercise-library/11/back-squat/",
+        "basis": "ACE's barbell back-squat instructions place both feet on the floor for the squat and return to standing. This supports bilateral execution; it does not establish suitability or loadability for a particular trainee."
+      }
     },
     "2692280b-4775-5d6e-abf9-fec2a637f023": {
       "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
@@ -39,6 +44,11 @@
       "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
       "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
       "basis": "The study directly compares inverted and standing bent-over rows. The library-named dumbbell row variants share the horizontal-row action but remain mechanically distinct variants. Family grouping supports exercise-variation counting only; it does not assert equal trunk demand.",
+      "execution": {
+        "supportingMuscles": ["lowerBack", "abs"],
+        "source": "https://www.cscca.org/content.aspx?club_id=408309&module_id=732310&page_id=22",
+        "basis": "CSCCa identifies erector spinae involvement and abdominal bracing while maintaining a neutral spine in the barbell bent-over row. These are documented trunk-support roles, not quantified fatigue, hypertrophy credit, or personal capacity."
+      },
       "anatomy": {
         "primarySubregions": [
           "latissimus_dorsi",
@@ -105,6 +115,11 @@
       "exerciseFamilyId": "2cfb5552-bd13-5413-aa1d-f0f829dabec6",
       "source": "https://cscca.org/content.aspx?club_id=408309&module_id=732309&page_id=22",
       "basis": "The CSCCa identifies the barbell Romanian deadlift as a standing hip hinge. It is kept distinct from a floor deadlift and from knee-flexion Nordics.",
+      "execution": {
+        "supportingMuscles": ["lowerBack", "abs"],
+        "source": "https://cscca.clubexpress.com/content.aspx?club_id=408309&module_id=732309&page_id=22",
+        "basis": "CSCCa identifies erector spinae involvement and abdominal bracing while maintaining a neutral spine in the barbell Romanian deadlift. These are documented trunk-support roles, not quantified fatigue, hypertrophy credit, or personal capacity."
+      },
       "programmingDemands": {
         "unsupported_trunk": {
           "present": true,
@@ -317,6 +332,11 @@
       "exerciseFamilyId": "30303e2d-bf30-5cab-b4c7-605726e50931",
       "source": "https://pubmed.ncbi.nlm.nih.gov/19002072/",
       "basis": "The study directly examines barbell front squat mechanics alongside back squat; grouped with the barbell hack squat as squat-pattern variants, without asserting equal mechanics.",
+      "execution": {
+        "limbMode": "bilateral",
+        "source": "https://doi.org/10.1519/JSC.0b013e31818546bb",
+        "basis": "The study's front-squat methods describe a shoulder-width stance with the right foot on a force plate and the left foot on an adjacent platform at the same height. This supports two-leg execution for this exact barbell definition only; it says nothing about load suitability or comparative effectiveness."
+      },
       "programmingDemands": {
         "unsupported_trunk": {
           "present": true,
@@ -346,6 +366,11 @@
         }
       }
     },
+    "562e458e-9c16-54ef-8458-e3115fa0dd7b": {
+      "exerciseFamilyId": "007032c9-9500-5865-b610-9ad2e9e94019",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/51/calf-raises/",
+      "basis": "The retained historical definition names Barbell Calf Raise with a barbell and squat rack, matching ACE's documented barbell calf-raise family. This links historical movement-family evidence only; it does not establish exact execution equivalence, transferable loads or current capacity."
+    },
     "bc095e45-b949-57d3-aa8d-b3235a575ff1": {
       "exerciseFamilyId": "007032c9-9500-5865-b610-9ad2e9e94019",
       "source": "https://www.acefitness.org/resources/everyone/exercise-library/51/calf-raises/",
@@ -356,6 +381,11 @@
           "source": "https://www.acefitness.org/resources/everyone/exercise-library/51/calf-raises/"
         }
       }
+    },
+    "6a4d7a08-e919-57fb-b667-142e53796c7b": {
+      "exerciseFamilyId": "007032c9-9500-5865-b610-9ad2e9e94019",
+      "source": "https://sunnyhealthfitness.com/blogs/fitness-programs/wearable-weights-how-to-add-resistance-to-your-workouts",
+      "basis": "The source explicitly describes a vest as added resistance for calf raises. The library's Weighted Vest Calf Raise is grouped with standing ankle plantar-flexion variants; changing the load carrier does not establish another movement family or complementary stimulus. This is movement-family classification only, not equivalent loads, ROM, stability, progression capacity or personal suitability."
     },
     "8b6b9813-39b1-5c86-89bf-22ab6828556e": {
       "exerciseFamilyId": "78b2924e-68d3-5655-b015-b01aeaf00b47",
@@ -398,6 +428,18 @@
           "present": true,
           "source": "https://www.acefitness.org/resources/everyone/exercise-library/366/bulgarian-split-squat/"
         }
+      },
+      "execution": {
+        "limbMode": "unilateral",
+        "source": "https://www.acefitness.org/resources/everyone/exercise-library/366/bulgarian-split-squat/",
+        "basis": "ACE's description performs the movement with one foot forward and the other elevated behind, then repeats for the opposite side. This supports unilateral execution; the separate balance-control demand is left unknown."
+      }
+    },
+    "e6f75beb-edb8-52c4-b4fd-b4f8e21f57fc": {
+      "execution": {
+        "limbMode": "alternating",
+        "source": "https://www.acefitness.org/resources/everyone/exercise-library/28/step-up/",
+        "basis": "ACE's step-up instructions lead with one leg, return, and repeat for the opposite side. The optional single-leg balance progression is not part of the base movement claim, so balanceControl remains unknown."
       }
     },
     "db613e3b-34ed-542a-95ff-e300c32537ad": {
@@ -410,6 +452,42 @@
           "source": "https://www.healthline.com/health/fitness-exercise/oblique-workout"
         }
       }
+    },
+    "f9d1310a-1e37-5de9-b654-76699033bd73": {
+      "exerciseFamilyId": "9e431603-217f-5fc7-903c-d189813521ca",
+      "source": "https://www.sussex.ac.uk/sport/documents/6-bulgarian-split-squat-barbell.pdf",
+      "basis": "The university guide directly describes the barbell Bulgarian split squat as a progression of the dumbbell split squat, with the rear foot elevated on a bench. Grouped with the existing rear-foot-elevated split-squat family; loading position and balance demands remain distinct.",
+      "execution": {
+        "limbMode": "unilateral",
+        "balanceControl": true,
+        "source": "https://www.sussex.ac.uk/sport/documents/6-bulgarian-split-squat-barbell.pdf",
+        "basis": "The University of Sussex barbell Bulgarian split squat instructions place one foot on the bench behind the lifter and direct the lifter to push through the front foot. The same exact-form source explicitly says the barbell position challenges balance. These are execution properties only; they do not establish personal balance ability, load suitability, or progressability."
+      }
+    },
+    "dd461d5b-03a6-5983-88ef-6c96ba88cd7b": {
+      "exerciseFamilyId": "9e431603-217f-5fc7-903c-d189813521ca",
+      "source": "https://www.sussex.ac.uk/sport/documents/5-bulgarian-split-squat-dumbbell.pdf",
+      "basis": "The university guide describes a dumbbell in each hand with the rear foot elevated on a bench. Grouped with the existing rear-foot-elevated split-squat family; family identity does not establish equal resistance or personal suitability.",
+      "execution": {
+        "limbMode": "unilateral",
+        "source": "https://www.sussex.ac.uk/sport/documents/5-bulgarian-split-squat-dumbbell.pdf",
+        "basis": "The University of Sussex dumbbell Bulgarian split squat instructions place one foot on the bench behind the lifter and direct the lifter to push up from the front foot. This supports unilateral execution for this exact dumbbell-pair definition only; it does not establish load suitability or personal balance ability."
+      }
+    },
+    "0c3ae710-bc65-5991-81b7-4b263d81f7a1": {
+      "exerciseFamilyId": "9e431603-217f-5fc7-903c-d189813521ca",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/366/bulgarian-split-squat/",
+      "basis": "ACE directly describes a single dumbbell held in both hands and a rear-foot-elevated split squat. Grouped with the existing Bulgarian split-squat family, without treating one and two dumbbells or barbell loading as interchangeable.",
+      "execution": {
+        "limbMode": "unilateral",
+        "source": "https://www.acefitness.org/resources/everyone/exercise-library/366/bulgarian-split-squat/",
+        "basis": "ACE's Bulgarian split squat instructions hold one dumbbell in both hands, place one foot forward and the other elevated behind, then push through the front foot. This supports unilateral execution for this exact single-dumbbell definition only; it does not establish load suitability or progressability."
+      }
+    },
+    "efc53382-bea3-53c3-a6f5-4d4ddc93ff2e": {
+      "exerciseFamilyId": "2cfb5552-bd13-5413-aa1d-f0f829dabec6",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/35162922/",
+      "basis": "The study directly compares Romanian and stiff-leg deadlifts as posterior-chain deadlift variations. Grouping the stiff-leg variant with the existing Romanian hip-hinge family is a movement-family attribution only; the study reports different muscle excitation, so this does not assert equal mechanics, stimulus, loads or personal capability."
     },
     "e0255620-1647-51d1-9590-1bcc98dc6c78": {
       "exerciseFamilyId": "8be3ba29-2aa3-58f3-9a21-d37f0328e7c0",
@@ -575,6 +653,81 @@
           "source": "https://cgsc.contentdm.oclc.org/digital/api/collection/p4013coll2/id/1253/download"
         }
       }
+    },
+    "5106ca59-7d48-5877-aad9-33d1b3724c3b": {
+      "exerciseFamilyId": "07fcecde-67c8-549a-9522-3eb46f62cfd8",
+      "source": "https://www.nasm.org/resource-center/blog/training/best-abs-exercises",
+      "basis": "The retained historical definition names a kneeling rollout and requires an Ab Wheel. NASM describes the ab-wheel rollout as an anti-extension exercise. Grouped with the existing rollout family only; kneeling support, range of motion, assistance and bodyweight accounting are not asserted equivalent to another rollout variant."
+    },
+    "1014657b-946b-5eb7-9d3a-a2a63d06e2df": {
+      "exerciseFamilyId": "dd607712-6da5-5cf8-aced-fe6c0d30fe3e",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/333/tricep-pressdown/",
+      "basis": "The retained historical Cable Triceps Pushdown definition uses cable equipment. ACE describes the high-pulley pressdown as elbow extension with the arms beside the torso, supporting the existing cable-pressdown family. Attachment, grip, stance, range of motion and cable resistance calibration remain unknown; family identity does not establish exact execution or transferable loads."
+    },
+    "bc72cdf8-c5b3-5cf0-8aab-ae4aa28567af": {
+      "exerciseFamilyId": "9e431603-217f-5fc7-903c-d189813521ca",
+      "source": "https://www.sussex.ac.uk/sport/documents/5-bulgarian-split-squat-dumbbell.pdf",
+      "basis": "The retained historical Dumbbell Bulgarian Split Squat definition requires a dumbbell pair and adjustable bench. The university guide describes dumbbells in each hand and the rear foot on a bench, supporting the existing Bulgarian split-squat family. Stance, depth, assistance and actual loading position remain unverified; neither exact execution nor load transfer is established."
+    },
+    "cf7150cc-a4a5-57d3-9588-083a9073cbcd": {
+      "exerciseFamilyId": "c086dec9-6095-55b5-a32e-2db47ccd10e0",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/26/lateral-raise/",
+      "basis": "The retained historical Dumbbell Lateral Raise definition uses a dumbbell pair. ACE describes raising dumbbells to the sides, supporting the existing lateral-raise family. This classification does not establish simultaneous versus alternating execution, stance, range of motion, transferable loads or current capacity."
+    },
+    "2d7bcea6-a543-54b4-9da1-4bb712296c0d": {
+      "exerciseFamilyId": "de82c18e-6540-5ee9-898e-2963de85af95",
+      "source": "https://doi.org/10.4085/1062-6050-0010.22",
+      "basis": "The retained historical Nordic Curl definition is BODY_WEIGHT and requires Nordic Curl Setup. The study treats standard, loaded and single-leg Nordics as variations of one Nordic family. Joined records can include weight-vest equipment and additional load; this family classification does not establish assistance, range of motion, exact execution or current capacity, and differing bodyweight percentages are accounting factors rather than a cross-variant strength scale."
+    },
+    "ac37561a-c4ed-5c70-ae76-6ceb884f47af": {
+      "exerciseFamilyId": "8be3ba29-2aa3-58f3-9a21-d37f0328e7c0",
+      "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bicep-curl",
+      "basis": "The retained historical Single Dumbbell Bicep Curl definition uses one dumbbell. Grouped with the existing curl family by the loaded elbow-flexion task documented by NASM, not by identical implement, grip, laterality, posture, stimulus or load. Historical execution and current capacity are not established by the family link."
+    },
+    "1f53c2a0-b11e-5e01-9dfa-e5dd6c1a17dc": {
+      "exerciseFamilyId": "9e431603-217f-5fc7-903c-d189813521ca",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/366/bulgarian-split-squat/",
+      "basis": "The retained historical Single Dumbbell Bulgarian Split Squat definition requires one dumbbell and an adjustable bench. ACE describes a single-dumbbell rear-foot-elevated split squat, supporting the existing Bulgarian split-squat family. The historical dumbbell hold, stance, depth and assistance remain unknown; one-dumbbell and pair loading are not interchangeable."
+    },
+    "5982dca0-2642-5294-865c-fcad640feb94": {
+      "exerciseFamilyId": "8be3ba29-2aa3-58f3-9a21-d37f0328e7c0",
+      "source": "https://www.catalystathletics.com/exercise/841/Hammer-Curl/",
+      "basis": "The retained historical Single Dumbbell Hammer Curl definition uses one dumbbell. Catalyst Athletics documents a dumbbell curl with the palms remaining inward. Grouped with the existing elbow-flexion curl family while preserving the neutral-grip hammer variation; grip, implement count, laterality, stimulus and loads are not asserted equivalent to supinated or bilateral curls."
+    },
+    "5e281e9e-3475-5b30-a288-4248cafa05bd": {
+      "exerciseFamilyId": "c086dec9-6095-55b5-a32e-2db47ccd10e0",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/26/lateral-raise/",
+      "basis": "The retained historical Single-Arm Dumbbell Lateral Raise definition uses one dumbbell. ACE documents the lateral dumbbell-raise action, supporting the existing lateral-raise family at movement level. Single-arm support, stance, range of motion and loading remain distinct or unknown; the family link does not establish exact bilateral execution or transferable loads."
+    },
+    "0da2662e-2165-5351-b15d-b22dfe185865": {
+      "exerciseFamilyId": "57975193-d6c2-3224-9942-534129074cf7",
+      "source": "https://spinning.com/content/pdfs/training-tips/basics/core-movements-hand-positions.pdf",
+      "basis": "The retained historical definition names seated cycling on a Spin Bike. The manufacturer's guide distinguishes seated cycling movements from standing movements. Reviewed here as a seated indoor-cycling family, retaining the shared historical identifier only after this source review; flat versus climb, cadence, resistance calibration, intensity and fitness equivalence remain unknown."
+    },
+    "f3b05620-3f1c-3a15-a9f1-8a0d62572183": {
+      "exerciseFamilyId": "57975193-d6c2-3224-9942-534129074cf7",
+      "source": "https://spinning.com/content/pdfs/training-tips/basics/core-movements-hand-positions.pdf",
+      "basis": "The retained historical definition names seated cycling on the same Spin Bike as the other historical seated-cycling identity. The manufacturer's guide distinguishes seated from standing cycling. Reviewed as the same seated indoor-cycling family only; the shared legacy identifier is not independent evidence, and neither exact session identity nor cadence, resistance, intensity or fitness equivalence is established."
+    },
+    "629287dc-15fb-3e58-b197-b6d4a73e58ff": {
+      "exerciseFamilyId": "bd42109b-cad5-5580-9791-488a1a52ac23",
+      "source": "https://www.nasm.org/resource-center/exercise-library/push-up",
+      "basis": "The recovered historical definition names Push-Up, uses BODY_WEIGHT accounting and identifies a weight vest. NASM documents the push-up as lowering and pressing the body from a plank position. Classified as a push-up family only; historical support height, hand placement, range of motion, assistance, vest load and accounting percentage do not establish exact current execution, transferable resistance or present capacity."
+    },
+    "68bc2a28-e43e-3186-975c-b06a3284bafa": {
+      "exerciseFamilyId": "ebf4f551-f050-54be-b0e6-819f14811ae9",
+      "source": "https://www.acefitness.org/continuing-education/certified/june-2025/8887/the-truth-behind-the-trends/",
+      "basis": "The recovered historical definition names Dead Hang and uses a count-up timer. ACE describes dead hangs as hanging from a bar. Classified as a static dead-hang family only; the historical apparatus, grip, shoulder position, assistance and external load are unrecorded. This is not a pull-up, an exact current timed configuration or proof of current grip capacity."
+    },
+    "bf15d39d-b0fd-57ea-833d-15e9d1760fee": {
+      "exerciseFamilyId": "bd42109b-cad5-5580-9791-488a1a52ac23",
+      "source": "https://www.acefitness.org/continuing-education/certified/june-2025/8887/the-truth-behind-the-trends/",
+      "basis": "ACE explicitly describes a weighted vest as additional load for push-ups. The current definition names Weighted Vest Push-Up and requires the vest, supporting the push-up family. This preserves vest, support, hand position, range of motion, assistance and bodyweight-accounting differences; no exact historical execution, transferable resistance or current capacity is established."
+    },
+    "2d021c5d-ddb3-5e2c-9a0d-07a595e903bd": {
+      "exerciseFamilyId": "ebf4f551-f050-54be-b0e6-819f14811ae9",
+      "source": "https://www.acefitness.org/continuing-education/certified/june-2025/8887/the-truth-behind-the-trends/",
+      "basis": "ACE identifies dead hangs as hanging from a bar. The current Dead Hang definition explicitly requires a pull-up bar, supporting the static dead-hang family. The current COUNTDOWN configuration remains distinct from historical COUNTUP records, whose apparatus, grip, shoulder position, assistance and external load are unknown; family membership does not establish exact execution or present grip capacity."
     },
     "b62e3191-3414-5a99-a3c9-0c6a3b2a5392": {
       "exerciseFamilyId": "78b2924e-68d3-5655-a015-b01aeaf00b47",

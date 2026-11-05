@@ -9,8 +9,7 @@ import pytest
 from workout_generator_pkg import session_drafting, plan_review, interactive_shell as shell
 from workout_generator_pkg.planner_context import request_planning_state, pending_evidence
 from workout_generator_pkg.planning_tools import PlanningInputError, audit_workout_plan, set_workout_requirements
-from test_workout_generator_planning_tools import planning_case, requirement_messages
-from test_workout_generator_plan_review import assessment_transport
+from test_workout_generator_planning_tools import planning_case, requirement_messages, capability_requirement_messages
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +48,7 @@ def week_case(execution_rules=None, occurrences=1, coverage=None, working_set_ri
     if execution_rules is not None:
         requirements['executionRules'] = execution_rules
     stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Three sessions, 15-18 chest sets weekly.'}], equipment)
-    messages = requirement_messages(stored)
+    messages = capability_requirement_messages(stored, equipment)
     sessions = [{**{key: value for key, value in draft['workouts'][0].items() if key != 'exercises'},
                  'name': f'Session {index}', 'trainingDays': [index * 2], 'exercises': structure(5 if occurrences == 1 else 2, occurrences)}
                 for index in range(3)]
@@ -68,9 +67,11 @@ def week_case(execution_rules=None, occurrences=1, coverage=None, working_set_ri
     return equipment, messages, prepared, draft['workouts'][0]['exercises']
 
 
-def test_forced_weekly_dose_returns_to_menu_choice_before_workers_and_resumes_started_work():
+def test_infeasible_menu_returns_to_selection_before_workers_and_resumes_started_work():
     from workout_generator_pkg.planner_context import construction_tool_failure
     equipment, messages, prepared, _ = week_case()
+    prepared['setAllocation']['feasible'] = False
+    messages[-1]['content'] = json.dumps(prepared)
     state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert state['constructionTask']['reviewAllocationBeforeDrafting']
     for name in ('draft_workout_sessions', 'prepare_workout_sessions', 'search_exercise_library'):
@@ -89,22 +90,26 @@ def test_forced_weekly_dose_returns_to_menu_choice_before_workers_and_resumes_st
 def test_menu_reconsideration_is_compact_and_a_second_preparation_goes_to_workers():
     from workout_generator_pkg.planner_context import _focus_session_preparation, planner_response_profile
     equipment, messages, prepared, _ = week_case()
+    prepared['setAllocation']['feasible'] = False
+    messages[-1]['content'] = json.dumps(prepared)
     state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     evidence = {'LIBRARY_0': {'name': 'Press', 'status': 'comparable_records', 'totalSessions': 1,
                              'sessions': [{'largeDetail': 'Detailed worker-only history'}]}}
     _focus_session_preparation(state, {}, evidence, False)
     assert state['constructionTask']['reviewAllocationBeforeDrafting']
     assert planner_response_profile(state)['reasoning_effort'] is None
+    assert planner_response_profile(state)['require_strict_tool_delivery'] is True
     assert state['trainingEvidence'] == {}
     assert state['trainingEvidenceSummary']['LIBRARY_0']['totalSessions'] == 1
     assert 'Detailed worker-only history' not in json.dumps(state)
+    prepared['setAllocation']['feasible'] = True
     store_tool(messages, 'prepare_workout_sessions', {}, prepared)
     revised = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert revised['constructionTask']['stage'] == 'draft_sessions'
     assert not revised['constructionTask']['reviewAllocationBeforeDrafting']
 
 
-def test_development_intent_opens_one_bounded_menu_review_without_allocation_diagnostics():
+def test_development_intent_goes_to_executable_comparison_without_reselecting_feasible_pool():
     from workout_generator_pkg.planner_context import construction_tool_failure, request_planning_state
     coverage = [{'key': 'upper_push', 'description': 'Upper push development',
                  'scope': 'weekly', 'intent': 'development'}]
@@ -116,10 +121,11 @@ def test_development_intent_opens_one_bounded_menu_review_without_allocation_dia
     assert not allocation['allocationDiagnostics']
 
     state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
-    assert state['constructionTask']['reviewAllocationBeforeDrafting']
-    assert 'exerciseDemandEvidence' in state and 'volumeCreditCoupling' in state
-    assert construction_tool_failure('search_exercise_library', {}, state) is None
-    assert construction_tool_failure('prepare_workout_sessions', {}, state) is None
+    assert not state['constructionTask']['reviewAllocationBeforeDrafting']
+    assert state['requirements']['requiredCoverage'] == coverage
+    assert construction_tool_failure('draft_workout_sessions', {}, state) is None
+    assert construction_tool_failure('search_exercise_library', {}, state)
+    assert construction_tool_failure('prepare_workout_sessions', {}, state)
 
     store_tool(messages, 'prepare_workout_sessions', {}, prepared)
     revised = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
@@ -910,6 +916,53 @@ def test_generated_full_body_description_comes_from_approved_session_roles():
         {'name': 'Full Body A', 'description': 'Full body'}]
 
 
+
+def test_generated_labels_are_rendered_before_preparation_length_validation(monkeypatch):
+    from jsonschema import Draft7Validator
+    from workout_generator_pkg.planning_tools import workout_schedule_suffix
+
+    equipment, requirements, _, _ = planning_case()
+    requirements['sessionsPerWeek'] = 4
+    requirements['requiredCoverage'] = [{'key': role, 'scope': 'eachSession'} for role in
+        ('knee_dominant', 'posterior_chain', 'upper_push', 'upper_pull')]
+    stored = set_workout_requirements(requirements,
+        [{'role': 'user', 'content': 'Four full-body sessions; keep the saved session label.'}], equipment)
+    messages = requirement_messages(stored)
+    fixed = {'workouts': [{'name': 'Saved session', 'description': 'My exact user label',
+                          'timesCompletedInAWeek': 1, 'trainingDays': [6], 'exercises': []}]}
+    original_fixed = copy.deepcopy(fixed)
+    monkeypatch.setattr(session_drafting, 'latest_draft_submission', lambda *_args: (fixed, 'REVISION_0'))
+    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0',
+        'name': 'Remaining week', 'sessions': [
+            {'name': f'Full Body {index}', 'description': text, 'timesCompletedInAWeek': 1,
+             'trainingDays': [day], 'exercises': structure()}
+            for index, (text, day) in enumerate([
+                ('Full body: squat, hinge, press, pull', 0),
+                ('Full body: pull-up, lunge, hinge, press', 2),
+                ('Full body: squat variation, hinge, press, pull', 4)])]}
+    original = copy.deepcopy(arguments)
+    before = list(Draft7Validator(session_drafting._preparation_schema(arguments)).iter_errors(arguments))
+    assert len(before) == 3 and all(error.validator == 'maxLength' for error in before)
+    admitted = []
+    class AdmissionReached(RuntimeError):
+        pass
+    def stop_after_admission(_messages, proposal, *_args):
+        admitted.append(copy.deepcopy(proposal))
+        raise AdmissionReached
+    monkeypatch.setattr(session_drafting, '_preparation_authority', stop_after_admission)
+    for prepare in (session_drafting.prepare_workout_sessions, session_drafting._prepare_week):
+        with pytest.raises(AdmissionReached):
+            prepare(arguments, messages, equipment)
+    assert len(admitted) == 2
+    for proposal in admitted:
+        assert not list(Draft7Validator(session_drafting._preparation_schema(proposal)).iter_errors(proposal))
+        for source, rendered in zip(original['sessions'], proposal['sessions']):
+            assert rendered == {**source, 'description': 'Full body'}
+        assert [len(day['description'] + workout_schedule_suffix(day['trainingDays']))
+                for day in proposal['sessions']] == [27, 30, 27]
+    assert arguments == original and fixed == original_fixed
+
+
 def test_worker_movement_mismatch_enters_bounded_preflight_repair(monkeypatch):
     equipment,messages,prepared,exercises=week_case()
     state=request_planning_state(shell._messages_for_api(messages,True,provided_equipment=equipment))
@@ -1186,6 +1239,39 @@ def test_worker_recipe_subset_rejects_unknown_references_and_excess_duplicates(r
     with pytest.raises(session_drafting.PlanningInputError) as error:
         session_drafting._bind_worker_recipe_subset({'exercises': structure()}, {'exercises': returned})
     assert error.value.code == error_code
+
+
+def test_worker_binding_restores_canonical_fields_before_validation_and_is_repeatable():
+    from jsonschema import validate
+    from workout_generator_pkg.joint_planning import _DRAFT_VALIDATOR
+
+    equipment, requirements, _, draft = planning_case()
+    requirements['workingSetRIR'] = {'minimum': 1, 'maximum': 2}
+    equipment['exerciseDefinitions'][0]['reviewedExecution'] = {'setMode': 'paired_sides'}
+    session = copy.deepcopy(draft['workouts'][0])
+    selection = {key: copy.deepcopy(value) for key, value in session.items() if key != 'exercises'}
+    selection['exercises'] = structure(5)
+    exercise = session['exercises'][0]
+    exercise.update(numWorkSets=99, setupSeconds=999, intraSetRestInSeconds=999, generateWarmUpSets=True)
+    prescribed = {key: copy.deepcopy(exercise[key]) for key in (
+        'minReps', 'maxReps', 'restBetweenSetsSeconds', 'restAfterExerciseSeconds')}
+    session_drafting._canonical_worker_session(selection, session, equipment, requirements)
+    validate(session, session_drafting._SESSION)
+    _DRAFT_VALIDATOR.validate({'name': draft['name'], 'requirementsId': draft['requirementsId'], 'workouts': [session]})
+    canonical = copy.deepcopy(session)
+    exercise = session['exercises'][0]
+    assert exercise['numWorkSets'] == 5 and exercise['setupSeconds'] == 60
+    assert 0 < exercise['intraSetRestInSeconds'] < 999
+    assert exercise['generateWarmUpSets'] is False
+    assert 'effortAcceptance' not in exercise
+    assert {key: exercise[key] for key in prescribed} == prescribed
+    session_drafting._canonical_worker_session(selection, session, equipment, requirements)
+    assert session == canonical
+    for field in ('setupSeconds', 'intraSetRestInSeconds'):
+        exercise.pop(field)
+    session_drafting._canonical_worker_session(selection, session, equipment, requirements,
+        preserve_group_fields=True)
+    assert session == canonical
 
 
 def test_failed_session_preserves_completed_workers_and_retries_only_unfinished(monkeypatch):
@@ -1471,6 +1557,14 @@ def test_mixed_group_repair_rejects_unreported_sibling_and_array_replacement():
 
 def test_worker_response_omits_code_owned_session_fields_and_restores_prepared_values(monkeypatch):
     from workout_generator_pkg.planning_tools import ASSUMPTIONS
+    original_case = planning_case
+    def calibratable_case():
+        equipment, requirements, stored, draft = original_case()
+        equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'name': 'Fixture dumbbells',
+            'type': 'DUMBBELLS', 'availableWeights': [{'weight': 5}]}]
+        equipment['exerciseDefinitions'][0]['equipmentId'] = 'EQUIPMENT_0'
+        return equipment, requirements, stored, draft
+    monkeypatch.setitem(globals(), 'planning_case', calibratable_case)
 
     equipment, messages, prepared, exercises = week_case(occurrences=3,
         working_set_rir={'minimum': 1, 'maximum': 2})
@@ -1523,9 +1617,8 @@ def test_worker_response_omits_code_owned_session_fields_and_restores_prepared_v
         assert all(item['generateWarmUpSets'] is False and item['intraSetRestInSeconds'] is None
                    for item in day['exercises'])
         assert all('repDurationSeconds' not in item for item in day['exercises'])
-        assert day['exercises'][0].get('setupSeconds') is None
         assert all(item['setupSeconds'] == ASSUMPTIONS['transitionSeconds']
-                   for item in day['exercises'][1:])
+                   for item in day['exercises'])
         assert all(item['superset'] is None for item in day['exercises'])
     assert result['jointPlanning']['feasible']
 

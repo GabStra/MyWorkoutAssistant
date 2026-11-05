@@ -114,7 +114,7 @@ def test_compact_ordering_matches_constructor_for_every_small_selection():
                     _assert_model_accepts_order(blocks, variables, constraints, selected, [wrong], rules)
 
 
-def test_compact_ordering_keeps_first_block_setup_deduction_exact():
+def test_compact_ordering_charges_every_setup_independently_of_first_block():
     from test_workout_generator_joint_prescriptions import two_recipe_order_case
     from workout_generator_pkg import joint_planning
 
@@ -136,9 +136,7 @@ def test_compact_ordering_keeps_first_block_setup_deduction_exact():
     assert [item['definition_id'] for item in approved_order['sessions'][0]['exercises']] == [
         'LIBRARY_1', 'LIBRARY_0']
     assert source_order['audit']['workouts'][0]['estimatedSeconds'] == 1620
-    assert approved_order['audit']['workouts'][0]['estimatedSeconds'] == 1320
-    assert source_order['audit']['workouts'][0]['estimatedSeconds'] - approved_order[
-        'audit']['workouts'][0]['estimatedSeconds'] == 300
+    assert approved_order['audit']['workouts'][0]['estimatedSeconds'] == 1620
 
 
 def test_compound_core_and_mixed_supersets_use_primary_library_metadata():
@@ -173,7 +171,7 @@ def test_audit_blocks_bad_default_order_and_respects_explicit_overrides():
     assert report['errors'] == []
 
 
-def test_default_order_changes_solver_first_setup_and_passes_final_native_audit():
+def test_default_order_preserves_all_setup_and_passes_final_native_audit():
     from test_workout_generator_joint_prescriptions import two_recipe_order_case
     from workout_generator_pkg import joint_planning
 
@@ -188,7 +186,7 @@ def test_default_order_changes_solver_first_setup_and_passes_final_native_audit(
     assert result['feasible'], result
     assert [item['definition_id'] for item in result['sessions'][0]['exercises']] == ['LIBRARY_1', 'LIBRARY_0']
     assert result['audit']['errors'] == []
-    assert result['audit']['workouts'][0]['estimatedSeconds'] == 1320
+    assert result['audit']['workouts'][0]['estimatedSeconds'] == 1620
 
 
 def test_superset_member_order_preserves_rest_slots_and_exact_source_lineage():

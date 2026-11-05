@@ -97,49 +97,6 @@ def test_wire_choices_omit_satisfied_session_spreads_but_keep_canonical_carried_
     assert review_assessment.validate_assessment(review, context)['groups'][0]['repairObjectives'] == [already_satisfied]
 
 
-def test_assessment_schema_accepts_only_enumerated_recipe_and_spread(monkeypatch):
-    draft, _, requirements, definitions, choices = _saved_shape_case()
-    context = {'draft': {'exercises': [
-        {'id': f'EXERCISE_{index}', 'libraryDefinitionId': 'LIBRARY_0'} for index in range(6)],
-        'libraryDefinitions': {'LIBRARY_0': {}}, 'workouts': draft['workouts']}, 'requirements': requirements,
-        'recipeDefinitions': definitions, 'redistributionObjectiveChoices': choices}
-    review = {'inputHash': 'saved-candidate', 'findings': [{
-        'severity': 'blocking', 'action': 'repair', 'message': 'Distribute the existing work.',
-        'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0']}]}
-    selected = next(choice for choice in choices if choice['minimumSessions'] == 3
-        and choice['exerciseRefs'] == ['EXERCISE_0', 'EXERCISE_3'])
-    captured = {}
-
-    def respond(_client, _request, **options):
-        captured['schema'] = options['output_schema']
-        captured['request'] = _request
-        return json.dumps({'findingAssessments': {'FINDING_0': {
-            'disposition': 'repair', 'repairDimensions': ['prescription'],
-            'repairObjectives': [selected], 'reason': 'Spread this exact recipe.'}},
-            'repairPlan': 'Distribute the selected existing recipe.'}), None, None
-
-    monkeypatch.setattr(review_assessment, '_review_call', respond)
-    result = review_assessment.assess_findings(None, context, review, single_attempt=True)
-
-    assert result['groups'][0]['repairObjectives'] == [selected]
-    finding_schema = captured['schema']['properties']['findingAssessments']['properties']['FINDING_0']
-    repair_variant = next(variant for variant in finding_schema['anyOf']
-        if variant['properties']['disposition']['enum'] == ['repair'])
-    for variant in finding_schema['anyOf']:
-        if variant['properties']['disposition']['enum'] != ['repair']:
-            assert variant['properties']['repairObjectives']['type'] == 'array'
-    objective_items = repair_variant['properties']['repairObjectives']['items']['anyOf']
-    assert len(objective_items) == 2
-    bounded_refs = {reference for option in objective_items
-        for reference in option['properties']['exerciseRefs']['items']['enum']}
-    assert bounded_refs == {'EXERCISE_0', 'EXERCISE_3'}
-    assert 'EXERCISE_1' not in bounded_refs
-    assert {option['properties']['minimumSessions']['enum'][0] for option in objective_items} == {2, 3}
-    findings_payload = json.loads(captured['request'][-1]['content'])['findings']['FINDING_0']
-    assert findings_payload['supportedRedistributionObjectives'] == [
-        choice for choice in choices if choice['exerciseRefs'] == ['EXERCISE_0', 'EXERCISE_3']]
-
-
 @pytest.mark.parametrize('objective', [
     {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_0', 'EXERCISE_1', 'EXERCISE_2',
         'EXERCISE_3', 'EXERCISE_4', 'EXERCISE_5'], 'minimumSessions': 3},
@@ -294,15 +251,6 @@ def test_finding_evidence_resolves_occurrences_from_supersets_and_final_componen
     assert review_assessment.finding_redistribution_objective_choices(
         {'path': '/finalArtifact', 'evidencePaths': []}, context) == []
 
-    from workout_generator_pkg import plan_review
-    finding = {'severity': 'blocking', 'action': 'repair',
-        'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0']}
-    with pytest.raises(ValueError, match='identified by this finding'):
-        plan_review._validate_confirmation_resolution({
-            'status': 'open', 'disposition': 'repair', 'repairDimensions': ['prescription'],
-            'repairObjectives': [choices[1]], 'reason': 'Redistribute unrelated exercise.',
-            'evidencePaths': ['/draft/exercises/0']}, finding, context)
-
 
 def test_programming_summary_order_identity_scopes_live_redistribution_objectives():
     library_indexes = (249, 208, 153, 169, 139, 82, 239, 7, 233, 248, 130, 225,
@@ -413,68 +361,3 @@ def test_homogeneous_exact_targets_remain_available_and_are_conserved():
     assert not repair_contract_errors(contract, repaired)
     assert sorted((target_content(item) for item in actual), key=lambda item: item['reps']) == sorted(
         exact_targets, key=lambda item: item['reps'])
-
-
-def test_empty_redistribution_menu_stays_strict_compatible_and_rejects_nonempty_objective(monkeypatch):
-    context = {'draft': {'exercises': [{'id': 'EXERCISE_0'}], 'workouts': [{}, {}]},
-        'redistributionObjectiveChoices': []}
-    review = {'inputHash': 'empty-menu-candidate', 'findings': [{
-        'severity': 'blocking', 'action': 'repair', 'message': 'Correct the plan.',
-        'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0']}]}
-
-    def respond(_client, _request, **options):
-        schema = options['output_schema']
-        assert api_client._strict_parameters_compatible(schema)
-        finding = schema['properties']['findingAssessments']['properties']['FINDING_0']
-        repair = next(variant for variant in finding['anyOf']
-            if variant['properties']['disposition']['enum'] == ['repair'])
-        assert repair['properties']['repairObjectives']['type'] == 'array'
-        payload = {'findingAssessments': {'FINDING_0': {
-            'disposition': 'repair', 'repairDimensions': ['prescription'],
-            'repairObjectives': [{'kind': 'redistribute_work',
-                'exerciseRefs': ['EXERCISE_0'], 'minimumSessions': 2}],
-            'reason': 'The proposed typed objective is not in the empty executable menu.'}},
-            'repairPlan': 'Repair through another supported dimension.'}
-        return json.dumps(payload), None, None
-
-    monkeypatch.setattr(review_assessment, '_review_call', respond)
-    with pytest.raises(ValueError, match='code-enumerated redistribution objective'):
-        review_assessment.assess_findings(None, context, review, single_attempt=True)
-
-
-def test_confirmation_route_uses_the_same_strict_redistribution_choices(monkeypatch):
-    from workout_generator_pkg import plan_review
-    _, _, _, _, choices = _saved_shape_case()
-    context = {'draft': {'workouts': [{'id': 'WORKOUT_0', 'name': 'Day A'}],
-        'exercises': [{'id': f'EXERCISE_{index}', 'libraryDefinitionId': 'LIBRARY_0'}
-            for index in range(6)], 'libraryDefinitions': {'LIBRARY_0': {}}},
-        'sourceMessages': {}, 'redistributionObjectiveChoices': choices}
-    part = {'confirmationOnly': True, 'previousBlockingFindings': {
-        'DISPUTE_0': {'message': 'A carried concentration concern.',
-            'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0']}}}
-    monkeypatch.setattr(plan_review, '_with_review_refs',
-        lambda value: (copy.deepcopy(value), {'FACT_0': '/draft/exercises/0'}))
-    monkeypatch.setattr(plan_review, '_review_views', lambda *args: None)
-    class Captured(Exception):
-        pass
-    def respond(client, request, **options):
-        schema = options['output_schema']
-        assert api_client._strict_parameters_compatible(schema)
-        variants = schema['properties']['blockerResolutions']['properties']['ISSUE_0']['anyOf']
-        repair = next(variant for variant in variants
-            if variant['properties']['disposition']['enum'] == ['repair'])
-        actual = repair['properties']['repairObjectives']
-        finding_choices = review_assessment.finding_redistribution_objective_choices(
-            part['previousBlockingFindings']['DISPUTE_0'], context)
-        expected = review_assessment._provider_assessment_schema({
-            'type': 'object', 'properties': {'choices': review_assessment.repair_objective_selection_schema(finding_choices)},
-            'required': ['choices'], 'additionalProperties': False})['properties']['choices']
-        assert actual == expected
-        for variant in variants:
-            if variant['properties']['disposition']['enum'] != ['repair']:
-                    assert variant['properties']['repairObjectives']['type'] == 'array'
-        raise Captured
-    monkeypatch.setattr(plan_review, '_review_call', respond)
-    with pytest.raises(Captured):
-        plan_review._review_part(None, 'evidence', part, context,
-            {'planIndex': {}, 'submittedDraft': {}}, [], 0, None)

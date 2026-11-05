@@ -38,87 +38,52 @@ def test_repair_pending_review_retains_the_returned_failure_receipt(monkeypatch)
     assert result['candidateSnapshot']['reviewErrors'] == review_result['errors']
 
 
-@pytest.mark.parametrize('mismatch', [None, 'workouts', 'submitted_requirements',
-                                      'requirements', 'library', 'history', 'decisions',
-                                      'load_guess_policy'])
-def test_legacy_pending_receipt_recovers_only_for_matching_submission_and_authority(
-        monkeypatch, mismatch):
-    import workout_generator_pkg.alternative_repair as alternative_repair
-    import workout_generator_pkg.cancellation as cancellation
-    import workout_generator_pkg.planning_tools as planning_tools
+def test_pending_review_audits_current_candidate_without_reconstructing_old_receipts(monkeypatch):
+    from workout_generator_pkg import alternative_repair, cancellation, planning_tools, planning_decisions
     from workout_generator_pkg.plan_review import REVIEW_VERSION
     from workout_generator_pkg.review_assessment import VERSION as ASSESSMENT_VERSION
 
     candidate = {'repairCandidateId': 'REVISION_PENDING', 'reviewPending': True, 'review': {},
-        'originalRequirementsId': 'REQ_ORIGINAL', 'originalRequirementsHash': 'original-hash',
-        'sourceDraftId': 'DRAFT_SOURCE', 'baseDraftId': 'DRAFT_SOURCE',
+        'originalRequirementsId': 'REQ_ORIGINAL', 'baseDraftId': 'DRAFT_SOURCE',
         'requirementsId': 'REQ_ALTERNATIVE', 'requirements': {'auditTargets': {}},
-        'workouts': [{'name': 'Session', 'exercises': [{'numWorkSets': 3}]}],
-        'candidateName': 'Current candidate name', 'changes': [], 'restrictionPolicy': {},
-        'libraryFingerprint': 'library-current', 'trainingHistoryFingerprint': 'history-current',
-        'resolvedDecisions': {'DECISION_0': {'choice': 'Keep the current layout'}},
-        'sourceMenuFingerprint': 'source-menu', 'candidateMenuFingerprint': 'candidate-menu',
-        'audit': {'errors': []}}
-    original_record = {'requirementsId': candidate['originalRequirementsId'],
-        'requirements': {'auditTargets': {}}}
-    submitted = {'requirementsId': candidate['requirementsId'],
-        'name': 'Historical reviewed name', 'workouts': copy.deepcopy(candidate['workouts'])}
-    authority = {'requirementsId': candidate['requirementsId'], 'libraryFingerprint': 'library-current',
-        'historyFingerprint': 'history-current', 'resolvedDecisions': copy.deepcopy(candidate['resolvedDecisions']),
-        'allowEducatedLoadGuesses': True}
-    if mismatch == 'workouts':
-        submitted['workouts'][0]['exercises'][0]['numWorkSets'] += 1
-    elif mismatch == 'submitted_requirements':
-        submitted['requirementsId'] = 'OTHER_REQUIREMENTS'
-    elif mismatch == 'requirements':
-        authority['requirementsId'] = 'OTHER_REQUIREMENTS'
-    elif mismatch == 'library':
-        authority['libraryFingerprint'] = 'old-library'
-    elif mismatch == 'history':
-        authority['historyFingerprint'] = 'old-history'
-    elif mismatch == 'decisions':
-        authority['resolvedDecisions'] = {}
-    elif mismatch == 'load_guess_policy':
-        authority['allowEducatedLoadGuesses'] = False
-    independent_review = {'submittedDraft': submitted, **authority,
-        'review': _review_receipt(REVIEW_VERSION, ASSESSMENT_VERSION)}
-    saved_snapshot = copy.deepcopy(candidate)
-    messages = [
-        {'role': 'assistant', 'tool_calls': [{'id': 'repair-result', 'type': 'function',
-            'function': {'name': 'repair_workout_alternative', 'arguments': '{}'}}]},
-        {'role': 'tool', 'tool_call_id': 'repair-result', 'content': json.dumps({
-            'candidateSnapshot': saved_snapshot, 'independentReview': independent_review})},
-    ]
+        'workouts': [{'name': 'Current session', 'exercises': []}],
+        'candidateName': 'Current candidate name', 'audit': {'errors': []}}
+    original = {'requirementsId': 'REQ_ORIGINAL', 'requirements': {'auditTargets': {}}}
+    messages = [{'role': 'tool', 'content': json.dumps({'candidateSnapshot': candidate,
+        'independentReview': {'submittedDraft': {'name': 'Old receipt name'},
+            'review': _review_receipt(REVIEW_VERSION, ASSESSMENT_VERSION)}})}]
+    monkeypatch.setattr(planning_tools, 'require_approved_requirements', lambda *_: None)
+    current_decisions = {'DECISION_0': {'choice': 'Current scoped user decision'}}
+    monkeypatch.setattr(planning_decisions, 'resolved_decisions', lambda *_: current_decisions)
+    monkeypatch.setattr(alternative_repair, '_latest_result', lambda *_: (-1, original))
+    monkeypatch.setattr(alternative_repair, '_fresh_binding', lambda *_: True)
+    audited = []
+    def audit(current, workouts, *_):
+        audited.append(copy.deepcopy(current))
+        return ({'requirementsId': current['requirementsId'], 'name': current['name'],
+            'workouts': copy.deepcopy(workouts)}, {'currentPlan': True}, {'errors': []}, {})
+    monkeypatch.setattr(alternative_repair, '_audit_candidate', audit)
+    monkeypatch.setattr(planning_tools, 'library_fingerprint', lambda *_: 'current-library')
+    monkeypatch.setattr(planning_tools, 'render_draft', lambda *_: 'current preview')
+    monkeypatch.setattr(alternative_repair, '_append_hypothetical_requirements', lambda *_: [])
+    receipt = _review_receipt(REVIEW_VERSION, ASSESSMENT_VERSION)
+    receipt.pop('failure')
+    receipt.pop('failureStage')
+    review_calls = []
+    def review_current(*args, **kwargs):
+        review_calls.append(copy.deepcopy(args[2]))
+        return {'passed': False, 'errors': [], 'review': receipt}
+    monkeypatch.setattr(cancellation, 'run_cancellable', review_current)
 
-    monkeypatch.setattr(planning_tools, 'require_approved_requirements', lambda *_args: None)
-    monkeypatch.setattr(alternative_repair, '_latest_result', lambda *_args: (-1, original_record))
-    monkeypatch.setattr(alternative_repair, '_fresh_binding', lambda *_args: True)
-    monkeypatch.setattr(alternative_repair, '_audit_candidate', lambda candidate, workouts, *_args:
-        ({'requirementsId': candidate['requirementsId'], 'name': candidate.get('reviewedDraftName', candidate['candidateName']),
-          'workouts': copy.deepcopy(workouts)}, {'plan': True}, {'errors': []}, {}))
-    monkeypatch.setattr(planning_tools, 'library_fingerprint', lambda *_args: 'library-current')
-    monkeypatch.setattr(planning_tools, 'render_draft', lambda *_args: 'preview')
-    recovered = {}
-    monkeypatch.setattr(alternative_repair, '_append_hypothetical_requirements',
-        lambda _messages, current, *_args: recovered.update(
-            review=copy.deepcopy(current.get('review')), reviewedDraftName=current.get('reviewedDraftName')) or [])
-    refreshed_review = _review_receipt(REVIEW_VERSION, ASSESSMENT_VERSION)
-    refreshed_review.pop('failure')
-    refreshed_review.pop('failureStage')
-    monkeypatch.setattr(cancellation, 'run_cancellable', lambda *args, **kwargs: {
-        'passed': False, 'errors': [], 'review': refreshed_review})
-
-    result = alternative_repair.refresh_candidate_assessment(
-        candidate, messages, {}, None, True, None)
+    result = alternative_repair.refresh_candidate_assessment(candidate, messages, {}, None, True, None)
 
     assert result['status'] == 'refreshed'
-    if mismatch is None:
-        assert recovered['review'] == independent_review['review']
-        # Preserve the name attached to the historical receipt separately from the candidate name.
-        assert recovered['reviewedDraftName'] == 'Historical reviewed name'
-    else:
-        assert recovered['review'] == {}
-        assert recovered['reviewedDraftName'] is None
+    assert len(audited) == len(review_calls) == 1
+    assert audited[0]['name'] == 'Current candidate name' and audited[0]['review'] == {}
+    assert audited[0]['resolvedDecisions'] == current_decisions
+    assert 'resolvedDecisions' not in candidate
+    assert review_calls[0]['submittedDraft']['workouts'] == candidate['workouts']
+    assert result['candidate']['review'] == receipt
 
 
 def test_pending_review_append_keeps_parent_ledger_separate_from_failed_receipt(monkeypatch):

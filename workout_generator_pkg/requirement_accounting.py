@@ -8,6 +8,41 @@ import re
 STRUCTURED_REQUIREMENTS_MARKER = 'Current approved structured requirements for extraction (the numerical authority):'
 
 
+def comparison_requirements(requirements):
+    """Ignore presentation and set ordering, never approved quantities or priority order."""
+    value = copy.deepcopy(requirements)
+    value.pop('notes', None)
+    if value.get('familySetBounds') == []:
+        value.pop('familySetBounds')
+    for rule in value.get('requiredCoverage', []):
+        rule.pop('description', None)
+    for rule in value.get('executionRules', []):
+        for field in ('sharedResourceGroups', 'confirmedIndependentPairs'):
+            if field in rule:
+                rule[field] = sorted(sorted(group) for group in rule[field])
+    for field in ('requiredCoverage', 'executionRules'):
+        if field in value:
+            value[field].sort(key=lambda item: json.dumps(item, sort_keys=True))
+    for field in ('excludeNameTerms', 'exceptNameTerms'):
+        if field in value.get('exerciseRestrictions', {}):
+            value['exerciseRestrictions'][field].sort()
+    return value
+
+REQUIREMENT_INTAKE_POLICY = (
+    'Normalize natural-language requests through the existing requirements intake before planning. '
+    'Python fills neutral omissions and discloses application defaults; unspecified targets are not zero targets. '
+    'Preserve explicit quantities, restrictions and qualifiers. Do not turn an ambiguous preference into a guessed numeric constraint. '
+    'Represent explicit soft muscle-set ranges with preferredMinimum/preferredMaximum, separate from hard minimum/maximum; '
+    'only explicitly ranked volume_target optimizes those ranges. A missed preference is not a requirement violation. '
+    'For an explicit preference for more volume within a range, use a later weekly_effective_sets:MUSCLE goal tier; '
+    'its negative target and positive scale must come from the source, not guessed physiology or a universal high-volume default. '
+    'Use existing planning decisions for source-delegated proposals and show them for approval. '
+    'Ask only about material missing choices, contradictions or unsupported requests. '
+    'History and equipment are generation context: do not require historical conclusions in the initial request or assume missing capability. '
+    'Do not copy one user\'s personal targets into defaults for other users.'
+)
+
+
 def structured_requirement_source(sources, schema):
     """Recognize the explicit user intake format, never arbitrary conversation JSON."""
     from jsonschema import validate
@@ -51,7 +86,9 @@ def structured_requirement_source(sources, schema):
     if text[start:].startswith('```json\n') or text[start:].startswith('```json\r\n'):
         start = text.index('\n', start) + 1
     payload, consumed = decoder.raw_decode(text[start:])
-    validate(payload, {key: value for key, value in schema.items() if key != 'required'})
+    input_schema = copy.deepcopy({key: value for key, value in schema.items() if key != 'required'})
+    input_schema['properties']['auditTargets'].pop('required', None)
+    validate(payload, input_schema)
     if not isinstance(payload, dict) or not payload:
         raise ValueError('The structured requirements block must be a nonempty object.')
     end = start + consumed
@@ -73,22 +110,39 @@ def comparable_requirement(value):
     return value
 
 
+def complete_structured_requirements(authority, schema, candidate_requirements=None):
+    """Require an explicit policy, allowing only already-equivalent neutral omissions."""
+    if not authority:
+        return False
+    effective = authority['requirements'] if candidate_requirements is None else candidate_requirements
+    fields = schema['properties'].keys() - {'notes', 'requirementAccounting', 'objectiveTiers', 'trainingDays'}
+    # A retained nonempty bound still needs review when the current source omits it.
+    if comparison_requirements({'familySetBounds': effective.get('familySetBounds', [])}) == {}:
+        fields.discard('familySetBounds')
+    return fields <= authority['requirements'].keys()
+
+
 def seed_structured_requirements(arguments, authority):
-    """Code copies explicit fields; the model may add previously unspecified rule kinds."""
+    """Code copies supplied fields; only omitted fields remain model-owned."""
     result = copy.deepcopy(arguments)
     for key, value in authority['requirements'].items():
         if key == 'notes':
             continue
         if key == 'executionRules':
-            kinds = {rule['kind'] for rule in value}
             supplied = result.get(key, [])
             if not isinstance(supplied, list):
                 raise ValueError('Supplied executionRules must be an array; they cannot clear the marked user rules.')
-            repeated = [rule for rule in supplied if rule['kind'] in kinds]
             if any(comparable_requirement(rule) not in [comparable_requirement(item) for item in value]
-                   for rule in repeated):
-                raise ValueError('executionRules changes a rule supplied in the structured user source.')
-            result[key] = copy.deepcopy(value) + [rule for rule in supplied if rule['kind'] not in kinds]
+                   for rule in supplied):
+                raise ValueError('executionRules adds or changes a rule in the structured user source.')
+            result[key] = copy.deepcopy(value)
+        elif key == 'auditTargets':
+            supplied = result.get(key, {})
+            if not isinstance(supplied, dict) or any(
+                    field in supplied and comparable_requirement(supplied[field]) != comparable_requirement(target)
+                    for field, target in value.items()):
+                raise ValueError('auditTargets differs from the structured user source.')
+            result[key] = {**supplied, **copy.deepcopy(value)}
         else:
             if key in result and comparable_requirement(result[key]) != comparable_requirement(value):
                 raise ValueError(f'{key} differs from the structured user source.')
@@ -109,6 +163,11 @@ def structured_authority_paths(requirements, authority):
             for index, rule in enumerate(actual or []):
                 if comparable_requirement(rule) in [comparable_requirement(item) for item in value]:
                     paths.append(f'/requirements/executionRules/{index}')
+        elif key == 'auditTargets' and isinstance(actual, dict):
+            if comparable_requirement(actual) == comparable_requirement(value):
+                paths.append('/requirements/auditTargets')
+            paths.extend('/requirements/auditTargets/' + field for field, target in value.items()
+                         if comparable_requirement(actual.get(field)) == comparable_requirement(target))
         elif comparable_requirement(actual) == comparable_requirement(value):
             paths.append('/requirements/' + key)
     return paths
@@ -120,9 +179,19 @@ def structured_requirement_mismatches(requirements, authority):
         if key == 'notes':
             continue
         if key == 'executionRules':
+            from .programming_guidelines import (MINIMUM_WORK_SETS_RULE, SESSION_STRUCTURE_RULE,
+                DEFAULT_ISOLATION_REST_RULE)
             current = [comparable_requirement(rule) for rule in requirements.get(key, [])]
-            if any(comparable_requirement(rule) not in current for rule in value):
+            explicit = [comparable_requirement(rule) for rule in value]
+            defaults = [comparable_requirement(rule) for rule in (
+                MINIMUM_WORK_SETS_RULE, SESSION_STRUCTURE_RULE, DEFAULT_ISOLATION_REST_RULE)]
+            if (any(rule not in current for rule in explicit)
+                    or any(rule not in explicit + defaults for rule in current)):
                 paths.append('/requirements/executionRules')
+        elif key == 'auditTargets':
+            current = requirements.get(key, {})
+            paths.extend('/requirements/auditTargets/' + field for field, target in value.items()
+                         if comparable_requirement(current.get(field)) != comparable_requirement(target))
         elif comparable_requirement(requirements.get(key)) != comparable_requirement(value):
             paths.append('/requirements/' + key)
     return paths
@@ -130,16 +199,38 @@ def structured_requirement_mismatches(requirements, authority):
 
 def requirement_implementation_checks(requirements):
     from .recipe_contracts import CODE_OWNED_DIRECT_COVERAGE_ROLES
+    from .repair_capabilities import CODE_OWNED_BEHAVIORS
     roles = sorted(item['key'] for item in requirements.get('requiredCoverage', [])
                    if item['key'] in CODE_OWNED_DIRECT_COVERAGE_ROLES)
-    return {
+    checks = {
+        **{key: {'status': 'code_owned_runtime_behavior', 'answer': answer}
+            for key, answer in CODE_OWNED_BEHAVIORS.items()},
         'direct_coverage': {'status': 'enforced_at_recipe_qualification_and_final_audit', 'roles': roles,
-            'answer': 'Direct calf and abdominal eligibility is derived from primary library muscle tags by Python; the final audit checks the approved role floors. No exercise-level compliance is claimed before a plan exists.'},
+            'answer': 'Direct muscle-role eligibility is derived from primary library muscle tags by Python; secondary credit cannot satisfy it. The final audit checks approved per-session presence and explicit role floors. No exercise-level compliance is claimed before a plan exists.'},
         'physical_sets': {'status': 'enforced_at_final_audit',
             'answer': 'Python counts physical working sets once; overlapping abs/core role labels do not add another physical set. Actual totals are checked after solving.'},
         'regional_reporting': {'status': 'evidence_dependent',
             'answer': 'Regional contributions use reviewed library annotations; missing evidence remains unknown. Combined target compliance does not establish regional development.'},
+        'source_instruction_preservation': {'status': 'retained_for_planning_and_final_review',
+            'answer': 'Original user instructions remain in chronological sourceMessages for planning and final-artifact review. '
+                'Qualitative, conditional and reporting obligations need no duplicate numerical requirement field or rewritten notes. '
+                'Retention is not proof that the final output satisfies them; unsupported behavior and genuine ambiguity remain reviewable.'},
     }
+    sessions = requirements.get('sessionsPerWeek')
+    if 'role_concentration' in requirements.get('objectiveOrder', []) and sessions:
+        from .joint_planning import _role_concentration_keys
+        concentration_roles = set(_role_concentration_keys(requirements))
+        checks['role_distribution'] = {
+            'status': 'soft_objective_after_higher_ranked_priorities',
+            'minimumDoseEqualShares': {rule['key']: rule['minimumWeeklySets'] / sessions
+                for rule in requirements.get('requiredCoverage', [])
+                if rule['key'] in concentration_roles and 'minimumWeeklySets' in rule},
+            'answer': 'The approved role_concentration objective distributes targeted primary-muscle and all-session development roles. '
+                'minimumDoseEqualShares computes equal per-session shares only for weekly floors in that quantitative objective. '
+                'Inclusion and explicitly partial-week development retain their approved presence, dose and frequency constraints without an implied equal daily dose. '
+                'These are soft distribution preferences, not hard per-session minima or a claim of achieved distribution; '
+                'the final plan supplies actual doses and residual imbalance.'}
+    return checks
 
 MINIMUM_TARGET_POLICY = (
     'Minimum requirements are fixed by default. General permission to offer alternatives, compromise, '
@@ -155,7 +246,7 @@ ACCOUNTING_SCHEMA = {'type': 'array', 'items': {'type': 'object', 'properties': 
     'sourceReferences': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
                          'items': {'type': 'string', 'pattern': '^SOURCE_[0-9]+$'}},
     'requirementPaths': {'type': 'array', 'items': {'type': 'string',
-        'pattern': '^/(auditTargets|sessionsPerWeek|minimumRestDaysBetweenSessions|workingSetRIR|requiredCoverage|executionRules|exerciseRestrictions|objectiveOrder|durationBalanceToleranceSeconds|familySetBounds)(/.*)?$'},
+        'pattern': '^/(auditTargets|sessionsPerWeek|trainingDays|minimumRestDaysBetweenSessions|workingSetRIR|requiredCoverage|executionRules|exerciseRestrictions|objectiveOrder|objectiveTiers|durationBalanceToleranceSeconds|familySetBounds)(/.*)?$'},
         'description': 'JSON pointers into the submitted requirements object, e.g. /auditTargets/weeklyEffectiveSets/chest/minimum or /requiredCoverage/0. Coverage keys such as knee_dominant_each_session are VALUES, never pointer indices. Use [] for semantic instructions not represented by a numeric field.'},
     'priority': {'type': 'string', 'enum': ['mandatory', 'negotiable', 'preference'],
         'description': 'mandatory means fixed; negotiable means the source permits exploring a compromise, but the current value remains binding until a specific alternative is approved. Preserve explicit source-ranked compromises such as time over a volume target. preference is a soft goal, never a hard minimum.'},

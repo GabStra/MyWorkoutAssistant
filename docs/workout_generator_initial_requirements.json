@@ -1,24 +1,35 @@
 {
   "relaxationPermissions": [],
   "objectiveOrder": [
-    "duration_balance",
+    "time_budget",
+    "volume_target",
     "source_balance",
+    "role_concentration",
+    "distribution",
+    "movement_overlap",
+    "execution_complementarity",
+    "balance_control",
     "workload_economy",
+    "duration_economy",
+    "setup_economy",
+    "duration_balance",
+    "exercise_count",
     "exercise_distribution",
-    "distribution"
+    "execution_order"
   ],
   "durationBalanceToleranceSeconds": 300,
   "executionRules": [
     {
       "kind": "sessionStructure",
       "maximumExercises": 15,
-      "maximumSupersetSize": 3
+      "maximumSupersetSize": 3,
+      "maximumSupersets": 3
     },
     {
       "kind": "workSets",
       "coverageKey": null,
       "minimumSets": 2,
-      "maximumSets": 20
+      "maximumSets": 3
     },
     {
       "kind": "rest",
@@ -40,18 +51,19 @@
       "kind": "rest",
       "coverageKey": null,
       "context": "supersetTransition",
-      "minimumSeconds": 15,
-      "maximumSeconds": 30
+      "minimumSeconds": 0,
+      "maximumSeconds": 0
     },
     {
       "kind": "rest",
       "coverageKey": null,
       "context": "supersetRound",
-      "minimumSeconds": 90,
+      "minimumSeconds": 60,
       "maximumSeconds": 120
     },
     {
       "kind": "supersetNoReconfiguration",
+      "confirmedIndependentPairs": [],
       "coverageKey": null
     },
     {
@@ -82,6 +94,14 @@
     {
       "kind": "warmup",
       "coverageKey": "hip_dominant"
+    },
+    {
+      "kind": "rest",
+      "coverageKey": null,
+      "exerciseCategory": "ISOLATION",
+      "context": "straightSets",
+      "minimumSeconds": 60,
+      "maximumSeconds": 120
     }
   ],
   "requiredCoverage": [
@@ -112,7 +132,7 @@
     {
       "key": "hip_dominant",
       "scope": "weekly",
-      "intent": "inclusion",
+      "intent": "development",
       "description": "Hip-dominant lower-body work"
     },
     {
@@ -124,79 +144,85 @@
     {
       "key": "horizontal_push",
       "scope": "weekly",
-      "intent": "inclusion",
+      "intent": "development",
       "description": "Horizontal push work"
     },
     {
       "key": "horizontal_pull",
       "scope": "weekly",
-      "intent": "inclusion",
+      "intent": "development",
       "description": "Horizontal pull work"
     },
     {
       "key": "vertical_push",
       "scope": "weekly",
-      "intent": "inclusion",
+      "intent": "development",
       "description": "Vertical push work"
     },
     {
       "key": "vertical_pull",
       "scope": "weekly",
       "intent": "development",
-      "minimumWeeklySets": 6,
-      "minimumSessions": 2,
       "description": "Vertical pull work"
+    },
+    {
+      "key": "unilateral",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Unilateral work; single-limb execution does not automatically establish balance-control work"
+    },
+    {
+      "key": "lateral_movement",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Lower-body lateral movement work; lateral raises alone do not satisfy this role"
+    },
+    {
+      "key": "rotational_core",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Dedicated core work with controlled rotation or anti-rotation; generic bracing alone does not establish this role"
+    },
+    {
+      "key": "sagittal_plane",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Sagittal-plane work across the weekly program; program coverage does not require every muscle in every plane"
+    },
+    {
+      "key": "frontal_plane",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Frontal-plane work across the weekly program; program coverage does not require every muscle in every plane"
+    },
+    {
+      "key": "transverse_plane",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Transverse-plane work across the weekly program, including loaded rotation or qualifying resistance to rotation; program coverage does not require every muscle in every plane"
     },
     {
       "key": "lateral_delt",
       "scope": "weekly",
       "intent": "development",
-      "minimumWeeklySets": 6,
-      "minimumSessions": 2,
       "description": "Lateral-delt work"
-    },
-    {
-      "key": "rear_delt",
-      "scope": "weekly",
-      "intent": "inclusion",
-      "description": "Rear-delt work"
-    },
-    {
-      "key": "elbow_flexion",
-      "scope": "weekly",
-      "intent": "inclusion",
-      "description": "Elbow-flexion work"
-    },
-    {
-      "key": "elbow_extension",
-      "scope": "weekly",
-      "intent": "inclusion",
-      "description": "Elbow-extension work"
     },
     {
       "key": "calves",
       "scope": "weekly",
-      "intent": "development",
-      "description": "Dedicated calf work",
-      "minimumWeeklySets": 9
+      "intent": "inclusion",
+      "description": "Dedicated calf work"
     },
     {
       "key": "core",
       "scope": "weekly",
       "intent": "inclusion",
       "description": "Dedicated abdominal/core work"
-    },
-    {
-      "key": "abs",
-      "scope": "weekly",
-      "intent": "development",
-      "description": "Dedicated abdominals work",
-      "minimumWeeklySets": 9
     }
   ],
   "exerciseRestrictions": {
     "excludeNameTerms": [
-      "sumo deadlift",
+      "deadlift",
       "cable",
       "pulley",
       "lat pulldown",
@@ -212,36 +238,64 @@
   "auditTargets": {
     "weeklyEffectiveSets": {
       "chest": {
-        "minimum": 15,
-        "maximum": 18
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
       },
       "back": {
-        "minimum": 15,
-        "maximum": 18
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
       },
       "quads": {
-        "minimum": 15,
-        "maximum": 18
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
       },
       "hamstrings": {
-        "minimum": 15,
-        "maximum": 18
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
       },
       "glutes": {
-        "minimum": 15,
-        "maximum": 18
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
       },
       "shoulders": {
-        "minimum": 15,
-        "maximum": null
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
       },
       "biceps": {
-        "minimum": 15,
-        "maximum": 18
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
       },
       "triceps": {
-        "minimum": 15,
-        "maximum": 18
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
+      },
+      "calves": {
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
+      },
+      "abs": {
+        "minimum": 0,
+        "maximum": null,
+        "preferredMinimum": 10,
+        "preferredMaximum": 15
       }
     },
     "perSessionEffectiveSets": {},
@@ -253,5 +307,229 @@
     "minimum": 1,
     "maximum": 2
   },
-  "notes": "Prefer 3 direct calf sets and 3 direct abdominal sets in each session; distribution is soft. Count overlapping abs/core physical sets once. Approved combined back/shoulder targets govern; report regional anatomy descriptively and mark incomplete evidence unknown."
+  "notes": "Optimize the whole week for hypertrophy, strength, movement coverage and practical adherence. All stated muscle-volume ranges are soft, separate from hard bounds. Calves and abs are hypertrophy targets. One shared goal tier considers preferred muscle ranges, 15-set muscle aspirations, approved movement-role targets, preferred session budget, duration balance, source balance, selection, setup and exposure distribution together. Minimize the worst normalized target miss, then the sum of within-group means across muscle_volume, movement_development, selection, practical_execution and exposure_distribution; no group gains weight merely by having more fields. Cost-minimization targets are zero. Role-concentration, movement-overlap and exercise-count scales are the frozen maximum native costs from the two retained audit references. Distribution and setup maxima of 164 and 38 are rounded upward to comparison scales 180 and 40 so exact shared solver normalization fits its supported rational lattice. These scales are implementation comparison units, not requirements, adequate thresholds, caps or physiological scores. Duration balance measures only the excess beyond the existing 300-second tolerance and uses scale 300. Preserve the attained joint result before remaining objectiveOrder tie-breakers. Add permitted sets to suitable existing exercises before unnecessary variations. Superset members have zero prescribed rest; final-member round recovery is 60 to 120 seconds, reduced from the prior 90 to 120 by explicit user decision. Appropriate per-exercise recovery and all other hard requirements remain authoritative; physical changeover time remains separate and unverified. Report dose, duration, setup and distribution tradeoffs; personal recoverability remains unverified. Controlled pain-free ROM, complementary execution evidence and resistance suitability remain essential. Combined back and shoulder totals do not establish complete regional development. Unknown evidence stays unknown. The app owns calibration and double progression. Working rep ranges are generally 5 to 30 for hypertrophy, with suitable heavier strength work retained. Demand-distribution optimization remains suspended. Ordering scores compare only fixed per-session canonical identities and counts; hard order, phase, setup, rest, structure, schedule and exclusion rules remain authoritative. No high-volume default is imposed on other users, and no new hard muscle-volume floors are introduced.",
+  "preferredSessionSeconds": 4500,
+  "preferenceResolution": "explicit_tradeoffs",
+  "exerciseSelection": {
+    "preferredMinimum": 2,
+    "preferredMaximum": 3,
+    "muscles": [
+      "chest",
+      "back",
+      "quads",
+      "hamstrings",
+      "glutes",
+      "shoulders",
+      "biceps",
+      "triceps"
+    ]
+  },
+  "orderingPreferences": {
+    "phaseOrder": [
+      [
+        "HEAVY_COMPOUND",
+        "MODERATE_COMPOUND"
+      ],
+      [
+        "ISOLATION"
+      ],
+      [
+        "CORE"
+      ]
+    ],
+    "protectionOrder": [
+      "priority_direct",
+      "priority_support",
+      "heavy_direct",
+      "heavy_support",
+      "main_direct",
+      "main_support",
+      "adjacent_direct",
+      "adjacent_support"
+    ]
+  },
+  "objectiveTiers": [
+    [
+      {
+        "metric": "weekly_volume:chest",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:back",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:quads",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:hamstrings",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:glutes",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:shoulders",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:biceps",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:triceps",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:calves",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_volume:abs",
+        "target": 0,
+        "scale": 10,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "coverage:lateral_delt",
+        "target": -4,
+        "scale": 4,
+        "group": "movement_development"
+      },
+      {
+        "metric": "coverage:vertical_pull",
+        "target": -4,
+        "scale": 4,
+        "group": "movement_development"
+      },
+      {
+        "metric": "time_budget",
+        "target": 0,
+        "scale": 4500,
+        "group": "practical_execution"
+      },
+      {
+        "metric": "source_balance",
+        "target": 0,
+        "scale": 1,
+        "group": "movement_development"
+      },
+      {
+        "metric": "weekly_effective_sets:chest",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:back",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:quads",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:hamstrings",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:glutes",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:shoulders",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:biceps",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:triceps",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:calves",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "weekly_effective_sets:abs",
+        "target": -15,
+        "scale": 5,
+        "group": "muscle_volume"
+      },
+      {
+        "metric": "role_concentration",
+        "target": 0,
+        "scale": 6,
+        "group": "exposure_distribution"
+      },
+      {
+        "metric": "distribution",
+        "target": 0,
+        "scale": 180,
+        "group": "exposure_distribution"
+      },
+      {
+        "metric": "movement_overlap",
+        "target": 0,
+        "scale": 2,
+        "group": "selection"
+      },
+      {
+        "metric": "exercise_count",
+        "target": 0,
+        "scale": 5,
+        "group": "selection"
+      },
+      {
+        "metric": "setup_economy",
+        "target": 0,
+        "scale": 40,
+        "group": "practical_execution"
+      },
+      {
+        "metric": "duration_balance",
+        "target": 0,
+        "scale": 300,
+        "group": "practical_execution"
+      }
+    ]
+  ]
 }

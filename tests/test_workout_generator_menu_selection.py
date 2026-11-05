@@ -156,6 +156,22 @@ def test_assessed_menu_repair_owns_choices_not_prescriptions():
             {'exerciseRef': 'EXERCISE_0', 'setFields': {'numWorkSets': 4}}]}), task, draft)
 
 
+def test_menu_selection_orders_from_code_owned_recipe_definitions():
+    draft, task = menu_case()
+    task['recipeDefinitions'] = {
+        'LIBRARY_0': {'id': 'a-isolation', 'name': 'Lateral Raise', 'exerciseType': 'WEIGHT',
+            'exerciseCategory': 'ISOLATION'},
+        'LIBRARY_1': {'id': 'b-heavy', 'name': 'Squat', 'exerciseType': 'WEIGHT',
+            'exerciseCategory': 'HEAVY_COMPOUND'},
+    }
+
+    compiled, _ = compile_coordinated_repair(selection(task, ['EXERCISE_0', 'EXERCISE_1']), task, draft)
+    candidate = apply_json_patch(draft, compiled['patch'])
+
+    assert [item['definition_id'] for item in candidate['workouts'][0]['exercises']] == [
+        'LIBRARY_1', 'LIBRARY_0']
+
+
 def test_menu_repair_can_correct_labels_without_reopening_prescription_edits():
     draft, task = menu_case()
     task.pop('candidateMenuExpansionTask')
@@ -389,6 +405,48 @@ def test_solver_menu_selection_copies_only_code_owned_candidate():
         compile_coordinated_repair({**request, 'sessionBlocks': []}, task, draft)
     with pytest.raises(ValidationError):
         compile_coordinated_repair({**request, 'useSolverMenu': False}, task, draft)
+
+
+def test_numeric_menu_repair_selects_code_candidate_without_reconstructing_blocks():
+    from workout_generator_pkg.planning_tools import numeric_menu_repair
+    from workout_generator_pkg.programming_guidelines import canonical_execution_order_draft
+
+    draft, task = menu_case()
+    task['candidateMenuExpansionTask']['blockers'] = [
+        {'code': 'duration_exceeded', 'path': '/workouts/0'},
+        {'code': 'coordinated_joint_unresolved'}]
+    solved = copy.deepcopy(draft['workouts'])
+    solved[0]['exercises'][0]['restBetweenSetsSeconds'] = 90
+    task['solverMenu'] = {'feasible': True, 'sessions': solved}
+    assert numeric_menu_repair(task)
+    schema = coordinated_repair_tool(task)['function']['parameters']
+    assert 'sessionBlocks' not in schema['properties']
+    with pytest.raises(ValidationError):
+        validate(selection(task, ['EXERCISE_1', 'EXERCISE_0']), schema)
+    request = {'requirementsId': task['requirementsId'], 'baseDraftId': task['baseDraftId'],
+               'useSolverMenu': True}
+    compiled, _ = compile_coordinated_repair(request, task, draft)
+    expected = canonical_execution_order_draft({'workouts': solved}, {}, {'exerciseDefinitions': []})
+    assert apply_json_patch(draft, compiled['patch'])['workouts'] == expected['workouts']
+
+
+def test_numeric_menu_repair_does_not_take_over_semantic_choice_or_admit_a_noop():
+    from workout_generator_pkg.planning_tools import numeric_menu_repair
+    from workout_generator_pkg.programming_guidelines import canonical_execution_order_draft
+
+    draft, task = menu_case()
+    draft = canonical_execution_order_draft(draft, {}, {'exerciseDefinitions': []})
+    task['currentDraft'] = draft
+    task['candidateMenuExpansionTask']['blockers'] = [{'code': 'duration_exceeded'}]
+    task['solverMenu'] = {'feasible': True, 'sessions': copy.deepcopy(draft['workouts'])}
+    request = {'requirementsId': task['requirementsId'], 'baseDraftId': task['baseDraftId'],
+               'useSolverMenu': True}
+    with pytest.raises(PlanningInputError) as error:
+        compile_coordinated_repair(request, task, draft)
+    assert error.value.code == 'empty_coordinated_edits'
+    task['reviewFindings'] = [{'action': 'repair'}]
+    assert not numeric_menu_repair(task)
+    assert 'sessionBlocks' in coordinated_repair_tool(task)['function']['parameters']['properties']
 
 
 def _loaded_replacement_case():

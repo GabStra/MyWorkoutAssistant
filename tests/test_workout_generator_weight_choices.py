@@ -19,8 +19,6 @@ from workout_generator_pkg.domain_ops import get_selectable_weights_for_exercise
 from workout_generator_pkg.domain_ops import sync_exercises_from_definitions
 from workout_generator_pkg.domain_ops import sync_exercises_from_plan_index
 from workout_generator_pkg.domain_ops import validate_equipment_weight_combinations
-from workout_generator_pkg.generation_pipeline import _extract_structured_generation_facts
-from workout_generator_pkg.generation_pipeline import _normalize_custom_prompt_equipment_ids
 from workout_generator_pkg.json_patching import build_allowed_patch_scope
 from workout_generator_pkg.json_patching import validate_patch_operations_scope
 from workout_generator_pkg.exercise_contracts import (
@@ -161,61 +159,8 @@ def test_sync_exercises_from_definitions_preserves_generate_warmup_sets():
     assert synced["workouts"][0]["workoutComponents"][0]["generateWarmUpSets"] is True
 
 
-def test_structured_generation_facts_preserve_partial_bodyweight_numeric_details():
-    custom_prompt = (
-        "DAY A - Full Body A:\n"
-        "3. Weighted Pull-Up (Pull-Up Bar + Weight Vest +4 kg, total 69 kg) - 3 sets x 4-8 reps\n"
-        "4. Weighted Ring Row (Rings + Weight Vest +10 kg, total 52.3 kg) - 3 sets x 8-12 reps\n"
-        "\n"
-        "DAY C - Full Body C:\n"
-        "2. Ring Dip (Rings + Weight Vest +10 kg, total 75 kg) - 3 sets x 8-12 reps\n"
-        "3. Weighted Ring Row (Rings + Weight Vest +8 kg, total 50.3 kg) - 3 sets x 8-12 reps\n"
-    )
-
-    facts = _extract_structured_generation_facts(custom_prompt)
-
-    assert "Derived user bodyweight estimate from full-bodyweight totals: 65 kg" in facts
-    assert "Weighted Ring Row" in facts
-    assert "totalEffectiveLoad=52.3 kg" in facts
-    assert "totalEffectiveLoad=50.3 kg" in facts
-    assert "derivedBodyWeightPercentage=65.08" in facts
-    assert "baselineHint=partial-bodyweight" in facts
 
 
-def test_generate_index_includes_structured_generation_facts_with_priority(monkeypatch):
-    captured = {}
-
-    def fake_chat(client, messages, loading_text, show_loading=True, logger=None):
-        captured["messages"] = messages
-        return json.dumps(
-            {
-                "planName": "Test Plan",
-                "equipments": [],
-                "accessoryEquipments": [],
-                "exercises": [],
-                "workouts": [],
-            }
-        )
-
-    monkeypatch.setattr(cli, "json_call_chat_max_with_loading", fake_chat)
-
-    plan_index = cli.generate_index(
-        client=None,
-        context_summary="Summary says ring row uses +10 kg vest.",
-        custom_request="Weighted Ring Row total 52.3 kg.",
-        use_reasoner=False,
-        provided_equipment=None,
-        logger=None,
-        structured_generation_facts=(
-            "Structured generation facts (authoritative for exact numeric/bodyweight details):\n"
-            "- Weighted Ring Row: additionalWeight=10 kg, totalEffectiveLoad=52.3 kg, derivedBodyWeightPercentage=65.08, baselineHint=partial-bodyweight"
-        )
-    )
-
-    assert plan_index["planName"] == "Test Plan"
-    user_message = captured["messages"][-1]["content"]
-    assert "Structured generation facts above are authoritative" in user_message
-    assert "derivedBodyWeightPercentage=65.08" in user_message
 
 
 def test_barbell_totals_match_shared_logic_without_double_counting_bar_weight():
@@ -806,319 +751,12 @@ def test_contract_allows_reusing_set_placeholders_across_different_exercises():
     validate_exercise_definitions_contract(plan_index, exercise_definitions)
 
 
-def test_emit_exercise_definition_retries_until_llm_matches_contract(monkeypatch) -> None:
-    responses = iter([
-        json.dumps(
-            {
-                "id": "EXERCISE_0",
-                    "type": "Exercise",
-                    "enabled": True,
-                    "name": "Hip Thrust",
-                    "notes": "",
-                    "exerciseType": "WEIGHT",
-                    "minReps": 8,
-                    "maxReps": 10,
-                "equipmentId": "EQUIPMENT_0",
-                "muscleGroups": ["GLUTES"],
-                "secondaryMuscleGroups": [],
-                "bodyWeightPercentage": None,
-                "generateWarmUpSets": False,
-                "progressionMode": "OFF",
-                "keepScreenOn": False,
-                "showCountDownTimer": False,
-                "intraSetRestInSeconds": None,
-                "requiresLoadCalibration": False,
-                "requiredAccessoryEquipmentIds": [],
-                "exerciseCategory": "MODERATE_COMPOUND",
-                "sets": [
-                    {"id": "SET_0", "type": "WeightSet", "reps": 10, "weight": 20.0, "subCategory": "WorkSet"},
-                ],
-            }
-        ),
-        json.dumps(
-            {
-                "id": "EXERCISE_0",
-                    "type": "Exercise",
-                    "enabled": True,
-                    "name": "Hip Thrust",
-                    "notes": "",
-                    "exerciseType": "WEIGHT",
-                    "minReps": 8,
-                    "maxReps": 12,
-                "equipmentId": "EQUIPMENT_0",
-                "muscleGroups": ["GLUTES"],
-                "secondaryMuscleGroups": [],
-                "bodyWeightPercentage": None,
-                "generateWarmUpSets": False,
-                "progressionMode": "OFF",
-                "keepScreenOn": False,
-                "showCountDownTimer": False,
-                "intraSetRestInSeconds": None,
-                "requiresLoadCalibration": False,
-                "requiredAccessoryEquipmentIds": [],
-                "exerciseCategory": "MODERATE_COMPOUND",
-                "sets": [
-                    {"id": "SET_0", "type": "WeightSet", "reps": 10, "weight": 20.0, "subCategory": "WorkSet"},
-                ],
-            }
-        ),
-    ])
-    captured_messages = []
-
-    def fake_reasoner(client, messages, custom_prompt, show_loading=False, logger=None):
-        captured_messages.append(messages)
-        return next(responses)
-
-    monkeypatch.setattr(cli, "json_call_reasoner_only_with_loading", fake_reasoner)
-
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Hip Thrust",
-                "exerciseType": "WEIGHT",
-                "minReps": 8,
-                "maxReps": 12,
-                "equipmentId": "EQUIPMENT_0",
-                "requiredAccessoryEquipmentIds": [],
-            }
-        ],
-        "workouts": [],
-    }
-    equipment_subset = [{"id": "EQUIPMENT_0", "type": "BARBELL", "barWeight": 20.0, "availablePlates": []}]
-
-    result, _ = cli.emit_exercise_definition(
-        "EXERCISE_0",
-        client=None,
-        context_summary="summary",
-        plan_index=plan_index,
-        equipment_subset=equipment_subset,
-        accessory_subset=None,
-        use_reasoner=True,
-        provided_equipment=None,
-        logger=None,
-    )
-
-    assert result["maxReps"] == 12
-    assert len(captured_messages) == 1
 
 
-def test_emit_exercise_definition_prompt_makes_unilateral_mapping_explicit(monkeypatch) -> None:
-    captured_messages = []
-
-    def fake_reasoner(client, messages, custom_prompt, show_loading=False, logger=None):
-        captured_messages.append(messages)
-        return json.dumps(
-            {
-                "id": "EXERCISE_0",
-                "type": "Exercise",
-                "enabled": True,
-                "name": "Single Arm Press",
-                "notes": "",
-                "exerciseType": "WEIGHT",
-                "minReps": 8,
-                "maxReps": 12,
-                "equipmentId": "EQUIPMENT_0",
-                "muscleGroups": ["FRONT_DELTOIDS"],
-                "secondaryMuscleGroups": [],
-                "bodyWeightPercentage": None,
-                "generateWarmUpSets": False,
-                "progressionMode": "OFF",
-                "keepScreenOn": False,
-                "showCountDownTimer": False,
-                "intraSetRestInSeconds": 15,
-                "requiresLoadCalibration": False,
-                "requiredAccessoryEquipmentIds": [],
-                "sets": [
-                    {"id": "SET_0", "type": "WeightSet", "reps": 10, "weight": 20.0, "subCategory": "WorkSet"},
-                ],
-            }
-        )
-
-    monkeypatch.setattr(cli, "json_call_reasoner_only_with_loading", fake_reasoner)
-
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Single Arm Press",
-                "exerciseType": "WEIGHT",
-                "minReps": 8,
-                "maxReps": 12,
-                "equipmentId": "EQUIPMENT_0",
-                "requiredAccessoryEquipmentIds": [],
-            }
-        ],
-        "workouts": [],
-    }
-    equipment_subset = [{"id": "EQUIPMENT_0", "type": "DUMBBELL", "dumbbells": [{"weight": 20.0}], "maxExtraWeightsPerLoadingPoint": 0}]
-
-    cli.emit_exercise_definition(
-        "EXERCISE_0",
-        client=None,
-        context_summary="summary",
-        plan_index=plan_index,
-        equipment_subset=equipment_subset,
-        accessory_subset=None,
-        use_reasoner=True,
-        provided_equipment=None,
-        logger=None,
-    )
-
-    prompt = captured_messages[0][-1]["content"]
-    assert [message['content'] for message in captured_messages[0] if message['role'] == 'system'] == [EXERCISE_SYSTEM_PROMPT]
-    assert "Set intraSetRestInSeconds to a positive integer only for unilateral side-to-side work" in prompt
-    assert "otherwise set it to null" in prompt
 
 
-def test_emit_exercise_definition_prompt_explicitly_requires_null_equipment_id(monkeypatch) -> None:
-    captured_messages = []
-
-    def fake_reasoner(client, messages, custom_prompt, show_loading=False, logger=None):
-        captured_messages.append(messages)
-        return json.dumps(
-            {
-                "id": "EXERCISE_0",
-                "type": "Exercise",
-                "enabled": True,
-                "name": "Row",
-                "notes": "",
-                "exerciseType": "BODY_WEIGHT",
-                "minReps": 8,
-                "maxReps": 12,
-                "equipmentId": None,
-                "muscleGroups": ["BACK_UPPER_BACK"],
-                "secondaryMuscleGroups": [],
-                "bodyWeightPercentage": 100.0,
-                "generateWarmUpSets": False,
-                "progressionMode": "OFF",
-                "keepScreenOn": False,
-                "showCountDownTimer": False,
-                "intraSetRestInSeconds": None,
-                "requiresLoadCalibration": False,
-                "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
-                "sets": [
-                    {"id": "SET_0", "type": "BodyWeightSet", "reps": 10, "additionalWeight": 0.0, "subCategory": "WorkSet"},
-                ],
-            }
-        )
-
-    monkeypatch.setattr(cli, "json_call_reasoner_only_with_loading", fake_reasoner)
-
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Row",
-                "exerciseType": "BODY_WEIGHT",
-                "minReps": 8,
-                "maxReps": 12,
-                "equipmentId": None,
-                "bodyWeightPercentage": 100.0,
-                "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
-            }
-        ],
-        "workouts": [],
-    }
-    accessory_subset = [{"id": "ACCESSORY_0", "type": "ACCESSORY", "name": "Rings"}]
-
-    cli.emit_exercise_definition(
-        "EXERCISE_0",
-        client=None,
-        context_summary="summary",
-        plan_index=plan_index,
-        equipment_subset=[],
-        accessory_subset=accessory_subset,
-        use_reasoner=True,
-        provided_equipment=None,
-        logger=None,
-    )
-
-    prompt = captured_messages[0][-1]["content"]
-    assert '"equipmentId": null' in prompt
-    assert "Treat the PlanIndex exercise entry as the source of truth" in prompt
 
 
-def test_emit_exercise_definition_prompt_uses_weight_specific_schema(monkeypatch) -> None:
-    captured_messages = []
-
-    def fake_reasoner(client, messages, custom_prompt, show_loading=False, logger=None):
-        captured_messages.append(messages)
-        return json.dumps(
-            {
-                "id": "EXERCISE_0",
-                "type": "Exercise",
-                "enabled": True,
-                "name": "Bench Press",
-                "notes": "",
-                "exerciseType": "WEIGHT",
-                "minReps": 6,
-                "maxReps": 8,
-                "equipmentId": "EQUIPMENT_0",
-                "bodyWeightPercentage": None,
-                "generateWarmUpSets": True,
-                "progressionMode": "AUTO_REGULATION",
-                "keepScreenOn": False,
-                "showCountDownTimer": False,
-                "intraSetRestInSeconds": None,
-                "muscleGroups": ["FRONT_CHEST"],
-                "secondaryMuscleGroups": [],
-                "requiredAccessoryEquipmentIds": [],
-                "requiresLoadCalibration": False,
-                "exerciseCategory": "HEAVY_COMPOUND",
-                "sets": [
-                    {"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 20.0, "subCategory": "WorkSet"},
-                ],
-            }
-        )
-
-    monkeypatch.setattr(cli, "json_call_reasoner_only_with_loading", fake_reasoner)
-
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Bench Press",
-                "exerciseType": "WEIGHT",
-                "minReps": 6,
-                "maxReps": 8,
-                "equipmentId": "EQUIPMENT_0",
-                "requiredAccessoryEquipmentIds": [],
-            }
-        ],
-        "workouts": [],
-    }
-
-    cli.emit_exercise_definition(
-        "EXERCISE_0",
-        client=None,
-        context_summary="summary",
-        plan_index=plan_index,
-        equipment_subset=[{"id": "EQUIPMENT_0", "type": "BARBELL", "barWeight": 20.0, "availablePlates": []}],
-        accessory_subset=None,
-        use_reasoner=True,
-        provided_equipment=None,
-        logger=None,
-    )
-
-    prompt = captured_messages[0][-1]["content"]
-    assert "Treat the PlanIndex exercise entry as the source of truth" in prompt
-    assert "Allowed work-set type: WeightSet." in prompt
-    assert "Forbidden fields on each WeightSet: additionalWeight, timeInMillis, timeInSeconds, autoStart, autoStop." in prompt
-    assert '"exerciseType": "WEIGHT"' in prompt
-    assert "\"const\": \"WEIGHT\"" in prompt
 
 
 def test_weight_schema_rejects_bodyweight_fields():
@@ -1343,6 +981,15 @@ def test_plan_index_requires_intra_set_rest_for_unilateral_exercise():
         validate_plan_index_contract(plan_index)
 
     assert "must include a positive intraSetRestInSeconds in the PlanIndex" in str(exc_info.value)
+
+
+def test_reviewed_limb_mode_controls_unilateral_rest_without_name_inference():
+    from workout_generator_pkg.plan_contract import _exercise_requires_unilateral_rest
+
+    assert _exercise_requires_unilateral_rest({'name': 'Supported Split Squat'},
+        {'reviewedExecution': {'limbMode': 'bilateral'}}) is False
+    assert _exercise_requires_unilateral_rest({'name': 'Weighted Squat'},
+        {'reviewedExecution': {'limbMode': 'unilateral'}}) is True
 
 
 def test_plan_index_prompt_requires_llm_selected_unilateral_rest():
@@ -1776,34 +1423,8 @@ def test_placeholder_id_manager_converts_rest_seconds_by_exercise_map_keys_to_uu
     assert rest_map[ex1_uuid] == 60
 
 
-def test_normalize_custom_prompt_equipment_ids_rewrites_uuid_references_to_placeholders():
-    custom_prompt = (
-        "EQUIPMENT AVAILABLE (use these exact IDs):\n"
-        "- Barbell - ID: a247d19d-e625-4c84-af6a-f643bb1d076c\n"
-        "- Pull-Up Bar - ID: 49405aae-8e6d-4364-8bd5-cb551fb97631\n"
-    )
-
-    normalized = _normalize_custom_prompt_equipment_ids(
-        custom_prompt,
-        {
-            "a247d19d-e625-4c84-af6a-f643bb1d076c": "EQUIPMENT_0",
-            "49405aae-8e6d-4364-8bd5-cb551fb97631": "ACCESSORY_3",
-        },
-    )
-
-    assert "use these exact placeholder IDs" in normalized
-    assert "a247d19d-e625-4c84-af6a-f643bb1d076c" not in normalized
-    assert "49405aae-8e6d-4364-8bd5-cb551fb97631" not in normalized
-    assert "EQUIPMENT_0" in normalized
-    assert "ACCESSORY_3" in normalized
 
 
-def test_normalize_custom_prompt_equipment_ids_leaves_unrelated_prompts_unchanged():
-    custom_prompt = "Generate a 3-day full body plan under 60 minutes."
-
-    normalized = _normalize_custom_prompt_equipment_ids(custom_prompt, {})
-
-    assert normalized == custom_prompt
 
 
 def test_exercise_definition_rejects_double_progression_mode():

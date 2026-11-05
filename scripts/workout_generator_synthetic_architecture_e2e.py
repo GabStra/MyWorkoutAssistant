@@ -139,14 +139,14 @@ def prepare_case(case: dict, backup: Path, backup_hash: str) -> Path:
         "immutableBackupSHA256": backup_hash, "createdAtUTC": now,
         "testOnlyApprovals": "Exact production confirmation phrases may be injected only after their reviewed canonical previews."})
     (run / "run.py").write_text(
-        "from dataclasses import replace\n"
+        "from unittest.mock import patch\n"
         "from pathlib import Path\n"
         "import sys\n"
         "sys.path.insert(0, str(Path.cwd()))\n"
-        "from workout_generator_pkg.deps import resolve_shell_deps\n"
         "from workout_generator_pkg.interactive_shell import main\n"
         "root = Path(__file__).resolve().parent\n"
-        "main(replace(resolve_shell_deps(), default_script_dir=lambda: str(root)))\n",
+        "with patch('workout_generator_pkg.cli._default_script_dir', lambda: str(root)):\n"
+        "    main()\n",
         encoding="utf-8")
     (run / "input_prompt.txt").write_text(synthetic_request, encoding="utf-8")
     retained.write_json(run / "preflight.json", {"modelWillRun": False, "fixtureId": case["id"],

@@ -37,10 +37,10 @@ def test_incumbent_cannot_bypass_current_domain_or_objective_lock(monkeypatch, i
 
 def test_joint_stage_passes_previous_candidate_and_preserves_exact_audit(monkeypatch):
     from test_workout_generator_joint_prescriptions import _distribution_solver_case
-    equipment, requirements, sessions, _ = _distribution_solver_case([4])
+    equipment, requirements, sessions, _ = _distribution_solver_case([4, 5])
     sessions[0]['exercises'][0].update(numWorkSets=5, workSetTemplate={'reps': 8})
     sessions[0]['exercises'][0].pop('targetSetPrescriptions')
-    original = joint_planning._milp_solve
+    original = joint_planning._cp_solve
     calls = []
     def capture(variables, features, **options):
         if calls:
@@ -48,12 +48,12 @@ def test_joint_stage_passes_previous_candidate_and_preserves_exact_audit(monkeyp
         result = original(variables, features, **options)
         calls.append(result[1])
         return result
-    monkeypatch.setattr(joint_planning, '_milp_solve', capture)
+    monkeypatch.setattr(joint_planning, '_cp_solve', capture)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
         preserve_source_selection=True)
     assert len(calls) >= 2
     assert result['feasible'] and not result['audit']['errors']
-    assert result['solverDiagnostics'][1]['incumbentSupplied']
+    assert result['solverDiagnostics'][1]['incumbentValidated']
 
 
 def test_joint_receipt_reuse_uses_numeric_fingerprint_across_requirements_id_refresh():

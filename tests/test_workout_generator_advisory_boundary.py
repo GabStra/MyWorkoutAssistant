@@ -54,33 +54,6 @@ def test_blocking_finding_cannot_be_advisory_even_after_schema_correction(monkey
     assert accepted[0]['action'] == 'repair'
 
 
-def test_advisory_calibration_finding_stays_separate_from_label_repair(monkeypatch):
-    findings = [
-        _finding('advisory', message='No compatible load history; app-native calibration handles the unknown load.'),
-        _finding('repair', message='The session label does not match its focus.'),
-    ]
-    review = {'inputHash': 'candidate-review', 'findings': findings}
-    calls = []
-
-    def respond(_client, request, **_options):
-        calls.append(json.loads(request[-1]['content']))
-        return json.dumps({'groups': [
-            {'findingIndexes': [0], 'disposition': 'advisory', 'repairDimensions': [],
-             'reason': 'Calibration mode handles the missing history; no extra sets are needed.',
-             'errorKind': 'none', 'authorityEvidenceRefs': [], 'currentDataEvidenceRefs': []},
-            {'findingIndexes': [1], 'disposition': 'repair', 'repairDimensions': ['session_labels'],
-             'reason': 'Correct only the inaccurate focus label.',
-             'errorKind': 'none', 'authorityEvidenceRefs': [], 'currentDataEvidenceRefs': []}],
-            'repairPlan': 'Correct the session label only.'}), None, None
-
-    monkeypatch.setattr(assessment, '_review_call', respond)
-    result = assessment.assess_findings(None, {'draft': {'programGuidance': ''}}, review)
-
-    assert [group['disposition'] for group in result['groups']] == ['advisory', 'repair']
-    assert result['groups'][1]['repairDimensions'] == ['session_labels']
-    assert len(calls) == 1
-
-
 @pytest.mark.parametrize('disposition', ['repair', 'unresolved_capability'])
 def test_assessment_cannot_promote_or_mix_advisory_finding(disposition):
     advisory = _finding('advisory')
@@ -96,15 +69,3 @@ def test_assessment_cannot_promote_or_mix_advisory_finding(disposition):
             'findingIndexes': [0, 1], 'disposition': 'repair',
             'repairDimensions': ['session_labels'], 'reason': 'Group both.'
         }], 'Repair both.'))
-
-
-def test_carried_advisory_resolution_cannot_become_repair():
-    prior = _finding('advisory')
-    with pytest.raises(ValueError, match='cannot be promoted'):
-        plan_review._validate_carried_resolution({'status': 'open', 'action': 'repair'}, prior)
-    plan_review._validate_carried_resolution({'status': 'open', 'action': 'advisory'}, prior)
-    plan_review._validate_carried_resolution({'status': 'resolved_by_change', 'action': 'none'}, prior)
-    with pytest.raises(ValueError, match='cannot be promoted'):
-        plan_review._validate_confirmation_resolution({
-            'status': 'open', 'disposition': 'repair', 'repairDimensions': ['guidance'],
-            'reason': 'Escalate the carried advisory.', 'evidencePaths': ['/draft']}, prior)

@@ -309,6 +309,17 @@ def test_count_series_compiler_preserves_enumerated_one_hot_solution():
     assert diagnostics['countSeriesSolverColumns'] == 2
 
 
+def test_two_choice_count_series_skips_nonreducing_compilation():
+    variables, features = _count_series((2, 3))
+    diagnostics = {}
+
+    status, counts = allocation._milp_solve(variables, features,
+        preserve_current=False, diagnostics=diagnostics)
+
+    assert (status, counts) == ('optimal', [0, 1])
+    assert 'countSeriesCompressed' not in diagnostics
+
+
 @pytest.mark.parametrize('values', [
     [0, 0, 0, 0],
     [0, 2, 4, 6],
@@ -348,6 +359,19 @@ def test_count_series_compiler_maps_warm_start_and_restores_original_columns(mon
     assert (status, counts) == ('optimal', [0, 1, 0])
     assert diagnostics['countSeriesCompressed']
     assert diagnostics['incumbentSupplied'] and diagnostics['incumbentValidated']
+
+
+def test_highspy_warm_start_diagnostics_separate_model_load_and_search_time():
+    variables, features = _count_series()
+    diagnostics = {}
+
+    status, counts = allocation._milp_solve(variables, features,
+        preserve_current=False, incumbent=[0, 1, 0], diagnostics=diagnostics)
+
+    assert (status, counts) == ('optimal', [0, 1, 0])
+    assert diagnostics['solverModelLoadSeconds'] >= 0
+    assert diagnostics['solverSearchSeconds'] >= 0
+    assert diagnostics['solverModelLoadSeconds'] + diagnostics['solverSearchSeconds'] <= diagnostics['solveSeconds']
 
 
 def test_count_series_restore_snaps_solver_integrality_noise_and_rechecks_original_rows(monkeypatch):

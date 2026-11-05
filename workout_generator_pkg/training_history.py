@@ -15,6 +15,41 @@ from .cancellation import check_cancelled
 
 RELATED_LOAD_TRANSFER_CAUTION = 'Do not convert or transfer loads automatically. Execution, laterality, reps, effort and equipment affect comparability.'
 LOAD_CEILING_CONCERNS = {'recorded_load_exceeds_current_capacity', 'related_history_ceiling_requires_reassessment'}
+
+
+def unverified_fixed_bodyweight_capability_concern(definition, evidence=None):
+    """Do not treat absent history as proof a fixed, unweighted movement is executable."""
+    if definition.get('exerciseType') != 'BODY_WEIGHT' or definition.get('equipmentId') is not None:
+        return None
+    comparable_performances = [performance for session in (evidence or {}).get('sessions', [])
+        for performance in session.get('performances', [])]
+    if any(isinstance(performance.get('record'), dict) and (
+            number(performance['record'].get('actualReps')) and performance['record']['actualReps'] > 0
+            or number(performance['record'].get('actualDurationSeconds'))
+                and performance['record']['actualDurationSeconds'] > 0
+            or number(performance['record'].get('actualDistanceMeters'))
+                and performance['record']['actualDistanceMeters'] > 0)
+            for performance in comparable_performances):
+        return None
+    return {'code': 'unverified_fixed_bodyweight_capability',
+        'message': 'No comparable performance is recorded for this fixed, unweighted configuration. '
+            'Native added-load calibration cannot reduce its difficulty; confirm capability or choose a supported variant.'}
+
+
+def confirmed_capability_references(messages, equipment):
+    """Return explicit, source-reviewed user capability assertions for this exact library snapshot."""
+    from .planning_decisions import resolved_decisions
+    from .recipe_contracts import library_definitions_by_reference
+    current_fingerprint = library_fingerprint(equipment)
+    decisions = resolved_decisions(messages)
+    definitions = library_definitions_by_reference(equipment)
+    return {decision['confirmedCapabilityReference'] for decision in decisions.values()
+        if isinstance(decision, dict) and not decision.get('supersededBy')
+        and decision.get('capabilityLibraryFingerprint') == current_fingerprint
+        and decision.get('confirmedCapabilityReference') in {
+            reference for reference in definitions}}
+
+
 PRESCRIPTION_EVIDENCE_INSTRUCTION = (
     'Use history to choose provisional prescriptions. Python renders working-set effort criteria. The app owns native load calibration. '
     'Do not duplicate structured work-set counts, rep targets, default RIR, rests, exercise order or superset assignments there; the renderer owns those facts. '
@@ -24,6 +59,7 @@ EVIDENCE_FORMAT = {
     'candidateContext': 'Loaded current configuration, not a fresh measurement. Effective bodyweight is derived from configured body mass and the selected library percentage.',
     'sessions': 'Recorded sessions comparable to the selected movement and recorded setup; records are observations, not strength maxima.',
     'otherSetupSessions': 'Same stored movement identity with changed or uncertain setup/definition. Read comparisonLimitations; do not transfer loads automatically.',
+    'candidateConfigurationHistory': 'Recorded setup comparisons against the selected candidate, including related movement records stored under a sibling definition. Counts cover returned session pages only. Matching equipment, accessories and accounting do not establish equivalent movement strength, current capability or target RIR; provenance retains inferred context.',
     'executionSequence': 'Recorded execution order across the session; preferred over the per-exercise set order when available.',
     'loadKg': 'External load only. For BODY_WEIGHT this is added load, not total resistance. Dumbbell-pair loads are combined across both implements.',
     'recordedRelativeBodyWeightKg': 'Recorded effective bodyweight contribution, not necessarily the athlete\'s full body mass.',
@@ -81,10 +117,107 @@ HISTORY_PLANNING_INSTRUCTION = (
 )
 
 
+def _merge_history_record(existing, incoming):
+    merged = copy.deepcopy(existing)
+    for key, value in incoming.items():
+        if key not in merged:
+            merged[key] = copy.deepcopy(value)
+        elif isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _merge_history_record(merged[key], value)
+        elif merged[key] != value:
+            raise ValueError(f'Contradictory historical record field: {key}')
+    return merged
+
+
+def _merge_history_sessions(existing, incoming):
+    sessions = {}
+    for session in existing + incoming:
+        identity = session.get('sessionId') or json.dumps(session, sort_keys=True)
+        previous = sessions.get(identity, {})
+        merged = _merge_history_record(
+            {key: value for key, value in previous.items() if key != 'performances'},
+            {key: value for key, value in session.items() if key != 'performances'})
+        performances = {}
+        for performance in previous.get('performances', []) + session.get('performances', []):
+            key = performance.get('record', {}).get('setHistoryId') or json.dumps(performance, sort_keys=True)
+            performances[key] = (_merge_history_record(performances[key], performance)
+                                 if key in performances else copy.deepcopy(performance))
+        merged['performances'] = sorted(performances.values(), key=lambda item: (
+            item.get('executionSequence') is None, _sort_number(item.get('executionSequence')),
+            _sort_number(item.get('order')), item.get('startTime') or ''))
+        sessions[identity] = merged
+    return sorted(sessions.values(), key=lambda item: (item.get('date') or '', item.get('time') or ''), reverse=True)
+
+
+def _evidence_page_offset(item):
+    offset = item.get('sessionOffset')
+    if isinstance(offset, int):
+        return offset
+    end = item.get('nextOffset')
+    if end is None:
+        end = max(item.get('totalSessions', 0), item.get('otherSetupSessionCount', 0))
+    return max(0, end - max(len(item.get('sessions', [])), len(item.get('otherSetupSessions', []))))
+
+
+def merge_training_evidence(existing, incoming, *, equipment=None):
+    """Union saved raw pages before any projection removes immutable record identities."""
+    existing = existing or {}
+    for field in ('definitionId', 'reference'):
+        if field in existing and field in incoming and existing[field] != incoming[field]:
+            raise ValueError(f'Cannot merge different historical movement identities: {field}')
+    merged = {**copy.deepcopy(existing), **copy.deepcopy(incoming)}
+    for field in ('sessions', 'otherSetupSessions'):
+        if field in existing or field in incoming:
+            merged[field] = _merge_history_sessions(existing.get(field, []), incoming.get(field, []))
+    owners = {}
+    for field in ('sessions', 'otherSetupSessions'):
+        for session in merged.get(field, []):
+            for performance in session.get('performances', []):
+                identifier = performance.get('record', {}).get('setHistoryId')
+                owner = (field, session.get('sessionId'))
+                if identifier and identifier in owners and owners[identifier] != owner:
+                    raise ValueError(f'Contradictory historical set ownership: {identifier}')
+                if identifier:
+                    owners[identifier] = owner
+    related = {}
+    for item in existing.get('relatedMovementHistory', []) + incoming.get('relatedMovementHistory', []):
+        identity = item.get('definitionId') or item['reference']
+        related[identity] = merge_training_evidence(related.get(identity), item, equipment=equipment)
+    if 'relatedMovementHistory' in merged:
+        merged['relatedMovementHistory'] = list(related.values())
+    if any(field in merged for field in ('sessionOffset', 'nextOffset', 'hasMore')):
+        before, after = _evidence_page_offset(existing), _evidence_page_offset(incoming)
+        merged['sessionOffset'] = min(before, after) if existing else after
+        # A returned last page does not establish that earlier pages were retrieved.
+        missing = any(len(merged.get(field, [])) < merged.get(total, 0) for field, total in (
+            ('sessions', 'totalSessions'), ('otherSetupSessions', 'otherSetupSessionCount')))
+        merged['hasMore'] = missing
+        if missing:
+            continuation = existing.get('nextOffset') if existing else 0
+            if before > 0 or not existing:
+                continuation = 0
+            if continuation == after:
+                continuation = incoming.get('nextOffset')
+            merged['nextOffset'] = continuation if isinstance(continuation, int) else 0
+        else:
+            merged['nextOffset'] = None
+        if existing and before < after and 'loadHeadroom' in existing:
+            merged['loadHeadroom'] = copy.deepcopy(existing['loadHeadroom'])
+    if 'candidateConfigurationHistory' in merged:
+        definition = next((item for item in (equipment or {}).get('exerciseDefinitions', [])
+                           if item['id'] == merged.get('definitionId')), None)
+        if definition is not None:
+            merged['candidateConfigurationHistory'] = candidate_configuration_history(merged, definition, equipment)
+        elif existing and existing.get('candidateConfigurationHistory') != incoming.get('candidateConfigurationHistory'):
+            # Without the candidate setup, only the original records can be combined safely.
+            merged.pop('candidateConfigurationHistory', None)
+    return merged
+
+
 def compact_training_evidence(items):
     """Store each movement's records once; keep comparison details on related links."""
     catalog = {}
-    comparison_fields = ('differences', 'loadTransfer', 'matchType', 'relevanceScore')
+    comparison_fields = ('differences', 'loadTransfer', 'matchType', 'relevanceScore', 'familyEvidence')
 
     def collect(item, related=False):
         reference = item.get('reference')
@@ -152,6 +285,65 @@ def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def _configuration_limitations(performance, definition, selected_gear):
+    """Compare the recorded configuration with the selected definition, not its sibling."""
+    limitations = []
+    if 'equipmentId' not in performance or performance['equipmentId'] != definition.get('equipmentId'):
+        limitations.append('recorded_equipment_differs_or_is_unresolved')
+    historical_type = performance.get('equipmentContext', {}).get('type')
+    if historical_type and selected_gear and historical_type != selected_gear.get('type'):
+        limitations.append('recorded_equipment_type_changed')
+    if performance.get('exerciseType') != definition.get('exerciseType'):
+        limitations.append('exercise_type_changed')
+    if 'requiredAccessoryEquipmentIds' not in performance:
+        limitations.append('required_accessories_unresolved')
+    elif set(performance['requiredAccessoryEquipmentIds']) != set(definition.get('requiredAccessoryEquipmentIds') or []):
+        limitations.append('required_accessories_changed')
+    percentage = performance.get('bodyWeightPercentage')
+    if (definition.get('exerciseType') == 'BODY_WEIGHT'
+            and (not number(percentage) or percentage != definition.get('bodyWeightPercentage'))):
+        limitations.append('bodyweight_percentage_changed' if number(percentage) else 'bodyweight_percentage_unresolved')
+    return limitations
+
+
+def _reviewed_families_by_definition(equipment):
+    from .recipe_contracts import reviewed_exercise_family_evidence
+    families = reviewed_exercise_family_evidence(equipment)['familyByReference']
+    return {definition['id']: families[f'LIBRARY_{index}']
+            for index, definition in enumerate(sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id']))
+            if f'LIBRARY_{index}' in families}
+
+
+def candidate_configuration_history(item, definition, equipment):
+    """Retain observed setup facts without converting related movement performances."""
+    selected_gear = next((gear for gear in equipment.get('equipments', [])
+                          if gear['id'] == definition.get('equipmentId')), None)
+    comparisons = []
+    for source in [item] + item.get('relatedMovementHistory', []):
+        matching, different, limitations = [], 0, set()
+        for session in source.get('sessions', []) + source.get('otherSetupSessions', []):
+            for performance in session.get('performances', []):
+                differences = _configuration_limitations(performance, definition, selected_gear)
+                if differences:
+                    different += 1
+                    limitations.update(differences)
+                    continue
+                matching.append({'date': session.get('date'), 'endReason': session.get('endReason'),
+                    'record': {key: value for key, value in performance.get('record', {}).items()
+                               if key != 'setHistoryId'},
+                    'provenance': {key: copy.deepcopy(performance[key]) for key in (
+                        'equipmentContext', 'accessoryContextSource', 'bodyWeightPercentageSource')
+                        if key in performance}})
+        comparisons.append({'sourceReference': source['reference'],
+            'sourceMovementRelation': 'same_definition' if source is item else 'related_not_equivalent',
+            'matchingConfigurationPerformanceCount': len(matching),
+            'otherConfigurationPerformanceCount': different,
+            'otherConfigurationLimitations': sorted(limitations),
+            'matchingConfigurationPerformances': matching})
+    return {'comparisonScope': 'returned_session_pages', 'sources': comparisons,
+            'currentCapabilityEstablished': False, 'relatedLoadTransferSupported': False}
+
+
 def has_usable_comparable_load_history(evidence):
     """True only when exact comparable records include a usable loaded work set."""
     if not isinstance(evidence, dict) or evidence.get('status') != 'comparable_records':
@@ -213,7 +405,7 @@ def apply_native_load_calibration_policy(plan, messages, equipment, history_fing
     """Bind native app load calibration to each plan before its preview is reviewed."""
     from .recipe_contracts import recorded_evidence
 
-    evidence = recorded_evidence(messages, library_fingerprint(equipment or {}), history_fingerprint)
+    evidence = recorded_evidence(messages, library_fingerprint(equipment or {}), history_fingerprint, equipment=equipment)
     for exercise in plan.get('exercises', []):
         exercise_type = exercise.get('exerciseType')
         supported = exercise_type == 'WEIGHT' or (
@@ -434,12 +626,15 @@ class TrainingHistory:
             finally:
                 self._related_matching_lock.release()
         self._add_reviewed_family_history(result, equipment)
+        definitions = {definition['id']: definition for definition in equipment.get('exerciseDefinitions', [])}
         if arguments.get('session_offset', 0):
             latest = self._exact_evidence({'definition_ids': [item['reference'] for item in result['exercises']]}, equipment)
             latest_by_definition = {item['definitionId']: item for item in latest['exercises']}
         else:
             latest_by_definition = {item['definitionId']: item for item in result['exercises']}
         for item in result['exercises']:
+            item['candidateConfigurationHistory'] = candidate_configuration_history(
+                item, definitions[item['definitionId']], equipment)
             current = dict(latest_by_definition[item['definitionId']])
             current['relatedMovementHistory'] = item.get('relatedMovementHistory', [])
             current['relatedHistoryStatus'] = item.get('relatedHistoryStatus')
@@ -451,22 +646,50 @@ class TrainingHistory:
         from .recipe_contracts import reviewed_exercise_family_evidence
         families = reviewed_exercise_family_evidence(equipment)
         definitions = sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id'])
-        historical = {f'LIBRARY_{index}': families['familyByReference'].get(f'LIBRARY_{index}')
-            for index, definition in enumerate(definitions) if self.sessions.get(definition['id'])}
+        current_refs = {definition['id']: f'LIBRARY_{index}' for index, definition in enumerate(definitions)}
+        catalogs = [(equipment, families, {reference: reference for identifier, reference in current_refs.items()
+            if self.sessions.get(identifier)})]
+        historical = sorted((self.definitions[key] for key in self.sessions if key in self.definitions),
+            key=lambda definition: definition['id'])
+        missing = {f'LIBRARY_{index}': f'HISTORY_{index}' for index, definition in enumerate(historical)
+            if definition['id'] not in current_refs}
+        if missing:
+            historical_equipment = {**equipment, 'exerciseDefinitions': historical}
+            catalogs.append((historical_equipment, reviewed_exercise_family_evidence(historical_equipment), missing))
+        source_families = {definition['id']: catalog_families['familyByReference'][f'LIBRARY_{index}']
+            for catalog, catalog_families, _ in catalogs
+            for index, definition in enumerate(sorted(catalog['exerciseDefinitions'], key=lambda entry: entry['id']))
+            if f'LIBRARY_{index}' in catalog_families['familyByReference']}
         for item in result.get('exercises', []):
             family = families['familyByReference'].get(item['reference'])
-            if not family or item.get('totalSessions') or item.get('candidateContext', {}).get('exerciseType') != 'WEIGHT':
+            exercise_type = item.get('candidateContext', {}).get('exerciseType')
+            if not family or item.get('totalSessions'):
                 continue
-            refs = [ref for ref, value in historical.items() if value == family and ref != item['reference']]
             related = item.setdefault('relatedMovementHistory', [])
-            for start in range(0, len(refs), 100):
-                for evidence in self._exact_evidence({'definition_ids': refs[start:start + 100], 'session_limit': 1}, equipment)['exercises']:
-                    if evidence['totalSessions'] and evidence['candidateContext']['exerciseType'] == 'WEIGHT':
-                        related[:] = [entry for entry in related if entry.get('reference') != evidence['reference']]
-                        related.append({**evidence, 'matchType': 'reviewed_family_not_equivalent',
-                            'familyEvidence': {'candidate': families['sourcesByReference'][item['reference']],
-                                'historical': families['sourcesByReference'][evidence['reference']]},
-                            'loadTransfer': RELATED_LOAD_TRANSFER_CAUTION})
+            for catalog, catalog_families, references in catalogs:
+                refs = [ref for ref in references if catalog_families['familyByReference'].get(ref) == family
+                    and references[ref] != item['reference']]
+                for start in range(0, len(refs), 100):
+                    for evidence in self._exact_evidence({'definition_ids': refs[start:start + 100], 'session_limit': 1}, catalog)['exercises']:
+                        if ((evidence['totalSessions'] or evidence.get('otherSetupSessionCount'))
+                                and evidence['candidateContext']['exerciseType'] == exercise_type):
+                            metadata = {'matchType': 'reviewed_family_not_equivalent',
+                                'familyEvidence': {'candidate': families['sourcesByReference'][item['reference']],
+                                    'historical': catalog_families['sourcesByReference'][evidence['reference']]},
+                                'loadTransfer': RELATED_LOAD_TRANSFER_CAUTION}
+                            retained = next((entry for entry in related
+                                if entry.get('definitionId') == evidence['definitionId']), None)
+                            if retained is not None:
+                                retained.update(metadata)
+                            else:
+                                related.append({**evidence, 'reference': references[evidence['reference']], **metadata})
+        for item in result.get('exercises', []):
+            family = families['familyByReference'].get(item['reference'])
+            if family and 'relatedMovementHistory' in item:
+                item['relatedMovementHistory'] = sorted((entry for entry in item['relatedMovementHistory']
+                    if source_families.get(entry.get('definitionId')) in (None, family)),
+                    key=lambda entry: (source_families.get(entry.get('definitionId')) != family,
+                                       -(entry.get('relevanceScore') or 0)))
 
     def refresh_evidence_metadata(self, payload, equipment):
         """Add current derived summaries to retained evidence without changing its session pages."""
@@ -493,14 +716,23 @@ class TrainingHistory:
             concerns = item.get('loadSuitabilityConcerns')
             concerns = concerns if isinstance(concerns, list) else []
             concerns = [concern for concern in concerns if not isinstance(concern, dict)
-                        or concern.get('code') != 'recorded_loaded_setup_requires_reassessment']
+                        or concern.get('code') not in (
+                            'recorded_loaded_setup_requires_reassessment',
+                            'unverified_fixed_bodyweight_capability')]
             setup_concern = _recorded_added_load_setup_concern(current)
-            item['loadSuitabilityConcerns'] = concerns + ([setup_concern] if setup_concern else [])
+            capability_concern = unverified_fixed_bodyweight_capability_concern(
+                current.get('candidateContext') or {}, current)
+            item['loadSuitabilityConcerns'] = concerns + ([setup_concern] if setup_concern else []) \
+                + ([capability_concern] if capability_concern else [])
             headroom = item.setdefault('loadHeadroom', {})
             if 'highestObservedComparableLoad' not in headroom:
                 headroom['highestObservedComparableLoad'] = current['loadHeadroom']['highestObservedComparableLoad']
         self._add_reviewed_family_history(result, equipment)
+        definitions = {definition['id']: definition for definition in equipment.get('exerciseDefinitions', [])}
         for item in result.get('exercises', []):
+            if item.get('definitionId') in definitions:
+                item['candidateConfigurationHistory'] = candidate_configuration_history(
+                    item, definitions[item['definitionId']], equipment)
             concerns = [entry for entry in item.get('loadSuitabilityConcerns', [])
                 if entry.get('code') != 'related_history_ceiling_requires_reassessment']
             item['loadSuitabilityConcerns'] = concerns + [entry for entry in self._load_concerns(item)
@@ -530,6 +762,8 @@ class TrainingHistory:
                 'message': 'Only related movement performance is available. Verify the candidate resistance/effort; do not transfer loads or infer suitability from another implement ceiling.'})
         related_ceiling = [e for e in item.get('relatedMovementHistory', [])
             if e.get('matchType') == 'reviewed_family_not_equivalent'
+            and item.get('candidateContext', {}).get('exerciseType') == 'WEIGHT'
+            and e.get('candidateContext', {}).get('exerciseType') == 'WEIGHT'
             and number(e.get('loadHeadroom', {}).get('latestSessionHeaviestLoadKg'))
             and number(maximum) and e['loadHeadroom']['latestSessionHeaviestLoadKg'] > maximum + .001]
         if not item['totalSessions'] and related_ceiling:
@@ -549,6 +783,9 @@ class TrainingHistory:
         setup_concern = _recorded_added_load_setup_concern(item)
         if setup_concern:
             concerns.append(setup_concern)
+        capability_concern = unverified_fixed_bodyweight_capability_concern(item.get('candidateContext') or {}, item)
+        if capability_concern:
+            concerns.append(capability_concern)
         return concerns
 
     def load_suitability_errors(self, plan, messages, equipment):
@@ -557,7 +794,8 @@ class TrainingHistory:
     def load_suitability_validator(self, messages, equipment):
         """Resolve evidence once for a bounded batch of candidate prescriptions."""
         from .recipe_contracts import recorded_evidence
-        evidence = recorded_evidence(messages, library_fingerprint(equipment), self.fingerprint)
+        confirmed_capabilities = confirmed_capability_references(messages, equipment)
+        evidence = recorded_evidence(messages, library_fingerprint(equipment), self.fingerprint, equipment=equipment)
         if evidence:
             evidence = self.refresh_evidence_metadata({
                 'historyFingerprint': self.fingerprint,
@@ -582,6 +820,13 @@ class TrainingHistory:
                 item = evidence.get(exercise.get('libraryDefinitionId'))
                 concerns = copy.deepcopy((item['loadSuitabilityConcerns'] if 'loadSuitabilityConcerns' in item
                                           else self._load_concerns(item)) if item else [])
+                if exercise.get('exerciseType') != 'BODY_WEIGHT' or exercise.get('equipmentId') is not None:
+                    concerns = [concern for concern in concerns
+                        if concern.get('code') != 'unverified_fixed_bodyweight_capability']
+                reference = by_id.get(exercise.get('libraryDefinitionId'))
+                if reference in confirmed_capabilities:
+                    concerns = [concern for concern in concerns
+                        if concern.get('code') != 'unverified_fixed_bodyweight_capability']
                 maximum_rir = plan.get('workingSetRIR', {}).get('maximum')
                 if item and exercise.get('maxReps') and number(maximum_rir):
                     records = [p['record'] for session in item.get('sessions', [])[:1] for p in session.get('performances', [])
@@ -597,7 +842,8 @@ class TrainingHistory:
                 # Setup observations are fixed evidence facts, independent of
                 # the prescription. Historical headroom is not current capacity.
                 suitability_concerns = [concern for concern in concerns
-                    if concern.get('code') in ('historical_reps_exceed_prescription',
+                    if concern.get('code') in ('unverified_fixed_bodyweight_capability',
+                                                'historical_reps_exceed_prescription',
                                                'recorded_loaded_setup_requires_reassessment')
                     or concern.get('code') in LOAD_CEILING_CONCERNS]
                 if not suitability_concerns:
@@ -608,6 +854,8 @@ class TrainingHistory:
                 if suitability_concerns:
                     errors.append({'code': 'training_load_suitability_unresolved', 'path': positions.get(exercise['id'], '/exercises'),
                         'exerciseId': exercise['id'], 'exercise': exercise.get('name', exercise['id']), 'concerns': suitability_concerns,
+                        **({'definition_id': reference} if any(c.get('code') == 'unverified_fixed_bodyweight_capability'
+                            for c in suitability_concerns) else {}),
                         **({'repairStage': 'candidate_reassessment'} if ceiling_concern or not supports_load_calibration else {}),
                         'repair': ('Reassess the available loading configuration or ask the user; native calibration cannot expand its load ceiling.'
                             if ceiling_concern else 'For WEIGHT or equipped BODY_WEIGHT, enable app native load calibration. Otherwise choose a supported configuration or ask the user.')})
@@ -619,6 +867,9 @@ class TrainingHistory:
         fingerprint = library_fingerprint(equipment)
         definitions = {d['id']: d for d in equipment.get('exerciseDefinitions', [])}
         historical = sorted((self.definitions[key] for key in self.sessions), key=lambda d: d['id'])
+        history_equipment = {**equipment, 'exerciseDefinitions': historical}
+        current_families = _reviewed_families_by_definition(equipment)
+        historical_families = _reviewed_families_by_definition(history_equipment)
         gear = {item['id']: item.get('name') for source in (self._history_equipment, equipment)
                 for field in ('equipments', 'accessoryEquipments') for item in source.get(field, [])}
         with self._related_lock:
@@ -646,7 +897,12 @@ class TrainingHistory:
                 if query_index in rerank_failures:
                     updates[cache_key] = ([], 'checked_local_unconfirmed')
                     continue
-                ranked = sorted(candidates, key=lambda index: (-candidates[index], historical[index]['id']))
+                family = current_families.get(item['definitionId'])
+                candidates = {index: score for index, score in candidates.items()
+                    if not family or historical_families.get(historical[index]['id']) in (None, family)}
+                ranked = sorted(candidates, key=lambda index: (
+                    not (family and historical_families.get(historical[index]['id']) == family),
+                    -candidates[index], historical[index]['id']))
                 updates[cache_key] = ([
                     (index, candidates[index]) for index in ranked
                     if historical[index]['id'] != item['definitionId'] and candidates[index] >= 0.45][:3], 'checked')
@@ -656,7 +912,6 @@ class TrainingHistory:
                 self._related_cache[cache_key] = candidates
                 self._related_status_cache[cache_key] = status
                 cached[cache_key[1]] = (list(candidates), status)
-        history_equipment = {**equipment, 'exerciseDefinitions': historical}
         current_refs = {d['id']: f'LIBRARY_{i}' for i, d in enumerate(sorted(definitions.values(), key=lambda d: d['id']))}
         for item in result['exercises']:
             item['relatedMovementHistory'] = []
@@ -700,22 +955,9 @@ class TrainingHistory:
             for session in sessions:
                 performances, different = [], []
                 for performance in session['performances']:
-                    limitations = []
+                    limitations = _configuration_limitations(performance, definition, selected_gear)
                     if not identity_matches:
-                        limitations.append('exercise_definition_changed')
-                    if performance['equipmentId'] != definition.get('equipmentId'):
-                        limitations.append('recorded_equipment_differs_or_is_unresolved')
-                    historical_type = performance.get('equipmentContext', {}).get('type')
-                    if historical_type and selected_gear and historical_type != selected_gear.get('type'):
-                        limitations.append('recorded_equipment_type_changed')
-                    if performance['exerciseType'] != definition.get('exerciseType'):
-                        limitations.append('exercise_type_changed')
-                    if set(performance['requiredAccessoryEquipmentIds']) != set(definition.get('requiredAccessoryEquipmentIds') or []):
-                        limitations.append('required_accessories_changed')
-                    percentage = performance.get('bodyWeightPercentage')
-                    if (definition.get('exerciseType') == 'BODY_WEIGHT' and number(percentage)
-                            and percentage != definition.get('bodyWeightPercentage')):
-                        limitations.append('bodyweight_percentage_changed')
+                        limitations.insert(0, 'exercise_definition_changed')
                     if limitations:
                         different.append({**performance, 'comparisonLimitations': limitations})
                     else:

@@ -101,13 +101,19 @@ def test_report_write_error_does_not_fail_generation(tmp_path,monkeypatch):
 
 
 def test_usage_report_reads_production_shell_logger_after_resume(tmp_path):
-    from workout_generator_pkg.deps import resolve_shell_deps
-    path=tmp_path/'conversation.log'
-    factory=resolve_shell_deps().ConversationLogger
-    first=factory(str(path))
+    from pathlib import Path
+    from workout_generator_pkg.logging_ui import ConversationLogger
+    from workout_generator_pkg.interactive_shell import _create_logger
+    first, log_path = _create_logger(ConversationLogger, str(tmp_path), 'usage-resume')
+    path = Path(log_path)
     request=event()
     first.log('[api_metric] '+json.dumps({'event':'api_request_started','requestId':'one'}))
     first.log('[api_metric] '+json.dumps(request))
-    resumed=factory(str(path))
+    first.close()
+    with pytest.raises(RuntimeError, match='Logger is closed'):
+        first.log('must not append after closing')
+    resumed, resumed_path = _create_logger(ConversationLogger, str(tmp_path), 'usage-resume')
+    assert resumed_path == resumed.log_filepath == str(path)
     assert report_usage(resumed)['totalTokens']==1_300_000
     assert path.with_suffix('.usage.json').exists()
+    resumed.close()

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import random
+import sys
 import time
 import traceback
 import copy
 from contextlib import nullcontext
+from datetime import datetime
 from urllib.parse import urlparse
 from jsonschema import validate, ValidationError, SchemaError
 from .constants import (
@@ -22,7 +25,7 @@ from .logging_ui import LoadingIndicator
 from .cancellation import check_cancelled, run_cancellable
 from .image_attachments import prepare_image_messages, validate_image_request
 from .api_metrics import (api_metrics_scope, current_api_metrics_scope, record_api_metric,
-    begin_api_request, remaining_request_timeout, response_fingerprint, record_submission_rejection)
+    begin_api_request, response_fingerprint, record_submission_rejection)
 
 try:
     from openai import APIConnectionError
@@ -43,8 +46,7 @@ class TruncatedResponseError(ValueError):
 
     def __init__(self, response, max_tokens, reasoning_effort):
         message = getattr(response.choices[0], 'message', None)
-        usage = getattr(response, 'usage', None)
-        usage = usage.model_dump() if hasattr(usage, 'model_dump') else None
+        usage = _usage_dict(response) or None
         reasoning_tokens = ((usage or {}).get('completion_tokens_details') or {}).get('reasoning_tokens')
         completion_tokens = (usage or {}).get('completion_tokens')
         has_output = bool(getattr(message, 'content', None) or getattr(message, 'tool_calls', None))
@@ -139,6 +141,15 @@ def _strict_wire_schema(schema):
     }
     if unsupported:
         raise ValueError('Strict tool delivery cannot project schema keywords: ' + ', '.join(sorted(unsupported)))
+
+    if schema.get('type') == 'object' and 'anyOf' in schema:
+        branches = schema['anyOf']
+        if not branches or any(set(branch) != {'required'} for branch in branches):
+            raise ValueError('Strict tool delivery cannot project object alternatives except required fields.')
+        # Strict unions need complete typed branches, not constraints on a sibling object.
+        base = {key: value for key, value in schema.items() if key != 'anyOf'}
+        return {'anyOf': [_strict_wire_schema({**base, 'required': list(dict.fromkeys(
+            [*base.get('required', []), *branch['required']]))}) for branch in branches]}
 
     if 'enum' in schema and (schema.get('type') in ('array', 'object')
             or not schema.get('type') and any(isinstance(value, (dict, list)) for value in schema['enum'])):
@@ -287,10 +298,19 @@ def _schema_for_choice(value):
     raise ValueError('Strict tool delivery cannot project this enumerated value.')
 
 
+def _normalize_transport_metadata(payload, schema):
+    """Remove the exact JSON-mode marker only when the closed schema has no such field."""
+    if (isinstance(payload, dict) and payload.get('type') == 'json_object'
+            and isinstance(schema, dict) and schema.get('additionalProperties') is False
+            and 'type' not in schema.get('properties', {}) and not schema.get('patternProperties')):
+        return {key: value for key, value in payload.items() if key != 'type'}
+    return payload
+
+
 def _normalize_strict_tool_arguments(arguments, original_schema):
     """Turn strict-schema null placeholders back into omitted optional properties."""
     try:
-        value = json.loads(arguments)
+        value = _normalize_transport_metadata(json.loads(arguments), original_schema)
     except (TypeError, json.JSONDecodeError):
         return arguments
 
@@ -304,7 +324,8 @@ def _normalize_strict_tool_arguments(arguments, original_schema):
         return any(allows_null(branch) for key in ('oneOf', 'anyOf') for branch in schema.get(key, []))
 
     def normalize(node, schema):
-        if isinstance(schema, dict) and ('oneOf' in schema or 'anyOf' in schema):
+        if (isinstance(schema, dict) and not isinstance(schema.get('properties'), dict)
+                and ('oneOf' in schema or 'anyOf' in schema)):
             variants = schema.get('oneOf', schema.get('anyOf', []))
             for variant in variants:
                 candidate = json.loads(json.dumps(node))
@@ -338,10 +359,11 @@ def _normalize_strict_tool_arguments(arguments, original_schema):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
 
-def _decode_json_with_terminal_closer_repair(content):
+def _decode_json_with_terminal_closer_repair(content, schema=None):
     """Decode JSON, tolerating only redundant terminal object-closing braces."""
+    repaired = False
     try:
-        return content, json.loads(content), False
+        payload = json.loads(content)
     except json.JSONDecodeError as error:
         if error.msg != 'Extra data':
             raise
@@ -349,7 +371,11 @@ def _decode_json_with_terminal_closer_repair(content):
         trailing = content[end:].strip()
         if not isinstance(payload, dict) or not trailing or any(character != '}' for character in trailing):
             raise error
-        return content[:end], payload, True
+        content, repaired = content[:end], True
+    normalized = _normalize_transport_metadata(payload, schema)
+    if normalized is not payload:
+        content = json.dumps(normalized, ensure_ascii=False, separators=(',', ':'))
+    return content, normalized, repaired
 
 
 def _recover_strict_tool_argument_syntax(arguments, original_schema):
@@ -380,22 +406,43 @@ def _request_messages(messages, response_format=None):
 
 
 def chat_call(client, messages, tools=None, *, reasoning_effort="high", max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS, response_format=None, output_schema=None, tool_choice=None, retry=True, require_strict_tool_delivery=False):
-    options = dict(max_tokens=max_tokens, timeout=timeout, response_format=response_format,
-                   output_schema=output_schema, tool_choice=tool_choice,
-                   require_strict_tool_delivery=require_strict_tool_delivery)
+    return call_model(client, messages, tools, reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens, timeout=timeout, response_format=response_format,
+        output_schema=output_schema, tool_choice=tool_choice, retry=retry,
+        require_strict_tool_delivery=require_strict_tool_delivery)
+
+
+def call_model(client, messages, tools=None, *, json_mode=False, model=None, reasoning_effort='high',
+               max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS,
+               response_format=None, output_schema=None, tool_choice=None, retry=True,
+               require_strict_tool_delivery=False):
+    """Run one request with at most one recovery attempt, preserving its model and budget.
+
+    Streaming JSON returns (content, finish_reason); chat returns
+    (content, tool_calls, reasoning_content).
+    """
+    if json_mode and (tools or output_schema is not None or tool_choice is not None or require_strict_tool_delivery):
+        raise ValueError('Streaming JSON generation cannot execute tools or structured tool delivery.')
+    if model is not None and not json_mode:
+        raise ValueError('Chat model selection belongs to the configured endpoint.')
+    endpoint = resolve_llm_endpoint() if json_mode else None
+
     def call(effort):
-        if not retry:
-            return _chat_call_once(client, messages, tools, reasoning_effort=effort, **options)
-        return _retry_on_connection_error(
-            lambda: _chat_call_once(client, messages, tools, reasoning_effort=effort, **options),
-            max_retries=2, base_delay=1)
-    try:
-        return call(reasoning_effort)
-    except TruncatedResponseError as error:
-        if not retry or reasoning_effort is None or error.diagnostics['cause'] != 'reasoning_budget_exhausted':
-            raise
-        # No answer was emitted; retry the same task once without the exhausted reasoning channel.
-        return call(None)
+        if not json_mode:
+            return _chat_call_once(client, messages, tools, reasoning_effort=effort,
+                max_tokens=max_tokens, timeout=timeout, response_format=response_format,
+                output_schema=output_schema, tool_choice=tool_choice,
+                require_strict_tool_delivery=require_strict_tool_delivery)
+        configured = client.with_options(max_retries=0) if hasattr(client, 'with_options') else client
+        return _measured_stream_request(configured.chat.completions.create,
+            model=model or endpoint.model, reasoning_effort=effort,
+            thinking='enabled' if effort is not None else 'disabled', max_tokens=max_tokens,
+            timeout=timeout, messages=messages, response_format=response_format or {'type': 'json_object'},
+            stream=True,
+            **({'extra_body': {'thinking': {'type': 'enabled' if effort is not None else 'disabled'}}}
+               if endpoint.is_deepseek else {}))
+
+    return _retry_model_call(call, reasoning_effort=reasoning_effort, max_attempts=2 if retry else 1)
 
 
 def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_tokens, timeout, response_format, output_schema,
@@ -497,7 +544,7 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
         client_options = {'max_retries': 0}
         if uses_deepseek_strict:
             client_options['base_url'] = deepseek_base_url
-        resp = run_cancellable(client.with_options(**client_options).chat.completions.create, deadline_seconds=remaining_request_timeout(timeout), **kwargs)
+        resp = run_cancellable(client.with_options(**client_options).chat.completions.create, deadline_seconds=timeout, **kwargs)
         if getattr(resp.choices[0], "finish_reason", None) == "length":
             error = TruncatedResponseError(resp, max_tokens, reasoning_effort)
             _record_chat_metric(resp, started, model=endpoint.model, reasoning_effort=reasoning_effort,
@@ -507,13 +554,22 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
         content = message.content
         request['responseFingerprint'] = response_fingerprint(content)
         tool_calls = message.tool_calls if hasattr(message, 'tool_calls') and message.tool_calls else None
-        if require_strict_tool_delivery and tool_calls:
+        if tool_calls and original_tool_schemas:
             tool_calls = copy.deepcopy(tool_calls)
             syntax_repairs = []
             for tool_call in tool_calls:
                 schema = original_tool_schemas.get(tool_call.function.name)
                 if schema is not None:
                     raw_arguments = tool_call.function.arguments
+                    if not require_strict_tool_delivery:
+                        try:
+                            payload = json.loads(raw_arguments)
+                        except (TypeError, json.JSONDecodeError):
+                            continue
+                        normalized = _normalize_transport_metadata(payload, schema)
+                        if normalized is not payload:
+                            tool_call.function.arguments = json.dumps(normalized, ensure_ascii=False, separators=(',', ':'))
+                        continue
                     recovered = _recover_strict_tool_argument_syntax(raw_arguments, schema)
                     if recovered is not None:
                         tool_call.function.arguments = recovered
@@ -540,7 +596,7 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
                 content = tool_calls[0].function.arguments
                 request['responseFingerprint'] = response_fingerprint(content)
             try:
-                content, payload, syntax_repaired = _decode_json_with_terminal_closer_repair(content)
+                content, payload, syntax_repaired = _decode_json_with_terminal_closer_repair(content, output_schema)
                 if syntax_repaired:
                     request['structuredOutputSyntaxRepair'] = 'redundant_terminal_closers'
             except json.JSONDecodeError:
@@ -700,7 +756,8 @@ def _log_connection_error(exception, attempt, max_retries, script_dir=None):
                 error_data["request_info"] = {
                     "method": getattr(req, 'method', None),
                     "url": str(getattr(req, 'url', None)) if hasattr(req, 'url') else None,
-                    "headers": dict(getattr(req, 'headers', {})) if hasattr(req, 'headers') else None,
+                    "headers": {key: value for key, value in getattr(req, 'headers', {}).items()
+                                if key.lower() in ('content-type', 'x-request-id', 'request-id')},
                 }
             except:
                 pass
@@ -746,13 +803,8 @@ def test_connection(client, show_message=True, logger=None, *, model=None):
         # Use streaming mode for better high-traffic handling
         with LoadingIndicator("Testing API connection") if show_message or logger else nullcontext():
             with api_metrics_scope(logger, 'connection_test'):
-                content, finish_reason = run_cancellable(_measured_stream_request,
-                    client.chat.completions.create,
-                    model=model or endpoint.model, reasoning_effort=None, thinking='disabled',
-                    max_tokens=10, messages=test_messages,
-                    response_format={"type": "json_object"}, stream=True,
-                    **({'extra_body': {"thinking": {"type": "disabled"}}} if endpoint.is_deepseek else {}),
-                )
+                content, finish_reason = call_model(client, test_messages, json_mode=True,
+                    model=model, reasoning_effort=None, max_tokens=10, retry=False)
         
         if content:
             if show_message or logger:
@@ -771,94 +823,51 @@ def test_connection(client, show_message=True, logger=None, *, model=None):
         return False, error_msg
 
 
-def _retry_on_connection_error(func, max_retries=5, base_delay=2, show_message=False):
-    """
-    Helper function to retry a callable on connection errors with exponential backoff.
-    
-    Args:
-        func: Callable to execute
-        max_retries: Maximum number of retry attempts
-        base_delay: Base delay in seconds for exponential backoff
-        show_message: If True, print retry messages
-    
-    Returns:
-        Result of func()
-    
-    Raises:
-        Original exception if not a connection error or if retries exhausted
-    """
-    for attempt in range(max_retries):
+def _is_connection_error(error):
+    causes = [error, getattr(error, '__cause__', None), getattr(error, '__context__', None),
+              getattr(error, 'context', None)]
+    for cause in causes:
+        if cause is None:
+            continue
+        if ((APIConnectionError and isinstance(cause, APIConnectionError))
+                or (RemoteProtocolError and isinstance(cause, RemoteProtocolError))):
+            return True
+        name, message = type(cause).__name__, str(cause).lower()
+        if ('ConnectionError' in name or 'RemoteProtocolError' in name
+                or 'peer closed connection' in message or 'incomplete chunked read' in message):
+            return True
+    return False
+
+
+def _retry_model_call(call, *, reasoning_effort=None, max_attempts=2, base_delay=1, show_message=False):
+    """Share one attempt limit between connection recovery and empty reasoning recovery."""
+    for attempt in range(max_attempts):
         check_cancelled()
         try:
-            return run_cancellable(func)
-        except Exception as e:
-            # Check if it's a connection error that we should retry
-            # Check the exception type and its chain (for wrapped exceptions)
-            error_type = type(e).__name__
-            error_str = str(e).lower()
-            error_type_str = str(type(e))
-            
-            # Check exception chain for underlying errors
-            cause = getattr(e, '__cause__', None)
-            context = getattr(e, 'context', None)
-            
-            # Build a comprehensive error message to check
-            full_error_str = error_str
-            if cause:
-                full_error_str += " " + str(cause).lower()
-                full_error_str += " " + str(type(cause)).lower()
-            if context:
-                full_error_str += " " + str(context).lower()
-                full_error_str += " " + str(type(context)).lower()
-            
-            # Check using imported exception types if available
-            is_connection_error = False
-            if APIConnectionError and isinstance(e, APIConnectionError):
-                is_connection_error = True
-            elif RemoteProtocolError and isinstance(e, RemoteProtocolError):
-                is_connection_error = True
-            elif cause and RemoteProtocolError and isinstance(cause, RemoteProtocolError):
-                is_connection_error = True
-            elif cause and APIConnectionError and isinstance(cause, APIConnectionError):
-                is_connection_error = True
-            else:
-                # Fallback to string matching
-                is_connection_error = (
-                    "APIConnectionError" in error_type or
-                    "ConnectionError" in error_type or
-                    "RemoteProtocolError" in error_type_str or
-                    "RemoteProtocolError" in full_error_str or
-                    "httpx.RemoteProtocolError" in error_type_str or
-                    "httpcore.RemoteProtocolError" in error_type_str or
-                    "peer closed connection" in full_error_str or
-                    "incomplete chunked read" in full_error_str or
-                    (cause and ("RemoteProtocolError" in str(type(cause)) or "ConnectionError" in str(type(cause))))
-                )
-            
-            if is_connection_error:
-                # Log the connection error to file
-                error_file = _log_connection_error(e, attempt + 1, max_retries)
-                if error_file and show_message:
-                    print(f"  Connection error logged to: {os.path.basename(error_file)}")
-                
-                if attempt < max_retries - 1:
-                    # Calculate exponential backoff delay with jitter
-                    delay = base_delay * (2 ** attempt)
-                    # Add random jitter (0-1 second) to avoid thundering herd
-                    jitter = random.uniform(0, 1)
-                    total_delay = delay + jitter
-                    if show_message:
-                        print(f"  Connection error (attempt {attempt + 1}/{max_retries}), retrying in {total_delay:.1f}s...")
-                    time.sleep(total_delay)
-                    continue
-                else:
-                    # Out of retries - log final failure
-                    if show_message:
-                        print(f"  Connection error: All {max_retries} retry attempts exhausted.")
+            return call(reasoning_effort)
+        except Exception as error:
+            if isinstance(error, TruncatedResponseError):
+                if (attempt + 1 >= max_attempts or reasoning_effort is None
+                        or error.diagnostics['cause'] != 'reasoning_budget_exhausted'):
                     raise
-            else:
-                # Not a retryable error
+                reasoning_effort = None
+                continue
+            if not _is_connection_error(error):
                 raise
+            error_file = _log_connection_error(error, attempt + 1, max_attempts)
+            if error_file and show_message:
+                print(f'  Connection error logged to: {os.path.basename(error_file)}')
+            if attempt + 1 >= max_attempts:
+                raise
+            delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+            if show_message:
+                print(f'  Connection error (attempt {attempt + 1}/{max_attempts}), retrying in {delay:.1f}s...')
+            time.sleep(delay)
+
+
+def _retry_on_connection_error(func, max_retries=2, base_delay=1, show_message=False):
+    return _retry_model_call(lambda _: run_cancellable(func), max_attempts=max_retries,
+                             base_delay=base_delay, show_message=show_message)
 
 
 def _collect_streaming_response(stream, start_time=None, usage_collector=None):
@@ -909,13 +918,21 @@ def _measured_stream_request(create, *, model, reasoning_effort, thinking, max_t
     if 'messages' in request_kwargs:
         request_kwargs['messages'] = _request_messages(request_kwargs['messages'], request_kwargs.get('response_format'))
     request_kwargs['stream_options'] = {'include_usage': True}
+    request_kwargs['timeout'] = timeout
     if reasoning_effort is not None:
         request_kwargs['reasoning_effort'] = reasoning_effort
     validate_image_request({'model': model, 'max_tokens': max_tokens, **request_kwargs})
     request = begin_api_request(model, messages=request_kwargs.get('messages'), tools=request_kwargs.get('tools'))
-    try:
+    def collect():
         stream = create(model=model, max_tokens=max_tokens, **request_kwargs)
-        result = _collect_streaming_response(stream, usage_collector=usage)
+        try:
+            return _collect_streaming_response(stream, usage_collector=usage)
+        finally:
+            if callable(getattr(stream, 'close', None)):
+                stream.close()
+
+    try:
+        result = run_cancellable(collect, deadline_seconds=timeout)
         outcome = 'truncated' if result[1] == 'length' else 'success'
         _record_stream_metric(usage, started, model=model, reasoning_effort=reasoning_effort,
                               thinking=thinking, max_tokens=max_tokens, timeout=timeout, outcome=outcome, request=request)
@@ -955,283 +972,82 @@ def _record_stream_metric(collected, started, *, model, reasoning_effort, thinki
 
 
 def json_call(client, messages, max_tokens=DEEPSEEK_CHAT_DEFAULT_TOKENS, *, model=None):
-    """
-    Call the endpoint in non-thinking mode for JSON generation using streaming.
-    Streaming mode better handles keep-alive comments during high traffic periods.
+    return call_model(client, messages, json_mode=True, model=model, reasoning_effort=None,
+                      max_tokens=max_tokens)
 
-    Returns:
-        tuple: (content, finish_reason) where finish_reason indicates if response was truncated
-    """
-    endpoint = resolve_llm_endpoint()
 
-    def _call():
-        return _measured_stream_request(client.chat.completions.create,
-            model=model or endpoint.model, reasoning_effort=None, thinking='disabled', max_tokens=max_tokens,
-            messages=messages,
-            response_format={"type": "json_object"},
-            stream=True,  # Enable streaming for better high-traffic handling
-            **({'extra_body': {"thinking": {"type": "disabled"}}} if endpoint.is_deepseek else {}),
-        )
-
-    return _retry_on_connection_error(_call, show_message=True)
+def _run_model_call(call, *, loading_message='Generating', show_loading=True, logger=None,
+                    stage=None, cancelled_result=None, loading_details=None, response_label=None):
+    """Own loading cleanup, context propagation, cancellation and rejected-output logging."""
+    started = time.monotonic()
+    loading = LoadingIndicator(loading_message) if show_loading else None
+    _, active_stage = current_api_metrics_scope()
+    with api_metrics_scope(logger, active_stage or stage or loading_message or 'json_generation'):
+        if loading:
+            if logger:
+                logger.log('Loading started: ' + (loading_details or loading_message))
+        try:
+            with loading if loading else nullcontext():
+                result = run_cancellable(call)
+        except KeyboardInterrupt:
+            (logger.log_print if logger else print)('Cancelled. Returning to prompt...')
+            return cancelled_result
+        except TruncatedResponseError as error:
+            if logger:
+                logger.log_response('rejected truncated planning response',
+                                    json.dumps(error.diagnostics, ensure_ascii=False), truncate_at=0)
+            raise
+        finally:
+            if loading and logger:
+                logger.log(f'Loading finished: {stage or loading_message} ({time.monotonic() - started:.2f}s)')
+        if logger and response_label:
+            logger.log_print(f'{response_label} response ready ({time.monotonic() - started:.1f}s).')
+        return result
 
 
 def chat_call_with_loading(client, messages, tools=None, logger=None, *, reasoning_effort='high', activity='Thinking',
                            max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS,
                            tool_choice=None, require_strict_tool_delivery=False):
-    """
-    Wrapper for chat_call that shows loading indicator with timer and supports cancellation.
-
-    Args:
-        client: OpenAI client
-        messages: List of message dicts
-        tools: Optional list of tool definitions for function calling
-        logger: Optional ConversationLogger for debug logging (loading start/stop)
-
-    Returns:
-        tuple: (content, tool_calls, reasoning_content), or three None values on cancellation.
-    """
     endpoint = resolve_llm_endpoint()
     mode = f'thinking, {reasoning_effort} effort' if reasoning_effort is not None else 'non-thinking'
-    loading = LoadingIndicator(f"{activity} | {endpoint.model}, {mode}")
-    started = time.monotonic()
-    result = [None]
-    exception = [None]
-    cancelled = [False]
-    
-    def api_call():
-        _, active_stage = current_api_metrics_scope()
-        with api_metrics_scope(logger, active_stage or activity):
-            try:
-                call_options = {'reasoning_effort': reasoning_effort, 'max_tokens': max_tokens,
-                                'timeout': timeout,
-                                'require_strict_tool_delivery': require_strict_tool_delivery}
-                if tool_choice is not None:
-                    call_options['tool_choice'] = tool_choice
-                result[0] = chat_call(client, messages, tools, **call_options)
-            except KeyboardInterrupt:
-                cancelled[0] = True
-                exception[0] = KeyboardInterrupt()
-            except Exception as e:
-                exception[0] = e
-    
-    if logger:
-        deadline = f'{timeout}s' if timeout else 'none'
-        logger.log(f"Loading started: {activity} (effort={reasoning_effort}, model={endpoint.model}, thinking={'enabled' if reasoning_effort is not None else 'disabled'}, max_tokens={max_tokens}, deadline={deadline})")
-    loading.start()
-    try:
-        run_cancellable(api_call)
-    except KeyboardInterrupt:
-        cancelled[0] = True
-        loading.stop()
-        if logger:
-            logger.log_print("\nCancelled. Returning to prompt...")
-        else:
-            print("\nCancelled. Returning to prompt...")
-        return None, None, None
-    
-    loading.stop()
-    if logger:
-        logger.log(f"Loading finished: {activity} ({time.monotonic() - started:.2f}s)")
-    
-    if cancelled[0]:
-        if logger:
-            logger.log_print("Cancelled. Returning to prompt...")
-        else:
-            print("Cancelled. Returning to prompt...")
-        return None, None, None
-    
-    if exception[0]:
-        if isinstance(exception[0], KeyboardInterrupt):
-            if logger:
-                logger.log_print("Cancelled. Returning to prompt...")
-            else:
-                print("Cancelled. Returning to prompt...")
-            return None, None, None
-        if logger and isinstance(exception[0], TruncatedResponseError):
-            logger.log_response('rejected truncated planning response',
-                                json.dumps(exception[0].diagnostics, ensure_ascii=False), truncate_at=0)
-        raise exception[0]
-    
-    if logger:
-        logger.log_print(f"{'Repair' if activity == 'Repairing draft' else 'Planning'} response ready ({time.monotonic() - started:.1f}s).")
-    return result[0]
+    options = {'reasoning_effort': reasoning_effort, 'max_tokens': max_tokens, 'timeout': timeout}
+    if tool_choice is not None:
+        options['tool_choice'] = tool_choice
+    if require_strict_tool_delivery:
+        options['require_strict_tool_delivery'] = True
+    deadline = f'{timeout}s' if timeout else 'none'
+    details = (f"{activity} (effort={reasoning_effort}, model={endpoint.model}, "
+               f"thinking={'enabled' if reasoning_effort is not None else 'disabled'}, "
+               f"max_tokens={max_tokens}, deadline={deadline})")
+    return _run_model_call(lambda: chat_call(client, messages, tools, **options),
+        loading_message=f'{activity} | {endpoint.model}, {mode}', logger=logger, stage=activity,
+        cancelled_result=(None, None, None), loading_details=details,
+        response_label='Repair' if activity == 'Repairing draft' else 'Planning')
 
 
-def json_call_with_retry(client, messages):
-    """
-    Cascading retry logic for JSON generation.
-    
-    Strategy:
-    1. Try non-thinking JSON generation with 4K tokens.
-    2. If truncated, retry non-thinking generation with 8K tokens.
-    3. If still truncated, use thinking mode with 32K tokens.
-    4. If still truncated, retry thinking mode with 64K tokens.
-    
-    Returns:
-        str: JSON content, or None if cancelled
-    """
-    # Helper to check if response is truncated
-    def is_truncated(content, finish_reason):
-        """Check if response is truncated based on finish_reason or JSON completeness."""
-        if finish_reason == "length":
-            return True
-        if not is_json_complete(content):
-            return True
-        return False
-    
-    # Step 1: Try with chat model at default (4K)
-    content, finish_reason = json_call(client, messages, DEEPSEEK_CHAT_DEFAULT_TOKENS)
-    if not is_truncated(content, finish_reason):
-        return content
-    
-    # Step 2: Retry with chat model at max (8K)
-    if finish_reason == "length":
-        print("  Response truncated at 4K, retrying with 8K tokens...")
-    content, finish_reason = json_call(client, messages, DEEPSEEK_CHAT_MAX_TOKENS)
-    if not is_truncated(content, finish_reason):
-        return content
-    
-    # Step 3: Fall back to reasoner model at default (32K)
-    if finish_reason == "length" or not is_json_complete(content):
-        print("  Still truncated at 8K, switching to reasoner model (32K)...")
-    content, finish_reason = json_call_large(client, messages, DEEPSEEK_REASONER_DEFAULT_TOKENS)
-    if not is_truncated(content, finish_reason):
-        return content
-    
-    # Step 4: Retry with reasoner model at max (64K)
-    if finish_reason == "length" or not is_json_complete(content):
-        print("  Still truncated at 32K, retrying with 64K tokens...")
-    content, finish_reason = json_call_large(client, messages, DEEPSEEK_REASONER_MAX_TOKENS)
-    if is_truncated(content, finish_reason):
-        raise ValueError(
-            f"Response still truncated after all retries (64K max). "
-            f"Finish reason: {finish_reason}. "
-            f"Consider breaking the request into smaller parts."
-        )
-    
+def _json_content(result, max_tokens, *, require_complete=False):
+    content, finish_reason = result
+    if finish_reason == 'length':
+        raise ValueError(f'Response truncated at {max_tokens} max tokens. Consider breaking the request into smaller parts.')
+    if require_complete and not is_json_complete(content):
+        raise ValueError('Model response is not a complete JSON object or array.')
     return content
 
 
+def json_call_with_retry(client, messages, max_tokens=DEEPSEEK_CHAT_DEFAULT_TOKENS):
+    """Use the shared bounded connection policy without escalating budget or thinking mode."""
+    return _json_content(json_call(client, messages, max_tokens), max_tokens, require_complete=True)
+
+
 def json_call_with_loading(client, messages, max_tokens=None):
-    """
-    Wrapper for json_call_with_retry that shows loading indicator with timer and supports cancellation.
-    
-    Note: max_tokens parameter is ignored - cascading retry logic handles token limits automatically.
-    """
-    loading = LoadingIndicator("Generating")
-    result = [None]
-    exception = [None]
-    cancelled = [False]
-    
-    def api_call():
-        try:
-            result[0] = json_call_with_retry(client, messages)
-        except KeyboardInterrupt:
-            cancelled[0] = True
-            exception[0] = KeyboardInterrupt()
-        except Exception as e:
-            exception[0] = e
-    
-    loading.start()
-    try:
-        run_cancellable(api_call)
-    except KeyboardInterrupt:
-        cancelled[0] = True
-        loading.stop()
-        print("\nCancelled. Returning to prompt...")
-        return None
-    
-    loading.stop()
-    
-    if cancelled[0]:
-        print("Cancelled. Returning to prompt...")
-        return None
-    
-    if exception[0]:
-        if isinstance(exception[0], KeyboardInterrupt):
-            print("Cancelled. Returning to prompt...")
-            return None
-        raise exception[0]
-    
-    return result[0]
+    budget = DEEPSEEK_CHAT_DEFAULT_TOKENS if max_tokens is None else max_tokens
+    return _run_model_call(lambda: json_call_with_retry(client, messages, budget))
 
 
-def json_call_chat_max_with_loading(client, messages, loading_message="Generating", show_loading=True, logger=None, *, model=None):
-    """
-    Wrapper for non-thinking JSON generation with an 8K output budget.
-    Includes loading indicator and cancellation support. Includes retry logic for connection errors.
-    
-    Args:
-        client: OpenAI client
-        messages: List of message dicts
-        loading_message: Custom message for loading indicator
-        show_loading: If False, skip the loading indicator (useful for parallel execution)
-        logger: Optional ConversationLogger for debug logging (loading start/stop)
-    
-    Returns:
-        str: JSON content, or None if cancelled
-    """
-    loading = None
-    if show_loading:
-        loading = LoadingIndicator(loading_message)
-    result = [None]
-    exception = [None]
-    cancelled = [False]
-    
-    def api_call():
-        try:
-            content, finish_reason = json_call(
-                client, messages, DEEPSEEK_CHAT_MAX_TOKENS,
-                **({"model": model} if model else {}),
-            )
-            if finish_reason == "length":
-                raise ValueError("Response truncated at 8K max tokens. Consider breaking the request into smaller parts.")
-            result[0] = content
-        except KeyboardInterrupt:
-            cancelled[0] = True
-            exception[0] = KeyboardInterrupt()
-        except Exception as e:
-            exception[0] = e
-    
-    if loading:
-        if logger:
-            logger.log("Loading started: " + loading_message)
-        loading.start()
-    try:
-        run_cancellable(api_call)
-    except KeyboardInterrupt:
-        cancelled[0] = True
-        if loading:
-            loading.stop()
-        if logger:
-            logger.log_print("\nCancelled. Returning to prompt...")
-        else:
-            print("\nCancelled. Returning to prompt...")
-        return None
-    
-    if loading:
-        loading.stop()
-        if logger:
-            logger.log("Loading finished: " + loading_message)
-    
-    if cancelled[0]:
-        if logger:
-            logger.log_print("Cancelled. Returning to prompt...")
-        else:
-            print("Cancelled. Returning to prompt...")
-        return None
-    
-    if exception[0]:
-        if isinstance(exception[0], KeyboardInterrupt):
-            if logger:
-                logger.log_print("Cancelled. Returning to prompt...")
-            else:
-                print("Cancelled. Returning to prompt...")
-            return None
-        raise exception[0]
-    
-    return result[0]
+def json_call_chat_max_with_loading(client, messages, loading_message='Generating', show_loading=True, logger=None, *, model=None):
+    return _run_model_call(lambda: _json_content(json_call(client, messages, DEEPSEEK_CHAT_MAX_TOKENS,
+        **({'model': model} if model else {})), DEEPSEEK_CHAT_MAX_TOKENS),
+        loading_message=loading_message, show_loading=show_loading, logger=logger)
 
 
 def is_json_complete(json_str):
@@ -1281,210 +1097,28 @@ def is_json_complete(json_str):
 
 
 def json_call_large(client, messages, max_tokens=DEEPSEEK_REASONER_DEFAULT_TOKENS):
-    """
-    Use thinking mode for larger outputs with streaming.
-    Streaming mode better handles keep-alive comments during high traffic periods.
-
-    Returns:
-        tuple: (content, finish_reason) where finish_reason indicates if response was truncated
-    """
-    endpoint = resolve_llm_endpoint()
-
-    def _call():
-        return _measured_stream_request(client.chat.completions.create,
-            model=endpoint.model, reasoning_effort='high', thinking='enabled', max_tokens=max_tokens,
-            messages=messages,
-            response_format={"type": "json_object"},
-            stream=True,  # Enable streaming for better high-traffic handling
-            **({'extra_body': {"thinking": {"type": "enabled"}}} if endpoint.is_deepseek else {}),
-        )
-
-    return _retry_on_connection_error(_call, show_message=True)
+    return call_model(client, messages, json_mode=True, reasoning_effort='high', max_tokens=max_tokens)
 
 
 def json_call_reasoner_only(client, messages, *, model=None):
-    """
-    Call the endpoint in thinking mode for JSON generation with a 64K output budget.
-    This is the standard function for all JSON generation in the planner/emitter architecture.
-    Streaming mode better handles keep-alive comments during high traffic periods.
-
-    Returns:
-        tuple: (content, finish_reason) where finish_reason indicates if response was truncated
-    """
-    endpoint = resolve_llm_endpoint()
-
-    def _call():
-        return _measured_stream_request(client.chat.completions.create,
-            model=model or endpoint.model, reasoning_effort='high', thinking='enabled', max_tokens=DEEPSEEK_REASONER_MAX_TOKENS,
-            messages=messages,
-            response_format={"type": "json_object"},
-            stream=True,  # Enable streaming for better high-traffic handling
-            **({'extra_body': {"thinking": {"type": "enabled"}}} if endpoint.is_deepseek else {}),
-        )
-
-    return _retry_on_connection_error(_call, show_message=True)
+    return call_model(client, messages, json_mode=True, model=model, reasoning_effort='high',
+                      max_tokens=DEEPSEEK_REASONER_MAX_TOKENS)
 
 
-def json_call_large_with_retry(client, messages):
-    """
-    Retry logic for large JSON generation using reasoner model.
-    
-    Strategy:
-    1. Try json_call_large() with 32K tokens (default)
-    2. If truncated, retry with 64K tokens (max)
-    
-    Returns:
-        str: JSON content, or None if cancelled
-    """
-    # Helper to check if response is truncated
-    def is_truncated(content, finish_reason):
-        """Check if response is truncated based on finish_reason or JSON completeness."""
-        if finish_reason == "length":
-            return True
-        if not is_json_complete(content):
-            return True
-        return False
-    
-    # Step 1: Try with reasoner model at default (32K)
-    content, finish_reason = json_call_large(client, messages, DEEPSEEK_REASONER_DEFAULT_TOKENS)
-    if not is_truncated(content, finish_reason):
-        return content
-    
-    # Step 2: Retry with reasoner model at max (64K)
-    if finish_reason == "length" or not is_json_complete(content):
-        print("  Response truncated at 32K, retrying with 64K tokens...")
-    content, finish_reason = json_call_large(client, messages, DEEPSEEK_REASONER_MAX_TOKENS)
-    if is_truncated(content, finish_reason):
-        raise ValueError(
-            f"Response still truncated after retry (64K max). "
-            f"Finish reason: {finish_reason}. "
-            f"Consider breaking the request into smaller parts."
-        )
-    
-    return content
+def json_call_large_with_retry(client, messages, max_tokens=DEEPSEEK_REASONER_DEFAULT_TOKENS):
+    return _json_content(json_call_large(client, messages, max_tokens), max_tokens, require_complete=True)
 
 
 def json_call_large_with_loading(client, messages, max_tokens=None):
-    """
-    Wrapper for json_call_large_with_retry that shows loading indicator with timer and supports cancellation.
-    
-    Note: max_tokens parameter is ignored - retry logic handles token limits automatically.
-    """
-    loading = LoadingIndicator("Generating (large output)")
-    result = [None]
-    exception = [None]
-    cancelled = [False]
-    
-    def api_call():
-        try:
-            result[0] = json_call_large_with_retry(client, messages)
-        except KeyboardInterrupt:
-            cancelled[0] = True
-            exception[0] = KeyboardInterrupt()
-        except Exception as e:
-            exception[0] = e
-    
-    loading.start()
-    try:
-        run_cancellable(api_call)
-    except KeyboardInterrupt:
-        cancelled[0] = True
-        loading.stop()
-        print("\nCancelled. Returning to prompt...")
-        return None
-    
-    loading.stop()
-    
-    if cancelled[0]:
-        print("Cancelled. Returning to prompt...")
-        return None
-    
-    if exception[0]:
-        if isinstance(exception[0], KeyboardInterrupt):
-            print("Cancelled. Returning to prompt...")
-            return None
-        raise exception[0]
-    
-    return result[0]
+    budget = DEEPSEEK_REASONER_DEFAULT_TOKENS if max_tokens is None else max_tokens
+    return _run_model_call(lambda: json_call_large_with_retry(client, messages, budget),
+                           loading_message='Generating (large output)')
 
 
-def json_call_reasoner_only_with_loading(client, messages, loading_message="Generating", show_loading=True, logger=None, *, model=None):
-    """
-    Wrapper for json_call_reasoner_only that shows loading indicator with timer and supports cancellation.
-    This is the standard function for all JSON generation in the planner/emitter architecture.
-    Includes retry logic for connection errors.
-    
-    Args:
-        client: OpenAI client
-        messages: List of message dicts
-        loading_message: Custom message for loading indicator
-        show_loading: If False, skip the loading indicator (useful for parallel execution)
-        logger: Optional ConversationLogger for debug logging (loading start/stop)
-    
-    Returns:
-        str: JSON content, or None if cancelled
-    """
-    result = [None]
-    exception = [None]
-    cancelled = [False]
-    
-    def api_call():
-        _, active_stage = current_api_metrics_scope()
-        with api_metrics_scope(logger, active_stage or loading_message or 'json_generation'):
-            try:
-                content, finish_reason = json_call_reasoner_only(
-                    client, messages, **({"model": model} if model else {}),
-                )
-                if finish_reason == "length":
-                    raise ValueError("Response truncated at 64K max tokens. Consider breaking the request into smaller parts.")
-                result[0] = content
-            except KeyboardInterrupt:
-                cancelled[0] = True
-                exception[0] = KeyboardInterrupt()
-            except Exception as e:
-                exception[0] = e
-    
-    loading = None
-    if show_loading:
-        loading = LoadingIndicator(loading_message)
-        if logger:
-            logger.log("Loading started: " + loading_message)
-        loading.start()
-    
-    try:
-        run_cancellable(api_call)
-    except KeyboardInterrupt:
-        cancelled[0] = True
-        if loading:
-            loading.stop()
-        if logger:
-            logger.log_print("\nCancelled. Returning to prompt...")
-        else:
-            print("\nCancelled. Returning to prompt...")
-        return None
-    
-    if loading:
-        loading.stop()
-        if logger:
-            logger.log("Loading finished: " + loading_message)
-    
-    if cancelled[0]:
-        if logger:
-            logger.log_print("Cancelled. Returning to prompt...")
-        else:
-            print("Cancelled. Returning to prompt...")
-        return None
-    
-    if exception[0]:
-        if isinstance(exception[0], KeyboardInterrupt):
-            if logger:
-                logger.log_print("Cancelled. Returning to prompt...")
-            else:
-                print("Cancelled. Returning to prompt...")
-            return None
-        raise exception[0]
-    
-    return result[0]
+def json_call_reasoner_only_with_loading(client, messages, loading_message='Generating', show_loading=True, logger=None, *, model=None):
+    return _run_model_call(lambda: _json_content(json_call_reasoner_only(client, messages,
+        **({'model': model} if model else {})), DEEPSEEK_REASONER_MAX_TOKENS),
+        loading_message=loading_message, show_loading=show_loading, logger=logger)
 
 
 def estimate_output_size(workout_count, exercise_count_per_workout=5):

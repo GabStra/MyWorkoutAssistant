@@ -134,3 +134,28 @@ def test_changed_decision_drops_old_review_findings_during_numerical_repair(monk
     assert not result['passed'] and result['reviewPending']
     assert result['previousReviewFindings'] == []
     assert list(result['resolvedDecisions']) == ['DECISION_1']
+
+
+def test_recorded_setup_answer_schedules_reaudit_instead_of_another_decision():
+    from test_workout_generator_planning_tools import requirement_messages
+    from test_workout_generator_planner_context import _tool
+
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    from workout_generator_pkg.planning_tools import audit_workout_plan
+    audited = audit_workout_plan(draft, equipment, messages)
+    # Retain an actual audit receipt; isolate the handoff from model judgment.
+    audited['passed'] = False
+    audited['errors'] = [{'code': 'unresolved_review_capability', 'action': 'clarify',
+        'message': 'Is there separate floor clearance?', 'basis': 'material_uncertainty'}]
+    _tool(messages, 'audit_workout_plan', draft, audited, 'setup_question')
+    messages.append({'role': 'user', 'content': 'Yes, there is separate clear space.'})
+    decisions = {'DECISION_0': {'topic': 'Floor clearance',
+        'choice': 'Separate clear space exists.', 'sourceReferences': ['SOURCE_1']}}
+    _tool(messages, 'record_planning_decisions', {}, {'passed': True,
+        'decisionReview': {'passed': True}, 'decisions': decisions}, 'setup_answer')
+    state = _state(_messages_for_api(messages, True, provided_equipment=equipment))
+    assert not state['newInstructionPending']
+    assert not state['planningDecisionNeeded']
+    assert pending_reaudit(state, 'Yes, there is separate clear space.') == {
+        'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0', 'patch': []}

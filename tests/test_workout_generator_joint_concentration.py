@@ -47,7 +47,7 @@ def test_peak_surplus_tiebreak_spreads_only_after_weekly_dose_is_locked():
         if (day == 0 and count_by_option[index] == 2) or (day == 1 and count_by_option[index] == 5):
             source_incumbent[index] = 1
     source_incumbent[peak] = 9
-    status, candidate = joint_planning._milp_solve(variables, rows, timeout_seconds=2,
+    status, candidate = joint_planning._cp_solve(variables, rows, timeout_seconds=2,
         preserve_current=False, incumbent=source_incumbent)
     assert status == 'optimal'
     selected_counts = [sum(count_by_option[index] * candidate[index]
@@ -108,7 +108,7 @@ def test_role_peak_tiebreak_spreads_other_roles_after_an_immovable_peak_without_
     primary_costs = {worst_peak: 1}
     primary_variables = [{**value, 'objectiveCost': primary_costs.get(index, 0)}
         for index, value in enumerate(variables)]
-    status, primary = joint_planning._milp_solve(primary_variables, rows,
+    status, primary = joint_planning._cp_solve(primary_variables, rows,
         timeout_seconds=2, preserve_current=False)
     assert status == 'optimal'
     primary_value = primary[worst_peak]
@@ -117,7 +117,7 @@ def test_role_peak_tiebreak_spreads_other_roles_after_an_immovable_peak_without_
 
     secondary_variables = [{**value, 'objectiveCost': profile_peak_costs.get(index, 0)}
         for index, value in enumerate(variables)]
-    status, balanced = joint_planning._milp_solve(secondary_variables, rows,
+    status, balanced = joint_planning._cp_solve(secondary_variables, rows,
         timeout_seconds=2, preserve_current=False, incumbent=primary)
 
     assert status == 'optimal'
@@ -134,22 +134,28 @@ def test_fixed_only_role_peak_participates_in_shared_role_profile_objective():
     requirements = copy.deepcopy(requirements)
     sessions = copy.deepcopy(sessions)
     requirements['sessionsPerWeek'] = 2
-    requirements['objectiveOrder'] = ['workload_economy', 'distribution']
+    requirements['objectiveOrder'] = ['workload_economy', 'role_concentration', 'distribution']
     requirements['requiredCoverage'] = [
-        {'key': 'variable_role', 'scope': 'weekly', 'description': 'Variable role'},
-        {'key': 'fixed_only_role', 'scope': 'weekly', 'description': 'Fixed-only role'},
+        {'key': 'variable_role', 'scope': 'weekly', 'description': 'Variable role', 'intent': 'development'},
+        {'key': 'fixed_only_role', 'scope': 'weekly', 'description': 'Fixed-only role', 'intent': 'development'},
+        {'key': 'chest', 'scope': 'eachSession', 'description': 'Targeted chest', 'intent': 'inclusion'},
+        {'key': 'weekly_inclusion', 'scope': 'weekly', 'description': 'Weekly inclusion', 'intent': 'inclusion'},
+        {'key': 'partial_development', 'scope': 'weekly', 'description': 'Partial-week development',
+            'intent': 'development', 'minimumSessions': 1},
     ]
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 0, 'maximum': 100}
     requirements['auditTargets']['perSessionEffectiveSets']['chest'] = {'minimum': 0, 'maximum': 50}
     for item in sessions[0]['exercises']:
         item['satisfiesCoverage'] = (
             ['variable_role'] if item['definition_id'] == 'LIBRARY_0' else [])
+        item['satisfiesCoverage'].extend(['chest', 'weekly_inclusion', 'partial_development'])
     fixed = copy.deepcopy(sessions[0])
     fixed['name'] = 'Fixed'
     fixed['trainingDays'] = [0]
     for item in fixed['exercises']:
         item['satisfiesCoverage'] = (
             ['fixed_only_role'] if item['definition_id'] == 'LIBRARY_0' else [])
+        item['satisfiesCoverage'].extend(['chest', 'weekly_inclusion', 'partial_development'])
     sessions[0]['name'] = 'Variable'
     sessions[0]['trainingDays'] = [2]
 
@@ -158,6 +164,8 @@ def test_fixed_only_role_peak_participates_in_shared_role_profile_objective():
 
     assert result['feasible'], result
     role_placement = result['priorityExecution']['structuralConcentration']['rolePlacement']
+    assert {role for profile in role_placement['profiles'] for role in profile['roles']} == {
+        'variable_role', 'fixed_only_role', 'chest'}
     fixed_profile = next(profile for profile in role_placement['profiles']
         if profile['roles'] == ['fixed_only_role'])
     assert fixed_profile['fixedSessionSets'] == [5]
@@ -231,7 +239,7 @@ def test_unique_union_peak_separates_two_tied_group_peaks():
     source[3] = source[7] = 4
     source[union_peak] = 8
 
-    status, candidate = joint_planning._milp_solve(variables, rows, timeout_seconds=2,
+    status, candidate = joint_planning._cp_solve(variables, rows, timeout_seconds=2,
         preserve_current=False, incumbent=source)
     assert status == 'optimal'
     assert candidate[3] == candidate[7] == 4
@@ -256,7 +264,8 @@ def test_joint_solver_runs_role_and_verified_union_polishes_after_their_parent_p
     requirements['sessionsPerWeek'] = 3
     requirements['requiredCoverage'] = [{'key': 'core', 'scope': 'weekly', 'description': 'Core',
         'intent': 'development'}]
-    requirements['objectiveOrder'] = ['demand_distribution', 'development_emphasis', 'distribution']
+    requirements['objectiveOrder'] = [
+        'demand_distribution', 'development_emphasis', 'role_concentration', 'distribution']
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 15, 'maximum': 18}
     requirements['auditTargets'].pop('perSessionEffectiveSets', None)
     demand_keys = ('unsupported_trunk', 'axial_loading', 'eccentric_emphasis')
@@ -265,7 +274,7 @@ def test_joint_solver_runs_role_and_verified_union_polishes_after_their_parent_p
             for key in demand_keys}
         definition['programmingDemands'][demand_keys[index]]['present'] = True
 
-    original_solve = joint_planning._milp_solve
+    original_solve = joint_planning._cp_solve
     stage_rows = {}
     def record_stage(variables, features, **kwargs):
         goal = (kwargs.get('diagnostics') or {}).get('goal')
@@ -277,18 +286,19 @@ def test_joint_solver_runs_role_and_verified_union_polishes_after_their_parent_p
                 and result[1] is not None):
             return 'feasible', result[1]
         return result
-    monkeypatch.setattr(joint_planning, '_milp_solve', record_stage)
+    monkeypatch.setattr(joint_planning, '_cp_solve', record_stage)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
     assert result['feasible'], result
     goals = [stage['goal'] for stage in result['objectiveProgress']]
     assert goals.index('demand_distribution') < goals.index('demand_colocation')
     assert goals.index('demand_colocation') < goals.index('development_emphasis')
-    assert goals.index('development_emphasis') < goals.index('distribution') < goals.index('role_concentration')
+    assert goals.index('development_emphasis') < goals.index('role_concentration')
+    assert goals.index('role_concentration_tiebreak') < goals.index('distribution')
     assert goals.index('role_concentration') < goals.index('role_concentration_tiebreak')
     assert not any(label == 'placement_conservation' for label in stage_rows['demand_colocation'])
     assert not any(label == 'placement_conservation' for label in stage_rows['development_emphasis'])
-    assert any(label == 'placement_conservation' for label in stage_rows['role_concentration'])
-    assert any(label == 'placement_conservation'
+    assert any(label == 'training_dose_conservation' for label in stage_rows['role_concentration'])
+    assert any(label == 'training_dose_conservation'
         for label in stage_rows['role_concentration_tiebreak'])
     concentration = result['priorityExecution']['structuralConcentration']
     assert concentration['verifiedDemandUnion']['presentDefinitionIds'] == ['press', 'row']
@@ -299,6 +309,10 @@ def test_joint_solver_runs_role_and_verified_union_polishes_after_their_parent_p
         assert concentration['verifiedDemandUnion']['stage']['solverStatus'] == 'optimal'
     role = concentration['rolePlacement']
     assert role['status'] == expected_status
+    role_priority = next(item for item in result['priorityExecution']['approvedPriorities']
+        if item['priority'] == 'role_concentration')
+    assert role_priority['solverStage']['goal'] == 'role_concentration'
+    assert role_priority['subStages'][0]['goal'] == 'role_concentration_tiebreak'
     disclosure = render_optimization_disclosure(result['priorityExecution'])
     if demand_distribution_status == 'feasible':
         assert 'Verified-demand co-location: valid candidate found' in disclosure
@@ -311,7 +325,7 @@ def test_joint_solver_runs_role_and_verified_union_polishes_after_their_parent_p
     assert core['peakSurplusPerOccurrence'] == 0
 
 
-def test_solver_stop_before_role_polish_reports_planned_substage_as_unresolved(monkeypatch):
+def test_role_priority_remains_proven_when_later_distribution_times_out(monkeypatch):
     equipment, requirements, source = two_recipe_order_case()
     sessions = [copy.deepcopy(source[0]) for _ in range(3)]
     for index, day in enumerate(sessions):
@@ -322,26 +336,52 @@ def test_solver_stop_before_role_polish_reports_planned_substage_as_unresolved(m
     requirements['sessionsPerWeek'] = 3
     requirements['requiredCoverage'] = [{'key': 'core', 'scope': 'weekly', 'description': 'Core',
         'intent': 'development'}]
-    # Preservation establishes the source candidate before distribution times out.
-    requirements['objectiveOrder'] = ['preservation', 'distribution']
+    # Role concentration is an explicit earlier preference; later distribution times out.
+    requirements['objectiveOrder'] = ['preservation', 'role_concentration', 'distribution']
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 15, 'maximum': 18}
     requirements['auditTargets'].pop('perSessionEffectiveSets', None)
 
-    original_solve = joint_planning._milp_solve
+    original_solve = joint_planning._cp_solve
     def stop_distribution(variables, features, **kwargs):
         if (kwargs.get('diagnostics') or {}).get('goal') == 'distribution':
             return 'timeout', None
         return original_solve(variables, features, **kwargs)
-    monkeypatch.setattr(joint_planning, '_milp_solve', stop_distribution)
+    monkeypatch.setattr(joint_planning, '_cp_solve', stop_distribution)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
         reviewed_baseline_workouts=sessions)
     assert result['feasible'], result
     concentration = result['priorityExecution']['structuralConcentration']
-    assert concentration['rolePlacement']['status'] == 'not_run_after_solver_stop'
+    assert concentration['rolePlacement']['status'] == 'optimal'
+    role_priority = next(item for item in result['priorityExecution']['approvedPriorities']
+        if item['priority'] == 'role_concentration')
+    assert role_priority['status'] == 'optimal'
+    assert [stage['status'] for stage in role_priority['subStages']] == ['optimal']
     priority = next(item for item in result['priorityExecution']['approvedPriorities']
         if item['priority'] == 'distribution')
     assert priority['status'] == 'timeout'
-    assert priority['subStages'][0]['status'] == 'not_run_after_solver_stop'
+
+
+def test_role_priority_is_feasible_when_earlier_approved_priority_is_unproven():
+    costs = {
+        'demand_distribution': {}, 'duration_balance': {}, 'distribution': {},
+        'source_balance': {}, 'development_emphasis': {},
+        'role_concentration': {1: 1}, 'role_concentration_tiebreak': {2: 1},
+        'workload_economy': {0: 1},
+    }
+    execution = joint_planning._priority_execution(
+        ['workload_economy', 'role_concentration'], costs,
+        [
+            {'goal': 'workload_economy', 'status': 'feasible', 'value': 4},
+            {'goal': 'role_concentration', 'status': 'optimal', 'value': 2},
+            {'goal': 'role_concentration_tiebreak', 'status': 'optimal', 'value': 1},
+        ],
+        ['workload_economy', 'role_concentration', 'role_concentration_tiebreak'], [],
+    )
+    role = next(item for item in execution['approvedPriorities']
+        if item['priority'] == 'role_concentration')
+    assert role['status'] == 'feasible'
+    assert role['solverStage']['status'] == 'optimal'
+    assert [stage['goal'] for stage in role['subStages']] == ['role_concentration_tiebreak']
 
 
 def test_exercise_distribution_stage_spreads_fixed_weekly_dose_across_qualified_definitions(monkeypatch):
@@ -413,7 +453,7 @@ def test_development_dose_lock_preserves_development_and_leaves_inclusion_mix_fr
         variable, constraint, option_variables, sessions, [], ['DEV', 'INC'],
         {'A': 'FAMILY_A', 'B': 'FAMILY_B', 'C': 'FAMILY_C'},
         {'DEV': 'development', 'INC': 'inclusion'})
-    status, candidate = joint_planning._milp_solve(
+    status, candidate = joint_planning._cp_solve(
         [{**item, 'objectiveCost': costs.get(index, 0)} for index, item in enumerate(variables)],
         features, timeout_seconds=2, preserve_current=False)
 

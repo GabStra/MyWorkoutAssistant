@@ -1,6 +1,7 @@
 import copy
 import json
 import threading
+from pathlib import Path
 import pytest
 
 from workout_generator_pkg.training_history import TrainingHistory
@@ -26,6 +27,69 @@ def history_case():
                          'setData': {'type': 'BodyWeightSetData', 'actualReps': 12, 'additionalWeight': 0,
                                      'relativeBodyWeightInKg': 49}}]}
     return equipment, stored, draft, backup
+
+
+@pytest.mark.parametrize('index,reference,count,load,reps,date', [
+    (0, 'LIBRARY_96', 2, 5, 7, '2026-07-27'),
+    (1, 'LIBRARY_249', 3, 18, 6, '2026-06-09'),
+])
+def test_retained_sibling_records_compare_with_selected_weighted_configuration(monkeypatch, index, reference, count, load, reps, date):
+    from workout_generator_pkg.training_history import candidate_configuration_history, compact_training_evidence
+    from workout_generator_pkg.plan_review import _compact_evidence, _compact_review_history
+    from workout_generator_pkg.planner_context import _movement_selection_context
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures/workout_candidate_history_20261104.json').read_text())
+    equipment, item = fixture['equipment'], fixture['evidence'][index]
+    definition = next(definition for definition in equipment['exerciseDefinitions'] if definition['id'] == item['definitionId'])
+    before = copy.deepcopy(item)
+    item['candidateConfigurationHistory'] = candidate_configuration_history(item, definition, equipment)
+    comparison = next(source for source in item['candidateConfigurationHistory']['sources'] if source['sourceReference'] == reference)
+
+    assert comparison['sourceMovementRelation'] == 'related_not_equivalent'
+    assert comparison['matchingConfigurationPerformanceCount'] == count
+    assert comparison['otherConfigurationPerformanceCount'] == 0
+    for performance in comparison['matchingConfigurationPerformances']:
+        assert performance['date'] == date
+        assert performance['record']['loadKg'] == load and performance['record']['actualReps'] == reps
+        assert performance['provenance']['equipmentContext']['source'] == 'set_snapshot'
+        assert performance['provenance']['accessoryContextSource'] == 'workout_occurrence_fallback'
+    assert item['relatedMovementHistory'] == before['relatedMovementHistory']
+    assert item['status'] == 'no_comparable_records' and item['totalSessions'] == 0
+    assert item['loadHeadroom']['latestSessionHeaviestLoadKg'] is None
+    assert not item['candidateConfigurationHistory']['relatedLoadTransferSupported']
+    assert not item['candidateConfigurationHistory']['currentCapabilityEstablished']
+    history = TrainingHistory({'WorkoutStore': {**equipment, 'workouts': []}, 'SetHistories': []})
+    monkeypatch.setattr(history, '_exact_evidence', lambda *args: {'exercises': [copy.deepcopy(before)]})
+    returned = history.evidence({'definition_ids': [item['reference']]}, equipment)['exercises'][0]
+    assert returned['candidateConfigurationHistory'] == item['candidateConfigurationHistory']
+    for projected in (compact_training_evidence([item])[item['reference']],
+                      _compact_evidence(item, include_related_records=False),
+                      _compact_review_history([item])[item['reference']]):
+        assert projected['candidateConfigurationHistory'] == item['candidateConfigurationHistory']
+    state = {'exerciseCandidates': {item['reference']: {'trainingEvidence': item}}, 'requirements': {}}
+    _movement_selection_context(state)
+    assert state['exerciseCandidates'][item['reference']]['trainingEvidence']['candidateConfigurationHistory'] == item['candidateConfigurationHistory']
+
+
+@pytest.mark.parametrize('field,value,limitation', [
+    ('equipmentId', 'different-vest', 'recorded_equipment_differs_or_is_unresolved'),
+    ('requiredAccessoryEquipmentIds', ['different-station'], 'required_accessories_changed'),
+    ('bodyWeightPercentage', 65, 'bodyweight_percentage_changed'),
+    ('bodyWeightPercentage', None, 'bodyweight_percentage_unresolved'),
+])
+def test_candidate_configuration_comparison_keeps_actual_mismatches_uncertain(field, value, limitation):
+    from workout_generator_pkg.training_history import candidate_configuration_history
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures/workout_candidate_history_20261104.json').read_text())
+    equipment, item = fixture['equipment'], fixture['evidence'][0]
+    definition = next(definition for definition in equipment['exerciseDefinitions'] if definition['id'] == item['definitionId'])
+    for performance in item['relatedMovementHistory'][0]['otherSetupSessions'][0]['performances']:
+        performance[field] = value
+    comparison = candidate_configuration_history(item, definition, equipment)['sources'][1]
+    assert comparison['matchingConfigurationPerformanceCount'] == 0
+    assert comparison['matchingConfigurationPerformances'] == []
+    assert comparison['otherConfigurationPerformanceCount'] == 2
+    assert limitation in comparison['otherConfigurationLimitations']
 
 
 def test_batch_load_validation_resolves_evidence_once_without_weakening_checks(monkeypatch):
@@ -99,13 +163,34 @@ def test_refresh_retained_history_adds_current_setup_metadata_without_rewriting_
     assert (result['sessions'], result['otherSetupSessions']) == saved_pages
     assert result['candidateContext']['equipmentId'] is None
     assert [concern['code'] for concern in result['loadSuitabilityConcerns']] == [
-        'related_history_only', 'recorded_loaded_setup_requires_reassessment']
+        'related_history_only', 'recorded_loaded_setup_requires_reassessment',
+        'unverified_fixed_bodyweight_capability']
     assert result['loadSuitabilityConcerns'][0] == {'code': 'related_history_only', 'message': 'keep this'}
     loaded = result['loadSuitabilityConcerns'][1]['records'][0]
     assert loaded['equipmentId'] == 'vest' and loaded['loadKg'] == 18
     assert loaded['equipmentContext']['source'] == 'set_snapshot'
     assert result['loadHeadroom']['latestSessionHeaviestLoadKg'] is None
     assert result['loadHeadroom']['highestObservedComparableLoad'] is None
+
+
+def test_refresh_retained_recomputes_fixed_bodyweight_capability_from_current_exact_evidence():
+    equipment, _, _, _ = history_case()
+    empty_history = TrainingHistory({'WorkoutStore': {**copy.deepcopy(equipment), 'workouts': []},
+        'WorkoutHistories': [], 'SetHistories': []})
+    old_without_flag = empty_history._exact_evidence({'definition_ids': ['LIBRARY_0']}, equipment)
+    old_without_flag['exercises'][0]['loadSuitabilityConcerns'] = []
+
+    refreshed_missing = empty_history.refresh_evidence_metadata(old_without_flag, equipment)
+    assert any(concern['code'] == 'unverified_fixed_bodyweight_capability'
+        for concern in refreshed_missing['exercises'][0]['loadSuitabilityConcerns'])
+
+    current_history = TrainingHistory(history_case()[3])
+    old_with_stale_flag = current_history._exact_evidence({'definition_ids': ['LIBRARY_0']}, equipment)
+    old_with_stale_flag['exercises'][0]['loadSuitabilityConcerns'] = [
+        {'code': 'unverified_fixed_bodyweight_capability', 'message': 'stale'}]
+    refreshed_performed = current_history.refresh_evidence_metadata(old_with_stale_flag, equipment)
+    assert not any(concern['code'] == 'unverified_fixed_bodyweight_capability'
+        for concern in refreshed_performed['exercises'][0]['loadSuitabilityConcerns'])
 
 
 def test_refresh_retained_history_does_not_treat_equipped_bodyweight_as_fixed():
@@ -526,6 +611,7 @@ def test_uncertain_related_lookup_does_not_flag_exact_own_history():
 
 def test_history_only_movement_survives_compaction_for_planning_and_independent_review(monkeypatch):
     from workout_generator_pkg.plan_review import _context
+    from workout_generator_pkg.planning_tools import audit_workout_plan
     from workout_generator_pkg.training_history import compact_training_evidence
     equipment, stored, draft, backup = history_case()
     equipment['exerciseDefinitions'][0].update(id='new-definition', name='Renamed Push-Up')
@@ -548,9 +634,10 @@ def test_history_only_movement_survives_compaction_for_planning_and_independent_
         {'role': 'assistant', 'tool_calls': [{'id': 'history', 'function': {
             'name': 'get_training_evidence', 'arguments': json.dumps({'definition_ids': ['LIBRARY_0']})}}]},
         {'role': 'tool', 'tool_call_id': 'history', 'content': json.dumps(evidence)}]
-    result = json.loads(handle_function_call(None, messages, 'audit_workout_plan', draft, equipment,
-                                           training_history=history)['result'])
-    assert result['passed']
+    monkeypatch.setattr('workout_generator_pkg.training_history.confirmed_capability_references',
+        lambda messages, equipment: {'LIBRARY_0'})
+    result = audit_workout_plan(draft, equipment, messages, training_history=history)
+    assert result['passed'], result['errors']
     reviewer_context = _context(result, messages, equipment, history, len(messages) - 3)
     assert reviewer_context['history']['HISTORY_0']['sessions'][0]['performances'][0]['record']['actualReps'] == 12
     outgoing = _messages_for_api(messages, True, history, equipment)

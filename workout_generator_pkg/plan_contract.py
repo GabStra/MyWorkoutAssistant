@@ -8,6 +8,7 @@ import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from .exercise_contracts import execution_set_mode, execution_semantics_problem
 from .domain_ops import (
     get_selectable_weights_for_exercise,
     pair_implement_total_for,
@@ -28,6 +29,7 @@ LIBRARY_DEFINITION_OWNED_FIELDS = (
     "requiredAccessoryEquipmentIds",
     "exerciseCategory",
     "movementRef",
+    "reviewedExecution",
 )
 
 
@@ -135,9 +137,16 @@ def _normalize_unilateral_text(value: Any) -> str:
     return normalized
 
 
-def _exercise_requires_unilateral_rest(exercise: Dict[str, Any]) -> bool:
+def _exercise_requires_unilateral_rest(exercise: Dict[str, Any], definition: Optional[Dict[str, Any]] = None) -> bool:
     if not isinstance(exercise, dict):
         return False
+
+    set_mode = execution_set_mode(exercise, definition)
+    if set_mode is not None:
+        return set_mode == 'paired_sides'
+    reviewed_execution = (definition if definition is not None else exercise).get('reviewedExecution')
+    if isinstance(reviewed_execution, dict) and 'limbMode' in reviewed_execution:
+        return reviewed_execution.get('limbMode') == 'unilateral'
 
     # Technique notes describe how to perform the movement; they do not define
     # whether both sides work together. For example, "stop if one arm lags"
@@ -409,6 +418,8 @@ def _collect_contract_issues_plan_index(
         for definition in library_definitions
         if isinstance(definition, dict) and definition.get("id")
     }
+    library_definitions_by_id = {definition.get('id'): definition for definition in library_definitions
+        if isinstance(definition, dict) and definition.get('id')}
     if library_definition_ids:
         provided_equipment_ids = {
             item.get("id")
@@ -527,8 +538,18 @@ def _collect_contract_issues_plan_index(
         if not ex.get("name"):
             issues.append(ContractIssue("missing_exercise_name", f"Exercise '{ex_id or 'Unknown'}' is missing name."))
         intra_set_rest_in_seconds = ex.get("intraSetRestInSeconds")
+        definition = library_definitions_by_id.get(ex.get('libraryDefinitionId'))
+        execution_problem = execution_semantics_problem(ex, definition)
+        if execution_problem:
+            issues.append(ContractIssue('execution_semantics_unresolved',
+                f"Exercise '{ex_name}': {execution_problem}", exercise_id=ex_id,
+                field='reviewedExecution'))
+        if execution_set_mode(ex, definition) == 'single_sequence' and intra_set_rest_in_seconds is not None:
+            issues.append(ContractIssue('execution_set_mode_mismatch',
+                f"Exercise '{ex_name}' single_sequence execution must use null intraSetRestInSeconds; a value repeats the entire set on both sides.",
+                exercise_id=ex_id, field='intraSetRestInSeconds'))
         if intra_set_rest_in_seconds is not None:
-            if not isinstance(intra_set_rest_in_seconds, int) or intra_set_rest_in_seconds <= 0:
+            if type(intra_set_rest_in_seconds) is not int or intra_set_rest_in_seconds <= 0:
                 issues.append(
                     ContractIssue(
                         "invalid_intra_set_rest",
@@ -536,8 +557,8 @@ def _collect_contract_issues_plan_index(
                         field="intraSetRestInSeconds",
                     )
                 )
-        if _exercise_requires_unilateral_rest(ex) and not (
-            isinstance(intra_set_rest_in_seconds, int) and intra_set_rest_in_seconds > 0
+        if _exercise_requires_unilateral_rest(ex, definition) and not (
+            type(intra_set_rest_in_seconds) is int and intra_set_rest_in_seconds > 0
         ):
             issues.append(
                 ContractIssue(
@@ -1058,6 +1079,14 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
 
     planned_intra_set_rest = plan_ex.get("intraSetRestInSeconds")
     actual_intra_set_rest = actual.get("intraSetRestInSeconds")
+    execution_problem = execution_semantics_problem(plan_ex)
+    if execution_problem:
+        issues.append(ContractIssue('execution_semantics_unresolved',
+            f"Exercise '{ex_id}': {execution_problem}", exercise_id=ex_id, field='reviewedExecution'))
+    if execution_set_mode(plan_ex) == 'single_sequence' and actual_intra_set_rest is not None:
+        issues.append(ContractIssue('execution_set_mode_mismatch',
+            f"Exercise '{ex_id}' single_sequence execution must emit null intraSetRestInSeconds.",
+            exercise_id=ex_id, field='intraSetRestInSeconds'))
     if "intraSetRestInSeconds" in plan_ex and actual_intra_set_rest != planned_intra_set_rest:
         issues.append(
             ContractIssue(
@@ -1066,7 +1095,7 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
             )
         )
     if _exercise_requires_unilateral_rest(plan_ex) and not (
-        isinstance(actual_intra_set_rest, int) and actual_intra_set_rest > 0
+        type(actual_intra_set_rest) is int and actual_intra_set_rest > 0
     ):
         issues.append(
             ContractIssue(

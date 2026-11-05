@@ -1,39 +1,15 @@
+import copy
 import json
 import os
+import re
 import sys
-import threading
 import time
 import uuid
-import copy
-import re
-from datetime import date, datetime
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
-from .cancellation import run_cancellable
-from .logging_ui import write_progress_line
-from .image_attachments import image_message
-from openai import OpenAI
-import httpx
-from workout_generator_pkg.constants import (
-    DEEPSEEK_MODEL,
-    JSON_SCHEMA,
-    PARALLEL_LOG_REQUEST_TRUNCATE,
-    BASE_SYSTEM_PROMPT,
-    SUMMARIZATION_SYSTEM_PROMPT,
-    SELF_HEAL_SYSTEM_PROMPT,
-    GENERATE_WORKOUT_TOOL,
-)
-from workout_generator_pkg.exercise_contracts import get_exercise_emission_profile
-from workout_generator_pkg.domain_ops import _materialize_exercise_definition, format_exercise_library_catalog, build_workout_structure, SchemaRepairError, validate_schema_repair
-from workout_generator_pkg.stage_prompts import (
-    EQUIPMENT_SYSTEM_PROMPT,
-    EXERCISE_SYSTEM_PROMPT,
-    JSON_PATCH_REPAIR_SYSTEM_PROMPT,
-    PLAN_INDEX_SYSTEM_PROMPT,
-)
-from workout_generator_pkg.plan_contract import (
-    _load_field_for_exercise_type,
-    validate_single_exercise_definition_contract,
-)
+from datetime import datetime
+
+from .domain_ops import _materialize_exercise_definition, build_workout_structure
+from .logging_ui import ConversationLogger, PrefixLogger, LoadingIndicator, ParallelLoadingIndicator
+from .plan_contract import validate_single_exercise_definition_contract
 
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(PACKAGE_DIR)
@@ -42,44 +18,24 @@ PROJECT_ROOT = os.path.dirname(PACKAGE_DIR)
 def _default_script_dir():
     """Return project root path for filesystem outputs."""
     return PROJECT_ROOT
-try:
-    from openai import APIConnectionError
-except ImportError:
-    APIConnectionError = None
-try:
-    from httpx import RemoteProtocolError
-except ImportError:
-    try:
-        from httpcore import RemoteProtocolError
-    except ImportError:
-        RemoteProtocolError = None
-                                                                                                                                                                                                                                                   
-# Optional validation (pip install jsonschema)                                                                                                                                                                                                   
-try:                                                                                                                                                                                                                                             
-    from jsonschema import validate                                                                                                                                                                                                              
-except Exception:                                                                                                                                                                                                                                
-    validate = None                                                                                                                                                                                                                              
-                                                                                                                                                                                                                                                   
-                                                                                                                                                                                                                                                   
-                                                                                                                                                                                                                                                   
 class PlaceholderIdManager:
     """Manages placeholder IDs and their mapping to real UUIDs."""
-    
+
     # UUID pattern: matches standard UUID format (8-4-4-4-12 hex digits)
     UUID_PATTERN = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-    
+
     def __init__(self):
         self.placeholder_to_uuid = {}
         self.uuid_to_placeholder = {}
         self._equipment_counter = 0
         self._accessory_counter = 0
-    
+
     def _is_uuid(self, value):
         """Check if a string value is a valid UUID."""
         if not isinstance(value, str):
             return False
         return bool(self.UUID_PATTERN.match(value))
-    
+
     def register_placeholder(self, placeholder_id):
         """Register a placeholder ID and generate a UUID for it if not already registered."""
         if placeholder_id not in self.placeholder_to_uuid:
@@ -87,12 +43,12 @@ class PlaceholderIdManager:
             self.placeholder_to_uuid[placeholder_id] = new_uuid
             self.uuid_to_placeholder[new_uuid] = placeholder_id
         return self.placeholder_to_uuid[placeholder_id]
-    
+
     def register_uuid_mapping(self, original_uuid, placeholder_id):
         """
         Register a mapping from an original UUID (from equipment file) to a placeholder ID.
         This preserves the original UUID so it can be restored later.
-        
+
         Args:
             original_uuid: The original UUID string from the equipment file
             placeholder_id: The placeholder ID (e.g., "EQUIPMENT_0") to map it to
@@ -101,29 +57,29 @@ class PlaceholderIdManager:
             raise ValueError(f"Invalid UUID format: {original_uuid}")
         if not self._is_placeholder(placeholder_id):
             raise ValueError(f"Invalid placeholder format: {placeholder_id}")
-        
+
         # Store both directions of the mapping
         self.placeholder_to_uuid[placeholder_id] = original_uuid
         self.uuid_to_placeholder[original_uuid] = placeholder_id
-    
+
     def convert_uuid_to_placeholder(self, original_uuid, prefix="EQUIPMENT"):
         """
         Convert an original UUID to a placeholder ID and register the mapping.
-        
+
         Args:
             original_uuid: The original UUID string from the equipment file
             prefix: The prefix for the placeholder (EQUIPMENT or ACCESSORY)
-        
+
         Returns:
             str: The generated placeholder ID (e.g., "EQUIPMENT_0")
         """
         if not self._is_uuid(original_uuid):
             return original_uuid  # Not a UUID, return as-is
-        
+
         # Check if we already have a mapping for this UUID
         if original_uuid in self.uuid_to_placeholder:
             return self.uuid_to_placeholder[original_uuid]
-        
+
         # Generate a new placeholder ID
         if prefix == "EQUIPMENT":
             placeholder_id = f"EQUIPMENT_{self._equipment_counter}"
@@ -133,11 +89,11 @@ class PlaceholderIdManager:
             self._accessory_counter += 1
         else:
             raise ValueError(f"Invalid prefix: {prefix}. Must be EQUIPMENT or ACCESSORY")
-        
+
         # Register the mapping
         self.register_uuid_mapping(original_uuid, placeholder_id)
         return placeholder_id
-    
+
     def get_uuid(self, placeholder_id):
         """
         Get the UUID for a placeholder ID.
@@ -147,7 +103,7 @@ class PlaceholderIdManager:
         if placeholder_id in self.placeholder_to_uuid:
             return self.placeholder_to_uuid[placeholder_id]
         return self.register_placeholder(placeholder_id)
-    
+
     def replace_placeholders(self, obj):
         """Recursively replace placeholder IDs with UUIDs in a JSON structure."""
         if isinstance(obj, dict):
@@ -187,14 +143,14 @@ class PlaceholderIdManager:
             return [self.replace_placeholders(item) for item in obj]
         else:
             return obj
-    
+
     def _is_placeholder(self, value):
         """Check if a string value is a placeholder ID."""
         if not isinstance(value, str):
             return False
         prefixes = ['EQUIPMENT_', 'ACCESSORY_', 'EXERCISE_', 'COMPONENT_', 'SET_', 'WORKOUT_', 'REST_']
         return any(value.startswith(prefix) for prefix in prefixes)
-    
+
     def extract_placeholders_from_json(self, obj):
         """Extract all placeholder IDs from a JSON structure and register them."""
         if isinstance(obj, dict):
@@ -215,32 +171,32 @@ class PlaceholderIdManager:
         elif isinstance(obj, list):
             for item in obj:
                 self.extract_placeholders_from_json(item)
-    
+
     def convert_equipment_uuids_to_placeholders(self, equipment_dict, is_accessory=False):
         """
         Convert UUIDs in an equipment dictionary to placeholders, preserving the original UUIDs.
         This modifies the dictionary in-place.
-        
+
         Args:
             equipment_dict: Dictionary containing equipment data (may have UUID 'id' field)
             is_accessory: If True, use ACCESSORY prefix, otherwise EQUIPMENT prefix
-        
+
         Returns:
             dict: The modified equipment dictionary with placeholder IDs
         """
         if not isinstance(equipment_dict, dict):
             return equipment_dict
-        
+
         result = equipment_dict.copy()
         prefix = "ACCESSORY" if is_accessory else "EQUIPMENT"
-        
+
         # Convert 'id' field if it's a UUID
         if 'id' in result and isinstance(result['id'], str):
             original_id = result['id']
             if self._is_uuid(original_id):
                 placeholder_id = self.convert_uuid_to_placeholder(original_id, prefix)
                 result['id'] = placeholder_id
-        
+
         # Convert 'equipmentId' references if they're UUIDs
         if 'equipmentId' in result and isinstance(result['equipmentId'], str):
             original_id = result['equipmentId']
@@ -251,7 +207,7 @@ class PlaceholderIdManager:
                 else:
                     # Default to EQUIPMENT prefix if not found
                     result['equipmentId'] = self.convert_uuid_to_placeholder(original_id, "EQUIPMENT")
-        
+
         # Convert 'requiredAccessoryEquipmentIds' array if present
         if 'requiredAccessoryEquipmentIds' in result and isinstance(result['requiredAccessoryEquipmentIds'], list):
             converted_ids = []
@@ -273,16 +229,16 @@ class PlaceholderIdManager:
                 else:
                     converted_ids.append(item_id)
             result['requiredAccessoryEquipmentIds'] = converted_ids
-        
+
         return result
-    
+
     def get_state(self):
         """Get the current state of the ID manager for serialization."""
         return {
             "placeholder_to_uuid": self.placeholder_to_uuid.copy(),
             "uuid_to_placeholder": self.uuid_to_placeholder.copy()
         }
-    
+
     def restore_state(self, state):
         """Restore the ID manager state from serialized data."""
         if state:
@@ -310,27 +266,27 @@ def validate_equipment_immutability(provided_equipment, plan_index_equipment):
     """
     Validate that provided equipment from file has not been modified.
     Plan_index equipment entries are minimal (id, type, name), so we only validate those fields.
-    
+
     Args:
         provided_equipment: Dict with 'equipments' and 'accessoryEquipments' lists
         plan_index_equipment: Dict with 'equipments' and 'accessoryEquipments' lists from plan_index
-    
+
     Returns:
         tuple: (is_valid: bool, error_message: str or None)
     """
     if not provided_equipment:
         return True, None
-    
+
     # Create lookup maps by ID for provided equipment
     provided_equipments_by_id = {eq.get("id"): eq for eq in provided_equipment.get("equipments", [])}
     provided_accessories_by_id = {acc.get("id"): acc for acc in provided_equipment.get("accessoryEquipments", [])}
-    
+
     # Check all provided equipment items that appear in plan_index
     for eq in plan_index_equipment.get("equipments", []):
         eq_id = eq.get("id")
         if not eq_id:
             continue
-        
+
         # Check if this ID exists in provided equipment
         if eq_id in provided_equipments_by_id:
             provided_eq = provided_equipments_by_id[eq_id]
@@ -341,13 +297,13 @@ def validate_equipment_immutability(provided_equipment, plan_index_equipment):
                 return False, f"Provided equipment {eq_id} type was modified from '{provided_eq.get('type')}' to '{eq.get('type')}'. Equipment from file is immutable."
             if eq.get("name") != provided_eq.get("name"):
                 return False, f"Provided equipment {eq_id} name was modified from '{provided_eq.get('name')}' to '{eq.get('name')}'. Equipment from file is immutable."
-    
+
     # Check all provided accessory items that appear in plan_index
     for acc in plan_index_equipment.get("accessoryEquipments", []):
         acc_id = acc.get("id")
         if not acc_id:
             continue
-        
+
         # Check if this ID exists in provided accessories
         if acc_id in provided_accessories_by_id:
             provided_acc = provided_accessories_by_id[acc_id]
@@ -358,7 +314,7 @@ def validate_equipment_immutability(provided_equipment, plan_index_equipment):
                 return False, f"Provided accessory equipment {acc_id} type was modified from '{provided_acc.get('type')}' to '{acc.get('type')}'. Equipment from file is immutable."
             if acc.get("name") != provided_acc.get("name"):
                 return False, f"Provided accessory equipment {acc_id} name was modified from '{provided_acc.get('name')}' to '{acc.get('name')}'. Equipment from file is immutable."
-    
+
     return True, None
 
 
@@ -449,7 +405,6 @@ def apply_accessory_id_rewrite(workout_store, duplicate_id_to_provided):
                     ]
 
 
-
 # Progress management functions for resume capability
 PROGRESS_DIR = "workouts/generation_progress"
 
@@ -460,133 +415,25 @@ LOGS_DIR = "logs"
 CONVERSATION_META_FILE = "conversation_meta.json"
 
 
-
-
-class ConversationLogger:
-    """
-    Per-conversation debug logger. Writes timestamped lines to a log file.
-    Use log_print for lines that should also go to stdout.
-    """
-
-    def __init__(self, log_path):
-        self._path = log_path
-        self._closed = False
-        self._lock = threading.Lock()
-
-    @property
-    def log_filepath(self):
-        return self._path
-
-    def _timestamp(self):
-        return datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
-
-    def _write(self, msg):
-        with self._lock:
-            try:
-                if self._closed:
-                    raise RuntimeError('Logger is closed')
-                with open(self._path, 'a', encoding='utf-8') as log_file:
-                    log_file.write(self._timestamp() + msg + "\n")
-            except Exception as e:
-                raise RuntimeError(f"Cannot write conversation log {self._path}: {e}") from e
-
-    def log(self, msg):
-        """Write timestamped line to log file only."""
-        self._write(msg)
-
-    def log_print(self, msg):
-        """Write to log and print to stdout."""
-        self._write(msg)
-        try:
-            print(msg)
-        except UnicodeEncodeError:
-            print(msg.encode("ascii", errors="replace").decode("ascii"))
-
-    def log_section(self, title):
-        """Write a section header to the log."""
-        self._write("--- " + title + " ---")
-
-    def log_request(self, label, summary):
-        """Log an API request (label + summary)."""
-        self._write("[request] " + label + ": " + str(summary))
-
-    def log_response(self, label, content, truncate_at=8000):
-        """Log an API response; truncate large content."""
-        s = str(content) if content is not None else ""
-        if truncate_at and len(s) > truncate_at:
-            s = s[:truncate_at] + f"... [truncated, total {len(s)} chars]"
-        self._write("[response] " + label + ": " + s)
-
-    def flush(self):
-        # Each entry is already flushed and closed before returning.
-        pass
-
-    def close(self):
-        with self._lock:
-            self._closed = True
-
-
-
-# When using PrefixLogger (parallel item emission), log more of the request in the log file
-
-
-class PrefixLogger:
-    """
-    Wrapper that prepends a prefix (e.g. [EQUIPMENT_0]) to every log line.
-    Used so parallel item logs can be filtered by item_id.
-    """
-
-    def __init__(self, logger, prefix):
-        self._logger = logger
-        self._prefix = prefix
-        self.is_parallel = True  # Emitters use this to apply higher request truncation
-
-    def log(self, msg):
-        self._logger.log(self._prefix + msg)
-
-    def log_print(self, msg):
-        self._logger.log_print(self._prefix + msg)
-
-    def log_section(self, title):
-        self._logger.log_section(self._prefix + title)
-
-    def log_request(self, label, summary):
-        self._logger.log_request(self._prefix + label, summary)
-
-    def log_response(self, label, content, truncate_at=8000):
-        self._logger.log_response(self._prefix + label, content, truncate_at=truncate_at)
-
-    def flush(self):
-        self._logger.flush()
-
-    def close(self):
-        self._logger.close()
-
-
-
-
-
-
-
 def load_equipment_from_file(filepath):
     """
     Load equipment JSON from a file and validate its structure.
-    
+
     Args:
         filepath: Path to the equipment JSON file
-    
+
     Returns:
         dict: Dictionary with keys:
             - equipments: list of equipment dictionaries (required)
             - accessoryEquipments: list of accessory equipment dictionaries (optional)
-    
+
     Raises:
         FileNotFoundError: If the file doesn't exist
         ValueError: If JSON is invalid or structure is incorrect
     """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Equipment file not found: {filepath}")
-    
+
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -594,27 +441,27 @@ def load_equipment_from_file(filepath):
         raise ValueError(f"Invalid JSON in equipment file: {e}")
     except Exception as e:
         raise ValueError(f"Failed to read equipment file: {e}")
-    
+
     # Validate structure
     if not isinstance(data, dict):
         raise ValueError("Equipment file must contain a JSON object")
-    
+
     if "equipments" not in data:
         raise ValueError("Equipment file must contain 'equipments' array")
-    
+
     if not isinstance(data["equipments"], list):
         raise ValueError("'equipments' must be an array")
-    
+
     if "accessoryEquipments" in data and not isinstance(data["accessoryEquipments"], list):
         raise ValueError("'accessoryEquipments' must be an array if present")
-    
+
     # Normalize: ensure accessoryEquipments exists (empty list if not provided)
     if "accessoryEquipments" not in data:
         data["accessoryEquipments"] = []
-    
+
     # Extract and validate placeholder IDs from equipment
     # (IDs will be registered with id_manager later in execute_workout_generation)
-    
+
     return {
         "equipments": data["equipments"],
         "accessoryEquipments": data["accessoryEquipments"]
@@ -623,312 +470,8 @@ def load_equipment_from_file(filepath):
 # Token limits for DeepSeek models
 
 
-
-
-
 # Simplified equipment schema for incremental generation
 
-
-
-# Simplified exercise schema for incremental generation
-
-
-
-# Workout structure schema
-
-
-# PlanIndex structure for planner/emitter architecture
-
-
-# JSON Patch repair system prompt
-
-# Function tool schema for OpenAI function calling
-                                                                                                                                                                                                                                                   
-class LoadingIndicator:
-    def __init__(self, message="Thinking"):
-        self.message = message
-        self.stop_event = threading.Event()
-        self.thread = None
-        self.start_time = None
-        
-    def _animate(self):
-        """Internal method to run the animation in a separate thread."""
-        dots = ["", ".", "..", "..."]
-        dot_index = 0
-        
-        while not self.stop_event.is_set():
-            elapsed = int(time.time() - self.start_time)
-            text = f"{self.message}{dots[dot_index]:<3} ({elapsed}s)\r"
-            write_progress_line(text)
-            dot_index = (dot_index + 1) % len(dots)
-            self.stop_event.wait(0.5)
-    
-    def start(self):
-        """Start the loading indicator."""
-        self.start_time = time.time()
-        self.stop_event.clear()
-        self.thread = threading.Thread(target=self._animate, daemon=True)
-        self.thread.start()
-    
-    def stop(self):
-        """Stop the loading indicator and clear the line."""
-        self.stop_event.set()
-        if self.thread:
-            self.thread.join()
-        write_progress_line()
-
-class ParallelLoadingIndicator:
-    """Loading indicator for parallel execution showing aggregate progress."""
-    def __init__(self, base_message="Generating", total_items=0):
-        self.base_message = base_message
-        self.total_items = total_items
-        self.completed_items = 0
-        self.stop_event = threading.Event()
-        self.thread = None
-        self.start_time = None
-        self.lock = threading.Lock()
-        
-    def _animate(self):
-        """Internal method to run the animation in a separate thread."""
-        dots = ["", ".", "..", "..."]
-        dot_index = 0
-        
-        while not self.stop_event.is_set():
-            with self.lock:
-                completed = self.completed_items
-                total = self.total_items
-            elapsed = int(time.time() - self.start_time)
-            if total > 0:
-                text = f"{self.base_message} ({completed}/{total}){dots[dot_index]:<3} ({elapsed}s)\r"
-            else:
-                text = f"{self.base_message}{dots[dot_index]:<3} ({elapsed}s)\r"
-            write_progress_line(text)
-            dot_index = (dot_index + 1) % len(dots)
-            self.stop_event.wait(0.5)
-    
-    def start(self):
-        """Start the loading indicator."""
-        self.start_time = time.time()
-        self.stop_event.clear()
-        self.thread = threading.Thread(target=self._animate, daemon=True)
-        self.thread.start()
-    
-    def increment(self):
-        """Increment the completed items count."""
-        with self.lock:
-            self.completed_items += 1
-    
-    def stop(self):
-        """Stop the loading indicator and clear the line."""
-        self.stop_event.set()
-        if self.thread:
-            self.thread.join()
-        write_progress_line()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Chunked emitters for planner/emitter architecture
-def emit_equipment_item(equipment_id, client, context_summary, plan_index, use_reasoner=True, logger=None):
-    """
-    Emit a single equipment item using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.
-    
-    Args:
-        client: OpenAI client
-        equipment_id: Placeholder ID (e.g., "EQUIPMENT_0")
-        context_summary: Summarized conversation context
-        plan_index: PlanIndex dict containing equipment entry for this ID
-        use_reasoner: If True, use reasoner model (slower, potentially higher quality).
-                     If False, use chat model (faster, 8K max tokens).
-        logger: Optional ConversationLogger for debug logging
-    
-    Returns:
-        dict: Single EquipmentItem with placeholder ID, or None if cancelled
-    """
-    # Find the equipment entry in plan_index
-    equipment_entry = None
-    for eq in plan_index.get("equipments", []):
-        if eq.get("id") == equipment_id:
-            equipment_entry = eq
-            break
-    
-    if not equipment_entry:
-        raise ValueError(f"Equipment ID {equipment_id} not found in PlanIndex")
-    
-    equipment_entry_json = json.dumps(equipment_entry, indent=2)
-    
-    user_content = (
-        "Use equipment names consistent with the plan entry.\n\n"
-        f"Plan entry for {equipment_id}:\n{equipment_entry_json}\n\n"
-        f"Generate ONLY this one equipment object using placeholder IDs. "
-        f"Output format should match one of the Equipment types from the schema. "
-        f"Use placeholder ID: {equipment_id}\n\n"
-        f"Output only the equipment object JSON, not a wrapper."
-    )
-    
-    messages = [
-        {"role": "system", "content": EQUIPMENT_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
-    ]
-    
-    if logger:
-        request_truncate = PARALLEL_LOG_REQUEST_TRUNCATE if getattr(logger, "is_parallel", False) else 2000
-        trunc = user_content[:request_truncate] + (f"... [truncated, total {len(user_content)} chars]" if request_truncate and len(user_content) > request_truncate else "")
-        logger.log_request("emit_equipment " + equipment_id, trunc)
-    if use_reasoner:
-        content = json_call_reasoner_only_with_loading(client, messages, "", show_loading=False, logger=logger)
-    else:
-        content = json_call_chat_max_with_loading(client, messages, "", show_loading=False, logger=logger)
-    if content is None:
-        return (None, None)
-    
-    if not content:
-        raise ValueError(f"Model returned empty equipment JSON content for {equipment_id}")
-    
-    if logger:
-        logger.log_response("emit_equipment " + equipment_id, content, truncate_at=8000)
-    log_entry = None
-    if logger:
-        log_entry = {
-            "step": "equipment",
-            "item_id": equipment_id,
-            "request_messages": messages,
-            "response_content": content,
-        }
-    try:
-        data = json.loads(content)
-        # If it's wrapped in an "equipments" array, extract the first item
-        if "equipments" in data and isinstance(data["equipments"], list) and len(data["equipments"]) > 0:
-            equipment_item = data["equipments"][0]
-        elif "id" in data or "type" in data:
-            # It's already a single equipment object
-            equipment_item = data
-        else:
-            raise ValueError(f"Invalid equipment JSON format for {equipment_id}: expected equipment object or equipments array")
-        
-        # Ensure the ID matches
-        if equipment_item.get("id") != equipment_id:
-            equipment_item["id"] = equipment_id
-        
-        # Normalize equipment before wrapping
-        normalized_list = fix_equipment_errors([equipment_item])
-        normalized_item = normalized_list[0] if normalized_list else equipment_item
-        
-        return (EquipmentItem(normalized_item), log_entry)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse equipment JSON for {equipment_id}: {e}")
-
-def emit_accessory_equipment_item(accessory_id, client, context_summary, plan_index, use_reasoner=True, logger=None):
-    """
-    Emit a single accessory equipment item using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.
-    
-    Args:
-        client: OpenAI client
-        accessory_id: Placeholder ID (e.g., "ACCESSORY_0")
-        context_summary: Summarized conversation context
-        plan_index: PlanIndex dict containing accessory equipment entry for this ID
-        use_reasoner: If True, use reasoner model (slower, potentially higher quality).
-                     If False, use chat model (faster, 8K max tokens).
-        logger: Optional ConversationLogger for debug logging
-    
-    Returns:
-        dict: Single AccessoryEquipment item with placeholder ID, or None if cancelled
-    """
-    # Find the accessory equipment entry in plan_index
-    accessory_entry = None
-    for acc in plan_index.get("accessoryEquipments", []):
-        if acc.get("id") == accessory_id:
-            accessory_entry = acc
-            break
-    
-    if not accessory_entry:
-        raise ValueError(f"Accessory Equipment ID {accessory_id} not found in PlanIndex")
-    
-    accessory_entry_json = json.dumps(accessory_entry, indent=2)
-    
-    user_content = (
-        "Use accessory names consistent with the plan entry.\n\n"
-        f"Plan entry for {accessory_id}:\n{accessory_entry_json}\n\n"
-        f"Generate ONLY this one accessory equipment object using placeholder IDs. "
-        f"Output format should match $defs.EquipmentAccessory from the schema. "
-        f"Use placeholder ID: {accessory_id}\n\n"
-        f"Accessory equipment only requires: id, type (must be 'ACCESSORY'), and name.\n\n"
-        f"Output only the accessory equipment object JSON, not a wrapper."
-    )
-    
-    messages = [
-        {"role": "system", "content": EQUIPMENT_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
-    ]
-    
-    if logger:
-        request_truncate = PARALLEL_LOG_REQUEST_TRUNCATE if getattr(logger, "is_parallel", False) else 2000
-        trunc = user_content[:request_truncate] + (f"... [truncated, total {len(user_content)} chars]" if request_truncate and len(user_content) > request_truncate else "")
-        logger.log_request("emit_accessory " + accessory_id, trunc)
-    if use_reasoner:
-        content = json_call_reasoner_only_with_loading(client, messages, "", show_loading=False, logger=logger)
-    else:
-        content = json_call_chat_max_with_loading(client, messages, "", show_loading=False, logger=logger)
-    if content is None:
-        return (None, None)
-    
-    if not content:
-        raise ValueError(f"Model returned empty accessory equipment JSON content for {accessory_id}")
-    
-    if logger:
-        logger.log_response("emit_accessory " + accessory_id, content, truncate_at=8000)
-    log_entry = None
-    if logger:
-        log_entry = {
-            "step": "accessory",
-            "item_id": accessory_id,
-            "request_messages": messages,
-            "response_content": content,
-        }
-    try:
-        data = json.loads(content)
-        # If it's wrapped in an array or object, extract the item
-        if "accessoryEquipments" in data and isinstance(data["accessoryEquipments"], list) and len(data["accessoryEquipments"]) > 0:
-            accessory_item = data["accessoryEquipments"][0]
-        elif "equipments" in data and isinstance(data["equipments"], list) and len(data["equipments"]) > 0:
-            accessory_item = data["equipments"][0]
-        elif "id" in data and data.get("type") == "ACCESSORY":
-            accessory_item = data
-        else:
-            raise ValueError(f"Invalid accessory equipment JSON format for {accessory_id}: expected accessory equipment object")
-        
-        # Ensure the ID matches
-        if accessory_item.get("id") != accessory_id:
-            accessory_item["id"] = accessory_id
-        
-        # Ensure type is ACCESSORY
-        accessory_item["type"] = "ACCESSORY"
-        
-        # Normalize accessory equipment before wrapping
-        normalized_list = fix_equipment_errors([accessory_item])
-        normalized_item = normalized_list[0] if normalized_list else accessory_item
-        
-        return (EquipmentItem(normalized_item), log_entry)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse accessory equipment JSON for {accessory_id}: {e}")
 
 def emit_exercise_definition(
     exercise_id,
@@ -945,248 +488,20 @@ def emit_exercise_definition(
     max_attempts=4,
     deterministic=False,
 ):
-    """
-    Emit a single exercise definition using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.
-    
-    Args:
-        client: OpenAI client
-        exercise_id: Placeholder ID (e.g., "EXERCISE_0")
-        context_summary: Summarized conversation context
-        plan_index: PlanIndex dict containing exercise entry for this ID
-        equipment_subset: List of weight-loaded equipment items relevant to this exercise (only those referenced)
-        accessory_subset: List of accessory equipment items relevant to this exercise (optional)
-        use_reasoner: If True, use reasoner model (slower, potentially higher quality).
-                     If False, use chat model (faster, 8K max tokens).
-        provided_equipment: Optional dict with 'equipments' and 'accessoryEquipments' keys
-        logger: Optional ConversationLogger for debug logging
-        max_attempts: Maximum emissions before returning a validation/parsing error
-    
-    Returns:
-        dict: Single ExerciseDefinition with placeholder IDs, or None if cancelled
-    """
+    """Compatibility entry point for deterministic materialization of a planned exercise."""
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least one")
-
-    exercise_entry = None
-    for ex in plan_index.get("exercises", []):
-        if ex.get("id") == exercise_id:
-            exercise_entry = ex
-            break
-
-    if not exercise_entry:
+    exercise_entry = next((entry for entry in plan_index.get("exercises", [])
+                           if entry.get("id") == exercise_id), None)
+    if exercise_entry is None:
         raise ValueError(f"Exercise ID {exercise_id} not found in PlanIndex")
-
-    if deterministic:
-        item = _materialize_exercise_definition(exercise_entry)
-        normalized_item = finalize_and_validate_exercise_definition(
-            item,
-            plan_entry=exercise_entry,
-            equipment_subset=equipment_subset,
-            accessory_subset=accessory_subset,
-            all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,
-            allow_educated_load_guesses=allow_educated_load_guesses,
-        )
-        validate_single_exercise_definition_contract(exercise_entry, normalized_item)
-        if logger:
-            logger.log_print(f"Materialized {exercise_id} deterministically")
-        return (ExerciseDefinition(normalized_item), None)
-
-    valid_muscle_groups = (
-        JSON_SCHEMA.get("$defs", {})
-        .get("MuscleGroup", {})
-        .get("enum", [])
-    )
-    muscle_group_enum_text = ", ".join(valid_muscle_groups)
-
-    exercise_plan_json = json.dumps(exercise_entry, indent=2)
-    equipment_list_short = format_equipment_list_for_plan(equipment_subset, accessory_subset)
-    equipment_json_text = json.dumps(
-        {
-            "equipments": equipment_subset or [],
-            "accessoryEquipments": accessory_subset or [],
-        },
-        indent=2,
-    )
-
-    profile = get_exercise_emission_profile(exercise_entry.get("exerciseType"))
-    load_field = _load_field_for_exercise_type(exercise_entry.get("exerciseType"))
-    exact_load_instruction = ""
-    if isinstance(exercise_entry.get("targetSetPrescriptions"), list) and exercise_entry["targetSetPrescriptions"] and load_field:
-        exact_load_instruction = (
-            f"- Copy targetSetPrescriptions exactly into the emitted work sets using `{load_field}` and `reps`.\n"
-            "- Emit exactly one work set per targetSetPrescriptions item in workSetIndex order.\n"
-        )
-        if all(isinstance(target, dict) and load_field not in target for target in exercise_entry["targetSetPrescriptions"]):
-            exact_load_instruction += (
-                f"- These targets omit `{load_field}` intentionally: preserve their reps, use 0 only as the app-required persisted set placeholder, and preserve requiresLoadCalibration=true so the app's native calibration mode supplies the actual load.\n"
-            )
-
-    calibration_instruction = (
-        "The approved plan owns requiresLoadCalibration; copy it exactly and never infer or change it from emitted load values. "
-        "Without comparable usable load history, Python sets it true for WEIGHT and equipped BODY_WEIGHT exercises, even when a provisional load is present. "
-        "The app runs its existing calibration mode; do not add separate trial sets or rests.\n"
-        if allow_educated_load_guesses
-        else "Copy the approved plan's requiresLoadCalibration value exactly. The strict generator policy may require it for every loaded exercise.\n"
-    )
-
-    base_user_content = (
-        "Generate ONLY the final JSON object for this one exercise definition.\n"
-        f"Placeholder exercise id must remain exactly `{exercise_id}`.\n"
-        "Use canonical placeholder IDs only: SET_<number>, EQUIPMENT_<number>, ACCESSORY_<number>.\n"
-        "Do not invent semantic IDs.\n\n"
-        f"Conversation summary:\n{context_summary}\n\n"
-        f"PlanIndex exercise entry for {exercise_id}:\n{exercise_plan_json}\n\n"
-        "Treat the PlanIndex exercise entry as the source of truth for all deterministic exercise details. "
-        "Do not reinterpret or change exerciseType, equipmentId, requiredAccessoryEquipmentIds, "
-        "bodyWeightPercentage, exerciseCategory, muscle groups, rep range, work-set count, restBetweenSetsSeconds, "
-        "or targetSetPrescriptions.\n"
-        "Your job is to emit a valid Exercise object that implements that plan entry exactly.\n"
-        "Preserve the movement-only name from the plan entry.\n"
-        f"CRITICAL: muscleGroups must use ONLY these valid enum values:\n{muscle_group_enum_text}\n"
-        "Keep muscleGroups non-empty unless this is the warm-up exercise.\n\n"
-        f"Available equipment for this exercise:\n{equipment_list_short}\n"
-        f"Equipment details JSON:\n{equipment_json_text}\n\n"
-        "Implementation rules:\n"
-        f"- exerciseType must be `{exercise_entry.get('exerciseType')}`.\n"
-        f"- equipmentId must be {json.dumps(exercise_entry.get('equipmentId'))}.\n"
-        f"- requiredAccessoryEquipmentIds must be {json.dumps(exercise_entry.get('requiredAccessoryEquipmentIds') or [])}.\n"
-        f"- bodyWeightPercentage must be {json.dumps(exercise_entry.get('bodyWeightPercentage'))}.\n"
-        f"- intraSetRestInSeconds must be {json.dumps(exercise_entry.get('intraSetRestInSeconds'))}.\n"
-        f"- exerciseCategory must be {json.dumps(exercise_entry.get('exerciseCategory'))}.\n"
-        f"- minReps must be {json.dumps(exercise_entry.get('minReps'))}.\n"
-        f"- maxReps must be {json.dumps(exercise_entry.get('maxReps'))}.\n"
-        f"- numWorkSets must be {json.dumps(exercise_entry.get('numWorkSets'))}.\n"
-        f"- restBetweenSetsSeconds must be {json.dumps(exercise_entry.get('restBetweenSetsSeconds'))}.\n"
-        f"{exact_load_instruction}"
-        "Generate work sets and rest sets so the emitted structure matches the plan entry exactly.\n"
-        "If numWorkSets is N and restBetweenSetsSeconds is provided, emit exactly N work sets and N-1 RestSet entries between them.\n"
-        "Do not add extra work sets, rest sets, warm-up sets, or target loads that are not implied by the plan entry.\n"
-        "Warm-up sets may be auto-generated later by the pipeline, so focus on the required work-set structure.\n"
-        "Set progressionMode to either OFF or AUTO_REGULATION only. "
-        "Use AUTO_REGULATION for load-based exercises that should continue progressing after these planned work-set targets. "
-        "Use OFF for timed/cardio work and exercises that should not auto-progress.\n"
-        "Set generateWarmUpSets explicitly to true or false based on whether this movement should receive ramp-up sets.\n"
-        "Set intraSetRestInSeconds to a positive integer only for unilateral side-to-side work; otherwise set it to null.\n"
-        f"{calibration_instruction}\n"
-        "Use this type-specific contract:\n"
-        f"{profile['instruction_text']}\n"
-        f"Required top-level fields: {', '.join(profile['required_top_level_fields'])}.\n"
-        f"Forbidden top-level fields: {', '.join(profile.get('forbidden_top_level_fields') or ['(none)'])}.\n"
-        f"Allowed work-set type: {profile['allowed_work_set_type']}.\n"
-        f"Required fields on each {profile['allowed_work_set_type']}: {', '.join(profile['required_set_level_fields'])}.\n"
-        f"Forbidden fields on each {profile['allowed_work_set_type']}: {', '.join(profile['forbidden_set_level_fields'])}.\n"
-        f"Schema:\n{json.dumps(profile['schema'], indent=2)}\n"
-        f"Example:\n{json.dumps(profile['example_object'], indent=2)}\n\n"
-        "Output only the exercise object JSON, not a wrapper."
-    )
-
-    attempt = 1
-    last_error = None
-    last_content = None
-
-    def _emit_log(msg):
-        if logger:
-            logger.log_print(msg)
-        else:
-            print(msg)
-
-    while attempt <= max_attempts:
-        retry_context = ""
-        if contract_error_context:
-            retry_context = (
-                "\n\nCONTRACT RETRY CONTEXT:\n"
-                f"{contract_error_context}\n\n"
-                "Regenerate the FULL exercise object so it satisfies schema and Step 3 contract.\n"
-            )
-        elif last_error:
-            previous_output = (last_content or "")[:3500]
-            retry_context = (
-                "\n\nAUTO-HEAL RETRY CONTEXT:\n"
-                f"Previous attempt failed validation/parsing with error:\n{last_error}\n\n"
-                "Regenerate the FULL exercise object and fix all issues.\n"
-                f"Previous invalid JSON snippet:\n{previous_output}\n"
-            )
-
-        retry_user_content = base_user_content + retry_context
-        messages = [
-            {"role": "system", "content": EXERCISE_SYSTEM_PROMPT},
-            {"role": "user", "content": retry_user_content},
-        ]
-
-        if logger:
-            request_truncate = PARALLEL_LOG_REQUEST_TRUNCATE if getattr(logger, "is_parallel", False) else 2000
-            trunc = retry_user_content[:request_truncate] + (f"... [truncated, total {len(retry_user_content)} chars]" if request_truncate and len(retry_user_content) > request_truncate else "")
-            logger.log_request("emit_exercise " + exercise_id, trunc)
-
-        use_reasoner_for_this_attempt = use_reasoner or bool(last_error) or bool(contract_error_context)
-        if use_reasoner_for_this_attempt:
-            content = json_call_reasoner_only_with_loading(client, messages, "", show_loading=False, logger=logger)
-        else:
-            content = json_call_chat_max_with_loading(client, messages, "", show_loading=False, logger=logger)
-        if content is None:
-            return (None, None)
-        if not content:
-            last_error = f"Model returned empty exercise JSON content for {exercise_id}"
-            last_content = content
-            if attempt >= max_attempts:
-                raise ValueError(
-                    f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
-                    f"Last error: {last_error}"
-                )
-            attempt += 1
-            _emit_log(f"  Retrying {exercise_id} with auto-heal (attempt {attempt})...")
-            continue
-
-        if logger:
-            logger.log_response("emit_exercise " + exercise_id, content, truncate_at=8000)
-        log_entry = None
-        if logger:
-            log_entry = {
-                "step": "exercise",
-                "item_id": exercise_id,
-                "request_messages": messages,
-                "response_content": content,
-            }
-
-        try:
-            data = json.loads(content)
-            if "exercises" in data and isinstance(data["exercises"], list) and len(data["exercises"]) > 0:
-                exercise_item = data["exercises"][0]
-            elif "id" in data and data.get("type") == "Exercise":
-                exercise_item = data
-            else:
-                raise ValueError(f"Invalid exercise JSON format for {exercise_id}: expected exercise object or exercises array")
-
-            exercise_item["id"] = exercise_id
-            if exercise_item.get("requiredAccessoryEquipmentIds") is None:
-                exercise_item["requiredAccessoryEquipmentIds"] = []
-
-            normalized_item = finalize_and_validate_exercise_definition(
-                exercise_item,
-                plan_entry=exercise_entry,
-                equipment_subset=equipment_subset,
-                accessory_subset=accessory_subset,
-                all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,
-                allow_educated_load_guesses=allow_educated_load_guesses,
-            )
-            validate_single_exercise_definition_contract(exercise_entry, normalized_item)
-            return (ExerciseDefinition(normalized_item), log_entry)
-        except Exception as e:
-            last_error = str(e)
-            last_content = content
-            if attempt >= max_attempts:
-                raise ValueError(
-                    f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
-                    f"Last error: {last_error}"
-                )
-            attempt += 1
-            _emit_log(f"  Retrying {exercise_id} with auto-heal (attempt {attempt})...")
-            continue
-
-    raise ValueError(
-        f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
-        f"Last error: {last_error or 'unknown error'}"
-    )
+    item = finalize_and_validate_exercise_definition(
+        _materialize_exercise_definition(exercise_entry), plan_entry=exercise_entry,
+        equipment_subset=equipment_subset, accessory_subset=accessory_subset,
+        all_equipment_candidates=(provided_equipment or {}).get("equipments", []),
+        allow_educated_load_guesses=allow_educated_load_guesses)
+    validate_single_exercise_definition_contract(exercise_entry, item)
+    return ExerciseDefinition(item), None
 
 
 def emit_workout_structure(
@@ -1206,962 +521,21 @@ def emit_workout_structure(
     return build_workout_structure(workout_entry), None
 
 
-def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, logger=None, fail_fast=False):
-    """
-    Execute emitter function for multiple items in parallel using ThreadPoolExecutor.
-
-    Args:
-        items: List of tuples (item_id, emitter_args_dict) where emitter_args_dict contains
-               the arguments needed to call the emitter function (excluding item_id).
-        emitter_func: Function to call for each item. Should take item_id as first arg,
-                      followed by unpacked **emitter_args_dict. Returns (result, log_entry)
-                      where log_entry may be None.
-        loading_message: Base message for progress indicator (e.g., "Generating equipment")
-        max_workers: Maximum number of worker threads (default: min(32, len(items) + 4))
-        logger: Optional ConversationLogger for debug logging (loading start/stop)
-        fail_fast: If True, stop/cancel remaining work when any item fails and raise.
-
-    Returns:
-        tuple: (results_dict, emitter_conversations_list) where results_dict maps item_id
-               to result (or None if cancelled/failed), and emitter_conversations_list
-               contains log_entry dicts from emitters for persistence in conversation_history.
-    """
-    if not items:
-        return ({}, [])
-
-    def _out(msg):
-        if logger:
-            logger.log_print(msg)
-        else:
-            print(msg)
-
-    results = {}
-    errors = []
-    emitter_conversations = []
-    emitter_conversations_lock = threading.Lock()
-    cancelled = threading.Event()
-    loading = ParallelLoadingIndicator(loading_message, len(items))
-    if logger:
-        logger.log("Loading started: " + loading_message)
-        logger.log_section(f"Parallel: {loading_message} ({len(items)} items)")
-
-    def emit_wrapper(item_data):
-        """Wrapper to handle individual item emission with error handling."""
-        if cancelled.is_set():
-            return (None, None)
-
-        if isinstance(item_data, tuple) and len(item_data) == 2:
-            item_id, emitter_args = item_data
-        else:
-            item_id = item_data.get("id") if isinstance(item_data, dict) else item_data
-            emitter_args = {}
-
-        # Pass a prefixed logger so each item's log lines are identifiable
-        args_copy = dict(emitter_args)
-        if logger:
-            args_copy["logger"] = PrefixLogger(logger, f"[{item_id}] ")
-
-        try:
-            result = run_cancellable(emitter_func, item_id, cancel_event=cancelled, **args_copy)
-            loading.increment()
-            # Emitters return (parsed_result, log_entry)
-            if isinstance(result, tuple) and len(result) == 2:
-                parsed_result, log_entry = result
-                if log_entry is not None:
-                    with emitter_conversations_lock:
-                        emitter_conversations.append(log_entry)
-                return (item_id, parsed_result)
-            return (item_id, result)
-        except KeyboardInterrupt:
-            cancelled.set()
-            return (item_id, None)
-        except Exception as e:
-            loading.increment()
-            errors.append((item_id, str(e)))
-            if fail_fast:
-                cancelled.set()
-            return (item_id, None)
-
-    loading.start()
-
-    executor = None
-    try:
-        if max_workers is None:
-            max_workers = min(32, len(items) + 4)
-
-        executor = ThreadPoolExecutor(max_workers=max_workers)
-        try:
-            future_to_item = {executor.submit(emit_wrapper, item): item for item in items}
-
-            pending = set(future_to_item)
-            while pending:
-                if cancelled.is_set():
-                    for f in future_to_item:
-                        f.cancel()
-                    break
-                completed, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
-                for future in completed:
-                    try:
-                        item_id, result = future.result()
-                        if item_id:
-                            results[item_id] = result
-                    except Exception as e:
-                        item_data = future_to_item[future]
-                        if isinstance(item_data, tuple):
-                            item_id = item_data[0]
-                        else:
-                            item_id = item_data.get("id") if isinstance(item_data, dict) else str(item_data)
-                        errors.append((item_id, str(e)))
-                        results[item_id] = None
-
-        except BaseException:
-            cancelled.set()
-            raise
-    except KeyboardInterrupt:
-        cancelled.set()
-        _out("\nCancelled. Stopping parallel execution...")
-        raise
-    finally:
-        if executor is not None:
-            executor.shutdown(wait=False, cancel_futures=True)
-        loading.stop()
-        if logger:
-            logger.log_section(f"End parallel: {loading_message}")
-            logger.log("Loading finished: " + loading_message)
-
-    if cancelled.is_set() and not errors:
-        raise KeyboardInterrupt
-    if errors:
-        _out(f"  Warning: {len(errors)} item(s) failed:")
-        for item_id, error_msg in errors[:5]:
-            _out(f"    - {item_id}: {error_msg}")
-        if len(errors) > 5:
-            _out(f"    ... and {len(errors) - 5} more error(s)")
-        if fail_fast:
-            first_item, first_error = errors[0]
-            raise RuntimeError(
-                f"{loading_message} failed (fail-fast) on '{first_item}': {first_error}"
-            )
-
-    return (results, emitter_conversations)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def validate_and_repair_placeholder_json(client, context_summary, placeholder_json, max_attempts=5,
-                                         session_id=None, step_data=None, custom_prompt="",
-                                         conversation_hash="", id_manager=None, script_dir=None,
-                                         resume_best_json=None, resume_best_error_count=None,
-                                         timing_data=None, use_reasoner_for_emitting=None, logger=None):
-    """
-    Validate placeholder-based WorkoutStore and repair errors using JSON Patch in a loop.
-    
-    Args:
-        client: OpenAI client
-        context_summary: Summarized conversation context
-        placeholder_json: Placeholder-based WorkoutStore to validate and repair
-        max_attempts: Maximum number of repair attempts
-        session_id: Optional session ID for progress saving
-        step_data: Optional dict to update with progress data
-        custom_prompt: Optional custom prompt for progress saving
-        conversation_hash: Optional conversation hash for progress saving
-        id_manager: Optional PlaceholderIdManager for progress saving
-        script_dir: Optional script directory for progress saving
-        resume_best_json: Optional best JSON state from previous run (for resume)
-        resume_best_error_count: Optional best error count from previous run (for resume)
-        timing_data: Optional dict to track timing information
-        logger: Optional ConversationLogger for debug logging
-    
-    Returns:
-        dict: Validated and repaired placeholder WorkoutStore, or raises exception if repair fails
-    """
-    def _out(msg):
-        if logger:
-            logger.log_print(msg)
-        else:
-            print(msg)
-    if validate is None:
-        # No validation available, return as-is
-        return placeholder_json
-    
-    placeholder_schema = create_placeholder_schema()
-    from workout_generator_pkg.domain_ops import strip_rep_range_fields_for_timed_exercises_in_workout_store
-
-    # Initialize state: use resume data if provided, otherwise start fresh
-    if resume_best_json is not None:
-        current_json = resume_best_json
-        best_error_count = resume_best_error_count if resume_best_error_count is not None else float('inf')
-        _out(f"  Resuming with best state (previous best error count: {resume_best_error_count if resume_best_error_count is not None else 'N/A'})")
-    else:
-        current_json = placeholder_json
-        best_error_count = float('inf')
-    
-    best_json = current_json
-    attempt = 0
-    
-    # Track if we should save progress (only if session_id and related params are provided)
-    should_save_progress = (session_id is not None and step_data is not None and 
-                           id_manager is not None and script_dir is not None)
-    
-    while attempt < max_attempts:
-        attempt += 1
-        
-        # Pre-validation normalization: Fix equipment structure issues before schema validation
-        if "equipments" in current_json:
-            equipments_before = len(current_json["equipments"])
-            current_json["equipments"] = fix_equipment_errors(current_json["equipments"])
-            equipments_after = len(current_json["equipments"])
-            if equipments_before != equipments_after:
-                _out(f"  Auto-fixed equipment structure issues (removed {equipments_before - equipments_after} invalid equipment item(s))")
-        
-        # Pre-validation normalization: Fix TimedDurationSet/EnduranceSet to use timeInMillis instead of timeInSeconds
-        for workout in current_json.get("workouts", []):
-            if not isinstance(workout, dict):
-                continue
-            for component in workout.get("workoutComponents", []):
-                if not isinstance(component, dict):
-                    continue
-                if component.get("type") == "Exercise":
-                    if "sets" in component:
-                        component["sets"] = fix_set_errors(component["sets"])
-                elif component.get("type") == "Superset":
-                    for ex in component.get("exercises", []):
-                        if isinstance(ex, dict) and "sets" in ex:
-                            ex["sets"] = fix_set_errors(ex["sets"])
-
-        strip_rep_range_fields_for_timed_exercises_in_workout_store(current_json)
-
-        try:
-            validate(instance=current_json, schema=placeholder_schema)
-            # Validation passed!
-            if attempt > 1:
-                _out(f"✓ Validation passed after {attempt} repair attempt(s)")
-            
-            # Save final success state if progress saving is enabled
-            if should_save_progress:
-                step_data["step_6_validated_placeholder_store"] = current_json
-                step_data["step_6_best_json"] = current_json
-                step_data["step_6_best_error_count"] = 0
-                step_data["step_6_current_attempt"] = attempt
-                _, _ = save_generation_progress(session_id, 6, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-            
-            return current_json
-        except Exception as validation_err:
-            # Count validation errors
-            error_count = 0
-            if hasattr(validation_err, 'context') and validation_err.context:
-                error_count = len(validation_err.context)
-            else:
-                error_count = 1
-            
-            # Update best state if this is better
-            if error_count < best_error_count:
-                best_error_count = error_count
-                best_json = copy.deepcopy(current_json)
-                
-                # Save progress if error count improved
-                if should_save_progress:
-                    step_data["step_6_best_json"] = best_json
-                    step_data["step_6_best_error_count"] = best_error_count
-                    step_data["step_6_current_attempt"] = attempt
-                    _, _ = save_generation_progress(session_id, 6, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-            
-            if attempt >= max_attempts:
-                # Max attempts reached
-                raise Exception(f"Validation failed after {max_attempts} repair attempts. Last error count: {error_count}. Best error count achieved: {int(best_error_count) if best_error_count != float('inf') else 'N/A'}. Last error: {str(validation_err)}")
-            
-            # Collect all errors
-            errors_to_fix = []
-            if hasattr(validation_err, 'context') and validation_err.context:
-                errors_to_fix = list(validation_err.context)
-            else:
-                errors_to_fix = [validation_err]
-            
-            # Analyze and log errors
-            error_analysis, log_filepath = analyze_and_log_validation_errors(errors_to_fix, attempt, script_dir)
-            
-            # Display error counter with enhanced breakdown
-            error_summary = error_analysis.get("error_summary", {})
-            by_item_type = error_summary.get("by_item_type", {})
-            by_error_type = error_summary.get("by_error_type", {})
-            common_patterns = error_analysis.get("common_patterns", [])
-            
-            # Build item type breakdown string
-            item_type_parts = []
-            for item_type, count in sorted(by_item_type.items(), key=lambda x: x[1], reverse=True):
-                # Handle None item_type defensively
-                item_type_display = (item_type or "unknown").capitalize()
-                item_type_parts.append(f"{item_type_display}({count})")
-            item_type_str = ", ".join(item_type_parts) if item_type_parts else "Unknown"
-            
-            # Build error type breakdown string
-            error_type_parts = []
-            for err_type, count in sorted(by_error_type.items(), key=lambda x: x[1], reverse=True):
-                error_type_parts.append(f"{err_type}({count})")
-            error_type_str = ", ".join(error_type_parts) if error_type_parts else "Unknown"
-            
-            # Display enhanced error information
-            if error_count < best_error_count:
-                if best_error_count == float('inf'):
-                    _out(f"  Validation error detected (attempt {attempt}/{max_attempts}), attempting repair... Errors: {error_count}")
-                else:
-                    _out(f"  Validation error detected (attempt {attempt}/{max_attempts}), attempting repair... Errors: {error_count} (improved from {int(best_error_count)})")
-            else:
-                _out(f"  Validation error detected (attempt {attempt}/{max_attempts}), attempting repair... Errors: {error_count}")
-            
-            # Show categorized breakdown
-            if by_item_type:
-                _out(f"    Errors by item type: {item_type_str}")
-            if by_error_type:
-                _out(f"    Errors by category: {error_type_str}")
-            
-            # Show top error patterns
-            if common_patterns:
-                top_patterns = common_patterns[:3]
-                _out(f"    Top issues: {', '.join(top_patterns)}")
-            
-            # Show log file path
-            if log_filepath:
-                _out(f"    Detailed errors saved to: {log_filepath}")
-            
-            # Try to repair
-            try:
-                repaired_json = repair_with_json_patch(client, context_summary, current_json, errors_to_fix, logger=logger)
-                if repaired_json is None:
-                    raise Exception("Repair was cancelled")
-                current_json = repaired_json
-            except SchemaRepairError as repair_err:
-                detail = getattr(validation_err, 'message', str(validation_err))
-                raise SchemaRepairError(f'{repair_err} Unresolved validation: {detail}') from repair_err
-            except Exception as repair_err:
-                _out(f"  Warning: Repair failed: {repair_err}")
-                # Continue to next attempt with original error
-                continue
-    
-    # Should not reach here, but return current_json if we do
-    return current_json
-
-def repair_with_json_patch(client, context_summary, placeholder_json, validation_errors, logger=None):
-    """
-    Repair validation errors using JSON Patch (RFC 6902) via deepseek-reasoner @ 64K max.
-
-    Args:
-        client: OpenAI client
-        context_summary: Summarized conversation context
-        placeholder_json: Placeholder-based WorkoutStore with validation errors
-        validation_errors: List of validation error messages or single error
-        logger: Optional ConversationLogger for debug logging (request/response)
-
-    Returns:
-        dict: Repaired placeholder JSON, or None if cancelled
-    """
-    def _schema_fragment_for_error(error):
-        schema_fragment = getattr(error, "schema", None)
-        if schema_fragment is None:
-            return None
-        try:
-            return copy.deepcopy(schema_fragment)
-        except Exception:
-            return schema_fragment
-
-    def _build_repair_targets(errors, workout_json):
-        targets = []
-        seen_paths = set()
-        for error in errors:
-            details = extract_validation_error_details(error)
-            path = details.get("path") or "<root>"
-            if path in seen_paths:
-                continue
-            seen_paths.add(path)
-
-            extracted = extract_item_by_path(workout_json, details.get("path_info", {}) or {})
-            target = {
-                "path": path,
-                "validator": getattr(error, "validator", None),
-                "message": details.get("message"),
-                "expected": details.get("expected"),
-                "actual": details.get("actual"),
-                "schemaFragment": _schema_fragment_for_error(error),
-            }
-            if extracted:
-                target["itemType"] = extracted.get("item_type")
-                target["failingItem"] = extracted.get("item")
-                target["context"] = extracted.get("context")
-            targets.append(target)
-        return targets
-
-    # Format errors for the prompt
-    if not isinstance(validation_errors, list):
-        validation_errors = [validation_errors]
-
-    error_messages = []
-    for error in validation_errors:
-        if hasattr(error, 'message'):
-            error_messages.append(str(error.message))
-        elif hasattr(error, '__str__'):
-            error_messages.append(str(error))
-        else:
-            error_messages.append(repr(error))
-
-    errors_text = "\n".join(f"- {msg}" for msg in error_messages)
-    placeholder_json_str = json.dumps(placeholder_json, indent=2)
-    repair_targets = _build_repair_targets(validation_errors, placeholder_json)
-    repair_targets_str = json.dumps(repair_targets, indent=2, ensure_ascii=False, default=str)
-    allowed_paths, allowed_descendant_paths = build_allowed_patch_scope(validation_errors)
-    if not (allowed_paths or allowed_descendant_paths):
-        raise SchemaRepairError('Validation did not establish any permitted repair paths. Restore the authoritative input first.')
-    permissions = json.dumps({'exact': sorted(allowed_paths), 'descendants': sorted(allowed_descendant_paths)})
-
-    user_content = (
-        f"Context summary:\n{context_summary}\n\n"
-        f"Validation errors:\n{errors_text}\n\n"
-        f"Structured repair targets:\n{repair_targets_str}\n\n"
-        f"Permitted document paths (all other fields stay unchanged):\n{permissions}\n\n"
-        f"Placeholder JSON (with errors):\n{placeholder_json_str}\n\n"
-        f"Generate a JSON Patch (RFC 6902) array that fixes ONLY these validation errors. "
-        f"Use Structured repair targets as the primary source of truth for the exact failing objects, their paths, and the schema fragments they must satisfy. "
-        f"When a failingItem and schemaFragment are provided, repair that object to satisfy that schemaFragment instead of guessing from the full document. "
-        f"Do NOT introduce new UUIDs - the document uses placeholder IDs (EQUIPMENT_X, EXERCISE_X, etc.). "
-        f"Output only the JSON Patch array, not a wrapper."
-    )
-
-    messages = [
-        {"role": "system", "content": JSON_PATCH_REPAIR_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
-    ]
-
-    if logger:
-        trunc = user_content[:2000] + (f"... [truncated, total {len(user_content)} chars]" if len(user_content) > 2000 else "")
-        logger.log_request("repair_with_json_patch", trunc)
-    content = json_call_reasoner_only_with_loading(client, messages, "Repairing validation errors", show_loading=True, logger=logger)
-    if content is None:
-        return None
-
-    if logger:
-        logger.log_response("repair", content, truncate_at=8000)
-    if not content:
-        raise ValueError("Model returned empty JSON Patch content")
-
-    try:
-        patch = json.loads(content)
-        # If it's wrapped, try to extract the patch array
-        if isinstance(patch, list):
-            patch_array = patch
-        elif "patch" in patch and isinstance(patch["patch"], list):
-            patch_array = patch["patch"]
-        else:
-            raise ValueError("Invalid JSON Patch format: expected array of patch operations")
-
-        try:
-            validate_patch_operations_scope(patch_array, allowed_paths, allowed_descendant_paths)
-        except ValueError as error:
-            raise SchemaRepairError(str(error)) from error
-
-        # Apply the patch
-        repaired_json = apply_json_patch(placeholder_json, patch_array)
-        changed_paths = collect_changed_json_paths(placeholder_json, repaired_json)
-        validate_changed_paths_scope(changed_paths, allowed_paths, allowed_descendant_paths)
-        validate_schema_repair(placeholder_json, repaired_json, validation_errors)
-        return repaired_json
-    except SchemaRepairError:
-        raise
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse JSON Patch: {e}")
-    except Exception as e:
-        raise ValueError(f"Failed to apply JSON Patch: {e}")
-
-
-
-
-
-
-
-
-
-
-
-
 # Muscle group name mappings for common errors
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def summarize_conversation(client, messages, logger=None):
-    """
-    Condense conversation history to extract only relevant information for workout generation.
-    
-    Args:
-        client: OpenAI client
-        messages: Full conversation message history
-        logger: Optional ConversationLogger for debug logging
-        
-    Returns:
-        str: Condensed extraction of essential workout generation information, or None if cancelled
-    """
-    # Filter out system messages and keep only user/assistant conversation
-    conversation_messages = [msg for msg in messages if msg.get("role") in ["user", "assistant"]]
-    
-    # If conversation is very short, return a simple summary
-    if len(conversation_messages) <= 2 and not any(m.get('imageAttachments') for m in conversation_messages):
-        # Just extract user messages
-        user_messages = [msg.get("content", "") for msg in conversation_messages if msg.get("role") == "user"]
-        return "\n".join(user_messages) if user_messages else "No specific requirements mentioned."
-    
-    # Use LLM to summarize the conversation
-    user_content = (
-        "Extract and condense the following conversation to only the information relevant for workout generation:\n\n"
-        + "\n".join([f"{msg.get('role', 'unknown').upper()}: {msg.get('content', '')}"
-                     for msg in conversation_messages])
-    )
-    summarization_messages = [
-        {"role": "system", "content": SUMMARIZATION_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
-    ]
-    summarization_messages[1:1] = image_message(conversation_messages, label='TURN')
-    if logger:
-        trunc = user_content[:2000] + (f"... [truncated, total {len(user_content)} chars]" if len(user_content) > 2000 else "")
-        logger.log_request("summarize_conversation", f"model={DEEPSEEK_MODEL} thinking=enabled messages={len(summarization_messages)}\n{trunc}")
-    content, _, _ = chat_call_with_loading(client, summarization_messages, logger=logger)
-    if content is None:
-        return None
-    if logger:
-        logger.log_response("summarize_conversation", content, truncate_at=8000)
-    return content
-
-def generate_index(
-    client,
-    context_summary,
-    custom_request="",
-    use_reasoner=True,
-    provided_equipment=None,
-    logger=None,
-    structured_generation_facts="",
-    contract_error_context="",
-):
-    """
-    Generate a PlanIndex - a compact plan defining what objects will exist, their placeholder IDs, and relationships.
-    This is the planner stage of the planner/emitter architecture.
-    
-    Args:
-        client: OpenAI client
-        context_summary: Summarized conversation context
-        custom_request: Additional user request (e.g., from /generate command)
-        use_reasoner: If True, use reasoner model (slower, potentially higher quality).
-                     If False, use chat model (faster, 8000 max tokens).
-        provided_equipment: Optional dict with 'equipments' and 'accessoryEquipments' keys
-        logger: Optional ConversationLogger for debug logging
-        structured_generation_facts: Deterministic numeric/bodyweight facts extracted from the raw generation request
-        contract_error_context: Legacy argument; textual contract feedback cannot authorize a full-index repair
-        
-    Returns:
-        dict: PlanIndex with equipments, exercises, and workouts entries, all using placeholder IDs, or None if cancelled
-    """
-    if contract_error_context:
-        raise SchemaRepairError('Plan-index contract errors require a planning revision and fresh confirmation; a textual error does not authorize a full-index repair.')
-    user_content = f"Context summary:\n{context_summary}\n\n"
-    if structured_generation_facts:
-        user_content += (
-            f"{structured_generation_facts}\n\n"
-            "CRITICAL: Structured generation facts above are authoritative for exact numeric and bodyweight-load semantics. "
-            "If they conflict with the prose Context summary, follow the Structured generation facts.\n\n"
-        )
-    if custom_request:
-        user_content += f"Additional request: {custom_request}\n\n"
-    
-    # Include provided equipment if available with planner-specific constraints
-    if provided_equipment:
-        exercise_library = provided_equipment.get("exerciseDefinitions") or []
-        formatted_equipment = format_planner_equipment_context(
-            provided_equipment.get("equipments", []),
-            provided_equipment.get("accessoryEquipments", [])
-        )
-        gear_creation_constraint = (
-            "Strict exercise-library mode is active: you MUST NOT create equipment or accessories.\n"
-            if exercise_library
-            else "If necessary gear is missing, you MAY create new equipment or accessories with non-conflicting EQUIPMENT_X/ACCESSORY_X IDs.\n"
-        )
-        user_content += (
-            f"{formatted_equipment}\n\n"
-            f"CRITICAL: Equipment from the provided file is IMMUTABLE - you CANNOT edit, modify, or change any equipment or accessories from the list above.\n"
-            f"Use exact placeholder IDs from the sections above when available.\n"
-            f"equipmentId may reference only Primary Equipment IDs (EQUIPMENT_X) or null. Never put an ACCESSORY_X in equipmentId.\n"
-            f"requiredAccessoryEquipmentIds may reference only Accessory Equipment IDs (ACCESSORY_X). Never put an EQUIPMENT_X there.\n"
-            f"When exact target loads are requested, choose an equipmentId whose listed selectable app loads can represent those exact values. Do not approximate or pick the nearest load.\n"
-            f"When an exercise requires an accessory that is already in the list above (same name), you MUST use that existing ID. Do NOT create a new accessory with a new ID for the same item.\n"
-            f"{gear_creation_constraint}"
-            f"Ensure all equipmentId and requiredAccessoryEquipmentIds values reference valid entries under that gear policy.\n\n"
-        )
-        if exercise_library:
-            user_content += (
-                format_exercise_library_catalog(exercise_library, provided_equipment)
-                + "For BODY_WEIGHT rows, copy bodyWeightPercentage verbatim into the plan "
-                "exercise (it is already in percentage form, e.g. 100.0).\n"
-                "Select catalog entries by matching the WOD context, not just the movement "
-                "pattern: prefer the plain/unqualified variant unless the WOD states or "
-                "implies the qualifier (a '@ load' implies a weighted variant; 'ring', "
-                "'incline', 'assisted', 'rack' imply those variants); and the row's "
-                "equipment must be gear the WOD actually provides for that movement.\n"
-                "The catalog is the sole allowed source of movements. Every planned exercise "
-                "must copy one listed libraryDefinitionId. Do not invent or infer a movement that "
-                "is absent from this catalog. The generator will resolve the selected ID to the "
-                "full immutable definition after planning. You may optionally set nameOverride to "
-                "a workout-local alias, but name must remain the canonical catalog name. "
-                "Periodized phases may and should use separate EXERCISE_X entries for independent "
-                "sets, reps, loads, rests, and progression while selecting the same libraryDefinitionId. "
-                "If the request cannot be satisfied from the catalog, do not substitute a new exercise.\n\n"
-            )
-            user_content += (
-                "Strict library mode also forbids creating equipment or accessories. Use only gear "
-                "from the supplied file, because every selected definition already declares its setup.\n\n"
-            )
-            selected_ids = set(provided_equipment.get("selectedExerciseDefinitionIds") or [])
-            if selected_ids:
-                selected = [
-                    {"libraryDefinitionId": definition["id"], "name": definition.get("name")}
-                    for definition in exercise_library if definition["id"] in selected_ids
-                ]
-                user_content += (
-                    "Confirmed library selections: every entry below must occur in the plan, including warm-ups; "
-                    "do not add, omit or substitute a definition. Repeated movements use separate EXERCISE_X "
-                    "prescriptions referencing the same libraryDefinitionId.\n"
-                    + json.dumps(selected, separators=(",", ":")) + "\n\n"
-                )
-    
-    user_content += (
-        "If workout/day names appear in both Context summary and Additional request with different formatting, "
-        "prefer the exact names from Context summary.\n\n"
-    )
-    user_content += "Generate the PlanIndex based on this context. Output only the PlanIndex JSON."
-    
-    messages = [
-        {"role": "system", "content": PLAN_INDEX_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
-    ]
-    
-    if logger:
-        trunc = user_content[:2000] + (f"... [truncated, total {len(user_content)} chars]" if len(user_content) > 2000 else "")
-        logger.log_request("generate_index", f"model={DEEPSEEK_MODEL} thinking={'enabled' if use_reasoner else 'disabled'} messages={len(messages)}\n{trunc}")
-    if use_reasoner:
-        content = json_call_reasoner_only_with_loading(client, messages, "Generating plan index", show_loading=True, logger=logger)
-    else:
-        content = json_call_chat_max_with_loading(client, messages, "Generating plan index", show_loading=True, logger=logger)
-    if content is None:
-        return None
-    if logger:
-        logger.log_response("generate_index", content, truncate_at=8000)
-    
-    if not content:
-        raise ValueError("Model returned empty PlanIndex JSON content.")
-    
-    try:
-        plan_index = json.loads(content)
-        # Validate basic structure
-        if not isinstance(plan_index, dict):
-            raise ValueError("Invalid PlanIndex format: must be an object")
-        if "equipments" not in plan_index or not isinstance(plan_index["equipments"], list):
-            raise ValueError("Invalid PlanIndex format: missing 'equipments' array")
-        if "accessoryEquipments" not in plan_index or not isinstance(plan_index["accessoryEquipments"], list):
-            raise ValueError("Invalid PlanIndex format: missing 'accessoryEquipments' array")
-        if "exercises" not in plan_index or not isinstance(plan_index["exercises"], list):
-            raise ValueError("Invalid PlanIndex format: missing 'exercises' array")
-        if "workouts" not in plan_index or not isinstance(plan_index["workouts"], list):
-            raise ValueError("Invalid PlanIndex format: missing 'workouts' array")
-        
-        return plan_index
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse PlanIndex JSON: {e}")
 
 # Normalized data structures for planner/emitter architecture
 # These are type hints/documentation - actual data is dict-based for JSON compatibility
 
 
-
-
-def self_heal_validation_error(client, workout_json, validation_error, context_summary, max_attempts=3, attempt=1):
-    """
-    Attempt to self-heal a validation error by sending it to the LLM for fixing.
-    Uses targeted healing to fix only the specific failing item, not the entire JSON.
-    
-    Args:
-        client: OpenAI client
-        workout_json: The invalid JSON that failed validation
-        validation_error: The validation error exception
-        context_summary: Summary of generation context
-        max_attempts: Maximum number of retry attempts
-        attempt: Current attempt number (for recursion)
-        
-    Returns:
-        dict: Fixed JSON that should pass validation
-        
-    Raises:
-        Exception: If healing fails after max attempts
-    """
-    if attempt > max_attempts:
-        raise Exception(f"Self-healing failed after {max_attempts} attempts. Last error: {str(validation_error)}")
-    
-    # Extract error details
-    error_details = extract_validation_error_details(validation_error)
-    path_info = error_details.get("path_info", {})
-    
-    print(f"  Attempt {attempt}/{max_attempts}: Analyzing error...")
-    if error_details.get("path"):
-        print(f"    Error path: {error_details['path']}")
-    if error_details.get("expected"):
-        print(f"    Expected: {error_details['expected']}")
-    
-    # Try to extract the specific failing item
-    extracted_data = extract_item_by_path(workout_json, path_info)
-    
-    if extracted_data is None:
-        # Cannot extract specific item (path not parseable), fall back to full JSON healing
-        print(f"    Warning: Cannot extract specific item, using full JSON healing (may hit token limits)")
-        return self_heal_validation_error_full_json(client, workout_json, validation_error, context_summary, max_attempts, attempt)
-    
-    item = extracted_data.get("item")
-    item_context = extracted_data.get("context", {})
-    item_type = extracted_data.get("item_type", "unknown")
-    
-    print(f"    Extracted {item_type} item for targeted healing")
-    
-    # Build minimal JSON structure with just the item and context
-    minimal_json = {
-        "item": item,
-        "itemType": item_type,
-        "context": item_context
-    }
-    
-    # Build prompt for LLM
-    error_message = error_details.get("message", str(validation_error))
-    invalid_json_str = json.dumps(minimal_json, indent=2)
-    
-    heal_messages = [
-        {"role": "system", "content": SELF_HEAL_SYSTEM_PROMPT},
-        {"role": "user", "content": (
-            f"Fix the following JSON schema validation error:\n\n"
-            f"ERROR MESSAGE:\n{error_message}\n\n"
-            f"ERROR DETAILS:\n"
-            f"- Path: {error_details.get('path', 'Unknown')}\n"
-            f"- Expected: {error_details.get('expected', 'Unknown')}\n"
-            f"- Actual value: {error_details.get('actual', 'Unknown')}\n"
-            f"- Item Type: {item_type}\n\n"
-            f"CONTEXT:\n{context_summary}\n\n"
-            f"INVALID ITEM (extracted from full structure):\n{invalid_json_str}\n\n"
-            f"INSTRUCTIONS:\n"
-            f"1. Fix ONLY the field(s) causing the validation error in the 'item' field\n"
-            f"2. Preserve all other data in the item exactly as-is\n"
-            f"3. Return ONLY the fixed item (the value of 'item' after fixing), not the wrapper structure\n"
-            f"4. Ensure the fix satisfies the schema requirement: {error_details.get('expected', 'schema constraint')}\n"
-            f"5. Use the context provided (equipments, etc.) to make contextually appropriate fixes\n"
-        )}
-    ]
-    
-    allowed, descendants = build_allowed_patch_scope([validation_error])
-    if not (allowed or descendants):
-        raise SchemaRepairError('Validation did not establish any permitted repair paths. Restore the authoritative input first.')
-    heal_messages[-1]['content'] += '\nPermitted document paths: ' + json.dumps({'exact': sorted(allowed), 'descendants': sorted(descendants)})
-    # Call LLM to get fixed item
-    try:
-        print(f"    Calling LLM for targeted fix...")
-        fixed_json_str = json_call_reasoner_only_with_loading(client, heal_messages, "Fixing validation error")
-        
-        if fixed_json_str is None:
-            raise Exception("LLM call was cancelled")
-        
-        # Parse the fixed JSON
-        try:
-            fixed_item_data = json.loads(fixed_json_str)
-            # The LLM should return just the fixed item, but might return a wrapper
-            if isinstance(fixed_item_data, dict) and "item" in fixed_item_data:
-                fixed_item = fixed_item_data["item"]
-            else:
-                fixed_item = fixed_item_data
-        except json.JSONDecodeError as e:
-            raise Exception(f"LLM returned invalid JSON: {e}")
-        
-        # Reassemble the fixed item back into the full structure
-        fixed_json = reassemble_item(workout_json, extracted_data['path_info'], fixed_item)
-        validate_schema_repair(workout_json, fixed_json, [validation_error])
-        
-        # Validate the reassembled JSON
-        if validate is not None:
-            try:
-                validate(instance=fixed_json, schema=JSON_SCHEMA)
-                print(f"  ✓ Self-healing successful on attempt {attempt}!")
-                return fixed_json
-            except Exception as new_error:
-                # Still invalid, try again if we have attempts left
-                if attempt < max_attempts:
-                    print(f"    Validation still failing, retrying...")
-                    return self_heal_validation_error(
-                        client, 
-                        fixed_json, 
-                        new_error, 
-                        context_summary, 
-                        max_attempts, 
-                        attempt + 1
-                    )
-                else:
-                    raise Exception(f"Fixed JSON still invalid after {max_attempts} attempts. Last error: {str(new_error)}")
-        else:
-            # No validation available, return the fixed JSON
-            print(f"  ✓ Self-healing completed (validation disabled)")
-            return fixed_json
-            
-    except SchemaRepairError:
-        raise
-    except Exception as e:
-        if attempt < max_attempts:
-            print(f"    Error during healing, retrying... ({str(e)})")
-            return self_heal_validation_error(
-                client, 
-                workout_json, 
-                validation_error, 
-                context_summary, 
-                max_attempts, 
-                attempt + 1
-            )
-        else:
-            raise Exception(f"Self-healing failed: {str(e)}")
-
-def self_heal_validation_error_full_json(client, workout_json, validation_error, context_summary, max_attempts=3, attempt=1):
-    """
-    Fallback self-healing method that sends the entire JSON (used when path cannot be parsed).
-    This is the original implementation kept as a fallback.
-    """
-    if attempt > max_attempts:
-        raise Exception(f"Self-healing failed after {max_attempts} attempts. Last error: {str(validation_error)}")
-    
-    # Extract error details
-    error_details = extract_validation_error_details(validation_error)
-    
-    print(f"  Attempt {attempt}/{max_attempts}: Analyzing error (full JSON mode)...")
-    if error_details.get("path"):
-        print(f"    Error path: {error_details['path']}")
-    if error_details.get("expected"):
-        print(f"    Expected: {error_details['expected']}")
-    
-    # Build prompt for LLM
-    error_message = error_details.get("message", str(validation_error))
-    invalid_json_str = json.dumps(workout_json, indent=2)
-    
-    heal_messages = [
-        {"role": "system", "content": SELF_HEAL_SYSTEM_PROMPT},
-        {"role": "user", "content": (
-            f"Fix the following JSON schema validation error:\n\n"
-            f"ERROR MESSAGE:\n{error_message}\n\n"
-            f"ERROR DETAILS:\n"
-            f"- Path: {error_details.get('path', 'Unknown')}\n"
-            f"- Expected: {error_details.get('expected', 'Unknown')}\n"
-            f"- Actual value: {error_details.get('actual', 'Unknown')}\n\n"
-            f"CONTEXT:\n{context_summary}\n\n"
-            f"INVALID JSON:\n{invalid_json_str}\n\n"
-            f"INSTRUCTIONS:\n"
-            f"1. Fix ONLY the field(s) causing the validation error\n"
-            f"2. Preserve all other data exactly as-is\n"
-            f"3. Return the complete corrected JSON structure\n"
-            f"4. Ensure the fix satisfies the schema requirement: {error_details.get('expected', 'schema constraint')}\n"
-        )}
-    ]
-    
-    allowed, descendants = build_allowed_patch_scope([validation_error])
-    if not (allowed or descendants):
-        raise SchemaRepairError('Validation did not establish any permitted repair paths. Restore the authoritative input first.')
-    heal_messages[-1]['content'] += '\nPermitted document paths: ' + json.dumps({'exact': sorted(allowed), 'descendants': sorted(descendants)})
-    # Call LLM to get fixed JSON
-    try:
-        print(f"    Calling LLM for fix...")
-        fixed_json_str = json_call_reasoner_only_with_loading(client, heal_messages, "Fixing validation error (full JSON)")
-        
-        if fixed_json_str is None:
-            raise Exception("LLM call was cancelled")
-        
-        # Parse the fixed JSON
-        try:
-            fixed_json = json.loads(fixed_json_str)
-        except json.JSONDecodeError as e:
-            raise Exception(f"LLM returned invalid JSON: {e}")
-        
-        validate_schema_repair(workout_json, fixed_json, [validation_error])
-        # Validate the fixed JSON
-        if validate is not None:
-            try:
-                validate(instance=fixed_json, schema=JSON_SCHEMA)
-                print(f"  ✓ Self-healing successful on attempt {attempt}!")
-                return fixed_json
-            except Exception as new_error:
-                # Still invalid, try again if we have attempts left
-                if attempt < max_attempts:
-                    print(f"    Validation still failing, retrying...")
-                    return self_heal_validation_error_full_json(
-                        client, 
-                        fixed_json, 
-                        new_error, 
-                        context_summary, 
-                        max_attempts, 
-                        attempt + 1
-                    )
-                else:
-                    raise Exception(f"Fixed JSON still invalid after {max_attempts} attempts. Last error: {str(new_error)}")
-        else:
-            # No validation available, return the fixed JSON
-            print(f"  ✓ Self-healing completed (validation disabled)")
-            return fixed_json
-            
-    except SchemaRepairError:
-        raise
-    except Exception as e:
-        if attempt < max_attempts:
-            print(f"    Error during healing, retrying... ({str(e)})")
-            return self_heal_validation_error_full_json(
-                client, 
-                workout_json, 
-                validation_error, 
-                context_summary, 
-                max_attempts, 
-                attempt + 1
-            )
-        else:
-            raise Exception(f"Self-healing failed: {str(e)}")
-
 def save_workout_to_file(workout_json, script_dir=None):
     """
     Save workout plan package JSON to a timestamped file in the workouts/ directory.
-    
+
     Args:
         workout_json: The complete workout plan package JSON dictionary
         script_dir: Directory where the script is located (defaults to current directory)
-    
+
     Returns:
         str: Path to the saved file, or None if saving failed
     """
@@ -2174,20 +548,20 @@ def save_workout_to_file(workout_json, script_dir=None):
             except (NameError, AttributeError):
                 # Fallback to current working directory if __file__ is not available
                 script_dir = os.getcwd()
-        
+
         # Create workouts directory if it doesn't exist
         workouts_dir = os.path.join(script_dir, "workouts")
         os.makedirs(workouts_dir, exist_ok=True)
-        
+
         # Generate timestamped filename
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         filename = f"workout_plan_{timestamp}.json"
         filepath = os.path.join(workouts_dir, filename)
-        
+
         # Write JSON to file
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(workout_json, f, indent=2, ensure_ascii=False)
-        
+
         return filepath
     except Exception as e:
         print(f"Error saving workout to file: {e}", file=sys.stderr)
@@ -2196,7 +570,7 @@ def save_workout_to_file(workout_json, script_dir=None):
 def display_workout_summary(workout_json, filepath, logger=None):
     """
     Display a summary of the generated workout plan package.
-    
+
     Args:
         workout_json: The complete workout plan package JSON dictionary
         filepath: Path to the saved file
@@ -2206,22 +580,22 @@ def display_workout_summary(workout_json, filepath, logger=None):
     workouts = workout_json.get("workouts", [])
     equipments = workout_json.get("equipments", [])
     plan_name = workout_json.get("name", "Generated Workout Plan")
-    
+
     if not workouts:
         _out("Warning: No workouts found in generated JSON")
         return
-    
+
     # Sort workouts by order value (default to 999 if missing)
     sorted_workouts = sorted(workouts, key=lambda w: w.get("order", 999))
-    
+
     # Collect all workout names in sorted order
     workout_names = []
     total_exercise_count = 0
-    
+
     for workout in sorted_workouts:
         workout_name = workout.get("name", "Unnamed Workout")
         workout_names.append(workout_name)
-        
+
         # Count exercises in workout components
         exercise_count = 0
         for component in workout.get("workoutComponents", []):
@@ -2230,12 +604,12 @@ def display_workout_summary(workout_json, filepath, logger=None):
             elif component.get("type") == "Superset":
                 exercise_count += len(component.get("exercises", []))
         total_exercise_count += exercise_count
-    
+
     # Get file size
     file_size = 0
     if filepath and os.path.exists(filepath):
         file_size = os.path.getsize(filepath)
-    
+
     # Display summary
     _out("\n" + "=" * 70)
     _out("Workout Plan Generated Successfully!")
@@ -2258,7 +632,7 @@ def display_workout_summary(workout_json, filepath, logger=None):
 def display_timing_summary(timing_data, is_resume=False, logger=None):
     """
     Display timing summary for workout generation.
-    
+
     Args:
         timing_data: Dict with timing information
         is_resume: Whether this was a resumed session
@@ -2267,30 +641,30 @@ def display_timing_summary(timing_data, is_resume=False, logger=None):
     if not timing_data:
         return
     _out = (lambda m: logger.log_print(m)) if logger else (lambda m: print(m))
-    
+
     total_time = timing_data.get("total_time_seconds", 0.0)
     step_times = timing_data.get("step_times", {})
     save_times = timing_data.get("save_times", [])
-    
+
     _out("\n" + "=" * 70)
     _out("Generation Timing Summary")
     _out("=" * 70)
-    
+
     if is_resume:
         _out(f"Total Generation Time: {total_time:.2f}s (includes previous session)")
     else:
         _out(f"Total Generation Time: {total_time:.2f}s")
-    
+
     if step_times:
         _out("\nStep Times:")
         step_names = {
             0: "Summarize conversation",
-            1: "Generate plan index",
-            2: "Emit equipment items",
-            3: "Emit exercise definitions",
+            1: "Load confirmed plan",
+            2: "Load equipment",
+            3: "Compile exercise prescriptions",
             4: "Build workout structures",
             5: "Assemble placeholder workout plan package",
-            6: "Validate and repair JSON",
+            6: "Validate package schema",
             7: "Convert placeholders to UUIDs",
             8: "Audit actual volume and duration",
         }
@@ -2302,18 +676,13 @@ def display_timing_summary(timing_data, is_resume=False, logger=None):
             step_num_int = int(step_num) if isinstance(step_num, str) and step_num.isdigit() else step_num
             step_name = step_names.get(step_num_int, f"Step {step_num_int}")
             _out(f"  {step_name}: {step_time:.2f}s")
-    
+
     _out("=" * 70)
 
 
 CONVERSATION_FILE = "conversation_history.json"
 
 
-
-
-
-
-                                                                                                                                                                                                                                                   
 # Extracted module bindings (compatibility-safe rebinds)
 from workout_generator_pkg.paths import (
     get_progress_dir as _mod_get_progress_dir,

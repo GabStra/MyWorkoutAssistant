@@ -45,6 +45,34 @@ def _package(*components):
     return {"workouts": [{"id": "WORKOUT_0", "name": "Day", "workoutComponents": list(components)}]}
 
 
+@pytest.mark.parametrize('count', [1, 2])
+def test_opening_setup_counts_once_and_changes_session_limit(count):
+    package = _package(*[_exercise(f'exercise-{index}', 1, 1) for index in range(count)])
+    baseline = audit.audit_workout_package(package, {})['workouts'][0]
+    assert baseline['timing']['generalWarmupSeconds'] == 300
+    assert baseline['timing']['transitionSeconds'] == 60 * count
+    assert len(baseline['setupEstimates']) == count
+    changed = audit.audit_workout_package(package, {'maximumSessionSeconds': baseline['estimatedSeconds']},
+        setup_seconds_by_exercise={'exercise-0': 300})
+    assert changed['workouts'][0]['estimatedSeconds'] - baseline['estimatedSeconds'] == 240
+    assert changed['workouts'][0]['setupEstimates'][0] == {
+        'exerciseId': 'exercise-0', 'seconds': 300,
+        'scope': 'one_time_before_exercise', 'basis': 'declared_estimate'}
+    assert any(issue['code'] == 'duration_exceeded' for issue in changed['errors'])
+
+
+@pytest.mark.parametrize('index', [0, 1])
+@pytest.mark.parametrize('seconds', [-1, True, 1801])
+def test_invalid_setup_rejects_opening_and_later_exercises_equally(index, seconds):
+    package = _package(_exercise('first', 1, 1), _exercise('second', 1, 1))
+    exercise_id = ('first', 'second')[index]
+    report = audit.audit_workout_package(package, {}, setup_seconds_by_exercise={exercise_id: seconds})
+    issue = next(issue for issue in report['errors'] if issue['code'] == 'invalid_setup_time')
+    assert issue['exerciseId'] == exercise_id
+    assert issue['path'] == f'/workouts/0/exercises/{index}/setupSeconds'
+    assert report['workouts'][0]['timing']['transitionSeconds'] == 120
+
+
 def test_minimum_only_volume_target_accepts_overage_and_numeric_maximum_still_rejects_it():
     package = _package(_exercise('press', 10, 21))
     minimum_only = {'weeklyEffectiveSets': {'chest': {'minimum': 15, 'maximum': None}},
@@ -162,10 +190,10 @@ def test_unilateral_timing_counts_both_sides_but_volume_once():
     assert workout["volume"]["quads"]["effective"] == 2
     assert workout["timing"] == {
         "workSeconds": 120, "restSeconds": 130, "generalWarmupSeconds": 300,
-        "rampUpSeconds": 120, "transitionSeconds": 0,
+        "rampUpSeconds": 120, "transitionSeconds": 60,
         "calibrationSeconds": 0,
     }
-    assert workout["estimatedSeconds"] == 670
+    assert workout["estimatedSeconds"] == 730
 
 
 @pytest.mark.parametrize('set_type', ['EnduranceSet', 'TimedDurationSet'])
@@ -181,7 +209,7 @@ def test_timed_unilateral_rest_can_make_a_session_exceed_its_limit(set_type, sup
     report = audit.audit_workout_package(_package(component), {'maximumSessionSeconds': limit})
     workout = report['workouts'][0]
     assert workout['timing']['restSeconds'] == (160 if superset else 40)
-    assert workout['estimatedSeconds'] == (700 if superset else 460)
+    assert workout['estimatedSeconds'] == (760 if superset else 520)
     assert any(error['code'] == 'duration_exceeded' for error in report['errors'])
 
 
@@ -192,7 +220,7 @@ def test_native_load_calibration_estimates_one_inserted_set_without_changing_wor
     assert report["workouts"][0]["workingSets"] == 3
     assert report["weeklyVolume"]["chest"]["direct"] == 3
     assert report["workouts"][0]["timing"]["calibrationSeconds"] == 30
-    assert report["workouts"][0]["estimatedSeconds"] == 600
+    assert report["workouts"][0]["estimatedSeconds"] == 660
     assert not report["errors"]
     assert 'interaction, retries, and actual execution time remain unknown' in report['calibrationTiming']
     over_limit = audit.audit_workout_package(_package(exercise), {'maximumSessionSeconds': 590})
@@ -206,7 +234,7 @@ def test_native_unilateral_calibration_estimate_counts_both_sides_and_between_si
     timing = report['workouts'][0]['timing']
     assert timing['calibrationSeconds'] == 48
     assert timing['restSeconds'] == 150
-    assert report['workouts'][0]['estimatedSeconds'] == 594
+    assert report['workouts'][0]['estimatedSeconds'] == 654
 
 
 def test_plan_audit_keeps_native_calibration_flag_without_inventing_attempt_metadata():
@@ -220,7 +248,7 @@ def test_plan_audit_keeps_native_calibration_flag_without_inventing_attempt_meta
     report = audit.audit_workout_package(package, plan['auditTargets'])
     assert report['workouts'][0]['workingSets'] == 3
     assert report['workouts'][0]['timing']['calibrationSeconds'] == 30
-    assert report['workouts'][0]['estimatedSeconds'] == 600
+    assert report['workouts'][0]['estimatedSeconds'] == 660
 
 
 def test_explicit_calibration_set_and_rest_are_timed_as_real_activity():
@@ -240,7 +268,7 @@ def test_explicit_calibration_set_and_rest_are_timed_as_real_activity():
     assert day['timing']['workSeconds'] == 90
     assert day['timing']['restSeconds'] == 255
     assert day['timing']['calibrationSeconds'] == 15
-    assert day['estimatedSeconds'] == 660
+    assert day['estimatedSeconds'] == 720
 
 
 def test_superset_uses_round_rest_and_omits_final_recovery():
@@ -249,11 +277,32 @@ def test_superset_uses_round_rest_and_omits_final_recovery():
     superset = {"type": "Superset", "exercises": [first, second], "restSecondsByExercise": {"first": 40, "second": 75}}
     report = audit.audit_workout_package(_package(superset), {})
     assert report["workouts"][0]["timing"]["restSeconds"] == 155
-    assert report["workouts"][0]["estimatedSeconds"] == 695
+    assert report["workouts"][0]["estimatedSeconds"] == 755
     second["sets"].extend([{"type": "RestSet", "timeInSeconds": 90}, {"type": "WeightSet", "reps": 20}])
     report = audit.audit_workout_package(_package(superset), {})
     assert report["workouts"][0]["workingSets"] == 4
     assert "shortest member" in report["issues"][0]
+
+
+@pytest.mark.parametrize('rounds', [1, 2])
+def test_zero_member_recovery_only_counts_completed_round_rests_and_keeps_setup(rounds):
+    first = _exercise('first', 10, rounds)
+    second = _exercise('second', 10, rounds)
+    for exercise in (first, second):
+        for item in exercise['sets']:
+            if item['type'] == 'RestSet':
+                item['timeInSeconds'] = 60
+    straight = audit.audit_workout_package(_package(first, second), {})['workouts'][0]
+    superset = {'type': 'Superset', 'exercises': [first, second],
+        'restSecondsByExercise': {'first': 0, 'second': 60}}
+    grouped = audit.audit_workout_package(_package(superset), {})['workouts'][0]
+
+    assert grouped['timing']['restSeconds'] == 60 * (rounds - 1)
+    assert grouped['timing']['transitionSeconds'] == straight['timing']['transitionSeconds'] == 120
+    assert grouped['setupEstimates'] == straight['setupEstimates']
+    assert grouped['volume'] == straight['volume']
+    assert straight['estimatedSeconds'] - grouped['estimatedSeconds'] == 60 * (rounds - 1)
+    assert 'Zero prescribed recovery between members does not imply zero physical changeover time' in audit.audit_policy()['setupTiming']
 
 
 def _plan():
@@ -337,34 +386,6 @@ def test_superset_timed_work_is_included_in_duration():
     assert report["workouts"][0]["timing"]["restSeconds"] == 30
 
 
-def test_pipeline_returns_audit_to_conversation_before_emission(monkeypatch, tmp_path):
-    from dataclasses import replace
-    from workout_generator_pkg.deps import resolve_pipeline_deps
-    from workout_generator_pkg.generation_pipeline import execute_workout_generation
-
-    events = []
-
-    def repair(*_args, **_kwargs):
-        events.append("repair")
-        return '{"changes":[{"exerciseId":"EXERCISE_0","numWorkSets":4,"placementNotes":"Four working sets."}]}'
-
-    def emission(items, *_args, **_kwargs):
-        events.append("emission")
-        assert items[0][1]["plan_index"]["exercises"][0]["numWorkSets"] == 4
-        raise RuntimeError("Stopped before model emission")
-
-    monkeypatch.setattr(audit, "json_call_reasoner_only_with_loading", repair)
-    deps = replace(
-        resolve_pipeline_deps(), test_connection=lambda *_args, **_kwargs: (True, None),
-        hash_conversation=lambda *_: "hash", summarize_conversation=lambda *_: "summary",
-        generate_index=lambda *_args, **_kwargs: _plan(),
-        save_generation_progress=lambda *_args, **_kwargs: ("progress.json", 0),
-        parallel_emit_items=emission,
-    )
-    result = execute_workout_generation(None, [{"role": "user", "content": "CONFIRM GENERATE"}], script_dir=str(tmp_path), deps=deps, force_use_reasoner=False)
-    assert events == []
-    assert not result["success"] and result["requires_plan_revision"]
-    assert "Weekly chest: 3 effective sets" in result["programming_audit"]["issues"][0]
 
 
 def test_load_calibration_flag_and_stale_trial_metadata_do_not_inflate_session_time():
@@ -372,7 +393,7 @@ def test_load_calibration_flag_and_stale_trial_metadata_do_not_inflate_session_t
     exercise.update(requiresLoadCalibration=True, calibrationAttempts=2, calibrationRecoverySeconds=90)
     planned = audit.audit_workout_package(_package(exercise), {'maximumSessionSeconds': 750})
     assert planned['workouts'][0]['timing']['calibrationSeconds'] == 30
-    assert planned['workouts'][0]['estimatedSeconds'] == 600
+    assert planned['workouts'][0]['estimatedSeconds'] == 660
     assert not planned['errors']
     assert 'calibrationAttemptsByExercise' not in planned
     assert 'calibrationRecoverySecondsByExercise' not in planned

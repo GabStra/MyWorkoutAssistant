@@ -118,7 +118,7 @@ def test_joint_solver_emits_count_series_hints_without_changing_domain_identity(
     requirements['executionRules'] = [{'kind': 'rest', 'coverageKey': None,
         'context': 'straightSets', 'minimumSeconds': 60, 'maximumSeconds': 90}]
     captured = {}
-    solve = joint_planning._milp_solve
+    solve = joint_planning._cp_solve
     fingerprint = joint_planning._joint_model_domain_fingerprint
 
     def capture_solver(variables, features, **options):
@@ -135,7 +135,7 @@ def test_joint_solver_emits_count_series_hints_without_changing_domain_identity(
             == fingerprint(without_hints, features, **kwargs))
         return fingerprint(variables, features, **kwargs)
 
-    monkeypatch.setattr(joint_planning, '_milp_solve', capture_solver)
+    monkeypatch.setattr(joint_planning, '_cp_solve', capture_solver)
     monkeypatch.setattr(joint_planning, '_joint_model_domain_fingerprint', capture_fingerprint)
     result = joint_planning.solve_prescribed_week(
         sessions, requirements, equipment, preserve_source_selection=True)
@@ -200,7 +200,7 @@ def capture_solver(variables, features, **kwargs):
     captured['features'] = features
     raise ModelCaptured()
 joint_planning._joint_model_domain_fingerprint = capture_fingerprint
-joint_planning._milp_solve = capture_solver
+joint_planning._cp_solve = capture_solver
 try:
     joint_planning.solve_prescribed_week(sessions, requirements, equipment, preserve_source_selection=True)
 except ModelCaptured:
@@ -304,7 +304,7 @@ def test_proven_infeasible_repair_domain_skips_repeat_solver_only_for_same_optio
     def infeasible(*args, **kwargs):
         calls.append(1)
         return 'infeasible', None
-    monkeypatch.setattr(joint_planning, '_milp_solve', infeasible)
+    monkeypatch.setattr(joint_planning, '_cp_solve', infeasible)
     first_messages, candidate = _repair_solver_messages(equipment, requirements, sessions)
     first = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
         messages=first_messages, preserve_source_selection=True)
@@ -390,7 +390,7 @@ def test_revision_two_infeasibility_survives_later_admission_failure(monkeypatch
     add_tool_result(messages, 'repair_workout_alternative', {'repairCandidateId': 'REV_1'},
         {'attemptStatus': 'repair_review_failed', 'candidateSnapshot': revision}, 'review-failed')
     calls = []
-    monkeypatch.setattr(joint_planning, '_milp_solve', lambda *a, **k: (calls.append(1) or 'infeasible', None))
+    monkeypatch.setattr(joint_planning, '_cp_solve', lambda *a, **k: (calls.append(1) or 'infeasible', None))
     add_tool_result(messages, 'repair_workout_alternative', {'repairCandidateId': 'REV_2',
         'originalRequirementsId': 'REQ_1'}, {}, 'first-revision-call')
     first = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
@@ -499,7 +499,7 @@ def test_final_production_audit_disagreement_fails_closed(monkeypatch):
 @pytest.mark.parametrize('status', ['unproven', 'infeasible'])
 def test_solver_failure_never_produces_a_submission(monkeypatch, status):
     equipment, requirements, sessions = prescription_case()
-    monkeypatch.setattr(joint_planning, '_milp_solve', lambda *args, **kwargs: (status, None))
+    monkeypatch.setattr(joint_planning, '_cp_solve', lambda *args, **kwargs: (status, None))
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
     assert not result['feasible'] and result['status'] == status and 'sessions' not in result
 
@@ -514,19 +514,17 @@ def test_exact_per_set_prescriptions_are_not_resized():
     assert not result['feasible'] and result['status'] == 'infeasible'
 
 
-def test_joint_solve_ignores_request_deadline_and_frequency_mismatch_stays_invalid(monkeypatch):
+def test_joint_solve_uses_search_budget_and_frequency_mismatch_stays_invalid(monkeypatch):
     equipment, requirements, sessions = prescription_case()
-    from workout_generator_pkg import api_metrics
-    monkeypatch.setattr(api_metrics, 'remaining_request_timeout', lambda _: 0)
-    original = joint_planning._milp_solve
+    original = joint_planning._cp_solve
     solver_time_limits = []
     def solve_without_cap(variables, features, *, timeout_seconds, **kwargs):
         solver_time_limits.append(timeout_seconds)
         return original(variables, features, timeout_seconds=timeout_seconds, **kwargs)
-    monkeypatch.setattr(joint_planning, '_milp_solve', solve_without_cap)
+    monkeypatch.setattr(joint_planning, '_cp_solve', solve_without_cap)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
     assert result['feasible'], result
-    assert solver_time_limits and all(limit is None for limit in solver_time_limits)
+    assert solver_time_limits and all(0 < limit <= 60 for limit in solver_time_limits)
     result = joint_planning.solve_prescribed_week(sessions[:2], requirements, equipment)
     assert result['status'] == 'invalid_schedule' and not result['feasible']
 
@@ -764,39 +762,54 @@ def test_joint_priorities_use_small_sequential_objectives_and_keep_attained_dist
         for item in day['exercises']:
             item.pop('placementNotes', None)
     requirements['auditTargets']['maximumSessionSeconds'] = 2000
-    requirements['objectiveOrder'] = ['progression', 'distribution', 'preservation']
+    requirements['objectiveOrder'] = ['progression', 'distribution', 'role_concentration', 'preservation']
     requirements['requiredCoverage'] = [
-        {'key': key, 'description': key, 'scope': 'weekly'} for key in ('first', 'second')]
+        {'key': key, 'description': key, 'scope': 'weekly', 'intent': 'development'}
+        for key in ('first', 'second')]
     requirements['executionRules'] = [
         {'kind': 'coverageBalance', 'first': 'first', 'second': 'second', 'scope': 'weekly'}]
     for day in sessions:
         day['exercises'][0]['satisfiesCoverage'] = ['first', 'second']
-    solve = joint_planning._milp_solve
+    solve = joint_planning._cp_solve
     calls = []
     def record(variables, features, **options):
         assert max(abs(variable['objectiveCost']) for variable in variables) < 1_000_000
-        calls.append([feature[0] for feature in features if feature[0][0] == 'objective'])
+        calls.append((options['diagnostics']['goal'],
+            [feature[0] for feature in features if feature[0][0] == 'objective']))
         return solve(variables, features, **options)
-    monkeypatch.setattr(joint_planning, '_milp_solve', record)
+    monkeypatch.setattr(joint_planning, '_cp_solve', record)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment, balance=True)
     assert result['feasible'], result
     assert result['problemFingerprint'] == joint_planning.joint_problem_fingerprint(sessions, requirements, equipment)
     stages = result['objectiveProgress']
-    assert stages[0]['goal'] == 'distribution' and stages[0]['value'] == pytest.approx(0)
-    assert [stage['goal'] for stage in stages] == ['distribution', 'preservation']
-    assert result['objectivePolicy'] == 'approved' and result['objectiveOrderUsed'] == ['distribution', 'preservation']
+    assert stages[0]['goal'] == 'distribution_worst' and stages[0]['value'] == pytest.approx(0)
+    assert [stage['goal'] for stage in stages[:2]] == ['distribution_worst', 'distribution']
+    assert stages[2]['goal'] == 'role_concentration'
+    assert result['objectivePolicy'] == 'approved'
+    assert result['objectiveOrderUsed'] == ['distribution', 'role_concentration']
     assert result['approvedObjectiveOrder'] == requirements['objectiveOrder']
     priorities = {item['priority']: item for item in result['priorityExecution']['approvedPriorities']}
     assert priorities['progression']['owner'] == 'movement_selection_and_review'
     assert priorities['progression']['status'] == 'outside_joint_solver'
     assert priorities['progression']['solverStage'] is None
-    assert priorities['distribution']['solverStage'] == stages[0]
-    assert priorities['preservation']['solverStage'] == stages[1]
+    assert priorities['distribution']['solverStage'] == stages[1]
+    assert priorities['preservation']['status'] == 'no_applicable_options'
     assert result['priorityExecution']['coverageBalance'] == [{
         'kind': 'coverageBalance', 'first': 'first', 'second': 'second', 'scope': 'weekly',
         'owner': 'semantic_review', 'status': 'semantic_review_required', 'solverStage': None}]
-    assert len(calls) >= 2 and ('objective', 'distribution') in calls[1]
-    assert [day['volume']['chest']['effective'] for day in result['audit']['workouts']] == [6, 6, 6]
+    assert calls
+    for goal, locked in calls:
+        if goal in ('distribution', 'role_concentration', 'role_concentration_tiebreak'):
+            assert ('objective', 'distribution_worst') in locked
+    solved_goals = {goal for goal, _ in calls}
+    for stage in stages:
+        if stage['goal'] not in solved_goals:
+            assert stage['status'] == 'optimal_zero_lower_bound'
+            assert stage['globalVariableBound'] == 0
+            assert stage['boundWitness'] == 'feasible_incumbent'
+    chest_by_session = [day['volume']['chest']['effective'] for day in result['audit']['workouts']]
+    assert max(chest_by_session) - min(chest_by_session) == 0
+    assert 15 <= sum(chest_by_session) <= 18
 
 
 def test_directional_emphasis_preserves_supported_surplus_instead_of_forcing_equality():
@@ -859,7 +872,7 @@ def test_later_balance_stage_is_not_reported_optimal_after_feasible_prior_stage(
     for item in sessions[0]['exercises']:
         item.pop('placementNotes', None)
 
-    solve = joint_planning._milp_solve
+    solve = joint_planning._cp_solve
 
     def return_feasible_distribution_incumbent(variables, features, **options):
         status, candidate = solve(variables, features, **options)
@@ -867,7 +880,7 @@ def test_later_balance_stage_is_not_reported_optimal_after_feasible_prior_stage(
             return 'feasible', candidate
         return status, candidate
 
-    monkeypatch.setattr(joint_planning, '_milp_solve', return_feasible_distribution_incumbent)
+    monkeypatch.setattr(joint_planning, '_cp_solve', return_feasible_distribution_incumbent)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
 
     assert result['feasible'], result
@@ -1102,17 +1115,17 @@ def test_joint_stage_deadline_preserves_verified_incumbent_without_claiming_opti
     sessions[0]['exercises'][0]['numWorkSets'] = 5
     sessions[0]['exercises'][0].pop('targetSetPrescriptions')
     sessions[0]['exercises'][0]['workSetTemplate'] = {'reps': 8}
-    original = joint_planning._milp_solve
+    original = joint_planning._cp_solve
     calls = []
     def bounded(variables, features, **options):
-        assert options['timeout_seconds'] == 30
+        assert options['timeout_seconds'] == joint_planning._SOLVER_STAGE_SECONDS
         calls.append(1)
         if not has_incumbent or len(calls) > 1:
             return 'unproven', None
         status, candidate = original(variables, features, **options)
         assert candidate is not None, status
         return 'feasible', candidate
-    monkeypatch.setattr(joint_planning, '_milp_solve', bounded)
+    monkeypatch.setattr(joint_planning, '_cp_solve', bounded)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
         preserve_source_selection=True)
     assert result['feasible'] is has_incumbent
@@ -1183,7 +1196,7 @@ def test_distribution_does_not_turn_inclusion_only_coverage_into_emphasis():
     equipment, requirements, sessions = prescription_case()
     sessions = sessions[:3]
     requirements['sessionsPerWeek'] = 3
-    requirements['objectiveOrder'] = ['distribution']
+    requirements['objectiveOrder'] = ['workload_economy', 'distribution']
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 3, 'maximum': 3}
     requirements['auditTargets']['perSessionEffectiveSets']['chest'] = {'minimum': 1, 'maximum': 1}
     requirements['auditTargets']['maximumSessionSeconds'] = 5000
@@ -1269,7 +1282,7 @@ def test_preserve_source_selection_keeps_each_submitted_block_and_labels(monkeyp
                for error in missing_source['errors'])
 
 
-def test_preserve_source_selection_keeps_duplicate_definition_recipes_and_superset_group():
+def test_preserve_source_selection_keeps_duplicate_definition_occurrences_distinct():
     equipment, requirements, sessions = prescription_case()
     requirements['sessionsPerWeek'] = 1
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 10, 'maximum': 12}
@@ -1295,10 +1308,11 @@ def test_preserve_source_selection_keeps_duplicate_definition_recipes_and_supers
 
     assert result['feasible'], result
     solved = result['sessions'][0]['exercises']
-    assert [(item['definition_id'], item['minReps'], item['superset'] is not None)
-            for item in solved] == [
-        ('LIBRARY_0', 8, True), ('LIBRARY_1', 12, True), ('LIBRARY_0', 16, False)]
-    assert result['candidateOrderChanges'] == []
+    assert sorted((item['definition_id'], item['minReps']) for item in solved) == [
+        ('LIBRARY_0', 8), ('LIBRARY_0', 16), ('LIBRARY_1', 12)]
+    assert sorted(result['occurrenceLineage'][0]) == [[0, 0], [0, 1], [0, 2]]
+    patch = joint_planning.prescription_patch(sessions, result['sessions'], result['occurrenceLineage'])
+    assert apply_json_patch({'workouts': sessions}, patch)['workouts'] == result['sessions']
 
 
 def test_preserve_source_selection_maps_duplicate_recipe_occurrences_across_workouts():
@@ -1448,7 +1462,7 @@ def test_redistribution_solver_prohibits_matching_recipe_outside_declared_target
     constraints = [{'recipeSignature': redistribution_recipe_signature(source_recipe),
         'weeklyWorkSets': 16, 'targetWorkoutIndexes': [0, 1]}]
 
-    original_solver = joint_planning._milp_solve
+    original_solver = joint_planning._cp_solve
     observed = []
 
     def capture_boundary(variables, features, **options):
@@ -1456,7 +1470,7 @@ def test_redistribution_solver_prohibits_matching_recipe_outside_declared_target
             if feature[0][0] == 'redistribute_outside_targets')
         return original_solver(variables, features, **options)
 
-    monkeypatch.setattr(joint_planning, '_milp_solve', capture_boundary)
+    monkeypatch.setattr(joint_planning, '_cp_solve', capture_boundary)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
         preserve_source_selection=True, redistribution_constraints=constraints)
 
@@ -1614,20 +1628,20 @@ def test_objective_order_used_reports_attempted_stages_and_reuse_rejects_overcla
     equipment, requirements, sessions = two_recipe_order_case()
     requirements['objectiveOrder'] = ['distribution', 'workload_economy', 'preservation']
     baseline = copy.deepcopy(sessions)
-    solve = joint_planning._milp_solve
+    solve = joint_planning._cp_solve
 
     def stop_before_preservation(variables, features, **options):
         if options.get('diagnostics', {}).get('goal') == 'workload_economy':
             return 'unproven', None
         return solve(variables, features, **options)
 
-    monkeypatch.setattr(joint_planning, '_milp_solve', stop_before_preservation)
+    monkeypatch.setattr(joint_planning, '_cp_solve', stop_before_preservation)
     result = joint_planning.solve_prescribed_week(
         sessions, requirements, equipment, reviewed_baseline_workouts=baseline)
 
     assert result['feasible'] and result['status'] == 'feasible'
     assert [stage['goal'] for stage in result['objectiveProgress']] == [
-        'distribution', 'workload_economy']
+        'distribution_worst', 'distribution', 'workload_economy']
     assert result['objectiveOrderUsed'] == ['distribution', 'workload_economy']
     priorities = {item['priority']: item for item in result['priorityExecution']['approvedPriorities']}
     assert priorities['preservation']['status'] == 'not_run_after_solver_stop'
@@ -1674,7 +1688,7 @@ def test_joint_objective_fingerprint_ignores_resequence_but_binds_recipe_and_req
 
 def test_unproven_joint_solve_returns_receipt_without_candidate_result(monkeypatch):
     equipment, requirements, sessions = two_recipe_order_case()
-    monkeypatch.setattr(joint_planning, '_milp_solve', lambda *a, **k: ('unproven', None))
+    monkeypatch.setattr(joint_planning, '_cp_solve', lambda *a, **k: ('unproven', None))
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
     assert result['status'] == 'unproven' and not result['feasible']
     assert result['objectiveInputFingerprint'] == joint_planning.joint_objective_input_fingerprint(
@@ -1683,19 +1697,19 @@ def test_unproven_joint_solve_returns_receipt_without_candidate_result(monkeypat
 
 def test_submitted_order_is_a_hard_default_and_needs_no_second_order_solve(monkeypatch):
     equipment, requirements, sessions = two_recipe_order_case()
-    solve = joint_planning._milp_solve
+    solve = joint_planning._cp_solve
     calls = []
     def record(*args, **kwargs):
         calls.append(1)
         return solve(*args, **kwargs)
-    monkeypatch.setattr(joint_planning, '_milp_solve', record)
+    monkeypatch.setattr(joint_planning, '_cp_solve', record)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
     assert result['feasible'], result
     assert [item['definition_id'] for item in result['sessions'][0]['exercises']] == [
         'LIBRARY_0', 'LIBRARY_1']
     assert result['candidateOrderPolicy'] == {
-        'policy': 'approved_rules_then_compound_categories_then_isolation_then_core',
-        'mode': 'stable_topological', 'reviewRequired': False,
+        'policy': joint_planning.JOINT_POLICY_DESCRIPTOR['candidateOrdering'],
+        'mode': 'cp_sat_optional_block_circuit_joint_selection_and_sequence', 'reviewRequired': False,
     }
     assert len(calls) == 1
     assert result['candidateOrderChanges'] == []
@@ -1736,13 +1750,13 @@ def test_numeric_time_limit_cannot_silently_reorder_submitted_exercises():
 
 def test_feasible_numeric_incumbent_does_not_need_a_second_order_solve(monkeypatch):
     equipment, requirements, sessions = prescription_case()
-    original = joint_planning._milp_solve
+    original = joint_planning._cp_solve
     calls = []
     def feasible_incumbent(*args, **kwargs):
         status, candidate = original(*args, **kwargs)
         calls.append((status, candidate))
         return ('feasible', candidate) if candidate is not None else (status, candidate)
-    monkeypatch.setattr(joint_planning, '_milp_solve', feasible_incumbent)
+    monkeypatch.setattr(joint_planning, '_cp_solve', feasible_incumbent)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
     assert len(calls) == 1
     assert result['feasible'] and result['status'] == 'feasible'
@@ -1753,13 +1767,13 @@ def test_feasible_numeric_incumbent_does_not_need_a_second_order_solve(monkeypat
 def test_zero_lower_bound_objective_stages_count_as_optimal(monkeypatch):
     equipment, requirements, sessions = two_recipe_order_case()
     requirements['objectiveOrder'] = ['distribution']
-    solve = joint_planning._milp_solve
+    solve = joint_planning._cp_solve
 
     def prove_zero_lower_bound(*args, **kwargs):
         status, candidate = solve(*args, **kwargs)
         return ('optimal_zero_lower_bound' if status == 'optimal' else status), candidate
 
-    monkeypatch.setattr(joint_planning, '_milp_solve', prove_zero_lower_bound)
+    monkeypatch.setattr(joint_planning, '_cp_solve', prove_zero_lower_bound)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
 
     assert result['feasible'], result
@@ -1902,3 +1916,216 @@ def test_solver_conserves_selected_destinations_without_absorbing_same_recipe_el
     assert result['feasible'], result.get('instruction')
     counts = [day['exercises'][0]['numWorkSets'] for day in result['sessions']]
     assert counts == [8, 8, 8]
+
+
+@pytest.mark.parametrize('repeat_block', [False, True])
+def test_three_set_session_cap_cannot_be_bypassed_by_repeated_blocks(repeat_block):
+    equipment, requirements, sessions = prescription_case()
+    requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': None,
+                                      'minimumSets': 2, 'maximumSets': 3}]
+    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 6, 'maximum': 9}
+    requirements['auditTargets']['perSessionEffectiveSets'] = {}
+    for day in sessions:
+        if repeat_block:
+            day['exercises'].append(copy.deepcopy(day['exercises'][0]))
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
+    assert result['feasible'], result
+    for day in result['sessions']:
+        totals = {}
+        for item in day['exercises']:
+            assert 2 <= item['numWorkSets'] <= 3
+            reference = item['definition_id']
+            totals[reference] = totals.get(reference, 0) + item['numWorkSets']
+        assert all(total <= 3 for total in totals.values())
+
+
+def test_three_set_session_cap_reports_conflict_instead_of_relaxing_weekly_floor():
+    equipment, requirements, sessions = prescription_case()
+    requirements['auditTargets']['perSessionEffectiveSets'] = {}
+    requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': None,
+                                      'minimumSets': 2, 'maximumSets': 3}]
+    for day in sessions:
+        day['exercises'].append(copy.deepcopy(day['exercises'][0]))
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
+    assert not result['feasible'], result
+    assert requirements['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] == 15
+
+
+def test_setup_economy_solver_uses_supplied_compatible_pair_without_adding_work():
+    equipment, requirements, sessions = two_recipe_order_case()
+    requirements['objectiveOrder'] = ['workload_economy', 'setup_economy', 'duration_economy']
+    equipment['accessoryEquipments'] = [{'id': 'ACCESSORY_0', 'name': 'Mat'}]
+    for definition in equipment['exerciseDefinitions']:
+        definition['requiredAccessoryEquipmentIds'] = ['ACCESSORY_0']
+    requirements['auditTargets']['maximumSessionSeconds'] = 4000
+    for index, item in enumerate(sessions[0]['exercises']):
+        item.update(superset='PAIR', restBetweenSetsSeconds=0,
+                    restAfterSupersetExerciseSeconds=30 if index == 0 else 90)
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
+    assert result['feasible'], result
+    stages = {stage['goal']: stage for stage in result['objectiveProgress']}
+    # A superset changes no preparation-task identities; each distinct exercise still has its own task.
+    assert stages['setup_economy']['value'] == 2
+    assert 'setup_economy_blocks' not in stages
+    items = result['sessions'][0]['exercises']
+    assert len(items) == 2
+    assert items[0]['superset'] is not None
+    assert items[0]['superset'] == items[1]['superset']
+    assert not result['audit']['errors']
+
+
+def test_setup_order_reuses_equipment_without_overriding_categories_or_explicit_order():
+    from workout_generator_pkg.programming_guidelines import execution_order_indices, equipment_setup_resources
+    resources = [frozenset({'bar'}), frozenset({'rings'}), frozenset({'bar'}), frozenset({'bar'})]
+    keys = [(0, 0), (0, 1), (0, 2), (2, 3)]
+    requirements = {'objectiveOrder': ['setup_economy'], 'executionRules': []}
+    assert execution_order_indices([set()] * 4, keys, requirements, resources) == [0, 2, 1, 3]
+    requirements['executionRules'] = [{'kind': 'order', 'before': 'pull', 'after': 'squat'}]
+    assert execution_order_indices([set(), {'pull'}, {'squat'}, set()], keys, requirements, resources) == [0, 1, 2, 3]
+    assert equipment_setup_resources([{'equipmentId': 'bar', 'requiredAccessoryEquipmentIds': ['rack']},
+                                      {'equipmentId': 'bar'}]) == frozenset({'bar', 'rack'})
+
+
+def test_setup_comparison_counts_distinct_exercise_tasks_and_supersets_as_one_block():
+    requirements = {'objectiveOrder': ['setup_economy']}
+    context = {'setupDefinitions': {'A': {'equipmentId': 'bar'}, 'B': {'equipmentId': 'bar'}}}
+    items = [{'definition_id': 'A', 'superset': 'PAIR'}, {'definition_id': 'B', 'superset': 'PAIR'}]
+    candidate = {'workouts': [{'timesCompletedInAWeek': 2, 'exercises': items}],
+                 'audit': {'workouts': [{'estimatedSeconds': 100}]}}
+    costs = joint_planning._joint_candidate_objective_costs(candidate, requirements, context)
+    assert costs['setup_economy'] == 4
+    assert 'setup_economy_blocks' not in costs
+    items[1]['superset'] = None
+    costs = joint_planning._joint_candidate_objective_costs(candidate, requirements, context)
+    assert costs['setup_economy'] == 4
+    assert 'setup_economy_blocks' not in costs
+
+
+def test_duration_economy_selects_time_saving_pair_and_matches_native_audit():
+    equipment, requirements, sessions = two_recipe_order_case()
+    requirements['objectiveOrder'] = ['workload_economy', 'duration_economy']
+    requirements['auditTargets']['maximumSessionSeconds'] = None
+    for index, item in enumerate(sessions[0]['exercises']):
+        item.update(superset='PAIR', restBetweenSetsSeconds=0,
+                    restAfterSupersetExerciseSeconds=30 if index == 0 else 90)
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
+    assert result['feasible'], result
+    items = result['sessions'][0]['exercises']
+    assert len(items) == 2 and items[0]['superset'] is not None
+    assert items[0]['superset'] == items[1]['superset']
+    costs = joint_planning._joint_candidate_objective_costs(
+        {'workouts': result['sessions'], 'audit': result['audit']}, requirements, {})
+    assert costs['duration_economy'] == result['audit']['workouts'][0]['estimatedSeconds']
+    duration_stage = next(stage for stage in result['objectiveProgress'] if stage['goal'] == 'duration_economy')
+    assert duration_stage['value'] + joint_planning.ASSUMPTIONS['generalWarmupSeconds'] == pytest.approx(
+        costs['duration_economy'])
+    assert not result['audit']['errors']
+
+
+def test_duration_economy_does_not_admit_shared_load_conflict():
+    from test_workout_generator_programming_guidelines import case
+    equipment, requirements, _, draft = case([{'kind': 'supersetNoReconfiguration', 'coverageKey': None}])
+    requirements['objectiveOrder'] = ['duration_economy']
+    equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'type': 'BARBELL', 'name': 'Adjustable barbell',
+        'barWeight': 10, 'sleeveLength': 100, 'availablePlates': [{'weight': 5, 'thickness': 1}] * 2}]
+    equipment['exerciseDefinitions'][0].update(exerciseType='WEIGHT', equipmentId='EQUIPMENT_0', bodyWeightPercentage=None)
+    for index, item in enumerate(draft['workouts'][0]['exercises']):
+        item.pop('placementNotes', None)
+        item.update(superset='PAIR', restBetweenSetsSeconds=0, restAfterExerciseSeconds=0,
+                    restAfterSupersetExerciseSeconds=30 if index == 0 else 90,
+                    workSetTemplate={'reps': 9, 'weight': 10}, setupSeconds=60)
+    result = joint_planning.solve_prescribed_week(draft['workouts'], requirements, equipment)
+    assert result['feasible'], result
+    assert all(item['superset'] is None for item in result['sessions'][0]['exercises'])
+    assert any(item['code'] == 'execution_supersetNoReconfiguration' for item in result['rejectedOptions'])
+
+
+def test_movement_overlap_pairs_deduplicate_labels_and_repeated_blocks():
+    items = [{'definition_id': 'A', 'satisfiesCoverage': ['knee_dominant', 'sagittal_plane']},
+             {'definition_id': 'A', 'satisfiesCoverage': ['knee_dominant', 'sagittal_plane']},
+             {'definition_id': 'B', 'satisfiesCoverage': ['knee_dominant', 'sagittal_plane']},
+             {'definition_id': 'C', 'satisfiesCoverage': ['horizontal_pull']}]
+    assert joint_planning.overlapping_movement_pairs(items) == [('A', 'B')]
+
+
+def test_execution_complementarity_selects_reviewed_mix_and_keeps_unknown_unresolved():
+    variables, features, option_variables = [], [], []
+
+    def variable(upper=1, cost=0, domain_identity=None, lower=0, integer=True):
+        index = len(variables)
+        variables.append({'lower': lower, 'upper': upper, 'current': [], 'members': [],
+            'objectiveCost': cost, 'domainIdentity': domain_identity, 'integer': integer})
+        return index
+
+    def constraint(label, lower, upper, coefficients, intercept=0):
+        features.append((label, lower, upper, intercept, coefficients))
+
+    modes = {'BAR_SQUAT': 'bilateral', 'SPLIT_SQUAT': 'unilateral', 'UNKNOWN': None}
+    for reference in modes:
+        index = variable(domain_identity={'kind': 'recipe', 'reference': reference})
+        option_variables.append((index, 0, 0, {'items': [{'definition_id': reference,
+            'satisfiesCoverage': ['knee_dominant']}]}))
+    constraint(('two_exercises_required',), 2, 2,
+        {index: 1 for index, _, _, _ in option_variables})
+    costs, inventory = joint_planning._add_execution_complementarity_objective(
+        variable, constraint, option_variables, [{'timesCompletedInAWeek': 1}],
+        ['knee_dominant'], {reference: {'limbMode': mode} for reference, mode in modes.items()
+            if mode is not None})
+    for index, cost in costs.items():
+        variables[index]['objectiveCost'] = cost
+
+    status, chosen = joint_planning._cp_solve(variables, features, preserve_current=False)
+    assert status == 'optimal'
+    assert chosen[:3] == [1, 1, 0]
+    assert any(set(pair['definitionReferences']) == {'SPLIT_SQUAT', 'UNKNOWN'}
+        for pair in inventory['unresolvedPairs'])
+    assert not any(set(pair['definitionReferences']) == {'BAR_SQUAT', 'SPLIT_SQUAT'}
+        for pair in inventory['knownOtherModePairs'])
+
+    # Shared direct-muscle credit is not a movement role and must not create a pair penalty.
+    direct_only_options = [(0, 0, 0, {'items': [{'definition_id': 'A', 'satisfiesCoverage': ['glutes']}]}),
+        (1, 0, 0, {'items': [{'definition_id': 'B', 'satisfiesCoverage': ['glutes']}]})]
+    direct_costs, direct_inventory = joint_planning._add_execution_complementarity_objective(
+        lambda **_: 2, lambda *args: None, direct_only_options,
+        [{'timesCompletedInAWeek': 1}], ['glutes'], {})
+    assert direct_costs == {}
+    assert not any(direct_inventory.values())
+
+
+def test_movement_overlap_order_overrides_equipment_reuse_but_preserves_explicit_rules():
+    from workout_generator_pkg.programming_guidelines import execution_order_indices
+    roles = [{'knee_dominant'}, {'knee_dominant'}, {'horizontal_pull'}]
+    keys = [(0, 0), (0, 1), (0, 2)]
+    resources = [frozenset({'bar'}), frozenset({'bar'}), frozenset({'rings'})]
+    requirements = {'objectiveOrder': ['movement_overlap', 'setup_economy'], 'executionRules': []}
+    assert execution_order_indices(roles, keys, requirements, resources) == [0, 2, 1]
+    assert execution_order_indices(roles, [(0, 0), (0, 1), (1, 2)], requirements, resources) == [0, 2, 1]
+    requirements['executionRules'] = [{'kind': 'order', 'before': 'knee_dominant', 'after': 'horizontal_pull'}]
+    assert execution_order_indices(roles, keys, requirements, resources) == [0, 1, 2]
+
+
+def test_movement_overlap_solver_separates_equivalent_variants_without_losing_volume():
+    equipment, requirements, sessions = prescription_case()
+    requirements['objectiveOrder'] = ['workload_economy', 'movement_overlap']
+    requirements['auditTargets']['perSessionEffectiveSets'] = {}
+    requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': None, 'minimumSets': 3, 'maximumSets': 3}]
+    requirements['auditTargets']['maximumSessionSeconds'] = 2000
+    for day in sessions:
+        item = day['exercises'][0]
+        item.update(numWorkSets=3, allocationBounds={'minimum': 3, 'maximum': 3}, satisfiesCoverage=['horizontal_push'])
+        other = copy.deepcopy(item)
+        other['definition_id'] = 'LIBRARY_1'
+        day['exercises'].append(other)
+    definition = copy.deepcopy(equipment['exerciseDefinitions'][0])
+    definition.update(id='second_press', name='Second press')
+    equipment['exerciseDefinitions'].append(definition)
+    requirements['requiredCoverage'] = [{'key': 'horizontal_push', 'scope': 'weekly', 'description': 'Pressing'}]
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
+    assert result['feasible'], result
+    assert result['audit']['weeklyVolume']['chest']['effective'] >= 15
+    # Five three-set occurrences across three sessions necessarily leave two overlapping pairs.
+    stage = next(s for s in result['objectiveProgress'] if s['goal'] == 'movement_overlap')
+    assert stage['value'] == 2
+    costs = joint_planning._joint_candidate_objective_costs(
+        {'workouts': result['sessions'], 'audit': result['audit']}, requirements, {})
+    assert costs['movement_overlap'] == stage['value']

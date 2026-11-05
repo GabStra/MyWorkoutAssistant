@@ -1,6 +1,7 @@
 """Source-backed planning choices stored in the existing conversation tool results."""
 import copy
 import json
+from collections import Counter
 
 from jsonschema import ValidationError, validate
 
@@ -9,7 +10,7 @@ from .planning_tools import PlanningInputError, requirement_sources, source_mess
 
 RECORD_PLANNING_DECISIONS_TOOL = {'type': 'function', 'function': {
     'name': 'record_planning_decisions',
-    'description': 'Record a user decision or delegated interpretation of requirements. Ordinary exercise substitutions, load calibration and prescriptions within approved requirements belong in audit_workout_plan, not this tool. Cite SOURCE_n references from sourceMessages. This does not change numerical goals or restrictions. Reuse existing DECISION_n records instead of asking again. To replace a settled choice, supply supersedes and a concrete reason backed by the user instructions or a newly found conflict. Python checks authorization before saving the choices.',
+    'description': 'Record a user decision or delegated interpretation of requirements, or bind physical setup facts and set-counting choices through the offered typed fields. Ordinary exercise substitutions, load calibration and prescriptions within approved requirements belong in audit_workout_plan, not this tool. Cite SOURCE_n references from sourceMessages. This does not change numerical goals or restrictions. Reuse existing DECISION_n records instead of asking again. To replace a settled choice, supply supersedes and a concrete reason backed by the user instructions or a newly found conflict. Python checks authorization before saving the choices.',
     'parameters': {'type': 'object', 'properties': {
         'decisions': {'type': 'array', 'minItems': 1, 'items': {
             'type': 'object', 'properties': {
@@ -116,18 +117,140 @@ def reviewable_concern_ids(messages):
     return sorted(ids)
 
 
-def record_planning_decisions_tool(messages):
+def _current_programming_decision_choices(messages):
+    from .repair_execution import programming_decision_choices
+    from .planning_tools import latest_requirement_candidate
+    _, audit = max((_latest_result(messages, name) for name in
+        ('audit_workout_plan', 'draft_workout_sessions')), key=lambda item: item[0])
+    _, requirements = latest_requirement_candidate(messages)
+    if (audit.get('requirementsId') != requirements.get('requirementsId')
+            or requirements.get('requirements', {}).get('preferenceResolution') != 'explicit_tradeoffs'):
+        return {}, {}
+    return audit, programming_decision_choices(audit)
+
+
+def pending_capability_references(messages):
+    """Offer factual confirmation only for a current code-reported capability gap."""
+    calls = {call.get('id'): call.get('function', {}).get('name')
+        for message in messages for call in message.get('tool_calls', [])}
+    for message in reversed(messages):
+        if (message.get('role') != 'tool' or calls.get(message.get('tool_call_id')) not in
+                {'prepare_workout_sessions', 'draft_workout_sessions', 'audit_workout_plan'}):
+            continue
+        try:
+            result = json.loads(message.get('content') or '{}')
+        except (TypeError, ValueError):
+            continue
+        references = set()
+
+        def visit(value):
+            if isinstance(value, dict):
+                concerns = value.get('concerns', [])
+                reference = value.get('definition_id')
+                if (isinstance(reference, str) and reference.startswith('LIBRARY_')
+                        and reference[8:].isdigit() and isinstance(concerns, list)
+                        and any(isinstance(concern, dict)
+                            and concern.get('code') == 'unverified_fixed_bodyweight_capability'
+                            for concern in concerns)):
+                    references.add(reference)
+                for child in value.values():
+                    visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(result)
+        return sorted(references)
+    return []
+
+
+def _selection_ids_by_name(items):
+    """Only unique current labels can resolve an executable configuration."""
+    counts = Counter(item.get('name') for item in items)
+    return {item['name']: item['id'] for item in items
+        if isinstance(item.get('name'), str) and item['name'].strip() and counts[item['name']] == 1}
+
+
+def record_planning_decisions_tool(messages, equipment=None):
     """Offer only code-indexed concern identities from the latest reviewed plan."""
     tool = copy.deepcopy(RECORD_PLANNING_DECISIONS_TOOL)
     active_ids = sorted(resolved_decisions(messages))
     tool['function']['parameters']['properties']['decisions']['items']['properties']['supersedes']['enum'] = [
         None, *active_ids]
     concern_ids = reviewable_concern_ids(messages)
+    _, programming_choices = _current_programming_decision_choices(messages)
+    concern_ids = sorted(set(concern_ids) | programming_choices.keys())
     if concern_ids:
         tool['function']['parameters']['properties']['decisions']['items']['properties']['acceptedConcernGroupId'] = {
             'type': 'string', 'enum': concern_ids,
-            'description': 'Explicitly accept this concern for this candidate; acceptance does not verify unknowns or waive hard requirements.'}
+            'description': 'Explicitly accept this concern for this candidate; acceptance does not verify unknowns or waive hard requirements.'
+                + (' Programming choices: ' + json.dumps({key: value['label'] for key, value in programming_choices.items()})
+                   if programming_choices else '')}
+    capability_references = pending_capability_references(messages)
+    if capability_references:
+        tool['function']['parameters']['properties']['decisions']['items']['properties']['confirmedCapabilityReference'] = {
+            'type': 'string', 'enum': capability_references,
+            'description': 'Record only an explicit user statement of personal ability for this exact configuration. Selecting an exercise, delegating choices, or accepting uncertainty is not a capability statement. Existing sourceReferences must cite the factual user statement.'}
+    if equipment:
+        definitions = sorted(_selection_ids_by_name(equipment.get('exerciseDefinitions', [])))
+        resources = sorted(_selection_ids_by_name([item for key in ('equipments', 'accessoryEquipments')
+            for item in equipment.get(key, [])]))
+        properties = tool['function']['parameters']['properties']['decisions']['items']['properties']
+        if len(resources) >= 2:
+            properties['confirmedSharedStation'] = {'type': 'array', 'minItems': 2, 'uniqueItems': True,
+                'items': {'type': 'string', 'enum': resources},
+                'description': 'Select exact resource names explicitly established by the cited user statement as one shared physical station. Exercises using this station cannot be paired with each other; possession alone does not establish this physical fact.'}
+        if definitions and resources:
+            properties['confirmedSetupAccess'] = {'type': 'object', 'properties': {
+                'independentExercises': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
+                    'items': {'type': 'string', 'enum': definitions}},
+                'retainedResources': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
+                    'items': {'type': 'string', 'enum': resources}}},
+                'required': ['independentExercises', 'retainedResources'], 'additionalProperties': False,
+                'description': 'Select exact exercise and resource names. Confirm clear-space access to these exercises while only the named retained station resources remain set up; exclude the equipment used by the independent exercises. Cite the explicit physical user statement; delegation and equipment possession do not establish access.'}
+        if definitions:
+            properties['executionPrescription'] = {'type': 'object', 'properties': {
+                'exercise': {'type': 'string', 'enum': definitions},
+                'setMode': {'type': 'string', 'enum': ['single_sequence', 'paired_sides']}},
+                'required': ['exercise', 'setMode'], 'additionalProperties': False,
+                'description': 'Choose prescribed reps/time as one total sequence or repeated per side/direction. This programming choice may be delegated; it does not establish personal ability.'}
     return tool
+
+
+def confirmed_setup_access(messages, equipment, requirements):
+    """Compile reviewed physical facts without changing the approved requirement snapshot."""
+    from .planning_tools import library_fingerprint
+    from .programming_guidelines import bind_confirmed_superset_access
+    fingerprint = library_fingerprint(equipment)
+    confirmations = [{**decision.get('confirmedSetupAccess', {}),
+        **({'confirmedSharedStation': decision['confirmedSharedStation']}
+           if decision.get('confirmedSharedStation') else {}),
+        'sourceReferences': decision['sourceReferences']}
+        for decision in resolved_decisions(messages).values()
+        if decision.get('factualContextLibraryFingerprint') == fingerprint
+        and (decision.get('confirmedSetupAccess') or decision.get('confirmedSharedStation'))]
+    return bind_confirmed_superset_access(requirements, equipment, confirmations,
+        source_message_context(requirement_sources(messages)))
+
+
+def execution_decision_definitions(messages, equipment):
+    """Copy only current reviewed prescription choices into compile-time definitions."""
+    from .planning_tools import library_fingerprint
+    definitions = {item['id']: item for item in equipment.get('exerciseDefinitions', [])}
+    fingerprint = library_fingerprint(equipment)
+    result = {}
+    for decision in resolved_decisions(messages).values():
+        prescription = decision.get('executionPrescription')
+        if not prescription or decision.get('factualContextLibraryFingerprint') != fingerprint:
+            continue
+        identifier = prescription['definitionId']
+        if identifier not in definitions:
+            continue
+        definition = copy.deepcopy(definitions[identifier])
+        definition['reviewedExecution'] = {**(definition.get('reviewedExecution') or {}),
+            'setMode': prescription['setMode']}
+        result[identifier] = definition
+    return result
 
 
 def saved_decisions(messages):
@@ -197,7 +320,8 @@ def _active_reusable_decision_state(decisions):
                 or decision.get('acceptedCandidateScope')):
             continue
         state[identifier] = {key: decision[key] for key in (
-            'topic', 'choice', 'sourceReferences', 'supersedes', 'supersededBy') if key in decision
+            'topic', 'choice', 'sourceReferences', 'supersedes', 'supersededBy',
+            'confirmedSetupAccess', 'confirmedSharedStation', 'executionPrescription', 'factualContextLibraryFingerprint') if key in decision and decision[key] is not None
             and not (key == 'supersededBy' and decision[key] in scoped_ids)}
     return state
 
@@ -362,13 +486,14 @@ def candidate_acceptance_scope(audit):
     except ValidationError:
         return None
     return {
+        'requirementsId': audit['requirementsId'],
         'workoutsFingerprint': _fingerprint(draft['workouts']),
         'libraryFingerprint': audit['libraryFingerprint'],
         'historyFingerprint': audit['historyFingerprint'],
     }
 
 
-def propose_decisions(arguments, messages):
+def propose_decisions(arguments, messages, equipment=None):
     arguments = copy.deepcopy(arguments)
     active_decisions = resolved_decisions(messages)
     active_ids = set(active_decisions)
@@ -397,13 +522,34 @@ def propose_decisions(arguments, messages):
                 f'Omit supersedes for a new choice. To replace an approved choice, use one of: {available}; '
                 'a rejected proposal is not settled and must be submitted for review as a corrected choice.')
     concern_ids = reviewable_concern_ids(messages)
-    tool = record_planning_decisions_tool(messages)
+    _, programming_choices = _current_programming_decision_choices(messages)
+    concern_ids = sorted(set(concern_ids) | programming_choices.keys())
+    tool = record_planning_decisions_tool(messages, equipment)
     validate(arguments, tool['function']['parameters'])
+    definition_ids = _selection_ids_by_name((equipment or {}).get('exerciseDefinitions', []))
+    resource_ids = _selection_ids_by_name([item for key in ('equipments', 'accessoryEquipments')
+        for item in (equipment or {}).get(key, [])])
+    for item in arguments['decisions']:
+        if item.get('confirmedSharedStation'):
+            item['confirmedSharedStation'] = sorted(resource_ids[name] for name in item['confirmedSharedStation'])
+        if item.get('confirmedSetupAccess'):
+            selection = item['confirmedSetupAccess']
+            item['confirmedSetupAccess'] = {
+                'independentDefinitionIds': sorted(definition_ids[name] for name in selection['independentExercises']),
+                'retainedResourceIds': sorted(resource_ids[name] for name in selection['retainedResources'])}
+        if item.get('executionPrescription'):
+            selection = item['executionPrescription']
+            item['executionPrescription'] = {'definitionId': definition_ids[selection['exercise']],
+                'setMode': selection['setMode']}
     sources = source_message_context(requirement_sources(messages))
     source_hash = _decision_source_hash(sources)
+    from .planning_tools import latest_requirement_candidate
+    _, requirements_record = latest_requirement_candidate(messages)
+    capability_library = requirements_record.get('libraryFingerprint')
     decisions = saved_decisions(messages)
     acceptance_scope = None
-    if any(item.get('acceptedConcernGroupId') for item in arguments['decisions']):
+    if any(item.get('acceptedConcernGroupId') and item['acceptedConcernGroupId'] not in programming_choices
+           for item in arguments['decisions']):
         _, latest_audit = _current_reviewed_audit(messages)
         acceptance_scope = candidate_acceptance_scope(latest_audit)
         if acceptance_scope is None:
@@ -413,7 +559,32 @@ def propose_decisions(arguments, messages):
                 'Audit the current submitted workout successfully before accepting a concern for this candidate.')
     proposed = []
     for item in arguments['decisions']:
+        capability_reference = item.get('confirmedCapabilityReference')
+        if capability_reference is not None and not isinstance(capability_library, str):
+            raise PlanningInputError('capability_library_unavailable',
+                'A factual capability confirmation needs the current library identity.',
+                '/decisions/confirmedCapabilityReference',
+                'Resolve the current requirements and library before recording the factual answer.')
+        structured_context = (item.get('confirmedSetupAccess') or item.get('confirmedSharedStation')
+            or item.get('executionPrescription'))
+        if structured_context:
+            from .planning_tools import library_fingerprint
+            context_library = library_fingerprint(equipment)
+            if item.get('confirmedSetupAccess') or item.get('confirmedSharedStation'):
+                from .programming_guidelines import bind_confirmed_superset_access
+                try:
+                    bind_confirmed_superset_access(requirements_record.get('requirements', {}), equipment,
+                        [{**item.get('confirmedSetupAccess', {}),
+                          **({'confirmedSharedStation': item['confirmedSharedStation']}
+                             if item.get('confirmedSharedStation') else {}),
+                          'sourceReferences': item['sourceReferences']}], sources)
+                except ValueError as error:
+                    field = 'confirmedSetupAccess' if item.get('confirmedSetupAccess') else 'confirmedSharedStation'
+                    raise PlanningInputError('invalid_setup_confirmation', str(error), '/decisions/' + field,
+                        'Select current independent configurations and retained station resources supported by the user statement.') from error
         concern_id = item.get('acceptedConcernGroupId')
+        item_acceptance_scope = (programming_choices[concern_id]['acceptedCandidateScope']
+            if concern_id in programming_choices else acceptance_scope)
         if concern_id is not None and concern_id not in concern_ids:
             raise PlanningInputError('invalid_decision_concern',
                 'A decision can accept only a current reviewable uncertainty or preference.',
@@ -423,23 +594,35 @@ def propose_decisions(arguments, messages):
             raise PlanningInputError('invalid_decision_source', 'A choice must cite existing source references including a user statement.',
                 '/decisions', 'Copy actual SOURCE_n references. Cite the user choice or delegation, with its question if needed; do not invent authorization.')
         active = {key: value for key, value in decisions.items() if not value.get('supersededBy')}
-        same = next((key for key, value in active.items() if value['topic'].strip().casefold() == item['topic'].strip().casefold()), None)
+        same = next((key for key, value in active.items()
+            if value['topic'].strip().casefold() == item['topic'].strip().casefold()
+            or (item.get('executionPrescription') and value.get('executionPrescription', {}).get('definitionId')
+                == item['executionPrescription']['definitionId'])
+            or (concern_id in programming_choices and value.get('acceptedConcernGroupId') in programming_choices
+                and value.get('acceptedCandidateScope') == item_acceptance_scope)), None)
         normalize = lambda text: ' '.join(text.split()).casefold()
         identical = next((key for key, value in active.items()
                           if normalize(value['choice']) == normalize(item['choice'])
                           and set(value['sourceReferences']) == set(refs)
                           and value.get('acceptedConcernGroupId') == concern_id
+                          and value.get('confirmedCapabilityReference') == capability_reference
+                          and value.get('confirmedSetupAccess') == item.get('confirmedSetupAccess')
+                          and value.get('confirmedSharedStation') == item.get('confirmedSharedStation')
+                          and value.get('executionPrescription') == item.get('executionPrescription')
                           and (normalize(value['topic']) == normalize(item['topic']) or item.get('supersedes') == key)
                           and item.get('supersedes') in (None, key)), None)
         if identical:
             same = identical
-            if concern_id and active[same].get('acceptedCandidateScope') != acceptance_scope:
+            if concern_id and active[same].get('acceptedCandidateScope') != item_acceptance_scope:
                 raise PlanningInputError('accepted_candidate_changed',
                     'The existing acceptance belongs to a different candidate or evidence scope.',
                     '/decisions/acceptedConcernGroupId',
                     'Record a new source-backed acceptance for the current candidate; do not reuse the prior scope.')
-            if active[same].get('authorizationSourceHash') != source_hash:
+            if (active[same].get('authorizationSourceHash') != source_hash or structured_context
+                    and active[same].get('factualContextLibraryFingerprint') != context_library):
                 decisions[same]['authorizationSourceHash'] = source_hash
+                if structured_context:
+                    decisions[same]['factualContextLibraryFingerprint'] = context_library
                 proposed.append(same)
             continue
         previous = item.get('supersedes')
@@ -461,14 +644,39 @@ def propose_decisions(arguments, messages):
             identifier_index += 1
         identifier = f'DECISION_{identifier_index}'
         decisions[identifier] = copy.deepcopy(item)
+        if structured_context:
+            decisions[identifier]['factualContextLibraryFingerprint'] = context_library
+        if capability_reference is not None:
+            decisions[identifier]['capabilityLibraryFingerprint'] = capability_library
         if concern_id:
-            decisions[identifier]['acceptedCandidateScope'] = copy.deepcopy(acceptance_scope)
+            decisions[identifier]['acceptedCandidateScope'] = copy.deepcopy(item_acceptance_scope)
         decisions[identifier]['sourceCountAtResolution'] = len(sources)
         decisions[identifier]['authorizationSourceHash'] = source_hash
         if previous:
             decisions[previous]['supersededBy'] = identifier
         proposed.append(identifier)
-    return {'decisions': decisions, 'newDecisionIds': proposed, 'sourceMessages': sources}
+    proposal = {'decisions': decisions, 'newDecisionIds': proposed, 'sourceMessages': sources}
+    selected_definitions, selected_resources = set(), set()
+    for decision in decisions.values():
+        if decision.get('supersededBy'):
+            continue
+        setup = decision.get('confirmedSetupAccess', {})
+        selected_definitions.update(setup.get('independentDefinitionIds', []))
+        selected_resources.update(setup.get('retainedResourceIds', []))
+        selected_resources.update(decision.get('confirmedSharedStation', []))
+        if decision.get('executionPrescription'):
+            selected_definitions.add(decision['executionPrescription']['definitionId'])
+    if selected_definitions or selected_resources:
+        proposal['decisionSelections'] = {
+            'definitions': [{key: item[key] for key in ('id', 'name', 'equipmentId',
+                'requiredAccessoryEquipmentIds', 'reviewedExecution') if key in item}
+                for item in (equipment or {}).get('exerciseDefinitions', []) if item['id'] in selected_definitions],
+            'resources': [{key: item[key] for key in ('id', 'name', 'type') if key in item}
+                for field in ('equipments', 'accessoryEquipments') for item in (equipment or {}).get(field, [])
+                if item['id'] in selected_resources]}
+    if any(item.get('acceptedConcernGroupId') in programming_choices for item in arguments['decisions']):
+        proposal.setdefault('decisionSelections', {})['programmingChoices'] = copy.deepcopy(programming_choices)
+    return proposal
 
 
 def render_decisions(decisions):

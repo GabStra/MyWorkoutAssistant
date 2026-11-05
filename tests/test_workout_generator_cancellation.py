@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from workout_generator_pkg import cli, exercise_library_tools
+from workout_generator_pkg import exercise_library_tools
 from workout_generator_pkg.cancellation import check_cancelled, run_cancellable
 
 
@@ -39,36 +39,29 @@ def test_cancelled_network_wait_returns_before_request_finishes():
     assert followup == []
 
 
-@pytest.mark.parametrize("operation", ["emission", "search"])
-def test_parallel_interrupt_does_not_wait_for_active_requests(monkeypatch, operation, tmp_path):
+def test_parallel_search_interrupt_does_not_wait_for_active_requests(monkeypatch, tmp_path):
     started, release = threading.Event(), threading.Event()
     requests = []
 
     def blocked(*args, **kwargs):
-        requests.append(args[0] if operation == "emission" else "search")
+        requests.append("search")
         started.set()
         release.wait(5)
-        return ({"ok": True}, None) if operation == "emission" else ('{"matches":[[]]}', None, None)
+        return ('{"matches":[[]]}', None, None)
 
     def interrupt(*args, **kwargs):
         assert started.wait(2)
         raise KeyboardInterrupt
 
-    module = cli if operation == "emission" else exercise_library_tools
+    module = exercise_library_tools
     monkeypatch.setattr(module, "wait", interrupt)
-    if operation == "search":
-        monkeypatch.setattr(exercise_library_tools, "CACHE_DIRECTORY", tmp_path)
-        monkeypatch.setattr(module, "chat_call", blocked)
-        monkeypatch.setattr(module, "_local_semantic_rank", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("local model unavailable")))
+    monkeypatch.setattr(exercise_library_tools, "CACHE_DIRECTORY", tmp_path)
+    monkeypatch.setattr(module, "chat_call", blocked)
+    monkeypatch.setattr(module, "_local_semantic_rank", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("local model unavailable")))
     before = time.monotonic()
     try:
         with pytest.raises(KeyboardInterrupt):
-            if operation == "emission":
-                cli.parallel_emit_items([("first", {}), ("queued", {})], blocked, "Emit", max_workers=1)
-            else:
-                module._semantic_matches(object(), ["press"], [{"name": "Press"}])
+            module._semantic_matches(object(), ["press"], [{"name": "Press"}])
         assert time.monotonic() - before < 1
-        if operation == "emission":
-            assert requests == ["first"]
     finally:
         release.set()

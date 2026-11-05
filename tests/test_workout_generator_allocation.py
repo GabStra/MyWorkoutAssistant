@@ -45,6 +45,52 @@ def test_prepared_milp_can_meet_minimum_only_target_above_old_range():
     assert sum(item['numWorkSets'] for item in result['sessions'][0]['exercises']) == 21
 
 
+def test_milp_normalizes_continuous_auxiliary_epsilon_at_exact_bound(monkeypatch):
+    from scipy.optimize import OptimizeResult
+    from workout_generator_pkg import allocation
+
+    monkeypatch.setattr(allocation, 'milp', lambda *args, **kwargs: OptimizeResult(
+        status=0, message='Optimal', x=[1.0, 300.99999729824685]))
+    variables = [
+        {'lower': 1, 'upper': 1, 'current': [], 'members': [], 'objectiveCost': 0, 'integer': True},
+        {'lower': 0, 'upper': 1000, 'current': [], 'members': [], 'objectiveCost': 1, 'integer': False},
+    ]
+    features = [(('duration_balance', 0, 'maximum'), -float('inf'), 0, 300,
+        {0: 1, 1: -1})]
+    diagnostics = {}
+
+    status, candidate = allocation._milp_solve(variables, features,
+        preserve_current=False, diagnostics=diagnostics)
+
+    assert status == 'optimal'
+    assert candidate[0] == 1
+    assert candidate[1] == pytest.approx(301.0)
+    assert diagnostics['continuousAuxiliaryNormalization'] == 'feasible_continuous_face_reoptimized'
+
+
+def test_milp_still_rejects_a_real_integer_solution_breach(monkeypatch):
+    from scipy.optimize import OptimizeResult
+    from workout_generator_pkg import allocation
+
+    monkeypatch.setattr(allocation, 'milp', lambda *args, **kwargs: OptimizeResult(
+        status=0, message='Optimal', x=[1.01, 301.0]))
+    variables = [
+        {'lower': 0, 'upper': 2, 'current': [], 'members': [], 'objectiveCost': 0, 'integer': True},
+        {'lower': 0, 'upper': 1000, 'current': [], 'members': [], 'objectiveCost': 1, 'integer': False},
+    ]
+    features = [(('duration_balance', 0, 'maximum'), -float('inf'), 0, 300,
+        {0: 1, 1: -1})]
+    diagnostics = {}
+
+    status, candidate = allocation._milp_solve(variables, features,
+        preserve_current=False, diagnostics=diagnostics)
+
+    assert status == 'unproven'
+    assert candidate is None
+    assert diagnostics['returnReason'] == 'invalid_count_value'
+    assert 'continuousAuxiliaryNormalization' not in diagnostics
+
+
 def test_prepared_selection_respects_shared_source_set_budget():
     from workout_generator_pkg.allocation import allocate_prepared_sets
     sessions = [{'timesCompletedInAWeek': 1, 'exercises': [{
@@ -288,17 +334,21 @@ def test_soft_preferences_reject_invalid_references_and_counts(preferences):
 @pytest.mark.parametrize('shown_preview', [False, True])
 def test_automatic_allocation_balances_only_before_a_preview_is_shown(monkeypatch, shown_preview):
     from workout_generator_pkg import allocation, joint_planning
-    equipment, _, stored, draft = planning_case()
+    from test_workout_generator_planning_tools import capability_requirement_messages
+    equipment, requirements, stored, draft = planning_case()
     draft['workouts'][0]['exercises'][0].update(numWorkSets=7, allocationBounds={'minimum': 1, 'maximum': 7})
     messages, result = _audited_messages(equipment, stored, draft)
+    messages = capability_requirement_messages(stored, equipment) + messages[len(requirement_messages(stored)):]
+    result = audit_workout_plan(draft, equipment, messages)
+    messages[-1]['content'] = json.dumps(result)
     if shown_preview:
         messages.append({'role': 'assistant', 'content': 'Reviewed plan', 'canonicalDraftPreview': 'previous'})
     calls = []
-    solve = allocation._milp_solve
+    solve = joint_planning._cp_solve
     def record(variables, features, **options):
         calls.append(options.get('balance', False))
         return solve(variables, features, **options)
-    monkeypatch.setattr(joint_planning, '_milp_solve', record)
+    monkeypatch.setattr(joint_planning, '_cp_solve', record)
     repaired = allocation.auto_allocate_workout(result, equipment, messages)
     assert repaired['passed'] is not shown_preview
     assert calls and not any(calls)
@@ -310,7 +360,11 @@ def test_automatic_allocation_balances_only_before_a_preview_is_shown(monkeypatc
         assert any(patch['path'].endswith('/numWorkSets')
                    for patch in repaired['automaticAllocation']['patch'])
     else:
-        assert repaired['audit']['weeklyVolume']['chest']['effective'] == 5
+        # With no approved objective order, preserve the closest valid count to the source seven.
+        selected = repaired['submittedDraft']['workouts'][0]['exercises'][0]['numWorkSets']
+        target = requirements['auditTargets']['weeklyEffectiveSets']['chest']
+        assert selected == repaired['audit']['weeklyVolume']['chest']['effective'] == 6
+        assert target['minimum'] <= selected <= target['maximum']
     assert draft['workouts'][0]['exercises'][0]['numWorkSets'] == 7
 
 
@@ -435,6 +489,34 @@ def test_automatic_allocation_runs_joint_solver_for_only_coverage_floor_error(mo
     allocation.auto_allocate_workout(result, equipment, messages)
 
     assert calls
+
+
+@pytest.mark.parametrize('objective', ['setup_economy', 'duration_economy'])
+def test_valid_plan_still_runs_approved_practical_optimization(monkeypatch, objective):
+    from workout_generator_pkg import allocation, joint_planning
+    from workout_generator_pkg.planning_tools import set_workout_requirements
+
+    equipment, requirements, _, draft = planning_case()
+    equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'name': 'Barbell', 'type': 'BARBELL',
+        'barWeight': 20, 'sleeveLength': 100, 'availablePlates': []}]
+    equipment['exerciseDefinitions'][0].update(exerciseType='WEIGHT', equipmentId='EQUIPMENT_0',
+        bodyWeightPercentage=None)
+    requirements['objectiveOrder'] = [objective]
+    stored = set_workout_requirements(requirements,
+        [{'role': 'user', 'content': 'Optimize practical execution within these requirements.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
+    messages, result = _audited_messages(equipment, stored, draft)
+    assert result['passed'], result.get('errors')
+    calls = []
+
+    def no_candidate(*args, **kwargs):
+        calls.append(kwargs)
+        return {'feasible': False, 'status': 'unproven', 'instruction': 'No candidate in this test.'}
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', no_candidate)
+    allocation.auto_allocate_workout(result, equipment, messages)
+    assert len(calls) == 1
+    assert calls[0]['preserve_source_selection'] is False
 
 
 def test_automatic_solver_preserves_and_rejects_carried_redistribution(monkeypatch):

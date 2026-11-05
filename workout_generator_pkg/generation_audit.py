@@ -3,6 +3,7 @@
 import copy
 import json
 import math
+from fractions import Fraction
 
 from .api_client import json_call_reasoner_only_with_loading
 from .domain_ops import build_workout_structure
@@ -89,6 +90,41 @@ def render_plan_disclosures(report, muscles=None, source_draft=None, coverage_ru
     lines = ['Code-computed credit sources:']
     lines.extend(render_volume_disclosure(report, muscle) for muscle in muscles if muscle in report['weeklyVolume'])
     lines.append('These library-role credits are accounting inputs, not measurements of equivalent physiological stimulus.')
+    preferences = report.get('volumePreferenceEvidence') or {}
+    if preferences.get('weekly') or preferences.get('perSession'):
+        lines.extend(['', 'Preferred volume ranges (soft goals; deviations do not fail the hard audit):'])
+        for scope, entries in (('Weekly', preferences.get('weekly', [])),
+                ('Per session', preferences.get('perSession', []))):
+            for item in entries:
+                preferred = volume_target_text({'minimum': item['preferredMinimum'],
+                    'maximum': item['preferredMaximum']})
+                label = item.get('session', scope)
+                actual = ('actual unknown because regional credit evidence is incomplete' if item['status'] == 'unknown'
+                    else f"actual {item['actual']:g}; shortfall {item['shortfall']:g}; excess {item['excess']:g}")
+                if 'aspiration' in item:
+                    remaining = ('unknown' if item['aspirationShortfall'] is None
+                        else f"{item['aspirationShortfall']:g}")
+                    actual += f"; soft aspiration {item['aspiration']:g}; aspiration shortfall {remaining}"
+                lines.append(f"{label} {MUSCLE_LABELS.get(item['muscle'], item['muscle'])}: "
+                    f"preferred {preferred} effective sets; {actual}.")
+    budget = report.get('sessionTimeBudgetEvidence')
+    if budget:
+        lines.extend(['', f"Preferred session-time budget: {budget['preferredSessionSeconds'] / 60:g} minutes (soft)."])
+        for day in budget['sessions']:
+            lines.append(f"{day['session']}: estimated {day['estimatedSeconds'] / 60:g} minutes; "
+                f"{day['excessSeconds'] / 60:g} minutes above the preferred budget.")
+    selection = report.get('exerciseSelectionEvidence')
+    if selection:
+        lines.extend(['', 'Weekly exercise-count preferences (distinct qualified definitions, repeated sessions counted once):'])
+        for muscle, item in selection.items():
+            if item.get('status') == 'insufficient_evidence':
+                lines.append(f"{MUSCLE_LABELS.get(muscle, muscle)}: qualified exercise count is unknown; "
+                    f"{item['knownCount']} known qualifying definitions. Missing regional evidence is not zero exposure.")
+                continue
+            lines.append(f"{MUSCLE_LABELS.get(muscle, muscle)}: {item['count']} qualified exercises; "
+                f"preferred {item['preferredMinimum']}–{item['preferredMaximum']}; "
+                f"shortfall {item['shortfall']}; excess {item['excess']}. "
+                'Count alone does not establish complementary ROM or muscle-length loading.')
     reliance = report.get('muscleCreditReliance') or {}
     if reliance.get('weeklyTargets') or reliance.get('perSessionMinimums'):
         lines.extend(['', 'Muscle-credit reliance sensitivity (diagnostic):'])
@@ -156,12 +192,32 @@ def render_optimization_disclosure(priority_execution):
     if not priorities and not development_roles:
         return ''
     meanings = {'optimal': 'best result proven within the supplied menu and preceding objectives',
+        'optimal_zero_lower_bound': 'best result proven at the objective lower bound within the supplied menu and preceding objectives',
         'feasible': 'valid candidate found; the approved balance hierarchy is not proven optimal',
         'unproven': 'bounded search did not establish this priority; this is not proof that improvement is impossible',
         'unavailable_evidence': 'not optimized because verified exercise evidence is unavailable'}
     lines = ['Programming-priority evidence:']
+    goal_policy = priority_execution.get('goalPolicy') or {}
+    if goal_policy:
+        from .programming_policy import goal_target_text
+        lines.append('Shared goal tiers minimize the worst normalized target miss, then the sum of per-group mean misses and ungrouped misses, before remaining efficiency tie-breakers. Meeting a target earns no additional reward; these are approved preferences, not physiological adequacy findings.')
+        for index, tier in enumerate(goal_policy.get('tiers', [])):
+            lines.append(f"Goal tier {index + 1}: " + '; '.join(
+                goal_target_text(goal) for goal in tier) + '.')
+        for stage in goal_policy.get('stages', []):
+            value = stage.get('value')
+            detail = f'{value:g}' if type(value) in (int, float) and math.isfinite(value) else 'unverified'
+            lines.append(f"{stage['goal']}: {stage['status']}; normalized target miss {detail}.")
     lines.extend(f"{entry['priority'].replace('_', ' ')}: "
         + meanings.get(entry['status'], entry['status'].replace('_', ' ')) + '.' for entry in priorities)
+    arrangement = priority_execution.get('arrangementRefinement') or {}
+    if arrangement.get('after'):
+        before, after = arrangement['before'], arrangement['after']
+        lines.append('Grouping was compared at unchanged training doses: '
+            f"declared equipment switches {before['weeklyDeclaredResourceSwitches']} to {after['weeklyDeclaredResourceSwitches']} per week; "
+            f"total estimated session time {before['weeklyEstimatedSeconds']} to {after['weeklyEstimatedSeconds']} seconds per week. "
+            'Equipment references do not establish measured physical changeovers. '
+            'The earlier joint-solver scores describe its original grouping; global optimality of this final arrangement is not established.')
     for entry in priorities:
         if entry.get('priority') != 'duration_balance':
             continue
@@ -170,17 +226,56 @@ def render_optimization_disclosure(priority_execution):
         if isinstance(residual, (int, float)) and not isinstance(residual, bool) and math.isfinite(residual) and residual > 0:
             lines.append(f"Duration balance retains {residual:g} seconds of excess beyond the approved duration-similarity band; "
                 'the preferred tolerance remains unmet.')
+    movement_priority = next((entry for entry in priorities if entry.get('priority') == 'movement_overlap'), None)
+    if movement_priority:
+        paired = next((stage for stage in movement_priority.get('subStages', [])
+            if stage.get('goal') == 'superset_lower_body_overlap'), None)
+        if paired:
+            value = paired.get('value')
+            detail = f'{value:g}' if type(value) in (int, float) and math.isfinite(value) else 'unverified'
+            lines.append(f'Major lower-body superset exposure: {detail} weekly paired sets. '
+                'This is a grouping preference, not a fatigue prediction or a tolerance threshold.')
+        lines.append('Exercise ordering uses local sequence improvement within approved order rules; '
+            'a globally optimal sequence is not established. Unknown setup configurations and personal recovery remain unverified.')
     concentration = priority_execution.get('structuralConcentration') or {}
+    distribution_priority = next((entry for entry in priorities
+        if entry.get('priority') == 'distribution'), None)
+    if distribution_priority:
+        stages = {stage.get('goal'): stage for stage in distribution_priority.get('subStages', [])}
+        worst_stage = stages.get('distribution_worst')
+        for goal, label in (
+                ('distribution_worst', 'Worst per-muscle session deviation'),
+                ('distribution', 'Aggregate per-session deviation')):
+            stage = stages.get(goal)
+            if not stage:
+                lines.append(f'{label}: not run or not recorded.')
+                continue
+            stage_status = stage.get('status')
+            if (goal == 'distribution' and worst_stage
+                    and worst_stage.get('status') not in ('optimal', 'optimal_zero_lower_bound')
+                    and stage_status in ('optimal', 'optimal_zero_lower_bound')):
+                status = ('solver optimum conditional on the attained worst-stage value; '
+                    'the overall distribution priority remains unproven')
+            else:
+                status = meanings.get(stage_status, str(stage_status or 'unknown').replace('_', ' '))
+            value = stage.get('value')
+            if goal == 'distribution_worst' and isinstance(value, (int, float)) and not isinstance(value, bool):
+                detail = f"; {value:g} effective sets from the frequency-weighted mean"
+            elif goal == 'distribution' and isinstance(value, (int, float)) and not isinstance(value, bool):
+                detail = f'; recorded solver objective score {value:g}'
+            else:
+                detail = ''
+            lines.append(f'{label}: {status}{detail}. This ranks distribution among the supplied choices; it does not establish adequate stimulus or personal suitability.')
     placement = concentration.get('rolePlacement') or {}
     if placement.get('profiles') and placement.get('status') != 'not_requested':
-        status = effective_concentration_status(priority_execution, 'distribution',
-            placement.get('solverStatus', placement.get('status', 'not_run')), include_following=True)
+        status = effective_concentration_status(priority_execution, 'role_concentration',
+            placement.get('solverStatus', placement.get('status', 'not_run')))
         peaks = [profile.get('peakSurplusPerOccurrence') for profile in placement['profiles']]
         peaks = [value for value in peaks if type(value) in (int, float) and math.isfinite(value)]
         peak_text = (f" The final largest role peak is {max(peaks):g} working sets above its frequency-weighted per-occasion average."
             if peaks else '')
         lines.append('Movement-role placement: ' + meanings.get(status, status.replace('_', ' ')) + '.'
-            + peak_text + ' This placement comparison preserves weekly exercise-recipe doses and exact target counts; '
+            + peak_text + ' This placement comparison preserves settled weekly physical working sets, muscle doses and qualified-role totals; '
             'it does not add volume to make inclusion-only roles appear balanced. These counts describe structural distribution, not fatigue or personal suitability.')
         tie_status = placement.get('sumTieBreakStatus')
         if tie_status and tie_status != 'not_requested':
@@ -402,6 +497,435 @@ def render_program_guidance(report, muscles=None, source_draft=None, coverage_ru
         report, muscles, source_draft, coverage_rules)
 
 
+def session_interference_evidence(artifact_day, sources, definitions, emitted, requirements, rep_durations):
+    """Describe preceding library-tagged work and audited time, never predicted recovery."""
+    from collections import Counter
+    from .programming_guidelines import (execution_interference_profile, execution_interference_score,
+        superset_lower_body_pair_sets)
+    from .exercise_contracts import execution_supporting_muscles
+    primary, supporting = Counter(), Counter()
+    last_exposure = {}
+    elapsed = ASSUMPTIONS['generalWarmupSeconds']
+    recovery = 0
+    profiles, blocks, superset_evidence = [], [], []
+    superset_member_working_sets = total_member_working_sets = 0
+    superset_primary, superset_supporting = Counter(), Counter()
+    setup = {item['exerciseId']: item['seconds'] for item in emitted.get('setupEstimates', [])}
+    for component in artifact_day['components']:
+        if component['type'] == 'Rest':
+            elapsed += component['timeInSeconds']
+            recovery += component['timeInSeconds']
+            continue
+        members = component.get('exercises', []) if component['type'] == 'Superset' else [component]
+        if not members or any(member.get('id') not in sources for member in members):
+            continue
+        source_items = [sources[member['id']][0] for member in members]
+        total_member_working_sets += sum(item['numWorkSets'] for item in source_items)
+        member_definitions = [definitions.get(sources[member['id']][3]['libraryDefinitionId'])
+            or sources[member['id']][1] for member in members]
+        roles = set().union(*(set(item.get('satisfiesCoverage', [])) for item in source_items))
+        profile = execution_interference_profile(member_definitions,
+            [item['numWorkSets'] for item in source_items], roles, requirements)
+        profiles.append(profile)
+        if component['type'] == 'Superset':
+            rounds = min((item['numWorkSets'] for item in source_items), default=0)
+            superset_member_working_sets += sum(item['numWorkSets'] for item in source_items)
+            superset_primary.update(profile['primary'])
+            superset_supporting.update(profile['supporting'])
+            interleaved_primary, interleaved_supporting = primary.copy(), supporting.copy()
+            member_facts = []
+            for member, definition in zip(members, member_definitions, strict=True):
+                member_profile = execution_interference_profile([definition], [1], roles, requirements)
+                support_known = execution_supporting_muscles(definition) is not None
+                execution = definition.get('reviewedExecution') or {}
+                member_facts.append({'exerciseRef': member['id'],
+                    'primaryMuscles': sorted(member_profile['primary']),
+                    'supportingMuscles': sorted(member_profile['supporting']),
+                    'executionSupportEvidence': ({'status': 'sourced', 'source': execution['source'],
+                        'basis': execution['basis']} if support_known else {'status': 'unknown'}),
+                    'firstRoundPriorExposure': None, 'finalRoundPriorExposure': None})
+            for round_index in range(rounds):
+                for member_index, (member, definition) in enumerate(zip(members, member_definitions, strict=True)):
+                    fact = member_facts[member_index]
+                    snapshot = {'primaryWorkingSets': {muscle: interleaved_primary[muscle]
+                            for muscle in fact['primaryMuscles']},
+                        'supportingWorkingSets': {muscle: interleaved_supporting[muscle]
+                            for muscle in fact['primaryMuscles']},
+                        'priorPrimaryWorkingSetsOnSupportingMuscles': {muscle: interleaved_primary[muscle]
+                            for muscle in fact['supportingMuscles']},
+                        'priorSupportingWorkingSetsOnSupportingMuscles': {muscle: interleaved_supporting[muscle]
+                            for muscle in fact['supportingMuscles']}}
+                    if round_index == 0:
+                        fact['firstRoundPriorExposure'] = snapshot
+                    if round_index == rounds - 1:
+                        fact['finalRoundPriorExposure'] = snapshot
+                    for muscle in fact['primaryMuscles']:
+                        interleaved_primary[muscle] += 1
+                    for muscle in fact['supportingMuscles']:
+                        interleaved_supporting[muscle] += 1
+            superset_evidence.append({'exerciseRefs': [member['id'] for member in members],
+                'scheduledRounds': rounds, 'lowerBodyPairedSets': superset_lower_body_pair_sets(
+                    member_definitions, [item['numWorkSets'] for item in source_items]),
+                'memberSetOrderPerRound': [member['id'] for member in members],
+                'memberExposure': member_facts,
+                'interpretation': 'Raw prior primary and supporting working-set counts before each member in the first '
+                    'and final scheduled rounds; not a recovery or fatigue estimate. Supporting exposure includes '
+                    'library secondary tags and sourced execution support; unrecorded demands remain unknown. '
+                    'Execution-support annotations create no muscle-volume credits.'})
+        wanted = set(profile['primary']) | set(profile['supporting'])
+        prior_primary = sum(primary[muscle] for muscle in profile['primary'])
+        prior_supporting = (sum(supporting[muscle] for muscle in profile['primary'])
+            + sum(primary[muscle] + supporting[muscle] for muscle in profile['supporting']
+                  if muscle not in profile['primary']))
+        start = elapsed + sum(setup.get(member['id'], 0) for member in members)
+        overlap = {muscle: {'priorPrimaryWorkingSets': primary[muscle],
+            'priorSupportingWorkingSets': supporting[muscle],
+            'interveningBlocks': len(blocks) - last_exposure[muscle][0] - 1,
+            'estimatedSecondsSincePriorBlock': start - last_exposure[muscle][1],
+            'prescribedRecoverySecondsSincePriorBlock': recovery - last_exposure[muscle][2]}
+            for muscle in sorted(wanted) if muscle in last_exposure}
+        blocks.append({'exerciseRefs': [member['id'] for member in members],
+            'priorityFromExplicitOrderRule': profile['priority'],
+            'mainCompound': profile['main_compound'],
+            'priorPrimaryWorkingSets': prior_primary,
+            'priorSupportingWorkingSets': prior_supporting,
+            'primaryWorkingSets': profile['primary'], 'supportingWorkingSets': profile['supporting'],
+            'prescribedWorkingSetRIR': requirements.get('workingSetRIR'),
+            'effortStatus': 'prescription_only_not_measured_performance',
+            'precedingOverlap': overlap, 'libraryMuscleEvidence': 'available' if profile['known'] else 'unknown',
+            'scope': 'before_block; superset members interleave rather than execute as complete consecutive exercises'})
+        block_report = audit_workout_package({'workouts': [{'name': 'Block', 'workoutComponents': [component]}]},
+            {'weeklyEffectiveSets': {}, 'perSessionEffectiveSets': {}, 'maximumSessionSeconds': None},
+            rep_duration_seconds_by_exercise={member['id']: rep_durations[member['id']]
+                for member in members if member['id'] in rep_durations})
+        timing = block_report['workouts'][0]['timing']
+        elapsed = start + sum(timing[field] for field in
+            ('workSeconds', 'restSeconds', 'rampUpSeconds', 'calibrationSeconds'))
+        recovery += timing['restSeconds']
+        primary.update(profile['primary'])
+        supporting.update(profile['supporting'])
+        for muscle in wanted:
+            last_exposure[muscle] = (len(blocks) - 1, elapsed, recovery)
+    scores = execution_interference_score(list(range(len(profiles))), profiles)
+    return {'status': 'library_overlap_proxies' if all(profile['known'] for profile in profiles)
+            else 'partial_library_evidence',
+        'countsAreOverlappingExposuresNotDistinctPhysicalSets': True,
+        'approvedOrderingMetricOrder': list(requirements.get('orderingPreferences', {}).get('protectionOrder', [])),
+        'orderingExposure': dict(zip(('priorPrimarySetsBeforePriorityWork',
+            'priorSupportingSetsBeforePriorityWork', 'worstHeavyCompoundPriorPrimarySets',
+            'worstHeavyCompoundPriorSupportingSets', 'worstMainCompoundPriorPrimarySets',
+            'worstMainCompoundPriorSupportingSets', 'adjacentPrimaryOverlapSets',
+            'adjacentSupportingOverlapSets'), scores, strict=True)), 'blocks': blocks,
+        'wholeSessionSupersetEvidence': {'groupCount': len(superset_evidence),
+            'supersetMemberWorkingSets': superset_member_working_sets,
+            'groups': superset_evidence,
+            'interpretation': 'Shows raw overlap within each repeated, interleaved superset and prior session exposures. These counts do not establish individual fatigue or recovery.'},
+        'wholeSessionExposure': {'totalMemberWorkingSets': total_member_working_sets,
+            'supersetMemberWorkingSets': superset_member_working_sets,
+            'nonSupersetMemberWorkingSets': total_member_working_sets - superset_member_working_sets,
+            'primaryWorkingSetsByMuscle': dict(primary),
+            'supportingWorkingSetsByMuscle': dict(supporting),
+            'supersetPrimaryWorkingSetsByMuscle': dict(superset_primary),
+            'supersetSupportingWorkingSetsByMuscle': dict(superset_supporting),
+            'interpretation': 'These are code-computed session totals and their superset contribution, not a fatigue score.'},
+        'interpretation': 'Primary and supporting sets remain separate raw exposure counts. Timing is an estimate, '
+            'not a recovery model; setup time is not prescribed recovery. No fatigue weights, decay rates, '
+            'tolerance thresholds or physiological predictions are inferred. Unrecorded grip/trunk demands remain unknown. Working-set overlap excludes unmeasured warm-up and calibration effort.'}
+
+
+def setup_resource_profile(definition, source=None):
+    """Return declared resources and an exact-load task identity when the source establishes one."""
+    equipment_id = definition.get('equipmentId')
+    accessories = sorted(set(definition.get('requiredAccessoryEquipmentIds') or []))
+    resources = sorted(set(([equipment_id] if equipment_id else []) + accessories))
+    source = source or {}
+    repeats_prescribed_load = isinstance(source.get('workSetTemplate'), dict)
+    prescriptions = ([source['workSetTemplate']] if repeats_prescribed_load
+        else source.get('targetSetPrescriptions') or [])
+    load_field = {'WEIGHT': 'weight', 'BODY_WEIGHT': 'additionalWeight'}.get(definition.get('exerciseType'))
+    exact_loads = ([item[load_field] for item in prescriptions
+        if isinstance(item, dict) and load_field in item] if load_field else [])
+    known_load_configuration = (bool(prescriptions) and len(exact_loads) == len(prescriptions)
+        and all(isinstance(load, (int, float)) and not isinstance(load, bool)
+            and math.isfinite(load) for load in exact_loads)
+        and (repeats_prescribed_load or source.get('numWorkSets', len(prescriptions)) == len(prescriptions))
+        and source.get('requiresLoadCalibration', definition.get('requiresLoadCalibration')) is not True)
+    configuration_key = ({'loadField': load_field, 'loads': exact_loads}
+        if known_load_configuration else None)
+    definition_id = (definition.get('id') or source.get('definition_id')
+        or source.get('libraryDefinitionId'))
+    task_key = {'definitionId': definition_id, 'resourceIds': resources,
+        'configuration': configuration_key if known_load_configuration else 'unknown'}
+    physical_facts = (definition.get('reviewedExecution') or {}).get('setupConfiguration')
+    if physical_facts is not None:
+        from .exercise_contracts import validate_setup_configuration
+        physical_facts = validate_setup_configuration(physical_facts, resources)
+        task_key['declaredPhysicalConfiguration'] = sorted(
+            [{'resourceId': fact['resourceId'], 'state': fact['state']} for fact in physical_facts],
+            key=lambda fact: fact['resourceId'])
+    return {'equipmentId': equipment_id, 'accessoryIds': accessories, 'resourceIds': resources,
+        'configurationStatus': 'known' if known_load_configuration else 'unknown',
+        'configurationKey': configuration_key, 'preparationTaskKey': task_key,
+        'repeatsPrescribedLoad': repeats_prescribed_load,
+        'resourceEvidence': 'declared_references' if equipment_id or accessories else 'no_declared_resources',
+        'loadConfigurationKnown': known_load_configuration, 'physicalConfigurationKnown': False,
+        'physicalConfigurationFacts': physical_facts or []}
+
+
+def _declared_physical_configuration_relation(before, after):
+    if not before or not after:
+        return 'unknown_configuration'
+    first, second = before['state'], after['state']
+    if any(first[key] != second[key] or isinstance(first[key], bool) != isinstance(second[key], bool)
+            for key in first.keys() & second.keys()):
+        return 'required_change'
+    return 'same_declared_state' if first == second else 'unknown_configuration'
+
+
+def _setup_resource_transition(before, after):
+    same_resources = before['resourceIds'] == after['resourceIds']
+    same_definition = (before['preparationTaskKey']['definitionId'] is not None
+        and before['preparationTaskKey']['definitionId'] == after['preparationTaskKey']['definitionId'])
+    both_known = before['configurationStatus'] == after['configurationStatus'] == 'known'
+    same_load_context = (before['equipmentId'] is not None
+        and before['equipmentId'] == after['equipmentId']) or same_definition
+    same_load_field = (before['configurationKey'] and after['configurationKey']
+        and before['configurationKey']['loadField'] == after['configurationKey']['loadField'])
+    if both_known and same_load_context and same_load_field:
+        configuration = ('known_same' if before['configurationKey']['loads'] == after['configurationKey']['loads']
+            else 'known_changed')
+    else:
+        configuration = 'unknown_configuration'
+    resource_selection = ('no_declared_resources' if not before['resourceIds'] and not after['resourceIds']
+        else 'same_references' if same_resources else 'changed_references')
+    declared_change = (True if resource_selection == 'changed_references' or configuration == 'known_changed'
+        else False if configuration == 'known_same' else None)
+    before_facts = {fact['resourceId']: fact for fact in before.get('physicalConfigurationFacts', [])}
+    after_facts = {fact['resourceId']: fact for fact in after.get('physicalConfigurationFacts', [])}
+    physical_relations = [_declared_physical_configuration_relation(before_facts.get(resource),
+        after_facts.get(resource)) for resource in before_facts.keys() | after_facts.keys()]
+    physical_relation = ('required_change' if 'required_change' in physical_relations else
+        'same_declared_state' if physical_relations and all(relation == 'same_declared_state'
+            for relation in physical_relations) else 'unknown_configuration')
+    return {'resourceSelection': resource_selection,
+        'addedResourceIds': sorted(set(after['resourceIds']) - set(before['resourceIds'])),
+        'removedResourceIds': sorted(set(before['resourceIds']) - set(after['resourceIds'])),
+        'configurationRelation': configuration,
+        'loadConfigurationKnown': configuration != 'unknown_configuration',
+        'declaredResourceChange': declared_change,
+        'preparationTaskRelation': ('same_task' if before['preparationTaskKey'] == after['preparationTaskKey']
+            else 'different_task'),
+        'physicalConfigurationKnown': False,
+        'physicalConfigurationRelation': physical_relation}
+
+
+def _setup_profile_at_set(profile, index):
+    configuration = profile['configurationKey']
+    if configuration is None:
+        return profile
+    loads = configuration['loads']
+    load = loads[0] if profile['repeatsPrescribedLoad'] else loads[index] if index < len(loads) else None
+    return profile | {'configurationKey': configuration | {'loads': [load]} if load is not None else None,
+        'configurationStatus': 'known' if load is not None else 'unknown',
+        'loadConfigurationKnown': load is not None}
+
+
+def scheduled_setup_transitions(profiles, rounds=1):
+    """List declared-resource/configuration edges in the actual repeated member order."""
+    if len(profiles) < 2 or not isinstance(rounds, int) or isinstance(rounds, bool) or rounds < 1:
+        return []
+    transitions = []
+    for round_index in range(rounds):
+        for member_index, (before, after) in enumerate(zip(profiles, profiles[1:])):
+            transitions.append({'scope': 'superset_member', 'roundIndex': round_index,
+                'fromMemberIndex': member_index, 'toMemberIndex': member_index + 1,
+                **_setup_resource_transition(_setup_profile_at_set(before, round_index),
+                    _setup_profile_at_set(after, round_index))})
+        if round_index < rounds - 1:
+            transitions.append({'scope': 'superset_round_return', 'roundIndex': round_index,
+                'fromMemberIndex': len(profiles) - 1, 'toMemberIndex': 0,
+                **_setup_resource_transition(_setup_profile_at_set(profiles[-1], round_index),
+                    _setup_profile_at_set(profiles[0], round_index + 1))})
+    return transitions
+
+
+def executable_setup_evidence(workout, definitions, shared_resource_groups=None):
+    """Evaluate ordered executable prescriptions using the same facts as the rendered audit."""
+    blocks = []
+    for source in workout.get('exercises', []):
+        group = source.get('superset')
+        if group is not None and blocks and blocks[-1]['group'] == group:
+            blocks[-1]['members'].append(source)
+        else:
+            blocks.append({'group': group, 'members': [source]})
+    return _setup_evidence_for_blocks([{
+        'componentIndex': index, 'kind': 'superset' if len(block['members']) > 1 else 'exercise',
+        'exerciseRefs': [source.get('id', source.get('definition_id')) for source in block['members']],
+        'rounds': min((source.get('numWorkSets', 0) for source in block['members']), default=0),
+        'profiles': [setup_resource_profile(definitions.get(source.get('definition_id'), {}), source)
+            for source in block['members']]}
+        for index, block in enumerate(blocks)], shared_resource_groups)
+
+
+def session_setup_evidence(artifact_day, sources, definitions, shared_resource_groups=None):
+    """Adapt emitted occurrence identities to the shared executable setup evaluation."""
+    blocks = []
+    for component_index, component in enumerate(artifact_day.get('components', [])):
+        if component.get('type') not in ('Exercise', 'Superset'):
+            continue
+        members = component.get('exercises', []) if component['type'] == 'Superset' else [component]
+        if not members:
+            continue
+        profiles, counts = [], []
+        for member in members:
+            source = sources.get(member.get('id'))
+            if source is None:
+                profiles.append(setup_resource_profile({}, {'definition_id': member.get('id')}))
+                counts.append(0)
+                continue
+            definition_id = source[3].get('libraryDefinitionId')
+            profiles.append(setup_resource_profile(definitions.get(definition_id) or source[1],
+                source[0] | source[1] | {'definition_id': definition_id}))
+            counts.append(source[0].get('numWorkSets', 0))
+        blocks.append({'componentIndex': component_index,
+            'kind': 'superset' if component.get('type') == 'Superset' else 'exercise',
+            'exerciseRefs': [member.get('id') for member in members], 'profiles': profiles,
+            'rounds': min(counts)})
+    return _setup_evidence_for_blocks(blocks, shared_resource_groups)
+
+
+def _declared_physical_setup_evidence(source_blocks, shared_resource_groups):
+    """Compare required states; no claim that the user's actual equipment retained them."""
+    states, transitions = {}, []
+    groups = [set(group) for group in shared_resource_groups or []]
+    has_facts = any(profile.get('physicalConfigurationFacts')
+        for block in source_blocks for profile in block['profiles'])
+    for block_index, block in enumerate(source_blocks if has_facts else []):
+        rounds = block['rounds'] if type(block['rounds']) is int else 0
+        for round_index in range(max(0, rounds)):
+            for member_index, profile in enumerate(block['profiles']):
+                resources = set(profile['resourceIds'])
+                aliases = set(resources)
+                while True:
+                    expanded = aliases | set().union(*(group for group in groups if aliases & group))
+                    if expanded == aliases:
+                        break
+                    aliases = expanded
+                for resource in aliases - resources:
+                    states.pop(resource, None)
+                facts = {fact['resourceId']: fact for fact in profile.get('physicalConfigurationFacts', [])}
+                for resource in sorted(resources):
+                    previous, required = states.get(resource), facts.get(resource)
+                    transitions.append({'blockIndex': block_index, 'roundIndex': round_index,
+                        'memberIndex': member_index, 'resourceId': resource,
+                        'relation': _declared_physical_configuration_relation(previous, required),
+                        'previousRequirement': copy.deepcopy(previous),
+                        'requiredConfiguration': copy.deepcopy(required)})
+                    if required is None:
+                        states.pop(resource, None)
+                    else:
+                        # Omitted dimensions cannot preserve a prior configuration proof.
+                        states[resource] = required
+    return {'physicalConfigurationTransitions': transitions,
+        'knownPhysicalConfigurationChanges': sum(row['relation'] == 'required_change' for row in transitions),
+        'sameDeclaredPhysicalConfigurationStates': sum(row['relation'] == 'same_declared_state'
+            for row in transitions),
+        'unknownPhysicalConfigurationTransitions': (sum(row['relation'] == 'unknown_configuration'
+            for row in transitions) if has_facts else sum(len(profile['resourceIds']) * max(0, block['rounds'])
+                for block in source_blocks if type(block['rounds']) is int for profile in block['profiles'])),
+        'physicalConfigurationEvidencePartial': True, 'physicalResourceIndependenceVerified': False,
+        'physicalConfigurationInterpretation': 'Sourced required states are compared per declared resource and dimension, '
+            'including returns across other resource references. Missing requirements invalidate retained state; '
+            'approved shared-station groups invalidate other member states when touched. Other resource aliases, '
+            'actual retained configurations, independent inventory and physical changeover time remain unverified. '
+            'Equal declared states are not proof of no physical setup action.'}
+
+
+def _setup_evidence_for_blocks(source_blocks, shared_resource_groups=None):
+    """Count preparation identities and every scheduled edge without physical-time guesses."""
+    blocks = []
+    first_use = {}
+    returns = []
+    transitions = []
+    previous_resources = None
+    previous_profile = None
+    preparation_tasks = {}
+    for source_block in source_blocks:
+        profiles = source_block['profiles']
+        rounds = source_block['rounds']
+        block_resources = sorted(set().union(*(set(profile['resourceIds']) for profile in profiles)))
+        block_index = len(blocks)
+        for profile in profiles:
+            task_id = json.dumps(profile['preparationTaskKey'], sort_keys=True, separators=(',', ':'))
+            preparation_tasks.setdefault(task_id, {'taskKey': profile['preparationTaskKey'],
+                'configurationStatus': profile['configurationStatus'], 'firstUseBlockIndex': block_index})
+        for resource_id in block_resources:
+            if resource_id not in first_use:
+                first_use[resource_id] = block_index
+            elif previous_resources is not None and resource_id not in previous_resources:
+                returns.append({'resourceId': resource_id, 'blockIndex': block_index,
+                    'firstUseBlockIndex': first_use[resource_id], 'kind': 'resource_reference_return'})
+        if previous_resources is not None and previous_profile is not None:
+            transitions.append({'scope': 'between_blocks', 'fromBlockIndex': block_index - 1,
+                'toBlockIndex': block_index, 'fromDefinitionId': previous_profile['preparationTaskKey']['definitionId'],
+                'toDefinitionId': profiles[0]['preparationTaskKey']['definitionId'], 'scheduledTransitionCount': 1,
+                **_setup_resource_transition(previous_profile, _setup_profile_at_set(profiles[0], 0))})
+        member_transitions = []
+        if source_block['kind'] == 'superset':
+            member_transitions = scheduled_setup_transitions(profiles, rounds or 0)
+            for transition in member_transitions:
+                transition['scheduledRepeatsPerRound'] = rounds if transition['scope'] == 'superset_member' else rounds - 1
+                transition['scheduledTransitionCount'] = 1
+        elif isinstance(rounds, int) and not isinstance(rounds, bool):
+            member_transitions = [{'scope': 'within_exercise', 'fromWorkSetIndex': index,
+                'toWorkSetIndex': index + 1, 'scheduledTransitionCount': 1,
+                **_setup_resource_transition(_setup_profile_at_set(profiles[0], index),
+                    _setup_profile_at_set(profiles[0], index + 1))}
+                for index in range(max(0, rounds - 1))]
+        blocks.append({'blockIndex': block_index, 'componentIndex': source_block['componentIndex'],
+            'kind': source_block['kind'], 'exerciseRefs': source_block['exerciseRefs'],
+            'equipmentIds': sorted({profile['equipmentId'] for profile in profiles if profile['equipmentId']}),
+            'accessoryIds': sorted(set().union(*(set(profile['accessoryIds']) for profile in profiles))),
+            'resourceIds': block_resources, 'memberTransitions': member_transitions})
+        previous_resources = block_resources
+        previous_profile = _setup_profile_at_set(profiles[-1], max(0, rounds - 1))
+    equipment_ids = sorted({resource for block in blocks for resource in block['equipmentIds']})
+    accessory_ids = sorted({resource for block in blocks for resource in block['accessoryIds']})
+    transitions_by_destination = {item['toBlockIndex']: item for item in transitions}
+    transition_list = []
+    for block in blocks:
+        if block['blockIndex'] in transitions_by_destination:
+            transition_list.append(transitions_by_destination[block['blockIndex']])
+        transition_list.extend(block['memberTransitions'])
+    transition_occurrences = {}
+    for transition in transition_list:
+        relation = transition['configurationRelation']
+        transition_occurrences[relation] = transition_occurrences.get(relation, 0) + transition.get('scheduledTransitionCount', 1)
+    return {**_declared_physical_setup_evidence(source_blocks, shared_resource_groups),
+        'status': 'preparation_task_identity_with_unknown_physical_setup',
+        'blockCount': len(blocks), 'supersetGroupCount': sum(block['kind'] == 'superset' for block in blocks),
+        'distinctEquipmentIds': equipment_ids, 'distinctAccessoryIds': accessory_ids,
+        'firstUseBlockByResourceId': first_use, 'resourceReferenceReturnCount': len(returns),
+        'resourceReferenceReturns': returns,
+        'preparationTaskCount': len(preparation_tasks),
+        'preparationTasks': list(preparation_tasks.values()),
+        'resourceIdentityComplete': bool(source_blocks) and all(
+            profile['resourceEvidence'] == 'declared_references'
+            for block in source_blocks for profile in block['profiles']),
+        'transitions': transition_list,
+        'scheduledTransitionOccurrencesByConfigurationRelation': transition_occurrences,
+        'scheduledTransitionOccurrenceCount': sum(transition_occurrences.values()),
+        'knownDeclaredChanges': sum(item['declaredResourceChange'] is True for item in transition_list),
+        'declaredResourceSwitches': sum(item['resourceSelection'] == 'changed_references'
+            for item in transition_list),
+        'unknownTransitions': sum(item['declaredResourceChange'] is None for item in transition_list),
+        'unknownConfigurationTransitions': sum(item['configurationRelation'] == 'unknown_configuration'
+            for item in transition_list),
+        'preparationTaskCountBasis': 'Distinct exact exercise-definition + declared-resource + known prescribed-load-sequence identities; different definitions are not collapsed because they share an equipment ID. Missing or app-calibrated loads remain an unknown configuration task, never zero setup cost.',
+        'physicalSetup': 'Rack, attachment position, load handling details after app calibration, layout, station independence and changeover time remain unknown.',
+        'interpretation': 'PreparationTaskCount is a conservative planning identity count, not a count of measured physical setup actions. Resource returns count exact IDs, not proven station returns. Repeated resource references may need reconfiguration; different IDs may refer to shared or related physical resources. Transitions include successive straight working sets and each scheduled superset round, including returns from the last member to the first between rounds; physical changeovers and their time remain unmeasured. Declared setup allowances are timing estimates, not measured physical setup time.'}
+
+
 def build_programming_summary(report, emitted_report, source_draft, plan_index, review_draft,
                               progression_capabilities, weekly_targets, final_artifact=None,
                               requirements=None, priority_execution=None, priority_tradeoffs=None,
@@ -491,18 +1015,46 @@ def build_programming_summary(report, emitted_report, source_draft, plan_index, 
     if requirements:
         coverage_sessions = report.get('workouts', [])
         weekly_coverage = report.get('weeklyCoverageSets', {})
+        soft_role_targets = {goal['metric'].split(':', 1)[1]: -goal['target']
+            for tier in requirements.get('objectiveTiers', []) for goal in tier
+            if goal['metric'].startswith('coverage:')}
         for requirement in requirements.get('requiredCoverage', []):
             key = requirement['key']
             session_counts = [day.get('coverageSets', {}).get(key, 0) for day in coverage_sessions]
             present = (all(count > 0 for count in session_counts)
                 if requirement['scope'] == 'eachSession' else weekly_coverage.get(key, 0) > 0)
             intent = requirement.get('intent', 'inclusion')
+            direct_muscle_exposure = None
+            if (key in (requirements.get('auditTargets', {}).get('weeklyEffectiveSets') or {})
+                    and requirement['scope'] == 'eachSession'):
+                session_exposure = []
+                for day in coverage_sessions:
+                    volume = day.get('volume', {}).get(key, {})
+                    direct = volume.get('direct', 0)
+                    session_exposure.append({'session': day['name'],
+                        'directWorkingSets': direct,
+                        'weightedIndirectCredit': volume.get('indirect', 0),
+                        'effectiveSets': volume.get('effective', direct + volume.get('indirect', 0)),
+                        'directPresence': 'present' if direct > 0 else 'missing'})
+                direct_muscle_exposure = {
+                    'source': 'audited primary-muscle credits; indirect credit does not satisfy direct presence',
+                    'weeklyDirectWorkingSets': report.get('weeklyVolume', {}).get(key, {}).get('direct', 0),
+                    'sessions': session_exposure,
+                    'status': ('direct_presence_each_session_met'
+                        if all(item['directWorkingSets'] > 0 for item in session_exposure)
+                        else 'direct_presence_missing'),
+                    'interpretation': 'Direct presence is a structural programming check, not evidence of physiological adequacy.'}
             coverage_requirements.append({
                 'key': key, 'description': requirement['description'], 'scope': requirement['scope'],
                 **({'intent': requirement['intent']} if requirement.get('intent') is not None else {}),
                 'weeklyWorkingSets': weekly_coverage.get(key, 0),
+                **({'preferredWeeklyWorkingSets': soft_role_targets[key],
+                    'preferredWeeklySetsShortfall': max(0, soft_role_targets[key] - weekly_coverage.get(key, 0))}
+                    if key in soft_role_targets else {}),
                 'sessionWorkingSets': [{'session': day['name'], 'workingSets': count}
                     for day, count in zip(coverage_sessions, session_counts, strict=True)],
+                **({'directMuscleExposure': direct_muscle_exposure}
+                    if direct_muscle_exposure is not None else {}),
                 **({'minimumWeeklySets': requirement['minimumWeeklySets']}
                     if 'minimumWeeklySets' in requirement else {}),
                 **({'attainedMinimumWeeklySets': weekly_coverage.get(key, 0)}
@@ -604,15 +1156,25 @@ def build_programming_summary(report, emitted_report, source_draft, plan_index, 
             'movementSets': day.get('coverageSets', {}), 'conservativeEstimatedSeconds': day['estimatedSeconds'],
             'emittedPrescriptionEstimatedSeconds': emitted['estimatedSeconds'],
             'finalExerciseOrder': exercise_order,
+            'setupEvidence': session_setup_evidence(artifact_day, sources_by_exercise, library_definitions,
+                [group for rule in (requirements or {}).get('executionRules', [])
+                    if rule.get('kind') == 'supersetNoReconfiguration'
+                    for group in rule.get('sharedResourceGroups', [])]),
+            'interferenceEvidence': session_interference_evidence(artifact_day, sources_by_exercise,
+                library_definitions, emitted, requirements or {}, report.get('repDurationSecondsByExercise', {})),
             'timingComponents': {
                 'prescribedRecoveryRestSeconds': timing['restSeconds'],
                 'estimatedSetupSeconds': timing['transitionSeconds'],
+                'setupEstimates': copy.deepcopy(emitted.get('setupEstimates', [])),
                 'estimatedTotalSeconds': emitted['estimatedSeconds'],
                 'transitions': transitions,
-                'setupScope': 'One-time allowance before each exercise after the first; not repeated per set or superset round.',
-                'supersetRoundSetup': 'Repeated equipment changes between superset members are not estimated; treat their duration as unknown.',
-                'note': ('Transition rows show separate Rest components and one-time setup estimates between blocks. Setup is not prescribed recovery and is not repeated each superset round. '
-                    'Prescribed set, explicit Rest, and superset-round rests are included in prescribedRecoveryRestSeconds. All components are already included in estimatedTotalSeconds.'),
+                'setupScope': 'One-time allowance before every exercise, including the opener; not repeated per set or superset round.',
+                'supersetRoundSetup': ('Repeated equipment setup, station travel, and physical changeovers between superset members are not timed. A supported grouping assumes both stations can remain ready; '
+                    'that assumption is not measured zero travel time, and any required reconfiguration may make actual duration longer.'),
+                'note': ('Setup estimates include every exercise, including the opener and each superset member. Transition rows show separate Rest components and destination setup estimates between blocks. Setup and station travel are not prescribed recovery; '
+                    'superset rest remains recovery time and does not establish that physical changeovers fit within it. Where a grouping is supported, its configurations are assumed ready, '
+                    'but any extra travel or reconfiguration time is unmeasured. Prescribed set, explicit Rest, and superset-round rests are included in prescribedRecoveryRestSeconds. '
+                    'The estimate may understate actual duration when physical changeovers are needed.'),
             },
         })
 
@@ -622,6 +1184,10 @@ def build_programming_summary(report, emitted_report, source_draft, plan_index, 
     summary = {'sessions': sessions,
         'exposures': exposures, 'timingAssumptions': timing_assumptions, 'executionTimeVerified': False,
         'muscleCreditReliance': copy.deepcopy(report.get('muscleCreditReliance', {})),
+        **({'volumePreferenceEvidence': copy.deepcopy(report['volumePreferenceEvidence'])}
+           if report.get('volumePreferenceEvidence') else {}),
+        **{key: copy.deepcopy(report[key]) for key in ('sessionTimeBudgetEvidence', 'exerciseSelectionEvidence')
+           if key in report},
         'regionalMuscleSummary': {region: {
             'status': ('unknown_selected_aggregate_contributions' if totals['unknownOccurrences'] else
                 'no_selected_aggregate_parent_exposure' if not totals['aggregateParentWorkingSetCredits'] else
@@ -728,7 +1294,9 @@ def audit_policy(muscle_targets=None):
             'shoulders': 'Shoulders (combined deltoids)'}.items() if key in supported},
         'capabilityLimits': 'Aggregate supportedMuscleTargets come from the library primary and secondary muscle arrays. Separately named regional targets are supported only when reviewed source-backed anatomy annotations exist for the participating exercises; an unannotated contribution remains unknown and cannot be inferred from an aggregate back, shoulder or chest credit. Regional credits are audited separately from aggregate totals. Do not invent regional credits or silently replace a regional target with its aggregate parent; explain incomplete evidence and resolve it before planning.',
         'prescribedRests': 'Explicit between-set rests, workout rest components and per-member superset rests are counted separately from setup transitions. The final superset recovery is omitted after the last round.',
-        'setupTiming': 'setupSeconds is a one-time allowance before each exercise after the first; it is separate from prescribed rest and is not repeated per set or superset round. Repeated equipment changes within a superset are not estimated here. The final audit reuses these estimates by occurrence ID; they are not measurements or duration guarantees.',
+        'setupTiming': ('setupSeconds is a one-time allowance before every exercise, including the opener; it is separate from prescribed recovery. Superset-round rest is recovery only, not setup or station travel. Zero prescribed recovery between members does not imply zero physical changeover time. '
+            'A supported superset assumes both configurations can remain ready; any required recurring reconfiguration or travel is unmeasured and can make actual duration longer. '
+            'The final audit reuses setup estimates by occurrence ID; duration remains an estimate, not a guarantee.'),
         'unilateralWork': 'Both sides of each set plus the prescribed between-side rest count for time; the working set counts once for muscle volume.',
         'volumeAccounting': 'Credits follow library primary/secondary roles. A working set may credit multiple muscles; summing muscle credits does not count distinct sets.',
         'precision': 'Duration is an estimate using the defaults above, plus prescribed work and rests; it is not a second-precise prediction.'}
@@ -749,6 +1317,16 @@ def validate_audit_targets(targets):
                     or upper is not None and (type(upper) not in (int, float)
                         or not math.isfinite(upper) or upper < lower or upper > 100)):
                 raise ContractValidationError(f"Invalid {field} range for {muscle}: {bounds}.")
+            if {'preferredMinimum', 'preferredMaximum'} & bounds.keys():
+                preferred_lower = bounds.get('preferredMinimum')
+                preferred_upper = bounds.get('preferredMaximum')
+                if (not {'preferredMinimum', 'preferredMaximum'} <= bounds.keys()
+                        or type(preferred_lower) not in (int, float)
+                        or not math.isfinite(preferred_lower) or not lower <= preferred_lower <= 100
+                        or preferred_upper is not None and (type(preferred_upper) not in (int, float)
+                            or not math.isfinite(preferred_upper) or not preferred_lower <= preferred_upper <= 100)
+                        or upper is not None and (preferred_upper is None or preferred_upper > upper)):
+                    raise ContractValidationError(f"Invalid {field} preferred range for {muscle}: {bounds}.")
     limit = targets.get("maximumSessionSeconds")
     if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0):
         raise ContractValidationError("auditTargets.maximumSessionSeconds must be a positive integer or null.")
@@ -759,10 +1337,53 @@ def volume_target_bounds(bounds):
     return bounds['minimum'], math.inf if bounds['maximum'] is None else bounds['maximum']
 
 
+def preferred_volume_target_bounds(bounds):
+    """Return a soft volume interval, or None when no preference was agreed."""
+    if 'preferredMinimum' not in bounds:
+        return None
+    return bounds['preferredMinimum'], (math.inf if bounds['preferredMaximum'] is None
+        else bounds['preferredMaximum'])
+
+
+def volume_preference_deviation(value, bounds):
+    """Measure distance from the preferred interval without changing hard bounds."""
+    preferred = preferred_volume_target_bounds(bounds)
+    return max(preferred[0] - value, value - preferred[1], 0) if preferred else 0
+
+
 def volume_target_text(bounds):
     """Render an explicit volume range without inventing an upper limit."""
     minimum, maximum = volume_target_bounds(bounds)
     return f"{minimum:g}–{maximum:g}" if math.isfinite(maximum) else f"≥ {minimum:g}"
+
+
+
+def audit_programming_preferences(report, plan, requirements):
+    """Report soft goals from the exact selected artifact without creating hard failures."""
+    aspirations = {goal['metric'].split(':', 1)[1]: -goal['target']
+        for tier in requirements.get('objectiveTiers', []) for goal in tier
+        if goal['metric'].startswith('weekly_effective_sets:')}
+    for entry in report.get('volumePreferenceEvidence', {}).get('weekly', []):
+        if entry['muscle'] in aspirations:
+            entry['aspiration'] = aspirations[entry['muscle']]
+            entry['aspirationShortfall'] = (None if entry['actual'] is None
+                else max(0, entry['aspiration'] - entry['actual']))
+    preferred = requirements.get('preferredSessionSeconds')
+    if preferred is not None:
+        sessions = [{'session': day['name'], 'estimatedSeconds': day['estimatedSeconds'],
+            'excessSeconds': max(0, day['estimatedSeconds'] - preferred),
+            'weeklyFrequency': day.get('timesCompletedInAWeek', 1)} for day in report['workouts']]
+        report['sessionTimeBudgetEvidence'] = {'preferredSessionSeconds': preferred,
+            'maximumSessionSeconds': requirements.get('auditTargets', {}).get('maximumSessionSeconds'),
+            'sessions': sessions, 'totalWeeklyExcessSeconds': sum(
+                day['excessSeconds'] * day['weeklyFrequency'] for day in sessions),
+            'interpretation': 'A preferred budget is a soft goal, distinct from the hard ceiling; elapsed time remains estimated.'}
+    if requirements.get('exerciseSelection'):
+        from .programming_policy import exercise_count_preference_facts
+        selected = {identifier for day in plan['workouts'] for identifier in day['exerciseIds']}
+        definitions = [exercise for exercise in plan['exercises'] if exercise['id'] in selected]
+        report['exerciseSelectionEvidence'] = exercise_count_preference_facts(definitions, requirements)
+    return report
 
 
 def _is_work_set(item):
@@ -1609,6 +2230,7 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
             rep_seconds = (rep_duration_seconds_by_exercise or {}).get(exercise['id'], exercise.get('repDurationSeconds', ASSUMPTIONS['secondsPerRep']))
             if type(rep_seconds) not in (int, float) or not math.isfinite(rep_seconds) or rep_seconds <= 0:
                 raise ValueError('Per-rep duration must be positive finite seconds.')
+            rep_seconds = Fraction(str(rep_seconds))
             work_sets = [item for item in sets if _is_work_set(item)]
             count = len(work_sets)
             timing_reps = (timing_reps_by_exercise or {}).get(exercise['id'])
@@ -1618,17 +2240,16 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
             for key in set((coverage_by_exercise or {}).get(exercise['id'], [])):
                 coverage[key] += count
             exercises_seen += 1
-            if exercises_seen > 1:
-                seconds = (setup_seconds_by_exercise or {}).get(exercise['id'], exercise.get('setupSeconds'))
-                if seconds is not None and (type(seconds) is not int or not 0 <= seconds <= 1800):
-                    add_audit_issue(report, 'invalid_setup_time', 'Setup time must be an integer from 0 to 1800 seconds.',
-                        'Correct the declared setup estimate and re-audit; negative or invalid values cannot reduce session duration.',
-                        path=f'/workouts/{workout_index}/exercises/{exercises_seen - 1}/setupSeconds', exerciseId=exercise['id'])
-                    seconds = None
-                setup_estimates.append({'exerciseId': exercise['id'],
-                    'seconds': ASSUMPTIONS['transitionSeconds'] if seconds is None else seconds,
-                    'scope': 'one_time_before_exercise',
-                    'basis': 'default_allowance' if seconds is None else 'declared_estimate'})
+            seconds = (setup_seconds_by_exercise or {}).get(exercise['id'], exercise.get('setupSeconds'))
+            if seconds is not None and (type(seconds) is not int or not 0 <= seconds <= 1800):
+                add_audit_issue(report, 'invalid_setup_time', 'Setup time must be an integer from 0 to 1800 seconds.',
+                    'Correct the declared setup estimate and re-audit; negative or invalid values cannot reduce session duration.',
+                    path=f'/workouts/{workout_index}/exercises/{exercises_seen - 1}/setupSeconds', exerciseId=exercise['id'])
+                seconds = None
+            setup_estimates.append({'exerciseId': exercise['id'],
+                'seconds': ASSUMPTIONS['transitionSeconds'] if seconds is None else seconds,
+                'scope': 'one_time_before_exercise',
+                'basis': 'default_allowance' if seconds is None else 'declared_estimate'})
             credits = {}
             per_set_credits = muscle_credits_per_set(exercise)
             if regional_targets:
@@ -1654,15 +2275,15 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                 timing_reps[0] if timing_reps else None)
             timing['calibrationSeconds'] += calibration_work_seconds
             if calibration_work_seconds and sides == 2:
-                timing['restSeconds'] += exercise['intraSetRestInSeconds']
+                timing['restSeconds'] += Fraction(str(exercise['intraSetRestInSeconds']))
             work_set_index = 0
             for item in sets:
                 kind = item.get("type")
                 if sides == 2 and kind in ("WeightSet", "BodyWeightSet", "EnduranceSet", "TimedDurationSet"):
-                    timing["restSeconds"] += exercise["intraSetRestInSeconds"]
+                    timing["restSeconds"] += Fraction(str(exercise["intraSetRestInSeconds"]))
                 if kind == "RestSet":
                     if standalone:
-                        timing["restSeconds"] += item["timeInSeconds"]
+                        timing["restSeconds"] += Fraction(str(item["timeInSeconds"]))
                 elif kind in ("WeightSet", "BodyWeightSet"):
                     field = "calibrationSeconds" if item.get("subCategory") == "CalibrationSet" else "workSeconds"
                     reps = item['reps']
@@ -1670,7 +2291,7 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                         reps = timing_reps[work_set_index]
                     timing[field] += reps * rep_seconds * sides
                 elif kind in ("EnduranceSet", "TimedDurationSet"):
-                    duration = item.get("timeInMillis", 0) / 1000
+                    duration = Fraction(str(item.get("timeInMillis", 0))) / 1000
                     field = "calibrationSeconds" if item.get("subCategory") == "CalibrationSet" else "workSeconds"
                     timing[field] += duration * sides
                     if duration <= 0 and targets.get("maximumSessionSeconds"):
@@ -1684,7 +2305,7 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                 if _is_work_set(item):
                     work_set_index += 1
             if exercise.get("generateWarmUpSets") and not any(s.get("subCategory") == "WarmupSet" for s in sets):
-                timing["rampUpSeconds"] += ASSUMPTIONS["generatedRampUpSecondsPerExercise"]
+                timing["rampUpSeconds"] += Fraction(str(ASSUMPTIONS["generatedRampUpSecondsPerExercise"]))
         for component in workout.get("workoutComponents", []):
             if component.get("enabled") is False:
                 continue
@@ -1692,7 +2313,7 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
             if kind == "Exercise":
                 add_exercise(component)
             elif kind == "Rest":
-                timing["restSeconds"] += component["timeInSeconds"]
+                timing["restSeconds"] += Fraction(str(component["timeInSeconds"]))
             elif kind == "Superset":
                 members = [e for e in component.get("exercises", []) if e.get("enabled") is not False]
                 member_sets = [[s for s in e.get("sets", []) if s.get("type") != "RestSet"] for e in members]
@@ -1715,19 +2336,23 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                     work = [s for s in sets if s.get("subCategory") not in EXCLUDED_VOLUME_CATEGORIES][:rounds]
                     add_exercise(exercise, warmups + work, standalone=False)
                 rests = component.get("restSecondsByExercise", {})
-                timing["restSeconds"] += rounds * sum(rests.get(e["id"], 0) for e in members) - rests.get(members[-1]["id"], 0)
+                timing["restSeconds"] += rounds * sum(Fraction(str(rests.get(e["id"], 0))) for e in members) - Fraction(str(rests.get(members[-1]["id"], 0)))
                 if component.get("timeCapSeconds") or component.get("amrap"):
                     if targets.get("weeklyEffectiveSets") or targets.get("perSessionEffectiveSets"):
                         add_audit_issue(report, "unbounded_volume", f"{workout['name']}: time-capped/AMRAP volume is not an exact prescribed set count.",
                                         "Exact set-volume targets require finite prescribed rounds. If AMRAP is required, ask the user to resolve that conflict.", path=f"/workouts/{workout_index}")
                     if component.get("timeCapSeconds"):
-                        timing["workSeconds"] = before_work + component["timeCapSeconds"]
+                        timing["workSeconds"] = before_work + Fraction(str(component["timeCapSeconds"]))
                         timing["restSeconds"] = before_rest
                 if component.get("roundDurationSeconds"):
                     elapsed = timing["workSeconds"] + timing["restSeconds"] - before
-                    timing["restSeconds"] += max(0, rounds * component["roundDurationSeconds"] - elapsed)
+                    timing["restSeconds"] += max(0, rounds * Fraction(str(component["roundDurationSeconds"])) - elapsed)
         timing["transitionSeconds"] = sum(item['seconds'] for item in setup_estimates)
-        seconds = sum(timing.values())
+        # Preserve decimal input arithmetic until the public JSON boundary.
+        seconds = sum(Fraction(str(value)) for value in timing.values())
+        timing = {key: int(value) if value.denominator == 1 else float(value)
+            for key, raw in timing.items() for value in (Fraction(str(raw)),)}
+        seconds = int(seconds) if seconds.denominator == 1 else float(seconds)
         result = {"name": workout["name"], "workingSets": logical_sets, "volume": volume, "contributions": contributions, "timing": timing, "estimatedSeconds": seconds}
         result['setupEstimates'] = setup_estimates
         report["workouts"].append(result)
@@ -1757,7 +2382,12 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                 'interpretation': ('Some selected aggregate-region exercises lack separate sourced attribution for this target; '
                     'no regional zero or compliance claim is inferred.' if unknown else
                     'Selected exercise contributions to this target have source-backed regional attribution.')}
-            if unknown:
+            regional_bounds = [targets[field][region]
+                for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets')
+                if region in targets.get(field, {})]
+            hard_target_requested = any(bounds['minimum'] > 0 or bounds['maximum'] is not None
+                or preferred_volume_target_bounds(bounds) is None for bounds in regional_bounds)
+            if unknown and hard_target_requested:
                 add_audit_issue(report, 'regional_target_evidence_unknown',
                     f"{REGIONAL_MUSCLE_LABELS[region]} target cannot be fully audited because selected aggregate-region contributions lack sourced regional attribution.",
                     'Use only source-backed regional credits for this target or ask the user to resolve the evidence gap; do not treat aggregate credits as regional sets.',
@@ -1776,14 +2406,59 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
 
 
 def audit_coverage_minimums(report, coverage_rules):
-    """Check explicitly approved role-dose and frequency minima from audited role assignments."""
+    """Check per-session presence and approved role-dose/frequency minima from audited work."""
     evidence = report.setdefault('coverageMinimumEvidence', {})
+    muscle_targets = (report.get('targets', {}).get('weeklyEffectiveSets') or {})
     for rule in coverage_rules or ():
         key = rule['key']
-        weekly_sets = report.get('weeklyCoverageSets', {}).get(key, 0)
-        actual_sessions = sum((1 if day.get('coverageSets', {}).get(key, 0) > 0 else 0)
-            * day.get('timesCompletedInAWeek', 1) for day in report.get('workouts', []))
+        direct_muscle = key in muscle_targets
+        weekly_sets = (report.get('weeklyVolume', {}).get(key, {}).get('direct', 0)
+            if direct_muscle else report.get('weeklyCoverageSets', {}).get(key, 0))
+        actual_sessions = 0
+        for day in report.get('workouts', []):
+            present = (day.get('volume', {}).get(key, {}).get('direct', 0) > 0 if direct_muscle
+                else day.get('coverageSets', {}).get(key, 0) > 0)
+            actual_sessions += int(present) * day.get('timesCompletedInAWeek', 1)
         item = {'weeklyWorkingSets': weekly_sets, 'weeklyTrainingSessions': actual_sessions}
+        if rule.get('scope') == 'eachSession':
+            missing = []
+            session_evidence = []
+            for index, day in enumerate(report.get('workouts', [])):
+                if direct_muscle:
+                    muscle = day.get('volume', {}).get(key, {})
+                    direct = muscle.get('direct', 0)
+                    indirect = muscle.get('indirect', 0)
+                    effective = muscle.get('effective', direct + indirect)
+                    present = direct > 0
+                    session_evidence.append({'session': day.get('name'), 'directWorkingSets': direct,
+                        'weightedIndirectCredit': indirect, 'effectiveSets': effective,
+                        'directPresence': 'present' if present else 'missing'})
+                else:
+                    actual = day.get('coverageSets', {}).get(key, 0)
+                    present = actual > 0
+                    session_evidence.append({'session': day.get('name'), 'workingSets': actual,
+                        'presence': 'present' if present else 'missing'})
+                if not present:
+                    missing.append((index, day.get('name')))
+            item['requiredPresenceStatus'] = 'met' if not missing else 'missing'
+            item['sessions'] = session_evidence
+            if direct_muscle:
+                item['directPresenceStatus'] = item['requiredPresenceStatus']
+            for index, session in missing:
+                already_reported = any(error.get('code') == 'required_coverage_missing'
+                    and error.get('coverageKey') == key
+                    and error.get('path', '').startswith(f'/workouts/{index}/')
+                    for error in report.get('errors', []))
+                if already_reported:
+                    continue
+                detail = ('direct primary-muscle working sets' if direct_muscle
+                    else 'qualified working sets')
+                add_audit_issue(report, 'required_coverage_missing',
+                    f"{session}: required {detail} for {key} are absent.",
+                    'Place a code-qualified exercise in this session and re-audit; indirect muscle credit does not satisfy direct muscle coverage.',
+                    path=f'/workouts/{index}/exercises', coverageKey=key,
+                    session=session, **({'actualDirectWorkingSets': session_evidence[index]['directWorkingSets']}
+                        if direct_muscle else {}))
         if 'minimumWeeklySets' in rule:
             item['minimumWeeklySets'] = rule['minimumWeeklySets']
             item['weeklySetsStatus'] = 'met' if weekly_sets >= rule['minimumWeeklySets'] else 'below_minimum'
@@ -1807,9 +2482,25 @@ def audit_coverage_minimums(report, coverage_rules):
 
 def _check_volume(volume, targets, label, report, workout_index=None):
     for muscle, bounds in targets.items():
-        if report.get('regionalTargetEvidence', {}).get(muscle, {}).get('status') == 'unknown_selected_aggregate_contributions':
-            continue
+        unknown = (report.get('regionalTargetEvidence', {}).get(muscle, {}).get('status')
+            == 'unknown_selected_aggregate_contributions')
         actual = volume[muscle]["effective"]
+        preferred = preferred_volume_target_bounds(bounds)
+        if preferred is not None:
+            minimum, maximum = preferred
+            shortfall, excess = max(minimum - actual, 0), max(actual - maximum, 0)
+            evidence = report.setdefault('volumePreferenceEvidence', {'weekly': [], 'perSession': [],
+                'interpretation': 'Preferred ranges guide optimization; missing them does not violate hard volume bounds.'})
+            evidence['weekly' if workout_index is None else 'perSession'].append({
+                'muscle': muscle, 'preferredMinimum': minimum,
+                'preferredMaximum': None if not math.isfinite(maximum) else maximum,
+                'actual': None if unknown else actual,
+                'shortfall': None if unknown else shortfall, 'excess': None if unknown else excess,
+                'status': ('unknown' if unknown else 'below_preferred' if shortfall
+                    else 'above_preferred' if excess else 'within_preferred'),
+                **({'session': label, 'sessionIndex': workout_index} if workout_index is not None else {})})
+        if unknown:
+            continue
         minimum, maximum = volume_target_bounds(bounds)
         if not minimum <= actual <= maximum:
             below = actual < minimum
@@ -1882,6 +2573,8 @@ def muscle_credit_reliance_sensitivity(package, report):
     weekly_targets = []
     for muscle, bounds in report.get('targets', {}).get('weeklyEffectiveSets', {}).items():
         if muscle in REGIONAL_MUSCLE_LABELS:
+            continue
+        if bounds['minimum'] == 0 and bounds['maximum'] is None:
             continue
         actual = report['weeklyVolume'][muscle]['effective']
         status = _volume_target_status(actual, bounds)

@@ -61,40 +61,6 @@ def _timing_finding(context, session_index, *, concern_group='NEW_3'):
         'concernGroup': concern_group, 'path': path, 'evidencePaths': [path]}
 
 
-def test_retained_estimate_uncertainty_can_be_adjudicated_and_canonicalized(monkeypatch):
-    finding, saved_assessment, context, review, raw_fact_refs = _saved_case()
-    assert raw_fact_refs == ['FACT_94', 'FACT_112', 'FACT_805', 'FACT_879',
-        'FACT_882', 'FACT_883', 'FACT_511', 'FACT_561']
-    captured = []
-
-    def call(_client, _request, **kwargs):
-        schema = kwargs['output_schema']
-        entry = schema['properties']['findingAssessments']['properties']['FINDING_0']
-        advisory = next(variant for variant in entry['anyOf']
-            if variant['properties']['disposition']['enum'] == ['advisory'])
-        assert 'authorityEvidenceRefs' not in advisory['properties']
-        assert 'currentDataEvidenceRefs' not in advisory['properties']
-        captured.append(True)
-        return json.dumps({'findingAssessments': {'FINDING_0': {
-            'disposition': 'advisory', 'repairDimensions': [], 'repairObjectives': [],
-            'reason': saved_assessment['reason']}}, 'repairPlan': ''}), None, None
-
-    monkeypatch.setattr(assessment, '_review_call', call)
-    assessed = assessment.assess_findings(None, context, review, single_attempt=True,
-        evidence_context=context)
-    review['assessment'] = assessed
-    assert captured == [True]
-    assert '/reviewAuthority' in assessed['groups'][0]['evidencePaths']
-    assert '/programmingSummary/sessions/2/timingComponents' in assessed['groups'][0]['evidencePaths']
-    assert review['findings'][0]['basis'] == 'material_uncertainty'
-    assessment.canonicalize_provisional_advisories(review, context)
-    assert review['findings'][0]['basis'] == 'uncertainty'
-    assert review['findings'][0]['severity'] == 'warning'
-    assert review['findings'][0]['action'] == 'advisory'
-    assert review['scopeResults']['execution']['findings'][0] == review['findings'][0]
-    assert assessment.validate_assessment(review, context) is review['assessment']
-
-
 def test_carried_material_uncertainty_remains_blocking():
     finding, _, context, review, _ = _saved_case()
     finding['concernGroup'] = 'ISSUE_3'
@@ -154,35 +120,6 @@ def test_supported_timing_repair_cannot_be_classified_as_missing_capability():
 
     carried = _timing_finding(context, 2, concern_group='ISSUE_3')
     assert 'unresolved_capability' in assessment._allowed_dispositions(carried, context)
-
-
-def test_reduced_model_context_does_not_reopen_code_owned_timing_capability(monkeypatch):
-    context = _current_context()
-    finding = _timing_finding(context, 0)
-    review = {'inputHash': 'retained-e2e-review', 'findings': [finding]}
-    evidence_context = copy.deepcopy(context)
-    evidence_context.pop('draft')
-    observed = {}
-
-    def respond(_client, request, **kwargs):
-        schema = kwargs['output_schema']
-        entry = schema['properties']['findingAssessments']['properties']['FINDING_0']
-        dispositions = {branch['properties']['disposition']['enum'][0]
-            for branch in entry['anyOf']}
-        observed['dispositions'] = dispositions
-        observed['model_saw_draft'] = '"draft"' in request[-1]['content']
-        return json.dumps({'findingAssessments': {'FINDING_0': {
-            'disposition': 'repair', 'repairDimensions': ['session_timing'],
-            'repairObjectives': [], 'reason': 'Use the supported rest repair.'}},
-            'repairPlan': 'Normalize the selected superset transition.'}), None, None
-
-    monkeypatch.setattr(assessment, '_review_call', respond)
-    review['assessment'] = assessment.assess_findings(None, context, review,
-        single_attempt=True, evidence_context=evidence_context)
-    assert 'unresolved_capability' not in observed['dispositions']
-    assert 'repair' in observed['dispositions']
-    assert observed['model_saw_draft'] is False
-    assert assessment.validate_assessment(review, context)
 
 
 def test_material_unknown_without_governing_authority_stays_blocking():

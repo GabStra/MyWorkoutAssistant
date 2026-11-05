@@ -225,11 +225,11 @@ def test_bounded_solver_accepts_only_independently_verified_incumbents(monkeypat
 
 
 def test_movement_api_cannot_submit_hard_counts():
-    block = session_drafting.PREPARE_WORKOUT_SESSIONS_TOOL['function']['parameters']['properties']['sessions']['items']['properties']['blocks']['items']
-    assert 'allocationBounds' not in block['properties'] and 'numWorkSets' not in block['properties']
+    selection = session_drafting.PREPARE_WORKOUT_SESSIONS_TOOL['function']['parameters']
+    assert set(selection['properties']) == {'requirementsId', 'baseDraftId', 'definition_ids'}
     with pytest.raises(ValidationError):
-        validate({'exercises': [{'definition_id': 'LIBRARY_0'}],
-                  'allocationBounds': {'minimum': 3, 'maximum': 4}}, block)
+        validate({'requirementsId': 'R1', 'baseDraftId': None, 'definition_ids': ['LIBRARY_0'],
+                  'allocationBounds': {'minimum': 3, 'maximum': 4}}, selection)
 
 
 def test_resume_revalidates_obsolete_failure_without_reselecting_or_changing_source():

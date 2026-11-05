@@ -33,6 +33,32 @@ def test_coverage_minimums_count_weekly_sets_and_frequency_weighted_sessions():
         'required_coverage_weekly_sets_below_minimum', 'required_coverage_sessions_below_minimum'}
 
 
+def test_each_session_target_muscle_coverage_uses_direct_audited_volume():
+    report = {
+        'targets': {'weeklyEffectiveSets': {'chest': {'minimum': 3, 'maximum': 6}}},
+        'weeklyCoverageSets': {'chest': 4},
+        'workouts': [
+            {'name': 'A', 'timesCompletedInAWeek': 1, 'coverageSets': {'chest': 2},
+             'volume': {'chest': {'direct': 2, 'indirect': 0, 'effective': 2}}},
+            {'name': 'B', 'timesCompletedInAWeek': 1, 'coverageSets': {'chest': 2},
+             'volume': {'chest': {'direct': 0, 'indirect': 2, 'effective': 2}}},
+        ],
+        'issues': [], 'errors': [],
+    }
+
+    generation_audit.audit_coverage_minimums(report, [
+        {'key': 'chest', 'scope': 'eachSession', 'intent': 'development'},
+    ])
+
+    evidence = report['coverageMinimumEvidence']['chest']
+    assert evidence['directPresenceStatus'] == 'missing'
+    assert evidence['sessions'][1] == {
+        'session': 'B', 'directWorkingSets': 0, 'weightedIndirectCredit': 2,
+        'effectiveSets': 2, 'directPresence': 'missing'}
+    assert [(error['code'], error['session']) for error in report['errors']] == [
+        ('required_coverage_missing', 'B')]
+
+
 @pytest.mark.parametrize('development_roles', [
     ['lateral_delt'], ['vertical_pull', 'lateral_delt'], ['lateral_delt', 'vertical_pull']])
 def test_qualified_menu_reports_lateral_ceiling_binding_constraints_and_minimum_conflict(development_roles):
@@ -191,6 +217,23 @@ def test_quality_disclosure_only_claims_priority_completion_within_recorded_scop
     assert 'Quality completion: requested optimization stages are proven' in disclosure
     assert 'within their recorded menu, evidence and preceding-priority scopes' in disclosure
     assert 'Native compliance and export acceptance are separate checks' in disclosure
+
+
+def test_distribution_disclosure_reports_worst_stage_separately_from_aggregate_tiebreak():
+    disclosure = generation_audit.render_optimization_disclosure({
+        'approvedPriorities': [{
+            'owner': 'joint_solver', 'priority': 'distribution', 'status': 'feasible',
+            'subStages': [
+                {'goal': 'distribution_worst', 'status': 'feasible', 'value': 2.5,
+                 'unit': 'effective_sets_from_weekly_mean'},
+                {'goal': 'distribution', 'status': 'optimal', 'value': 14},
+            ],
+        }],
+    })
+
+    assert 'Worst per-muscle session deviation: valid candidate found; the approved balance hierarchy is not proven optimal; 2.5 effective sets from the frequency-weighted mean' in disclosure
+    assert 'Aggregate per-session deviation: solver optimum conditional on the attained worst-stage value; the overall distribution priority remains unproven; recorded solver objective score 14' in disclosure
+    assert 'does not establish adequate stimulus or personal suitability' in disclosure
 
 
 def test_unrequested_development_does_not_imply_maximization_or_a_source_cap():

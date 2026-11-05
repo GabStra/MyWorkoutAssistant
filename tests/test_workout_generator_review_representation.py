@@ -15,6 +15,34 @@ CRITERIA = {'acceptanceCriterion': 'Count only repetitions with controlled lower
     'terminationCriterion': 'Stop when controlled lowering can no longer be maintained.'}
 
 
+def test_selected_review_definitions_preserve_sourced_execution_and_range_caveats(monkeypatch):
+    from workout_generator_pkg import recipe_contracts
+    equipment, _, _, _ = planning_case()
+    identifier = equipment['exerciseDefinitions'][0]['id']
+    annotation = {'exerciseFamilyId': 'reviewed_press_family',
+        'source': 'https://example.com/press',
+        'basis': 'Range is limited by floor contact; equal stimulus is not established.',
+        'execution': {'limbMode': 'bilateral', 'source': 'https://example.com/execution',
+            'basis': 'The described execution uses both arms together.'}}
+    monkeypatch.setattr(recipe_contracts, '_reviewed_exercise_annotations_by_definition',
+        lambda: {identifier: annotation})
+    plan = {'exercises': [{'id': f'EXERCISE_{index}', 'libraryDefinitionId': identifier,
+        'name': 'Press', 'numWorkSets': 2} for index in range(2)]}
+    before = copy.deepcopy((equipment, plan, annotation))
+
+    compact = plan_review._compact_review_draft(plan, equipment)
+
+    definition = compact['libraryDefinitions']['LIBRARY_0']
+    assert definition['reviewedExerciseFamily'] == {
+        key: annotation[key] for key in ('exerciseFamilyId', 'source', 'basis')}
+    assert definition['reviewedExecution'] == annotation['execution']
+    assert 'reviewedExerciseFamily' not in compact['exercises'][0]
+    assert (equipment, plan, annotation) == before
+    monkeypatch.setattr(recipe_contracts, '_reviewed_exercise_annotations_by_definition', lambda: {})
+    unknown = plan_review._compact_review_draft(plan, equipment)['libraryDefinitions']['LIBRARY_0']
+    assert 'reviewedExerciseFamily' not in unknown and 'reviewedExecution' not in unknown
+
+
 @pytest.mark.parametrize('kind', ['rir_range', 'technical_criteria'])
 def test_approved_rir_and_technical_criteria_coexist_and_render(kind):
     exercise = {'effortAcceptance': {'kind': kind, **CRITERIA}}
@@ -201,7 +229,6 @@ def test_final_artifact_audit_includes_superset_members_and_their_timing():
     assert report['workouts'][0]['timing']['workSeconds'] == 240
 
 
-
 @pytest.mark.parametrize('explicit_criteria', [False, True])
 def test_definition_replacement_does_not_inherit_old_movement_criteria(explicit_criteria):
     from workout_generator_pkg.planning_tools import compile_coordinated_repair
@@ -332,8 +359,7 @@ def test_review_distinguishes_selected_menu_from_equipment_eligible_library():
         'eligibilityEstablishesSuitability': False,
     }
     from workout_generator_pkg.review_assessment import _CURRENT_DATA_ROOTS, _evidence_categories
-    for projected in (plan_review._execution_review_context(context),
-                      plan_review._evidence_review_context(context, [context['draft']['exercises'][0]['id']])):
+    for projected in (context,):
         assert projected['librarySelectionScope'] == scope
         _, facts = plan_review._with_review_refs(projected)
         scope_refs = [reference for reference, path in facts.items() if path == '/librarySelectionScope']

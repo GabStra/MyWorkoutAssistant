@@ -115,6 +115,8 @@ def _selection_entry(definition, gear_names, reference):
     entry["creditsPerWorkingSet"] = muscle_credits_per_set(definition)
     entry['programmingDemandFacts'] = definition_demand_facts(definition)
     entry['regionalMuscleFacts'] = regional_muscle_facts(definition)
+    if definition.get('reviewedExecution'):
+        entry['reviewedExecution'] = copy.deepcopy(definition['reviewedExecution'])
     if definition.get('reviewedExerciseFamily'):
         entry['reviewedExerciseFamily'] = copy.deepcopy(definition['reviewedExerciseFamily'])
     from .generation_audit import VOLUME_SET_TYPES

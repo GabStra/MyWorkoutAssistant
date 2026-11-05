@@ -6,7 +6,7 @@ import pytest
 from workout_generator_pkg import restriction_policy as policy
 from workout_generator_pkg import exercise_library_tools as library
 from workout_generator_pkg.planning_tools import set_workout_requirements, audit_workout_plan, PlanningInputError
-from test_workout_generator_planning_tools import planning_case, requirement_messages
+from test_workout_generator_planning_tools import planning_case, requirement_messages, capability_requirement_messages
 
 
 def restriction_case():
@@ -38,7 +38,7 @@ def test_restrictions_resolve_once_and_all_consumers_enforce_the_same_ids(monkey
     with pytest.raises(ValueError, match='restriction policy'):
         library.execute_library_tool('select_exercises', {'definition_ids': ['LIBRARY_2']}, equipment, messages=messages)
     draft['requirementsId'] = stored['requirementsId']
-    assert audit_workout_plan(draft, equipment, messages)['passed']
+    assert audit_workout_plan(draft, equipment, capability_requirement_messages(stored, equipment))['passed']
     draft['workouts'][0]['exercises'][0]['definition_id'] = 'LIBRARY_2'
     with pytest.raises(ValueError, match='violates approved restrictions'):
         audit_workout_plan(draft, equipment, messages)
@@ -55,13 +55,51 @@ def test_unknown_alias_is_semantically_resolved_then_shown_for_approval(monkeypa
     calls = []
     def resolve(client, messages, **options):
         calls.append(json.loads(messages[-1]['content']))
-        return json.dumps({'matches': [{'kind': 'exception', 'term': 'pulley arm pressdown',
-            'references': ['LIBRARY_0'], 'unresolvedReason': None}]}), None, None
+        assert options['output_schema']['properties']['WORDING_0']['items']['enum'][0] == 'LIBRARY_0'
+        return json.dumps({'WORDING_0': ['LIBRARY_0']}), None, None
     monkeypatch.setattr(policy, 'chat_call', resolve)
     stored = set_workout_requirements(requirements, [], equipment, client=object())
     assert len(calls) == 1 and stored['restrictionPolicy']['exceptDefinitionIds'] == ['a']
     assert '### Permitted library exceptions\n\n- Cable Tricep Pushdown' in stored['requirementsPreview']
     assert 'separate approval question' in stored['requirementsPreview']
+
+
+def test_alias_resolution_receives_original_clarification_without_duplicate_structured_targets(monkeypatch):
+    from workout_generator_pkg.requirement_accounting import STRUCTURED_REQUIREMENTS_MARKER
+
+    equipment, requirements, _ = restriction_case()
+    requirements['exerciseRestrictions']['excludeNameTerms'].append('pushdown machine')
+    clarification = ('Previously approved alias: pushdown machine means the current-library Cable Tricep Pushdown, '
+        'which remains explicitly allowed by its existing exception. No broader cable permission is implied.')
+    messages = [{'role': 'user', 'content': STRUCTURED_REQUIREMENTS_MARKER + '\n' + json.dumps(requirements)}]
+    original_messages, original_requirements = copy.deepcopy(messages), copy.deepcopy(requirements)
+    payloads = []
+
+    def resolve(client, request, **options):
+        payload = json.loads(request[-1]['content'])
+        payloads.append(payload)
+        clarified = any(source['role'] == 'user' and clarification in source['content']
+                        for source in payload['sourceMessages'].values())
+        assert payload['wordings'] == {'WORDING_0': 'pushdown machine'}
+        return json.dumps({'WORDING_0': ['LIBRARY_0'] if clarified else []}), None, None
+
+    monkeypatch.setattr(policy, 'chat_call', resolve)
+    with pytest.raises(PlanningInputError, match='Cannot resolve restriction'):
+        set_workout_requirements(requirements, messages, equipment, client=object())
+    clarified_messages = messages + [{'role': 'user', 'content': clarification}]
+    original_clarified = copy.deepcopy(clarified_messages)
+    result = set_workout_requirements(requirements, clarified_messages, equipment, client=object())
+
+    assert result['restrictionPolicy']['exceptDefinitionIds'] == ['a', 'b']
+    assert result['restrictionPolicy']['excludedDefinitionIds'] == ['c', 'd', 'e']
+    assert {'kind': 'exclude', 'term': 'pushdown machine', 'definitionIds': ['a']} in result['restrictionPolicy']['matches']
+    assert payloads[0]['wordings'] == payloads[1]['wordings']
+    assert payloads[1]['sourceMessages']['SOURCE_1']['content'] == clarification
+    assert 'auditTargets' not in payloads[1]['sourceMessages']['SOURCE_0']['content']
+    assert 'pushdown machine' in payloads[1]['sourceMessages']['SOURCE_0']['content']
+    assert 'Working sets at' in payloads[1]['sourceMessages']['SOURCE_0']['content']
+    assert messages == original_messages and clarified_messages == original_clarified
+    assert requirements == original_requirements
 
 
 def test_unresolved_or_stale_policy_cannot_silently_allow_or_substitute_exercises():
@@ -83,9 +121,12 @@ def test_unresolved_or_stale_policy_cannot_silently_allow_or_substitute_exercise
 
 
 @pytest.mark.parametrize('response', [
-    {'matches': [{'kind': 'exception', 'term': 'unknown alias', 'references': ['LIBRARY_999'], 'unresolvedReason': None}]},
-    {'matches': []},
-    {'matches': [{'kind': 'exception', 'term': 'unknown alias', 'references': [], 'unresolvedReason': 'Ambiguous'}]},
+    {'WORDING_0': ['LIBRARY_999']},
+    {},
+    {'WORDING_0': []},
+    {'WORDING_0': ['LIBRARY_0'], 'extra': []},
+    {'matches': [{'kind': 'exclude', 'term': 'pushdown machine', 'references': [],
+        'unresolvedReason': 'Maps to Cable Tricep Pushdown (LIBRARY_6), which is explicitly excepted; no exclusion reference applied.'}]},
 ])
 def test_bad_semantic_resolution_never_produces_an_approved_policy(monkeypatch, response):
     equipment, requirements, _ = restriction_case()
@@ -110,8 +151,8 @@ def test_multiple_exception_candidates_require_user_clarification(monkeypatch, s
     equipment['exerciseDefinitions'].append({**equipment['exerciseDefinitions'][0], 'id': 'g', 'name': 'Cable Reverse Crunch'})
     term = 'ab movement' if semantic else 'crunch'
     requirements['exerciseRestrictions']['exceptNameTerms'] = [term]
-    monkeypatch.setattr(policy, 'chat_call', lambda *a, **k: (json.dumps({'matches': [
-        {'kind': 'exception', 'term': term, 'references': ['LIBRARY_1', 'LIBRARY_6'], 'unresolvedReason': None}]}), None, None))
+    monkeypatch.setattr(policy, 'chat_call', lambda *a, **k: (json.dumps({
+        'WORDING_0': ['LIBRARY_1', 'LIBRARY_6']}), None, None))
     with pytest.raises(PlanningInputError, match='Cable Crunch, Cable Reverse Crunch') as error:
         set_workout_requirements(requirements, [], equipment, client=object())
     assert error.value.code == 'ambiguous_restriction_exception'

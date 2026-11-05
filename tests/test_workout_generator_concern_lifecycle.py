@@ -60,7 +60,6 @@ def _run_discovery(monkeypatch, context, audited, messages, boundary, findings,
         return result
 
     monkeypatch.setattr(review, '_review_call', discover)
-    monkeypatch.setattr(review, 'assess_findings', adjudicate)
     reviewed = review._review_complete_draft(None, context, audited, messages, boundary, None)
     return reviewed, captured
 

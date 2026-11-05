@@ -308,21 +308,6 @@ def test_duration_repair_respects_superset_execution_and_intersected_ranges():
     assert items[0]['numWorkSets'] == items[1]['numWorkSets']
 
 
-def test_evidence_cache_ignores_unrelated_arithmetic_but_preserves_own_prescription():
-    equipment, _, stored, draft = planning_case()
-    draft['workouts'][0]['exercises'].append(copy.deepcopy(draft['workouts'][0]['exercises'][0]))
-    raw = audit_workout_plan(draft, equipment, requirement_messages(stored))
-    context = plan_review._context(raw, requirement_messages(stored), equipment, None, 3)
-    before = plan_review._evidence_review_context(context, ['EXERCISE_0'])
-    changed = copy.deepcopy(context)
-    changed['audit']['weeklyWorkingSets'] = 100
-    changed['audit']['workouts'][0]['estimatedSeconds'] = 999
-    changed['draft']['exercises'][1]['placementNotes'] = 'Unrelated note'
-    assert plan_review._evidence_review_context(changed, ['EXERCISE_0']) == before
-    changed['draft']['exercises'][0]['minReps'] += 1
-    assert plan_review._evidence_review_context(changed, ['EXERCISE_0']) != before
-
-
 def test_structure_authority_ignores_post_instruction_planner_chatter():
     equipment, _, messages, _, draft = prepared_case()
     before = plan_review._week_structure_context(draft['workouts'], messages, equipment)
@@ -598,15 +583,16 @@ def test_parallel_structure_review_preserves_completed_parts_and_waits_for_all_s
 
 def test_movement_only_preparation_allocates_counts_and_preserves_explicit_source_bounds():
     from jsonschema import Draft7Validator
+    from test_workout_generator_planning_tools import capability_requirement_messages
     equipment, requirements, messages, _, _ = prepared_case()
     requirements['auditTargets']['perSessionEffectiveSets'] = {}
     stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Three full-body sessions; weekly chest 15-18. Allocate counts.'}], equipment)
-    messages = requirement_messages(stored)
+    messages = capability_requirement_messages(stored, equipment)
     arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': None, 'name': 'Week',
         'sessions': [{'name': f'Day {i}', 'description': 'Push', 'trainingDays': [i * 2], 'timesCompletedInAWeek': 1,
                       'blocks': [{'exercises': [{'definition_id': 'LIBRARY_0'}]}]} for i in range(3)]}
     original = copy.deepcopy(arguments)
-    public = session_drafting.PREPARE_WORKOUT_SESSIONS_TOOL['function']['parameters']
+    public = session_drafting._BLOCK_PREPARATION_SCHEMA  # Retained movement-block arguments remain replayable.
     Draft7Validator(public).validate(arguments)
     prepared = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
     assert arguments == original
@@ -623,7 +609,7 @@ def test_movement_only_preparation_allocates_counts_and_preserves_explicit_sourc
     requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': None, 'minimumSets': 5, 'maximumSets': 5}]
     fixed_requirements = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Exactly 5 sets per exercise.'}], equipment)
     arguments['requirementsId'] = fixed_requirements['requirementsId']
-    fixed = session_drafting.prepare_workout_sessions(arguments, requirement_messages(fixed_requirements), equipment)
+    fixed = session_drafting.prepare_workout_sessions(arguments, capability_requirement_messages(fixed_requirements, equipment), equipment)
     assert [day['exercises'][0]['numWorkSets'] for day in fixed['sessions']] == [5, 5, 5]
     assert all(day['exercises'][0]['allocationBounds'] == {'minimum': 5, 'maximum': 5} for day in fixed['sessions'])
     arguments['sessions'][0]['blocks'] = None

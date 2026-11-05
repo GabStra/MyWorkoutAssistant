@@ -407,11 +407,13 @@ def test_assessed_menu_repair_projects_real_tools_and_requires_deepseek_strict(m
         for tool in requests[0]['tools'])
     repair_wire = next(tool['function']['parameters'] for tool in requests[0]['tools']
         if tool['function']['name'] == 'audit_workout_plan')
-    assert 'EXERCISE_0' not in json.dumps(repair_wire['properties']['sessionBlocks'])
+    assert 'sessionBlocks' not in repair_wire['properties']
+    assert repair_wire['properties']['useSolverMenu']['type'] == 'boolean'
     assert json.loads(calls[0].function.arguments) == {'question': 'Need one detail.'}
     assert coordinated['function'].get('strict') is None
-    target_schema = coordinated['function']['parameters']['properties']['edits']['properties'][
-        'redistributionTargets']['properties']['REDISTRIBUTION_0']
+    assert 'edits' not in coordinated['function']['parameters']['properties']
+    target_schema = coordinated['function']['parameters']['properties']['useSolverMenu']
+    validate(False, target_schema)
     with pytest.raises(ValidationError):
         validate(['WORKOUT_0'], target_schema)
 
@@ -711,3 +713,34 @@ def test_optional_nullable_union_flattens_provider_branches_without_losing_const
     nested = {'anyOf': [{'anyOf': [{'type': 'string'}, {'type': 'null'}]}, {'type': 'null'}]}
     assert not api_client._strict_schema_compatible(nested)
     assert api_client._strict_wire_schema(nested) == {'anyOf': [{'type': 'string'}, {'type': 'null'}]}
+
+
+def test_selection_repair_strict_delivery_preserves_required_edit_alternatives():
+    from jsonschema import validate, ValidationError
+    from workout_generator_pkg.session_drafting import preparation_patch_tool
+
+    task = {'allowedDefinitionIds': ['LIBRARY_1', 'LIBRARY_2'], 'permittedPaths': [],
+        'blockRepair': {'groupingOnly': False, 'sessions': {'SESSION_1': {
+            'occurrences': {'/sessions/1/exercises/4': {}},
+            'editableOccurrences': ['/sessions/1/exercises/4'], 'canAdd': True}}}}
+    schema = preparation_patch_tool(task)['function']['parameters']
+    original = copy.deepcopy(schema)
+    wire = api_client._strict_wire_schema(schema)
+    assert api_client._strict_parameters_compatible(wire)
+    replacement = {'replaces': '/sessions/1/exercises/4', 'definition_id': 'LIBRARY_1',
+                   'satisfiesCoverage': []}
+    addition = {'definition_id': 'LIBRARY_2', 'satisfiesCoverage': []}
+    for replacements, additions in (([replacement], None), (None, [addition]),
+                                     ([replacement], [addition])):
+        payload = {'basePreparationId': 'PREPARATION_1', 'sessionBlocks': [{
+            'sessionReference': 'SESSION_1', 'replacements': replacements, 'additions': additions}]}
+        validate(payload, wire)
+        decoded = json.loads(api_client._normalize_strict_tool_arguments(json.dumps(payload), schema))
+        validate(decoded, schema)
+        assert set(decoded['sessionBlocks'][0]) == {'sessionReference'} | {
+            field for field, value in (('replacements', replacements), ('additions', additions))
+            if value is not None}
+    with pytest.raises(ValidationError):
+        validate({'basePreparationId': 'PREPARATION_1', 'sessionBlocks': [{
+            'sessionReference': 'SESSION_1', 'replacements': None, 'additions': None}]}, wire)
+    assert schema == original

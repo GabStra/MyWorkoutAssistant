@@ -286,8 +286,108 @@ def pending_question(messages):
                     validated = clarification_question({key: question[key] for key in ('question', 'options', 'recommendation') if key in question})
                 except (ValueError, KeyError, TypeError, ValidationError):
                     continue
-                return {**validated, 'messageIndex': index}
+                return {**validated, 'messageIndex': index,
+                    **({'executionChoices': copy.deepcopy(question['executionChoices'])}
+                       if question.get('executionChoices') else {})}
     return None
+
+
+def answered_execution_decision(messages, equipment, history_fingerprint=None):
+    """Compile only an explicit numbered answer to a current backend counting choice."""
+    from .planning_tools import library_fingerprint, requirement_sources
+
+    user_index = max((index for index, message in enumerate(messages)
+                      if message.get('role') == 'user'), default=-1)
+    if user_index < 0:
+        return None
+    interaction = messages[user_index].get('userInteraction') or {}
+    question = interaction.get('question') or {}
+    modes = {'One complete sequence; reps/time are total': 'single_sequence',
+             'Repeat prescribed reps/time on each side or direction': 'paired_sides'}
+    if (interaction.get('input') not in ('1', '2') or question.get('options') != list(modes)
+            or question != pending_question(messages[:user_index])):
+        return None
+    choices = question.get('executionChoices') or []
+    if not isinstance(choices, list) or not choices or any(not isinstance(choice, dict) for choice in choices):
+        return None
+    origin = messages[question['messageIndex']]
+    function = next((call.get('function', {}).get('name') for message in messages[:question['messageIndex']]
+                     for call in message.get('tool_calls', []) if call.get('id') == origin.get('tool_call_id')), None)
+    if function not in ('prepare_workout_sessions', 'draft_workout_sessions', 'audit_workout_plan'):
+        return None
+    payload = json.loads(origin['content'])
+    _, requirements = _latest_result(messages, 'set_workout_requirements')
+    if (not requirements_approved(messages, requirements)
+            or payload.get('requirementsId') != requirements.get('requirementsId')
+            or payload.get('libraryFingerprint') != library_fingerprint(equipment)
+            or payload.get('historyFingerprint') != history_fingerprint):
+        return None
+    definitions = sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id'])
+    by_reference = {f'LIBRARY_{index}': definition for index, definition in enumerate(definitions)}
+    references = [choice.get('definition_id') for choice in choices]
+    execution_errors = [error for error in payload.get('errors', [])
+                        if error.get('code') == 'execution_semantics_unresolved']
+    if (any(not isinstance(reference, str) for reference in references)
+            or len(set(references)) != len(references)
+            or set(references) != {error.get('definition_id') for error in execution_errors}):
+        return None
+    from .planning_decisions import _selection_ids_by_name
+    names = {identity: name for name, identity in _selection_ids_by_name(definitions).items()}
+    selected_names = []
+    for choice in choices:
+        definition = by_reference.get(choice['definition_id'])
+        if (not definition or choice.get('canonicalDefinitionId') != definition['id']
+                or definition['id'] not in names
+                or any(error.get('canonicalDefinitionId', definition['id']) != definition['id']
+                       for error in execution_errors if error.get('definition_id') == choice['definition_id'])):
+            return None
+        selected_names.append(names[definition['id']])
+    if len(set(selected_names)) != len(selected_names):
+        return None
+    answer = question['options'][int(interaction['input']) - 1]
+    sources = requirement_sources(messages)
+    references = [f'SOURCE_{index}' for index, source in enumerate(sources)
+                  if source['messageIndex'] == user_index or (source['role'] == 'assistant'
+                      and question['messageIndex'] < source['messageIndex'] < user_index)]
+    return {'decisions': [{'topic': name + ' rep/time counting', 'choice': answer,
+        'sourceReferences': references,
+        'executionPrescription': {'exercise': name, 'setMode': modes[answer]}}
+        for name in selected_names]}
+
+
+def execution_preparation_arguments(messages, equipment, history_fingerprint=None):
+    """Reuse the exact menu whose counting-only answer passed independent review."""
+    from .planning_tools import latest_draft_submission
+
+    if answered_execution_decision(messages, equipment, history_fingerprint) is None:
+        return None
+    user = next(message for message in reversed(messages) if message.get('role') == 'user')
+    gate_index = user['userInteraction']['question']['messageIndex']
+    gate = json.loads(messages[gate_index]['content'])
+    index, prepared = _latest_result(messages[:gate_index], 'prepare_workout_sessions')
+    if (index < 0 or not gate.get('preparationId') or prepared.get('preparationId') != gate['preparationId']
+            or prepared.get('requirementsId') != gate.get('requirementsId')
+            or prepared.get('libraryFingerprint') != gate.get('libraryFingerprint')
+            or prepared.get('historyFingerprint') != history_fingerprint
+            or prepared.get('baseDraftId') != latest_draft_submission(messages, equipment)[1]
+            or not prepared.get('setAllocation', {}).get('feasible') or prepared.get('errors')):
+        return None
+    call_id = messages[index].get('tool_call_id')
+    function = next((call['function'] for message in messages[:index] for call in message.get('tool_calls', [])
+                     if call.get('id') == call_id), None)
+    try:
+        arguments = copy.deepcopy(prepared.get('preparationArguments'))
+        if arguments is None:
+            arguments = json.loads(function.get('arguments', '{}')) if function else None
+        if isinstance(arguments, dict) and ('patch' in arguments or 'sessionBlocks' in arguments):
+            from .session_drafting import resolve_preparation_patch
+            arguments = resolve_preparation_patch(arguments, messages[:index], equipment)
+    except (ValueError, TypeError):
+        return None
+    if (not isinstance(arguments, dict) or arguments.get('requirementsId') != prepared['requirementsId']
+            or arguments.get('baseDraftId') != prepared.get('baseDraftId')):
+        return None
+    return arguments
 
 
 def answer_question(question, text):

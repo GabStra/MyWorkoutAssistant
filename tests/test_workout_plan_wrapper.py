@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 
-def test_motion_launchers_allow_automatic_vram_fitting():
+def test_motion_launchers_preserve_the_configured_inference_profile():
     repo = Path(__file__).resolve().parents[1]
     command = r'''
     $ErrorActionPreference = 'Stop'
@@ -27,6 +27,11 @@ def test_motion_launchers_allow_automatic_vram_fitting():
     $to = $body.IndexOf('    $launchId =')
     $build = [scriptblock]::Create($body.Substring($from, $to - $from))
     $LlamaCppCtxSize = 16384; $LlamaCppFitCtx = 12345; $LlamaCppFitTarget = 3072
+    $LlamaCppBackend = 'gpu'; $LlamaCppParallel = $null
+    $LlamaCppImageMinTokens = 1024; $LlamaCppImageMaxTokens = 2048; $LlamaCppMtmdBatchMaxTokens = 768
+    $LlamaCppReasoningBudgetMessage = 'Return the JSON object.'; $LlamaCppCacheReuse = 128
+    $LlamaCppMtpModel = 'draft.gguf'; $LlamaCppSpecDraftNMax = 3
+    $LlamaCppMmap = $true; $LlamaCppMlock = $false
     foreach ($fit in @('on', 'off')) {
         $LlamaCppFit = $fit
         . $build
@@ -34,7 +39,31 @@ def test_motion_launchers_allow_automatic_vram_fitting():
         if ($serverArgs[[array]::IndexOf($serverArgs, '--gpu-layers') + 1] -ne $expected) { throw 'Shared worker defeats auto-fit' }
         if ($serverArgs[[array]::IndexOf($serverArgs, '--fit-ctx') + 1] -ne '12345') { throw 'Fit context not forwarded' }
         if ($serverArgs[[array]::IndexOf($serverArgs, '--fit-target') + 1] -ne '3072') { throw 'VRAM reserve not forwarded' }
+        foreach ($pair in @(
+            @('--parallel', '3'), @('--split-mode', 'none'),
+            @('--image-min-tokens', '1024'), @('--image-max-tokens', '2048'), @('--mtmd-batch-max-tokens', '768'),
+            @('--reasoning-budget-message', 'Return the JSON object.'), @('--cache-reuse', '128'),
+            @('--model-draft', 'draft.gguf'), @('--spec-type', 'draft-mtp'), @('--spec-draft-n-max', '3'),
+            @('--gpu-layers-draft', 'all')
+        )) {
+            $index = [array]::IndexOf($serverArgs, $pair[0])
+            if ($index -lt 0 -or $serverArgs[$index + 1] -ne $pair[1]) { throw "Shared worker lost $($pair[0])" }
+        }
+        if ($serverArgs -contains '--load-mode') { throw 'Default mmap should use the native default' }
     }
+    $LlamaCppBackend = 'cpu'
+    . $build
+    if ($serverArgs[[array]::IndexOf($serverArgs, '--gpu-layers') + 1] -ne '0' -or $serverArgs[[array]::IndexOf($serverArgs, '--gpu-layers-draft') + 1] -ne '0') { throw 'CPU backend offloads model layers' }
+    $LlamaCppBackend = 'gpu'
+    foreach ($mode in @(@($false, $false, 'none'), @($false, $true, 'mlock'), @($true, $true, 'mmap+mlock'))) {
+        $LlamaCppMmap = $mode[0]; $LlamaCppMlock = $mode[1]
+        . $build
+        if ($serverArgs[[array]::IndexOf($serverArgs, '--load-mode') + 1] -ne $mode[2]) { throw 'Shared loading mode not forwarded' }
+    }
+    $LlamaCppImageMinTokens = $null; $LlamaCppImageMaxTokens = $null; $LlamaCppMtmdBatchMaxTokens = $null
+    $LlamaCppCacheReuse = $null; $LlamaCppMtpModel = ''; $LlamaCppReasoningBudgetMessage = ''
+    . $build
+    if (@($serverArgs | Where-Object { $_ -in @('--image-min-tokens', '--image-max-tokens', '--mtmd-batch-max-tokens', '--cache-reuse', '--model-draft', '--reasoning-budget-message') }).Count) { throw 'Unset optional settings must stay unset' }
     $segment = [System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $root 'scripts/run_exercise_segment_detection.ps1'), [ref]$tokens, [ref]$errors)
     if ($errors.Count) { throw $errors[0] }
@@ -45,6 +74,12 @@ def test_motion_launchers_allow_automatic_vram_fitting():
         Resolve-LlamaCppServerProcess -Command 'unused.exe' -ModelPath 'model' -MmprojPath 'projector' -Backend 'gpu' -Fit $fit
         $expected = if ($fit -eq 'on') { 'auto' } else { 'all' }
         if ($launchArgs[[array]::IndexOf($launchArgs, '--gpu-layers') + 1] -ne $expected) { throw 'Segment worker defeats auto-fit' }
+        if ($launchArgs[[array]::IndexOf($launchArgs, '--split-mode') + 1] -ne 'none') { throw 'Segment worker splits the model across GPUs' }
+    }
+    foreach ($mode in @(@($false, $false, 'none'), @($false, $true, 'mlock'), @($true, $true, 'mmap+mlock'))) {
+        Resolve-LlamaCppServerProcess -Command 'unused.exe' -ModelPath 'model' -MmprojPath 'projector' -Backend 'gpu' -Mmap $mode[0] -Mlock $mode[1]
+        if ($launchArgs[[array]::IndexOf($launchArgs, '--load-mode') + 1] -ne $mode[2]) { throw 'Segment loading mode not forwarded' }
+        if ($launchArgs -contains '--no-mmap' -or $launchArgs -contains '--mlock') { throw 'Segment worker uses removed loading flags' }
     }
     '''
     result = subprocess.run(['pwsh', '-NoProfile', '-Command', command],

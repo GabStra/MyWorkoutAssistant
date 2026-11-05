@@ -37,6 +37,12 @@ MOVEMENT_COVERAGE_ROLES = {
     'elbow_extension': 'Elbow-extension work',
     'calves': 'Dedicated calf work',
     'core': 'Dedicated abdominal/core work',
+    'sagittal_plane': 'Sagittal-plane work across the weekly program; program coverage does not require every muscle in every plane',
+    'frontal_plane': 'Frontal-plane work across the weekly program; program coverage does not require every muscle in every plane',
+    'transverse_plane': 'Transverse-plane work across the weekly program, including loaded rotation or qualifying resistance to rotation; program coverage does not require every muscle in every plane',
+    'unilateral': 'Unilateral work; single-limb execution does not automatically establish balance-control work',
+    'lateral_movement': 'Lower-body lateral movement work; lateral raises alone do not satisfy this role',
+    'rotational_core': 'Dedicated core work with controlled rotation or anti-rotation; generic bracing alone does not establish this role',
 }
 
 

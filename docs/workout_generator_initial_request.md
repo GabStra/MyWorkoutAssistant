@@ -1,306 +1,106 @@
 # Initial workout-generation request
 
-You are an expert strength coach and exercise physiologist specializing in evidence-based hypertrophy, biomechanical exercise selection, fatigue management, and time-efficient training programs.
+Design a practical **3-day full-body program** for hypertrophy and strength, balanced multiplanar movement capacity and joint health, using the following user-supplied guidelines inspired by Andy Galpin's general training principles.
 
-## TASK
+The accompanying `workout_generator_initial_requirements.json` supplies the exact structured quantities. Hard limits and preferred ranges are separate. This policy replaces the previous high-volume floors, direct work for every muscle in every session, and dedicated 6/9-set development floors. Preserve the practical execution limits and explicit exclusions below. Do not import superseded requirements from an earlier run.
 
-Design a customized, balanced **3-day full-body hypertrophy program**, targeting **15–18 effective weekly sets per major muscle group**, with each workout lasting **no more than 90 minutes, including warm-up, rest, equipment changes, and transitions**.
+## 1. Optimize the week, not every individual workout
 
-Prioritize hypertrophy, practical execution, progression, and muscular development over arbitrary mathematical symmetry.
+Optimize a program I can consistently complete. Do not try to maximize muscle volume, movement variety and ROM exposure in every session. Weekly movement coverage and safe, practical execution take priority over achieving a particular muscle-set total. A shorter useful session is preferable to filler work.
 
-Do not silently relax any requirements. Identify conflicts, explain necessary compromises, and verify the final program mathematically.
+Use exactly **3 full-body sessions weekly**, ideally at least **48 hours apart**, with at least **1 full recovery day** between sessions, including across the weekly boundary. Every session includes knee-dominant lower-body work, posterior-chain work, upper pushing and upper pulling. It does **not** need direct isolation for every muscle or every plane.
 
----
+## 2. Flexible volume
 
-## 1. FREQUENCY AND SCHEDULE
+- **Target 10–15 challenging effective sets weekly per major muscle group**, including supported compound overlap. This is a soft programming range, not a mandatory minimum or an automatic failure outside the range.
+- The structured targets use hard `minimum: 0, maximum: null` and soft `preferredMinimum: 10, preferredMaximum: 15`. Zero here introduces no positive hard floor; it does not request zero work. Consider shortfall/excess outside this band jointly with the approved role targets, preferred time budget, movement balance, selection, practical execution and exposure distribution. In that same shared tier, retain the soft aspiration of **15 weekly effective sets** for each targeted muscle, normalized by the **5-set difference** from 10 to 15. Reaching 10 is a starting dose, not a reason to classify all further work as unnecessary. Additional volume must be assessed together with movement balance and the other goals, rather than settled before them. Reaching 15 earns no further volume reward. These priorities are programming preferences, not a fitted biological dose-response curve or proof that I recover from 15 sets.
+- Consider **15–18 sets** only for specifically identified priority muscles when performance and recovery support it, through a scoped approved update. No priority muscles or recovery capacity are assumed in this standing request.
+- Account for chest, combined back, quads, hamstrings, glutes, combined shoulders, biceps, triceps, **calves and abs** as hypertrophy targets. Calves and abs use the same soft 10–15 range and shared-tier 15-set aspiration, rather than token inclusion alone. Compound assistance can contribute; direct work for every target is not mandatory in every session. Rotational/anti-rotational coverage can overlap with abdominal training when the reviewed credits support it; do not count physical sets twice.
+- Use reviewed library accounting: **effective sets = direct sets + 0.5 × substantial indirect sets**. Incidental stabilization gets no credit. These are accounting conventions, not exact stimulus or fatigue measurements. Count unilateral work per muscle, not twice for two limbs; exclude warm-ups.
+- Report actual direct, indirect and effective volume, soft-target shortfalls/excesses and evidence limitations. A missed preference may be an acceptable practical tradeoff; do not turn it into a hard requirement or silently change its stated range.
+- Combined back/shoulder compliance does not prove adequate lats, upper-back or individual deltoid-head development. Use available reviewed regional annotations and mark missing evidence unknown; do not invent regional credits.
 
-- Exactly 3 full-body sessions weekly (e.g., Monday, Wednesday, Friday).
-- At least one recovery day between sessions.
-- Every session must contain knee-dominant lower-body work, posterior-chain work, upper-body pushing, and upper-body pulling.
-- Distribute training volume across the three sessions to manage fatigue.
+## 3. Weekly movement, ROM and selection
 
-## 2. EQUIPMENT AND PRACTICAL CONSTRAINTS
+Cover **sagittal, frontal and transverse planes across the weekly program**. Not every muscle needs direct work in every plane. Include squat/knee-dominant and hinge work, horizontal and vertical pushing and pulling, unilateral work, lower-body lateral movement, and controlled rotational **or anti-rotational core** work. Generic bracing is not automatically dedicated anti-rotation; lateral raises alone do not establish lower-body lateral movement.
 
-- Select exercises exclusively from equipment confirmed to be available in the user's separately supplied parameters.
-- Do not assume access to equipment that has not been specified.
-- Prioritize exercises that allow practical progressive overload.
-- Supersets must require minimal equipment adjustments or reconfiguration.
-- Avoid pairing exercises that require changing the same adjustable weights or substantially repositioning equipment between sets.
-- Account for equipment setup, transitions, and available training space when calculating session duration.
-- If equipment limitations prevent meeting a programming target, explain the limitation and propose the closest feasible alternative.
+Use the existing qualification/review path to establish which exercises meet these roles from their actual execution and available evidence. One suitable exercise can cover several roles; do not add one exercise for every label. Unilateral execution alone does not prove balance training. Preserve calf, lateral-delt and knee-flexion movement inclusion where suitable, without resurrecting their previous development quotas.
 
-## 3. WEEKLY HYPERTROPHY VOLUME
+Hip-dominant work, horizontal and vertical pushing/pulling, and lateral-delt work have **development intent**, rather than token presence alone. This is a qualitative selection and review purpose, not an added numerical floor or a request to maximize their sets. Calf, knee-flexion, planes, lateral movement and core/stability coverage retain inclusion intent. Compare hip-dominant and knee-flexion allocations using the actual menu and execution evidence; do not assume one exercise name warrants a universal cap or that their doses must be equal. A smaller difference obtained by reducing both compared roles does not by itself establish better balance; disclose their combined dose and the practical tradeoff.
 
-**Target: 15–18 effective sets per muscle group per week.**
+The approved soft movement-development targets are **4 weekly lateral-delt sets and 4 weekly vertical-pull sets**. Reaching either target earns no further role-exposure reward. These are preferences, not hard minimums or evidence of personal adequacy; report a remaining shortfall. They do not replace the separate muscle-volume preferences or imply that every muscle region needs ten direct sets. Other movement-development roles remain qualitative unless separately specified.
 
-Audit these muscle groups separately:
+Prioritize controlled, **full pain-free ROM**. Prefer complementary muscle lengths and joint angles where beneficial and supported by execution evidence. Do not infer pain tolerance, ROM capability or long-length loading merely from an exercise name. Treat uncertain evidence as uncertain and ask when it materially affects a safe choice.
 
-1. Chest (including upper chest).
-2. Lats.
-3. Upper back.
-4. Quads.
-5. Hamstrings.
-6. Glutes.
-7. Anterior delts.
-8. Lateral delts.
-9. Rear delts.
-10. Biceps.
-11. Triceps.
+Prefer **2–3 distinct qualified exercises per major muscle across the week** when useful, not a binding count quota. A library definition qualifies through direct or substantial secondary muscle credit greater than zero; incidental stabilization does not qualify. Count a repeated definition only once across the week. Count primary and substantial-secondary participation transparently. This numerical preference does not establish complementarity: assess ROM, muscle lengths and joint angles separately from execution evidence, and mark missing evidence unknown. Reuse effective, trackable exercises rather than maximize variety. Avoid redundant variations and unnecessary switching. Prefer suitable compounds first, then necessary isolation and small supplemental movements.
 
-Calves and abdominal development: prescribe at least **9 direct, challenging working sets per week for calves and 9 for abdominals**. Prefer **3 sets for each in every session**; this distribution is a soft preference, not a binding per-session or session-frequency minimum. Warm-ups and incidental stabilization do not count. Abdominal sets labeled both `abs` and `core` count once as physical work. These are separate development requirements, not inclusion-only accessories. Include them during exercise selection and duration solving, preserve the 90-minute limit and all other approved requirements, and disclose any conflict rather than silently reducing either minimum. Do not infer a 15–18-set target for calves or abs.
+Include roughly **2–4 weekly supplemental sets** of lateral, rotational or stability work as appropriate. This is a flexible movement-coverage guideline, not a cap on abdominal hypertrophy work or a separate hypertrophy dose for every plane or stabilizing muscle. Reuse overlap where justified; do not count one physical set several times as extra work. The old nine-set abdominal/calf and six-set lateral-delt/vertical-pull hard floors no longer apply.
 
-Do not combine unrelated muscle groups into one aggregate target. For example, 17 total sets across quads and hamstrings does not mean both muscles received 17 sets.
+## 4. Efficiency and execution
 
-### Volume-counting methodology
+Prefer **at most 75 minutes per session including warm-up**, considered jointly with training-quality targets. **90 minutes is the hard ceiling** for work, prescribed recovery, warm-up, calibration allowances, setup and transitions. There is no minimum duration: do not add work to make a useful shorter session longer.
 
-Use a consistent fractional-set model:
+- At most **15 exercise occurrences per session**, including all superset members.
+- Each selected exercise receives **2–3 working sets per session**, with at least **2 per occurrence** and at most **3 total across all blocks for the same exercise in a session**. Warm-ups do not count.
+- When increasing useful volume, prefer adding permitted working sets to existing suitable exercises before adding more variations or setups. Preserve balance, complementarity, recovery prescriptions and all hard bounds. If the three-set cap demonstrably forces unnecessary switching, report the audited conflict and propose a scoped change rather than bypassing the cap.
+- At most **3 superset groups per session**, with at most **3 exercises per group**. These are practical limits, not evidence of adequate recovery.
+- Prefer time-saving supersets only when loading, physical setup, muscle interaction and recovery make them appropriate. Both stations must remain usable without recurring reconfiguration. Sharing equipment IDs does not prove independent equipment inventory.
+- Heavy compounds as straight sets: **120–180 seconds** between working sets; moderate compounds: **90–150 seconds**.
+- Isolation work, including core exercises in that category: **60–120 seconds** between straight working sets. Individual recovery remains unverified.
+- Superset members have **zero prescribed inter-exercise rest**; recovery after the final member between rounds is **60–120 seconds**, reduced from the prior 90–120 seconds by explicit user decision. Choose suitable members and rounds with appropriate per-exercise recovery; do not reduce other hard recovery requirements to make a grouping fit. Keep physical setup/travel estimates separate from prescribed recovery: zero prescribed rest does not mean an instantaneous physical changeover or verified recovery.
+- Use app-generated ramp-ups where supported for knee- and hip-dominant work. The app owns exact warm-up loads and reps.
+- Keep compound blocks ahead of standalone isolation and core blocks, unless an explicit approved exercise-priority rule requires otherwise. Heavy and moderate compounds share one phase so complementary compound work can separate overlapping exercises; do not force every heavy compound to finish before any moderate compound. Protect explicitly prioritized, heavy and main work through the existing cumulative primary/supporting exposure preferences before reducing immediate adjacent overlap. Order superset members by the same phases and retain compatible accessory partners only when they do not undermine the main work. Shared muscle involvement does not by itself make two different movement roles redundant. Consider prescribed rest without inventing physiological fatigue scores or personal tolerance thresholds. Demand-distribution optimization remains suspended pending usable evidence.
 
-**Effective sets = Direct sets + (Indirect sets × 0.5)**
+The generator may propose context-dependent per-exercise weekly session/set limits through the existing approval gate. Do not carry a prior run's proposed limits into this request automatically. Reviewed family limits require an explicit scoped decision.
 
-Definitions:
-- **Direct set (1.0):** The muscle is a primary target and receives substantial mechanical tension through a meaningful range of motion.
-- **Indirect set (0.5):** The muscle is a substantial secondary contributor.
-- **Negligible involvement (0):** Stabilization or incidental activation without meaningful hypertrophic stimulus.
+## 5. Context, restrictions, effort and recovery
 
-Illustrative examples:
+Standing requirements must work before my histories or a particular menu are known. During generation, consult the separately supplied library, equipment, space, history and clarification answers. Do not assume missing equipment, capacity, recovery, pain-free execution or physical station independence.
 
-| Exercise | Direct (1.0) | Indirect (0.5) |
-|---|---|---|
-| Low-incline press | Chest | Anterior delts, triceps |
-| Overhead press | Anterior delts | Triceps, lateral delts |
-| Pull-up | Lats | Biceps, upper back |
-| Row | Upper back | Lats, biceps, rear delts |
-| Squat | Quads | Glutes |
-| Hip thrust | Glutes | — |
-| Leg curl | Hamstrings | — |
-| Lateral raise | Lateral delts | — |
-| Biceps curl | Biceps | — |
-| Triceps extension | Triceps | — |
+Use exact and relevant related performance evidence to assess resistance suitability, without treating different exercises' loads as interchangeable. Missing exact history establishes neither eligibility nor ineligibility. Fixed unweighted configurations with no way to reduce baseline difficulty require comparable capability evidence or factual user confirmation; selecting an exercise is not that confirmation. Preserve existing restrictions on configurations whose available resistance I have already said is insufficient.
 
-These are approximate accounting conventions, not exact physiological equivalences. Explain any exercise-specific departures, especially where technique changes muscle emphasis.
+- Exclude **all deadlift variations**, including conventional, sumo, deficit, Romanian and stiff-legged deadlifts, and my current **Dumbbell Squat** configuration. I have explicitly excluded every deadlift variation because of my available resistance; do not substitute another deadlift variant. These are standing user restrictions, not conclusions that must be rediscovered from history. Calibration does not override them. Other hip-dominant exercises still require qualification and sufficient resistance evidence.
+- Preserve cable, pulley and pulldown exclusions except the named **Cable Crunch** and **Cable Tricep Pushdown** options; no broader cable permission is implied.
+- Working sets: **1–2 RIR**, with an exercise-appropriate rep range generally within **5–30 repetitions** for hypertrophy. This is a flexible selection guideline, not a requirement to offer every rep range or a hard rejection outside it. Preserve suitable heavier work for strength; avoid adding unusually low or high repetitions merely to game volume or timing. Do not require rep drop-off as proof of effort.
+- The app owns calibration, tracking and **double progression**. Keep exercise selection consistent enough to track progress; do not generate a competing loading/progression system or loading workarounds.
+- This remains a hypertrophy program. Strength-oriented guidance supports placing heavy and priority lifts early and retaining trackable practice; it does not automatically impose a separate heavy/technique day, twice-weekly frequency for every lift, a 3–6-rep prescription or an 80–90% 1RM load. Do not infer a 1RM from exercise history or replace app-owned load calibration.
+- Adjust future programming in response to performance, fatigue, joint tolerance and recovery evidence. Guidance should request re-audit before changing prescribed sets or selection; preserve hard limits and update preferences transparently. Do not invent recovery evidence to authorize a higher priority-muscle dose.
 
-Rules:
-- Count unilateral exercises per muscle, not per limb. Three sets of split squats per leg count as three sets for quads, not six.
-- Do not count warm-ups.
-- Only count challenging working sets performed with appropriate technique and proximity to failure.
-- Never automatically count every compound exercise as a full set for every muscle involved.
-- A set may contribute to multiple muscles, but only once per muscle.
-- Audit each muscle's direct, indirect, and effective weekly volume.
-- Avoid adding isolation exercises merely to satisfy artificial numerical symmetry when recovery or time makes them impractical.
+## 6. Priorities and output
 
-**15–18 effective sets is the requested programming target, not a scientifically proven universal optimum.** If reaching it for every listed muscle is impractical within 90 minutes, show the conflict explicitly and prioritize the main muscle groups rather than presenting an unrealistic routine.
+Apply all hard requirements together: schedule, qualified weekly/full-body coverage, safety/equipment restrictions, execution limits and the 90-minute ceiling. ROM quality, complementary lengths and personal suitability are substantive selection/review criteria; an arithmetic score cannot establish them.
 
-## 4. ANATOMICAL BALANCE
+Within that feasible space, consider training targets, supported selection quality, setup burden and fatigue-management proxies together in one shared goal tier. Do not settle volume or speed first and leave the other goals only what remains:
 
-### Upper-body push/pull
+The shared tier compares each targeted muscle's deviation outside its preferred weekly range, the two approved movement-development shortfalls, excess above the preferred session budget, source-backed movement balance, the 15-set muscle aspirations, session-duration imbalance beyond the existing five-minute tolerance, per-session role concentration, muscle-volume distribution, same-session movement redundancy, deviation from the preferred weekly exercise-count range, and distinct preparation tasks. First minimize the worst normalized target miss across all goals, then the sum of the within-group mean misses. The five explicit groups are `muscle_volume` (range and aspiration goals), `movement_development` (role targets and source balance), `selection` (movement overlap and exercise-count deviation), `practical_execution` (preferred time budget, duration balance and setup), and `exposure_distribution` (role concentration and muscle distribution). Each group has equal total weight in the second stage, so twenty muscle-volume fields do not give that group twenty times the influence of setup. All individual goals still participate in the worst-miss stage. A better volume score cannot automatically defeat every improvement in selection, setup or exposure distribution. Hard requirements remain independent; the preferred ranges, aspirations and comparative yardsticks are all soft.
 
-- Aim for broadly comparable weekly pressing and pulling volume.
-- Balance horizontal presses with rows and vertical presses with vertical pulls.
-- Do not assume pressing and pulling must have exactly identical set counts to protect shoulder health.
-- Provide a weekly audit of horizontal and vertical movement patterns.
+Keep the existing muscle-range scales (10 sets), role-target scales (4 sets), preferred-time scale (4500 seconds), movement-balance scale (1 native set-difference unit), and muscle-aspiration scales (5 sets). The additional comparison yardsticks below come from a code-owned comparison of the retained previous plan after correcting its order and the latest export, both passing the same native execution audit. For each cost-minimization measure, the target is **zero** and the scale uses the **maximum observed native cost** across these two alternatives as its yardstick. Distribution and setup maxima of 164 and 38 are rounded upward to scales 180 and 40, respectively; together with the unchanged other scales, this keeps exact solver normalization within its supported rational lattice. This is an implementation normalization choice, not a new requirement, adequate threshold or cap. This preserves an incentive to reduce setup, redundancy and exercise-count deviation below either reference result. These reference values normalize comparison; reaching an old reference result does not make a cost satisfactory or stop further improvement. Freeze these values for this request and every candidate comparison; do not normalize each candidate against itself. They express comparison preferences, not adequate stimulus, recovery capacity, maximum exercise counts or physiological fatigue limits. They do not prove that the reference alternatives span the feasible frontier.
 
-### Lower-body balance
+| Supported measure | Soft comparison target | Scale |
+|---|---:|---:|
+| Role-concentration surplus, native frequency-scaled cost | 0 | 6 |
+| Aggregate muscle-distribution deviation, native cost (reference maximum 164) | 0 | 180 |
+| Same-session qualified movement-overlap pairs | 0 | 2 |
+| Total deviation from preferred weekly exercise counts | 0 | 5 |
+| Weekly distinct preparation tasks (reference maximum 38) | 0 | 40 |
+| Session-duration spread excess beyond 300 seconds | 0 | 300 seconds |
 
-- Independently track quad, hamstring, and glute stimulation.
-- Include both knee-dominant and hip-dominant movement patterns.
-- Do not treat all posterior-chain work as interchangeable.
-- Avoid excessive axial loading and repeated heavy hinges.
+The duration-balance metric already subtracts the five-minute tolerance; do not subtract it a second time. Its 300-second scale is a request-owned comparison unit, separate from the two reference plans.
 
-### Shoulder development
+Selection quality also requires qualified resistance, movement roles, ROM and complementary execution evidence. Exercise counts and overlap scores cannot establish those properties. Role concentration and muscle distribution are supported structural fatigue-management proxies; do not call them a physiological fatigue model. Missing demand, setup, ROM or personal-recovery evidence remains unknown and must not become zero cost or a claim of suitability. Raw cumulative ordering exposure remains conditional on the selected work: do not drop useful exercises simply to lower an ordering score.
 
-- Account for anterior-delt involvement in chest pressing.
-- Include dedicated lateral-delt training.
-- Include sufficient rear-delt stimulation from appropriately selected rows or isolation exercises.
-- Avoid overemphasizing anterior delts solely to reach numeric targets.
+Use **explicit tradeoff decisions** for remaining unresolved preferences or missing evidence. Present code-computed, natively audited alternatives through the existing programming-decision gate. A shared-tier improvement is a result under this approved policy, not a claim that every metric improved. Disclose increases in workload, duration or setup. Acceptance does not establish physical facts or waive hard requirements. Missing support or setup evidence remains unknown.
 
-### Arms
+1. Apply the joint tier above. Once its worst and total normalized misses are settled, the remaining `objectiveOrder` preferences only break ties without worsening that attained joint result. Do not freeze physical workload, individual role totals or muscle doses before joint selection.
+2. Use remaining role-concentration profile and worst-session distribution comparisons as tie-breakers. Broad movement balance, aggregate concentration/distribution, redundancy, exercise-count deviation and preparation burden already participate in the joint tier; they are not postponed until after an extra-volume decision. Reducing both compared movement doses does not by itself establish better balance; disclose actual doses.
+3. Prefer supported complementary execution forms and suitable balance-control work. Shared planes, parent coverage such as posterior-chain work, or unilateral execution alone do not establish redundancy. A hinge and knee-flexion exercise are not redundant merely because both are sagittal posterior-chain work. Count compliance does not establish ROM or muscle-length complementarity or justify filler.
+4. Minimize unnecessary physical weekly working sets after the joint comparison. Preserve that attained total during subsequent execution and family-distribution refinement, rather than imposing an earlier incidental minimum.
+5. Minimize total estimated time for the selected work; prefer suitable time-saving supersets when loading, physical setup, muscle interaction and prescribed recovery permit them. Superset count earns no independent reward. Preparation burden has already influenced selection in the joint tier.
+6. Session durations within **5 minutes** of one another already participate in the shared tier through excess beyond that tolerance. Prefer complementary family diversity within the settled doses without undoing the attained joint result or higher-ranked tie-breakers. Selection preferences may still change exercise identities.
+7. After settling selection, for the selected per-session canonical exercise identities and working-set counts, protect explicitly ordered work, then heavy/main work from cumulative prior direct and substantial-supporting exposure, and reduce immediate adjacent overlap using `orderingPreferences.protectionOrder`. These are sequencing proxies, not selection or fatigue scores: do not omit a useful compound just to reduce this arithmetic. Heavy and moderate compounds may interleave within one compound phase, followed by standalone isolation and core phases. This permits complementary work between overlapping compounds without placing competing accessory work ahead of protected lifts. The opener is a sequencing choice subject to those phases and explicit priorities, not a fixed library-ID tie-break. Explicit approved order and phase rules remain hard constraints throughout selection. Compatible grouping and recovery may still change while selected identities and counts stay fixed.
 
-- Include direct biceps and triceps work where needed.
-- Account for their indirect involvement in compound exercises.
-- Aim for balanced development, not necessarily identical raw set counts.
+Selection and sequencing have separate ownership within the shared solver. The joint tier and selection tie-breakers choose the work; the final sequencing preference optimizes its execution. Once selected canonical identities and per-session working counts are fixed, known equipment/configuration changes and resource switches break sequencing ties only after protection of the selected work. Hard approved order, phase, rest and timing rules apply throughout. Raw sequencing exposure scores must not rank different selections as though only their order changed.
 
-## 5. EXERCISE SELECTION
+Show a table of the exact final plan: order, identity, sets, rep range, RIR, rest, superset membership, warm-up flags, practical setup and estimated duration. Show weekly planes/patterns, direct/indirect/effective muscle totals, preferred-range deviations, physical sets counted once, and remaining tradeoffs.
 
-Select exercises across these movement categories:
-
-- Horizontal push.
-- Horizontal pull.
-- Vertical push.
-- Vertical pull.
-- Knee-dominant lower body.
-- Hip-dominant lower body.
-- Knee-flexion hamstring work.
-- Shoulder isolation.
-- Elbow flexion.
-- Elbow extension.
-- Calves and core as appropriate.
-
-Selection principles:
-- Prioritize stable exercises that allow high muscular effort.
-- Favor movements with meaningful progressive overload.
-- Use a mixture of compound and isolation exercises.
-- Distribute exercises to manage local and systemic fatigue.
-- Avoid unnecessary spinal loading.
-- Avoid highly unstable exercises that limit effective muscular loading.
-- Avoid redundant exercises that contribute little additional stimulus.
-- Consider stimulus-to-fatigue ratio when choosing between alternatives.
-
-Each chosen exercise must have a clear hypertrophy purpose and realistic progression method.
-
-## 6. SESSION STRUCTURE AND TIME MANAGEMENT
-
-**Maximum session duration: 90 minutes total.**
-
-Suggested allocation:
-- General warm-up and specific ramp-up sets: 8–12 minutes.
-- Primary compound work: 15–20 minutes.
-- Secondary compound supersets: 25–30 minutes.
-- Isolation supersets: 15–20 minutes.
-- Accessories and transitions: remaining time.
-
-These are flexible guidelines, not separate mandatory blocks.
-
-### Straight sets
-
-Use straight sets for demanding compound movements when supersets would compromise performance.
-
-Rest:
-- Heavy compounds: 2–3 minutes.
-- Moderate compounds: 90–150 seconds.
-
-### Supersets
-
-Prefer antagonist or non-competing pairings, including:
-- Chest / back.
-- Biceps / triceps.
-- Upper-body / lower-body movements where systemic fatigue remains manageable.
-- Other non-competing muscle groups when equipment setup permits.
-
-Execution:
-1. Exercise A.
-2. Rest 15–30 seconds, or only as long as needed for a practical transition.
-3. Exercise B.
-4. Rest 90–120 seconds, adjusted for performance.
-5. Repeat.
-
-Longer rest is acceptable when needed to preserve repetitions and technique.
-
-**Equipment efficiency is mandatory.** Do not pair exercises requiring incompatible equipment configurations or substantial adjustments between sets.
-
-### Time verification
-
-Calculate each session's duration using:
-- Expected execution time per set.
-- Rest intervals.
-- Unilateral exercise duration for both legs or arms.
-- Warm-up and ramp-up sets.
-- Equipment adjustments.
-- Realistic transitions.
-
-Do not estimate duration from the number of exercises alone.
-
-If the projected session exceeds 90 minutes, redesign it before presenting the final routine.
-
-## 7. INTENSITY AND PROGRESSION
-
-- Working sets generally finish at 1–2 RIR.
-- Larger compounds may use 2–3 RIR initially when fatigue or technique warrants.
-- Isolation movements may occasionally reach 0–1 RIR.
-- Use a clearly defined rep range for each exercise.
-- Double progression is owned by the app; do not define a separate progression policy in the generator.
-- Check whether the available configuration can support the intended work; do not prescribe loading/progression workarounds. Resolve unsuitable configurations before selection.
-- Track exercises, loads, repetitions, and RIR.
-- Do not require repetition drop-off as proof of sufficient intensity.
-- The app owns load calibration and progression. Recovery concerns require re-audit before changing set counts; preserve approved minimums unless a specific change is authorized.
-
-## 8. REQUIRED OUTPUT FORMAT
-
-### For each day (A, B, C)
-
-Provide:
-
-1. Session focus.
-2. Exercise table with:
-   - Block/order.
-   - Exercise name.
-   - Sets.
-   - Repetitions.
-   - Target RIR.
-   - Rest interval.
-   - Primary and secondary muscles.
-   - Straight-set or superset designation.
-3. Exact warm-up and ramp-up instructions.
-4. Superset execution instructions.
-5. Equipment setup notes explaining why transitions are practical.
-6. Calculated session duration, with a breakdown of exercise time, rest, warm-up, and transitions.
-7. Total working sets.
-
-### Weekly volume audit
-
-Provide a table with these columns:
-
-| Muscle | Direct sets | Indirect sets | Effective sets | Target | Status |
-|---|---:|---:|---:|---|---|
-
-Use the exact formula:
-
-**Effective = Direct + 0.5 × Indirect**
-
-Show which exercises contribute to each muscle's total so calculations can be independently verified.
-
-Additionally report:
-- Horizontal push vs horizontal pull sets.
-- Vertical push vs vertical pull sets.
-- Quad vs hamstring vs glute effective volume.
-- Total direct working sets weekly.
-- Session duration for A, B, and C.
-
-### Final validation
-
-Before completing the answer:
-
-- Recalculate every weekly volume total.
-- Verify no exercise set was incorrectly counted twice within the same muscle.
-- Verify all equipment restrictions.
-- Verify every superset can be performed without meaningful reconfiguration.
-- Verify all three sessions are full-body.
-- Verify all three sessions fit within 90 minutes.
-- Identify any target that could not realistically be achieved.
-
-**Do not claim perfect compliance unless the calculations and time estimates demonstrate it.**
-
----
-
-## 9. PROGRAMMING PRIORITIES
-
-Apply these priorities in descending order when constraints conflict:
-
-1. Safe, effective hypertrophy training.
-2. Equipment and space feasibility.
-3. Maximum 90-minute session duration.
-4. 15–18 effective weekly sets per major muscle group.
-5. Balanced muscle development.
-6. Practical supersets and efficient transitions.
-7. Sustainable progressive overload and fatigue management.
-
-If all targets cannot be achieved simultaneously, explicitly identify the conflict and provide the most effective feasible compromise.
-
-NOTE: for cable exercises use only cable crunch and cable triceps pushdown
-
-**Produce the complete three-day program and its audited weekly totals.**
-here is the home gym i've got plus all the available space
-
-## Later approved preferences and restrictions
-
-- Prefer session-duration spread within **5 minutes**. This is soft; the **90-minute** session limit remains hard.
-- Use the approved preference order: duration balance, source-backed movement balance, workload economy, exercise-family diversity, then muscle-set distribution. Settle movement doses before diversifying. Demand-distribution optimization is currently suspended; do not invent fatigue scores.
-- Lateral-delt work and vertical pulling each require at least **6 qualified working sets weekly across at least 2 sessions**. These approved role floors do not prove compliance with separate original regional-muscle targets.
-- At most **15 exercises per session**, at most **3 exercises per superset**, and at least **2 working sets per exercise occurrence**. Do not invent a new superset-count limit.
-- Choose and record explicit limits for **sessions per exercise per week** and **working sets per exercise per week**, using the training history, available equipment, intended development and other approved requirements. I delegate choosing these programming limits to the generator; no universal default is implied. Encode them in the structured `exerciseExposure` execution rule and show the selected limits in the requirements preview. Count repeated occurrences of the same library exercise together, including superset members, and count a session once for frequency. Separate exercise definitions remain separate; use reviewed family bounds when a family-wide limit is intended. Check feasibility in code; if the chosen limits conflict with existing requirements, propose a scoped change rather than silently weakening any requirement or claiming the limits are physiological safety thresholds.
-- Exclude Sumo Deadlift and the current Dumbbell Squat configuration: the user reports insufficient available loading for their intended training. Preserve the existing cable/pulley/pulldown exclusions and the named Cable Crunch / Cable Tricep Pushdown exceptions.
-- Use exact history, reviewed related evidence and available load ceilings when selecting exercises. No exact records means unverified suitability, not approval. Related loads are not equivalent working-load prescriptions.
-- Do not generate standalone loading or progression guidance; these are app-owned.
-
-## Approved aggregate targets and known regional limitation
-
-The previously approved Option 1 uses combined Back and combined Shoulders targets; lats, upper back and deltoid heads are reported descriptively from available reviewed annotations. This approved policy supersedes the separate regional minimums in the original request above. Do not reopen that settled choice or invent regional credits. Report unknown regional contributions honestly. Use the accompanying current structured requirements as the numerical authority, including the approved minimum-only shoulder target. Combined compliance is not proof of precise regional development.
+Distinguish **verified compliance**, **needs correction**, **acceptable soft tradeoff** and **insufficient evidence**. Report timing assumptions and unverified execution time, capability and recovery. A timeout is not proof of impossibility. Use existing question gates for genuine unresolved choices, current independent semantic review, and final export confirmation. Do not repeatedly repair a soft preference as though it were an unwaivable requirement.

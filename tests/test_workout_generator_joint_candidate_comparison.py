@@ -1,3 +1,5 @@
+import pytest
+
 from workout_generator_pkg.joint_planning import (
     _add_exercise_distribution_objective,
     _ordered_joint_objective_names,
@@ -72,10 +74,10 @@ def test_distribution_cost_matches_joint_solver_formula_and_promotes_a_better_au
         baseline, candidate, requirements=requirements, context=_context())
 
     assert result['decision'] == 'promote_candidate'
-    assert result['firstDifferingObjective'] == 'distribution'
+    assert result['firstDifferingObjective'] == 'distribution_worst'
     assert result['comparisons'] == [{
-        'objective': 'distribution',
-        'baselineCost': 8,
+        'objective': 'distribution_worst',
+        'baselineCost': 4,
         'candidateCost': 0,
         'status': 'candidate_better',
     }]
@@ -96,6 +98,70 @@ def test_unknown_higher_priority_demand_evidence_blocks_duration_promotion():
     assert result['comparisons'] == []
 
 
+def test_missing_higher_priority_setup_evidence_blocks_duration_promotion():
+    requirements = _requirements(['setup_economy', 'duration_economy'])
+    result = compare_audited_joint_candidates(
+        _candidate([2, 2], durations=[300, 300]),
+        _candidate([2, 2], durations=[200, 200]),
+        requirements=requirements, context=_context())
+
+    assert result['decision'] == 'incomparable'
+    assert result['reason'] == 'objective_evidence_unavailable:setup_economy'
+    assert result['executionEvaluation']['candidate']['weeklyEstimatedSeconds'] == 400
+    assert result['executionEvaluation']['candidate']['weeklyKnownSetupChanges'] is None
+
+
+def test_complete_execution_facts_remain_visible_when_an_earlier_priority_rejects_candidate():
+    requirements = _requirements(['workload_economy', 'duration_economy'])
+    result = compare_audited_joint_candidates(
+        _candidate([2, 2], durations=[300, 300]),
+        _candidate([3, 3], durations=[200, 200]),
+        requirements=requirements, context=_context())
+
+    assert result['decision'] == 'retain_baseline'
+    assert result['firstDifferingObjective'] == 'workload_economy'
+    assert result['executionEvaluation']['baseline']['weeklyWorkingSets'] == 4
+    assert result['executionEvaluation']['candidate']['weeklyWorkingSets'] == 6
+    assert result['objectiveCosts']['baseline']['duration_economy'] == 600
+    assert result['objectiveCosts']['candidate']['duration_economy'] == 400
+
+
+@pytest.mark.parametrize('candidate_seconds, decision, first_objective', [
+    (300, 'promote_candidate', 'setup_economy_resource_switches'),
+    (400, 'retain_baseline', 'duration_economy'),
+])
+def test_resource_switches_only_break_duration_ties_with_unknown_calibration(
+        candidate_seconds, decision, first_objective):
+    import copy
+
+    requirements = _requirements(['setup_economy', 'duration_economy'])
+    baseline = _candidate([4])
+    baseline['workouts'][0]['exercises'] = [{
+        'definition_id': reference, 'numWorkSets': 1, 'superset': None,
+        'requiresLoadCalibration': True, 'satisfiesCoverage': [],
+    } for reference in ('A', 'B', 'C', 'D')]
+    candidate = copy.deepcopy(baseline)
+    candidate['audit']['workouts'][0]['estimatedSeconds'] = candidate_seconds
+    candidate['workouts'][0]['exercises'] = [candidate['workouts'][0]['exercises'][index]
+        for index in (0, 2, 3, 1)]
+    context = _context()
+    context['qualifiedRoleEvidence'] = {reference: [] for reference in ('A', 'B', 'C', 'D')}
+    context['setupDefinitions'] = {reference: {'id': reference, 'exerciseType': 'WEIGHT',
+        'equipmentId': 'dumbbells' if reference == 'B' else 'bar'}
+        for reference in ('A', 'B', 'C', 'D')}
+
+    result = compare_audited_joint_candidates(baseline, candidate,
+        requirements=requirements, context=context)
+
+    assert result['decision'] == decision
+    assert result['firstDifferingObjective'] == first_objective
+    assert result['objectiveCosts']['baseline']['setup_economy'] == (
+        result['objectiveCosts']['candidate']['setup_economy'])
+    assert result['objectiveCosts']['baseline']['setup_economy_resource_switches'] == 2
+    assert result['objectiveCosts']['candidate']['setup_economy_resource_switches'] == 1
+    assert result['setupTransitionEvidence']['status'] == 'not_compared_unknown_configuration'
+
+
 def test_unmapped_demand_definition_ids_do_not_score_as_zero_exposure():
     requirements = _requirements(['demand_distribution'])
     baseline = _candidate([1, 1])
@@ -111,6 +177,36 @@ def test_unmapped_demand_definition_ids_do_not_score_as_zero_exposure():
 
     assert result['decision'] == 'incomparable'
     assert result['reason'] == 'higher_priority_demand_evidence_unavailable'
+
+
+@pytest.mark.parametrize('mode, decision', [
+    ('strict_lexicographic', 'promote_candidate'),
+    ('explicit_tradeoffs', 'incomparable'),
+])
+def test_public_comparison_distinguishes_time_switch_tradeoff_from_strict_priority(mode, decision):
+    import copy
+    requirements = _requirements(['setup_economy', 'duration_economy'])
+    requirements['preferenceResolution'] = mode
+    baseline = _candidate([4])
+    items = [{'definition_id': reference, 'numWorkSets': 1, 'superset': None,
+        'requiresLoadCalibration': True, 'satisfiesCoverage': []} for reference in ('A', 'B', 'C', 'D')]
+    baseline['workouts'][0]['exercises'] = [items[index] for index in (0, 2, 3, 1)]
+    candidate = copy.deepcopy(baseline)
+    candidate['workouts'][0]['exercises'] = copy.deepcopy(items)
+    candidate['audit']['workouts'][0]['estimatedSeconds'] = 270
+    context = _context()
+    context['qualifiedRoleEvidence'] = {reference: [] for reference in ('A', 'B', 'C', 'D')}
+    context['setupDefinitions'] = {reference: {'id': reference, 'exerciseType': 'WEIGHT',
+        'equipmentId': 'dumbbells' if reference == 'B' else 'bar'} for reference in ('A', 'B', 'C', 'D')}
+
+    result = compare_audited_joint_candidates(baseline, candidate, requirements=requirements, context=context)
+
+    assert result['decision'] == decision
+    if mode == 'explicit_tradeoffs':
+        tradeoff = result['programmingTradeoff']
+        assert tradeoff['status'] == 'requires_programming_decision'
+        assert [item['objective'] for item in tradeoff['improved']] == ['duration_economy']
+        assert [item['objective'] for item in tradeoff['worsened']] == ['setup_economy_resource_switches']
 
 
 def test_candidate_cannot_drop_a_role_from_its_pinned_qualification():
@@ -485,12 +581,11 @@ def test_development_internals_do_not_reorder_explicit_objective_order():
         'demand_distribution', 'demand_colocation', 'duration_balance',
         'development_emphasis', 'distribution', 'source_balance',
         'exercise_distribution', 'development_exposure', 'progression',
-        'role_concentration', 'role_concentration_tiebreak',
     ]
 
 
-def test_role_balance_precedes_muscle_distribution_only_after_workload_economy():
-    requirements = _requirements(['workload_economy', 'distribution'])
+def test_explicit_role_concentration_stays_at_approved_position_before_distribution():
+    requirements = _requirements(['workload_economy', 'role_concentration', 'distribution'])
     requirements['requiredCoverage'] = [{'key': 'HORIZONTAL_PULL', 'intent': 'inclusion'}]
     available = {name: True for name in requirements['objectiveOrder']}
     available.update(demand_colocation=True, role_concentration=True,
@@ -504,7 +599,7 @@ def test_role_balance_precedes_muscle_distribution_only_after_workload_economy()
     ]
 
 
-def test_role_balance_keeps_legacy_position_when_other_priorities_follow_distribution():
+def test_distribution_does_not_implicitly_run_role_concentration():
     requirements = _requirements([
         'workload_economy', 'distribution', 'source_balance',
         'exercise_distribution', 'development_exposure',
@@ -516,7 +611,6 @@ def test_role_balance_keeps_legacy_position_when_other_priorities_follow_distrib
     assert _ordered_joint_objective_names(requirements, available) == [
         'workload_economy', 'distribution', 'source_balance',
         'exercise_distribution', 'development_exposure',
-        'role_concentration', 'role_concentration_tiebreak',
     ]
 
 
@@ -622,11 +716,11 @@ def test_no_development_cap_does_not_treat_source_budget_as_a_hard_quota():
             baseline, candidate, requirements=requirements, context=context)
 
         assert result['decision'] == 'promote_candidate'
-        assert result['firstDifferingObjective'] == 'distribution'
+        assert result['firstDifferingObjective'] == 'distribution_worst'
 
 
 def test_role_concentration_cost_matches_shared_peak_and_can_resolve_a_tie():
-    requirements = _requirements(['distribution'])
+    requirements = _requirements(['role_concentration'])
     requirements['requiredCoverage'] = [{'key': 'LATERAL_DELT', 'intent': 'development'}]
 
     def plan(role_counts):
@@ -671,12 +765,57 @@ def test_role_concentration_cost_matches_shared_peak_and_can_resolve_a_tie():
     }
 
 
+@pytest.mark.parametrize(('rule', 'targeted_muscle', 'protect_equal_sessions'), [
+    ({'key': 'hip_dominant', 'intent': 'inclusion', 'scope': 'eachSession'}, False, False),
+    ({'key': 'lateral_delt', 'intent': 'development', 'minimumSessions': 2}, False, False),
+    ({'key': 'lateral_delt', 'intent': 'development', 'minimumSessions': 3}, False, True),
+    ({'key': 'abs', 'intent': 'development'}, False, True),
+    ({'key': 'quads', 'intent': 'inclusion', 'scope': 'eachSession'}, True, True),
+])
+def test_role_concentration_domain_preserves_targeted_muscles_without_expanding_inclusion_or_frequency(
+        rule, targeted_muscle, protect_equal_sessions):
+    requirements = _requirements(['role_concentration'])
+    requirements['sessionsPerWeek'] = 3
+    requirements['requiredCoverage'] = [rule]
+    if targeted_muscle:
+        requirements['auditTargets']['weeklyEffectiveSets'][rule['key']] = {'minimum': 6, 'maximum': 6}
+
+    def plan(role_counts):
+        result = _candidate([3, 3, 3])
+        result['audit']['targets'] = requirements['auditTargets']
+        for day, audit_day, count in zip(result['workouts'], result['audit']['workouts'], role_counts):
+            day['exercises'] = [
+                {'definition_id': 'ROLE', 'numWorkSets': count, 'satisfiesCoverage': [rule['key']]},
+                {'definition_id': 'OTHER', 'numWorkSets': 3 - count, 'satisfiesCoverage': []},
+            ]
+            audit_day['coverageSets'] = {rule['key']: count}
+            if targeted_muscle:
+                audit_day['volume'][rule['key']] = {'effective': count}
+        result['audit']['weeklyCoverageSets'] = {rule['key']: sum(role_counts)}
+        if targeted_muscle:
+            result['audit']['weeklyVolume'][rule['key']] = {'effective': sum(role_counts)}
+        return result
+
+    context = _context()
+    context['qualifiedRoleEvidence'] = {'ROLE': [rule['key']], 'OTHER': []}
+    result = compare_audited_joint_candidates(plan([2, 2, 2]), plan([3, 3, 0]),
+        requirements=requirements, context=context)
+
+    assert result['decision'] == 'retain_baseline'
+    if protect_equal_sessions:
+        assert result['firstDifferingObjective'] == 'role_concentration'
+        assert result['comparisons'][-1]['candidateCost'] == 3
+    else:
+        assert result['firstDifferingObjective'] is None
+        assert result['comparisons'] == []
+
+
 def test_role_peak_sum_breaks_a_tie_left_by_an_immovable_role_peak():
-    requirements = _requirements(['distribution'])
+    requirements = _requirements(['role_concentration'])
     requirements['auditTargets'] = {'weeklyEffectiveSets': {}}
     requirements['requiredCoverage'] = [
-        {'key': 'LOCKED', 'intent': 'inclusion'},
-        {'key': 'PULL', 'intent': 'inclusion'},
+        {'key': 'LOCKED', 'intent': 'development'},
+        {'key': 'PULL', 'intent': 'development'},
     ]
 
     def plan(pull_counts):
@@ -733,7 +872,51 @@ def test_role_peak_sum_breaks_a_tie_left_by_an_immovable_role_peak():
         }},
     })
     assert 'After preserving the worst role peak, the role-balance tie-break reduces the sum' in disclosure
-    assert 'The sum of distinct role-profile peak surpluses is 5.33333 sets per occurrence.' in disclosure
+
+
+def test_candidate_comparison_prioritizes_role_concentration_before_faster_duration():
+    requirements = _requirements([
+        'workload_economy', 'role_concentration', 'movement_overlap',
+        'duration_economy', 'distribution',
+    ])
+    requirements['requiredCoverage'] = [{'key': 'PULL', 'intent': 'development'}]
+
+    def plan(role_counts, durations):
+        workouts, audit_days = [], []
+        for index, (role_sets, other_sets) in enumerate(role_counts):
+            exercises = []
+            if role_sets:
+                exercises.append({'id': f'R{index}', 'definition_id': 'LIBRARY_ROLE',
+                    'numWorkSets': role_sets, 'satisfiesCoverage': ['PULL']})
+            if other_sets:
+                exercises.append({'id': f'O{index}', 'definition_id': 'LIBRARY_OTHER',
+                    'numWorkSets': other_sets, 'satisfiesCoverage': []})
+            workouts.append({'name': f'Session {index}', 'timesCompletedInAWeek': 1,
+                'exercises': exercises})
+            audit_days.append({'estimatedSeconds': durations[index],
+                'volume': {'CHEST': {'effective': role_sets + other_sets}},
+                'coverageSets': {'PULL': role_sets}})
+        return {'workouts': workouts, 'searchStatus': 'feasible', 'audit': {
+            'errors': [], 'targets': requirements['auditTargets'], 'workouts': audit_days,
+            'weeklyVolume': {'CHEST': {'effective': 4}},
+            'weeklyCoverageSets': {'PULL': sum(role_sets for role_sets, _ in role_counts)},
+        }}
+
+    baseline = plan([(1, 1), (1, 1)], [300, 300])
+    faster_but_concentrated = plan([(2, 0), (0, 2)], [200, 200])
+    context = _context()
+    context['qualifiedRoleEvidence'] = {'LIBRARY_ROLE': ['PULL'], 'LIBRARY_OTHER': []}
+
+    result = compare_audited_joint_candidates(baseline, faster_but_concentrated,
+        requirements=requirements, context=context)
+
+    assert result['decision'] == 'retain_baseline'
+    assert result['firstDifferingObjective'] == 'role_concentration'
+    assert result['comparisons'][-1] == {
+        'objective': 'role_concentration', 'baselineCost': 0,
+        'candidateCost': 2, 'status': 'baseline_better',
+        'unit': 'frequency_scaled_peak_surplus',
+    }
 
 
 def test_role_peak_sum_counts_distinct_role_memberships_even_when_candidate_exposure_matches():

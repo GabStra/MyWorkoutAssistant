@@ -113,9 +113,7 @@ def test_active_demand_or_family_objective_bounds_preparation_selector_and_repai
     assert session_drafting._preparation_choice_domain([], {}) == allowed
 
     tool = session_drafting.prepare_workout_sessions_tool([], {})
-    tool_enum = tool['function']['parameters']['properties']['sessions']['items'][
-        'properties']['blocks']['items']['properties']['exercises']['items'][
-        'properties']['definition_id']['enum']
+    tool_enum = tool['function']['parameters']['properties']['definition_ids']['items']['enum']
     assert tool_enum == allowed
 
     flat_arguments = {'sessions': [{'exercises': [{'definition_id': 'LIBRARY_40'}]}]}
@@ -160,10 +158,8 @@ def test_exercise_distribution_keeps_unclassified_choices_selectable(monkeypatch
     assert session_drafting._preparation_choice_domain([], {}) is None
     tool = session_drafting.prepare_workout_sessions_tool([], {})
     assert tool is not None
-    definition_schema = tool['function']['parameters']['properties']['sessions']['items'][
-        'properties']['blocks']['items']['properties']['exercises']['items'][
-        'properties']['definition_id']
-    assert 'enum' not in definition_schema
+    definition_schema = tool['function']['parameters']['properties']['definition_ids']['items']
+    assert definition_schema.get('enum', []) == []
     assert session_drafting.prepare_workout_session_tool([], {}) is not None
     errors = session_drafting._preparation_selection_errors(
         {'sessions': [{'exercises': [{'definition_id': 'LIBRARY_0'}]}]}, None)
@@ -187,6 +183,16 @@ def test_exercise_distribution_supplements_only_family_classified_recipes(monkey
     receipt = {'requirements': {'objectiveOrder': ['exercise_distribution']}}
 
     assert session_drafting._reviewed_recipe_candidate_references({}, receipt) == ['LIBRARY_FAMILY']
+
+
+def test_execution_preferences_make_reviewed_candidates_available_without_family_evidence(monkeypatch):
+    entries = [{'id': 'LIBRARY_0', 'reviewedExecution': {'limbMode': 'unilateral'}},
+               {'id': 'LIBRARY_1', 'reviewedExecution': {'balanceControl': True}},
+               {'id': 'LIBRARY_2'}]
+    monkeypatch.setattr('workout_generator_pkg.exercise_library_tools.search_catalog',
+        lambda *_: (entries, 'fingerprint'))
+    requirements = {'objectiveOrder': ['execution_complementarity', 'balance_control']}
+    assert session_drafting._reviewed_recipe_candidate_references({}, requirements) == ['LIBRARY_0', 'LIBRARY_1']
 
 
 def test_omitting_demand_distribution_omits_demand_colocation_goal():
@@ -292,8 +298,14 @@ def test_saved_f2cf_preparation_cannot_bypass_domain_check_through_cache_or_dire
     assert len(rejected.value.errors) == 4
 
 
-def test_preparation_sends_reviewed_alternatives_through_existing_recipe_pool(monkeypatch):
+@pytest.mark.parametrize('pool_source', ['library_annotations', 'incumbent'])
+def test_preparation_sends_reviewed_alternatives_through_existing_recipe_pool(monkeypatch, pool_source):
     equipment, _, _, draft = planning_case()
+    # Pool expansion is independent of fixed-unweighted capability confirmation.
+    equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'name': 'Barbell', 'type': 'BARBELL',
+        'barWeight': 20.0, 'availablePlates': []}]
+    equipment['exerciseDefinitions'][0].update(exerciseType='WEIGHT', equipmentId='EQUIPMENT_0',
+        bodyWeightPercentage=None)
     original = copy.deepcopy(equipment['exerciseDefinitions'][0])
     for exercise_id in ('reviewed-option-a', 'reviewed-option-b'):
         variant = copy.deepcopy(original)
@@ -309,11 +321,14 @@ def test_preparation_sends_reviewed_alternatives_through_existing_recipe_pool(mo
     entries = [{'id': reference, 'reviewedExerciseFamily': family,
         'programmingDemandFacts': {'unsupported_trunk': {'status': 'absent',
             'source': 'https://example.org/demand'}}} for reference in references]
+    if pool_source == 'incumbent':
+        entries = []
     monkeypatch.setattr('workout_generator_pkg.exercise_library_tools.search_catalog',
         lambda equipment, restrictions: (entries, 'fingerprint'))
 
     stored = set_workout_requirements({
         'sessionsPerWeek': 2,
+        'objectiveOrder': ['exercise_distribution'],
         'auditTargets': {'weeklyEffectiveSets': {'chest': {'minimum': 10, 'maximum': 12}},
                          'perSessionEffectiveSets': {'chest': {'minimum': 5, 'maximum': 6}},
                          'maximumSessionSeconds': 1000},
@@ -326,9 +341,17 @@ def test_preparation_sends_reviewed_alternatives_through_existing_recipe_pool(mo
             exercises=[{'definition_id': original_reference, 'numWorkSets': 5, 'superset': None}])
         sessions.append(session)
 
-    prepared = session_drafting.prepare_workout_sessions({
+    arguments = {
         'requirementsId': stored['requirementsId'], 'baseDraftId': None,
-        'name': 'Program', 'sessions': sessions}, messages, equipment)
+        'name': 'Program', 'sessions': sessions}
+    if pool_source == 'incumbent':
+        # A cached preparation must not hide newly available incumbent alternatives.
+        cached = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
+        assert not set(references).intersection(cached['definition_ids'])
+        _store_tool(messages, 'prepare_workout_sessions', arguments, cached)
+        monkeypatch.setattr('workout_generator_pkg.repair_execution.incumbent_candidate_references',
+            lambda *_args: references)
+    prepared = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
 
     assert set(references).issubset(prepared['definition_ids'])
     assert all(set(references).issubset({item['definition_id'] for item in day['exercises']})
@@ -708,12 +731,11 @@ def test_accepted_menu_worker_budget_and_joint_proof_survive_later_model_prepara
 
 
 def test_retained_continue_dispatches_worker_reaudit_without_planner_call(monkeypatch, tmp_path):
-    from dataclasses import replace
     from pathlib import Path
     from types import SimpleNamespace
 
     from workout_generator_pkg import interactive_shell
-    from workout_generator_pkg.deps import resolve_shell_deps
+    from workout_generator_pkg import cli, constants, conversation_store, domain_ops, generation_pipeline
     from workout_generator_pkg.planner_context import pending_reaudit, request_planning_state
     from workout_generator_pkg.training_history import TrainingHistory
 
@@ -761,7 +783,14 @@ def test_retained_continue_dispatches_worker_reaudit_without_planner_call(monkey
         return {'result': json.dumps({'passed': True, 'userQuestion': 'stop after dispatch'}),
                 'waiting_for_user': True, 'should_exit': False, 'generation_result': None}
 
-    deps = replace(resolve_shell_deps(),
+    deps = SimpleNamespace(
+        load_equipment_from_file=cli.load_equipment_from_file,
+        list_conversations=conversation_store.list_conversations,
+        has_equipment_in_messages=domain_ops.has_equipment_in_messages,
+        format_equipment_for_conversation=domain_ops.format_equipment_for_conversation,
+        base_system_prompt=constants.BASE_SYSTEM_PROMPT,
+        generate_workout_tool=constants.GENERATE_WORKOUT_TOOL,
+        execute_workout_generation=generation_pipeline.execute_workout_generation,
         default_script_dir=lambda: str(tmp_path),
         load_conversation_record=lambda _cid, _directory: copy.deepcopy(saved_record),
         resolve_conversation_id=lambda _identifier, _directory: conversation_id,

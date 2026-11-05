@@ -8,11 +8,9 @@ import shutil
 import sys
 import threading
 import time
-import uuid
 from datetime import datetime
 from typing import Optional
 
-from .paths import get_log_dir
 from rich.cells import set_cell_size
 
 
@@ -69,40 +67,67 @@ def print_question(question, logger):
 
 
 class ConversationLogger:
-    """Simple conversation and debug logger."""
+    """
+    Per-conversation debug logger. Writes timestamped lines to a log file.
+    Use log_print for lines that should also go to stdout.
+    """
 
-    def __init__(self, script_dir: Optional[str] = None):
-        self.script_dir = script_dir
-        self.log_dir = get_log_dir(script_dir)
-        self.conversation_id = str(uuid.uuid4())
-        self.log_filepath = os.path.join(self.log_dir, f"conversation_{self.conversation_id[:8]}.log")
+    def __init__(self, log_path):
+        self._path = log_path
+        self._closed = False
         self._lock = threading.Lock()
 
-    def _write(self, line: str) -> None:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        out = f"[{timestamp}] {line}\n"
+    @property
+    def log_filepath(self):
+        return self._path
+
+    def _timestamp(self):
+        return datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+
+    def _write(self, msg):
         with self._lock:
-            with open(self.log_filepath, "a", encoding="utf-8") as f:
-                f.write(out)
+            try:
+                if self._closed:
+                    raise RuntimeError('Logger is closed')
+                with open(self._path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(self._timestamp() + msg + "\n")
+            except Exception as e:
+                raise RuntimeError(f"Cannot write conversation log {self._path}: {e}") from e
 
-    def log(self, line: str) -> None:
-        self._write(line)
+    def log(self, msg):
+        """Write timestamped line to log file only."""
+        self._write(msg)
 
-    def log_print(self, line: str) -> None:
-        print(line)
-        self._write(line)
+    def log_print(self, msg):
+        """Write to log and print to stdout."""
+        self._write(msg)
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            print(msg.encode("ascii", errors="replace").decode("ascii"))
 
-    def log_section(self, title: str) -> None:
-        self._write(f"--- {title} ---")
+    def log_section(self, title):
+        """Write a section header to the log."""
+        self._write("--- " + title + " ---")
 
-    def log_request(self, label: str, content: str) -> None:
-        self._write(f"[request] {label}: {content}")
+    def log_request(self, label, summary):
+        """Log an API request (label + summary)."""
+        self._write("[request] " + label + ": " + str(summary))
 
-    def log_response(self, label: str, content: str, truncate_at: int = 8000) -> None:
-        s = str(content)
+    def log_response(self, label, content, truncate_at=8000):
+        """Log an API response; truncate large content."""
+        s = str(content) if content is not None else ""
         if truncate_at and len(s) > truncate_at:
             s = s[:truncate_at] + f"... [truncated, total {len(s)} chars]"
-        self._write(f"[response] {label}: {s}")
+        self._write("[response] " + label + ": " + s)
+
+    def flush(self):
+        # Each entry is already flushed and closed before returning.
+        pass
+
+    def close(self):
+        with self._lock:
+            self._closed = True
 
 
 class PrefixLogger:

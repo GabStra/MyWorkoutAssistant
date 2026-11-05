@@ -26,10 +26,77 @@ def _state(outgoing):
     return json.loads(snapshot.split('\n', 1)[1])
 
 
+@pytest.mark.parametrize('receipt_tool', ['draft_workout_sessions', 'audit_workout_plan'])
+def test_pending_programming_choice_projects_facts_without_private_artifacts_or_auto_audit(receipt_tool):
+    from test_workout_generator_context_decisions import programming_choice_case
+    equipment, _, _, _, messages, gated = programming_choice_case(receipt_tool)
+    gated['preparationId'] = 'saved_preparation'
+    gated['jointCandidateComparison']['programmingArtifacts'] = {'baseline': {'private': 'BASELINE_NATIVE'},
+        'candidate': {'private': 'CANDIDATE_NATIVE'}}
+    messages[-1]['content'] = json.dumps(gated)
+    outgoing = focus_planner_context(messages, messages, equipment=equipment)
+    state = _state(outgoing)
+    assert state['planningDecisionNeeded']
+    assert state['programmingChoice']['comparison']['worsened'][0]['candidate'] == 21
+    assert 'CONCERN_programming_use_candidate' in state['programmingChoice']['choices']
+    assert not state.get('parallelSubmission') and not state.get('constructionTask')
+    serialized = json.dumps(outgoing)
+    assert 'BASELINE_NATIVE' not in serialized and 'CANDIDATE_NATIVE' not in serialized
+    assert 'record_planning_decisions' in serialized
+
+
+@pytest.mark.parametrize('later_failed_attempt,new_request', [(False, False), (True, False), (True, True)])
+def test_resolved_fresh_programming_choice_routes_selected_artifact_directly_to_audit(later_failed_attempt, new_request):
+    from test_workout_generator_context_decisions import programming_choice_case
+    equipment, stored, candidate, _, messages, gated = programming_choice_case('draft_workout_sessions')
+    gated['preparationId'] = 'saved_preparation'
+    baseline = copy.deepcopy(candidate)
+    baseline['submittedDraft']['workouts'][0]['name'] = 'Baseline'
+    gated['jointCandidateComparison']['programmingArtifacts'] = {'baseline': baseline, 'candidate': candidate}
+    messages[-1]['content'] = json.dumps(gated)
+    identifier = 'CONCERN_programming_use_candidate'
+    messages.append({'role': 'user', 'content': 'Use the displayed candidate.'})
+    _tool(messages, 'record_planning_decisions', {}, {'passed': True, 'decisionReview': {'passed': True},
+        'decisions': {'DECISION_0': {'topic': 'Programming choice', 'choice': 'Use candidate',
+            'acceptedConcernGroupId': identifier, 'sourceReferences': ['SOURCE_1'],
+            'acceptedCandidateScope': gated['programmingDecisionChoices'][identifier]['acceptedCandidateScope']}}}, 'select')
+    if later_failed_attempt:
+        _tool(messages, 'draft_workout_sessions', {}, {'passed': False,
+            'requirementsId': stored['requirementsId'], 'errors': [{'code': 'construction_stage_required'}]}, 'failed_handoff')
+    if new_request:
+        messages.append({'role': 'user', 'content': 'Choose a different workout before generating.'})
+    state = _state(focus_planner_context(messages, messages, equipment=equipment))
+    if new_request:
+        assert not state.get('parallelSubmission')
+        return
+    assert state['parallelSubmission'] == candidate['submittedDraft']
+    assert not state.get('constructionTask') and not state.get('programmingChoiceResume')
+
+
+def test_unrecorded_execution_answer_keeps_decision_gate_instead_of_redrafting_week():
+    equipment, _, stored, _ = planning_case()
+    messages = requirement_messages(stored)
+    _tool(messages, 'draft_workout_sessions', {}, {
+        'requirementsId': stored['requirementsId'], 'libraryFingerprint': library_fingerprint(equipment),
+        'historyFingerprint': None, 'passed': False,
+        'errors': [{'code': 'execution_semantics_unresolved',
+            'canonicalDefinitionId': equipment['exerciseDefinitions'][0]['id']}],
+        'userQuestion': {'question': 'Choose counting.', 'options': ['Total', 'Per side']}}, 'pending_execution')
+    messages.append({'role': 'user', 'content': 'Count total reps.'})
+    _tool(messages, 'record_planning_decisions', {}, {'passed': False,
+        'errors': [{'code': 'invalid_arguments', 'message': 'Invalid selection shape.'}]}, 'bad_decision')
+    state = _state(focus_planner_context(messages, messages, equipment=equipment))
+    assert state['requirementsApproved'] and state['planningDecisionNeeded']
+    assert not state.get('constructionTask') and not state.get('parallelSubmission')
+    assert state['otherToolResults']['record_planning_decisions']['errors'][0]['code'] == 'invalid_arguments'
+
+
 def test_recording_edit_authorization_does_not_consume_the_pending_edit():
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
     result = audit_workout_plan(draft, equipment, messages)
+    # This routing fixture starts after capability has been established.
+    result.update(passed=True, errors=[])
     _tool(messages, 'audit_workout_plan', draft, result, 'before_edit')
     messages.append({'role': 'user', 'content': 'Replace the selected lift with my approved alternative.'})
     decision = {'DECISION_0': {'topic': 'Approved replacement', 'choice': 'Replace the selected lift.',
@@ -1106,6 +1173,17 @@ def test_compacted_review_assessment_keeps_its_validation_hash_and_routes_to_coo
         'evidencePaths': ['/draft/exercises/0/progressionPlan'], 'message': 'Add the missing local setup cue.',
         'repair': 'Describe the setup.', 'action': 'repair', 'decisionId': None,
         'newConflictEvidencePaths': [], 'muscleTargets': []}
+    from workout_generator_pkg import plan_review
+    from workout_generator_pkg.review_subjects import (compile_review_subjects,
+        render_review_judgment, review_subject_catalog)
+    boundary = max(index for index, message in enumerate(messages) if message.get('role') == 'user')
+    context = plan_review._context(result, messages, equipment, None, boundary)
+    refs, facts = compile_review_subjects(['EXERCISE_0'], review_subject_catalog(context), context)
+    rationale = 'Add the missing local setup cue.'
+    message, repair = render_review_judgment('source_compliance', 'source_conflict', facts, rationale)
+    finding.update(reviewConcern='source_compliance', reviewJudgment='source_conflict',
+        qualitativeRationale=rationale, subjectRefs=['EXERCISE_0'], subjectExerciseRefs=refs,
+        subjectWorkoutRefs=[], subjectFacts=facts, message=message, repair=repair)
     review_input_hash = 'review-input-hash'
     findings = [finding]
     review = {'version': REVIEW_VERSION, 'inputHash': review_input_hash, 'findings': findings}
@@ -1403,20 +1481,35 @@ def test_newer_current_review_supersedes_older_rejected_repair_receipt():
     assert state.get('savedDraftReaudit') is None
 
 
-@pytest.mark.parametrize('current_review', [False, True])
-def test_unresolved_review_capability_pauses_only_for_current_bound_review(current_review):
+@pytest.mark.parametrize('valid_assessment', [False, True])
+def test_unresolved_review_capability_pauses_only_for_current_bound_review(valid_assessment):
     from workout_generator_pkg.review_assessment import assessment_hash
+    from workout_generator_pkg import plan_review
+    from workout_generator_pkg.review_subjects import (compile_review_subjects,
+        render_review_judgment, review_subject_catalog)
 
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
-    finding = {'severity': 'blocking', 'message': 'Automatically lower load after a failed repetition.'}
-    review = {'version': REVIEW_VERSION if current_review else REVIEW_VERSION - 1,
+    result = audit_workout_plan(draft, equipment, messages)
+    boundary = max(index for index, message in enumerate(messages) if message.get('role') == 'user')
+    context = plan_review._context(result, messages, equipment, None, boundary)
+    subject_refs, subject_facts = compile_review_subjects(
+        ['EXERCISE_0'], review_subject_catalog(context), context)
+    rationale = 'Automatically lowering load after a failed repetition requires unsupported behavior.'
+    message, reason = render_review_judgment(
+        'practical_execution', 'unsupported_behavior', subject_facts, rationale)
+    finding = {'severity': 'blocking', 'message': message, 'repair': reason,
+        'reviewConcern': 'practical_execution', 'reviewJudgment': 'unsupported_behavior',
+        'qualitativeRationale': rationale, 'subjectRefs': ['EXERCISE_0'],
+        'subjectExerciseRefs': subject_refs, 'subjectWorkoutRefs': [], 'subjectFacts': subject_facts}
+    review = {'version': REVIEW_VERSION - 1,
         'inputHash': 'capability-review', 'findings': [finding]}
-    review['assessment'] = {'version': ASSESSMENT_VERSION,
+    review['assessment'] = {'version': ASSESSMENT_VERSION - 1,
         'inputHash': assessment_hash(review), 'repairPlan': '',
         'groups': [{'findingIndexes': [0], 'disposition': 'unresolved_capability',
             'repairDimensions': [], 'reason': 'Automatic within-set load reduction is unsupported.'}]}
-    result = audit_workout_plan(draft, equipment, messages)
+    if not valid_assessment:
+        review['assessment']['inputHash'] = 'unverified'
     result.update(passed=False,
         errors=[{'code': 'unresolved_review_capability', 'findingIndex': 0,
             'message': finding['message'], 'reviewScope': 'execution'}],
@@ -1426,7 +1519,7 @@ def test_unresolved_review_capability_pauses_only_for_current_bound_review(curre
 
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
 
-    if current_review:
+    if valid_assessment:
         assert state['repairCapabilityUnresolved']['status'] == 'unresolved_capability'
         assert state['repairCapabilityUnresolved']['findingIndexes'] == [0]
         assert 'repairTask' not in state and not state.get('savedDraftReaudit')
@@ -1885,11 +1978,12 @@ def test_planning_choices_are_only_enabled_for_new_user_instructions_or_pending_
 def test_construction_is_bounded_and_does_not_treat_partial_weekly_totals_as_repairs():
     from workout_generator_pkg.planning_tools import set_workout_requirements, construction_workout_tool, validate_construction_submission
     from workout_generator_pkg.planner_context import planner_response_profile
+    from test_workout_generator_planning_tools import capability_requirement_messages
     equipment, requirements, _, draft = planning_case()
     requirements['sessionsPerWeek'] = 3
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 15, 'maximum': 18}
     stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Three sessions, 5-6 chest sets each; 15-18 weekly.'}], equipment)
-    messages = requirement_messages(stored)
+    messages = capability_requirement_messages(stored, equipment)
     draft['requirementsId'] = stored['requirementsId']
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert state['constructionTask']['action'] == 'create_first_session'
@@ -1905,7 +1999,8 @@ def test_construction_is_bounded_and_does_not_treat_partial_weekly_totals_as_rep
             assert not state.get('repairTask')
             assert planner_response_profile(state) == {'reasoning_effort': None if index == 1 else 'low',
                                                        'activity': 'Selecting weekly movements' if index == 1 else 'Drafting session',
-                                                       'max_tokens': 16384, 'timeout': None}
+                                                       'max_tokens': 16384, 'timeout': None,
+                                                       **({'require_strict_tool_delivery': True} if index == 1 else {})}
             arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': f'REVISION_{index-1}', 'patch': [
                 {'op': 'add', 'path': '/workouts/-', 'value': {**copy.deepcopy(draft['workouts'][0]), 'name': f'Day {index + 1}'}}]}
             with pytest.raises(ValueError, match='one workout'):
@@ -2184,7 +2279,8 @@ def test_missing_coverage_is_repaired_before_numeric_allocation():
     errors = [
         {'code': 'volume_below_target', 'path': '/workouts', 'muscle': 'chest', 'scope': 'weekly'},
         {'code': 'required_coverage_missing', 'path': '/workouts', 'coverageKey': 'push'},
-        {'code': 'required_coverage_missing', 'path': '/workouts', 'coverageKey': 'calves'}]
+        {'code': 'required_coverage_missing', 'path': '/workouts', 'coverageKey': 'calves'},
+        {'code': 'duration_exceeded', 'path': '/workouts/0', 'actual': 5595, 'maximum': 5400}]
     _tool(messages, 'audit_workout_plan', draft, {'passed': False, 'submittedDraft': draft,
         'requirementsId': stored['requirementsId'], 'currentDraftId': 'REVISION_0',
         'libraryFingerprint': library_fingerprint(equipment), 'historyFingerprint': None,
@@ -2196,7 +2292,7 @@ def test_missing_coverage_is_repaired_before_numeric_allocation():
     assert 'placementNotesLimits' not in state['repairTask']
     assert state['lastAudit']['errors'] == errors
     assert state['candidateMenuExpansionTask']['sourceProblemFingerprint'] == 'source-problem-fingerprint'
-    assert state['candidateMenuExpansionTask']['blockers'] == [errors[1], errors[2]]
+    assert state['candidateMenuExpansionTask']['blockers'] == errors
     assert 'Do not offer numeric relaxations' in state['candidateMenuExpansionTask']['instruction']
     assert 'conflictDiagnosisTask' not in state
 
@@ -2896,6 +2992,8 @@ def test_stale_review_or_explicit_review_retry_can_reaudit_without_broad_plannin
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
     result = audit_workout_plan(draft, equipment, messages)
+    # Isolate review retry from the independent fixed-bodyweight capacity gate.
+    result.update(passed=True, errors=[])
     result['review'] = {'version': REVIEW_VERSION if execution_failed else REVIEW_VERSION-1, 'findings': []}
     if not execution_failed:
         result['candidateMenuExpansion'] = {'version': 1, 'attempted': True,

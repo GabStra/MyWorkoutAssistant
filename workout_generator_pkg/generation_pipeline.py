@@ -1,1312 +1,179 @@
-"""Generation pipeline orchestration."""
+"""Compile the current confirmed, reviewed plan into the native app package."""
 
 from __future__ import annotations
+
+import copy
 import json
 import os
-import re
 import time
-import traceback
 import uuid
-import copy
 from datetime import datetime
 
-from .deps import resolve_pipeline_deps
-from .logging_ui import LoadingIndicator
-from .domain_ops import strip_rep_range_fields_for_timed_exercises_in_workout_store, reviewable_workout_artifact
-from .plan_contract import (
-    ContractValidationError,
-    hydrate_plan_index_from_exercise_library,
-    normalize_dumbbell_pair_prescription_loads,
-    validate_exercise_definitions_contract,
-    validate_plan_index_contract,
-    validate_uuid_conversion_parity,
-    validate_workout_structures_contract,
-    validate_assembled_workout_contract,
-)
-from .exercise_library_tools import selected_library_ids_from_messages
-from .planning_tools import confirmed_draft, draft_coverage_assignments, active_requirement_result
-from .training_history import apply_native_load_calibration_policy
 from jsonschema import Draft7Validator
+
+from .constants import JSON_SCHEMA
+from .conversation_meta import hash_conversation
+from .domain_ops import (
+    _materialize_exercise_definition, apply_exercise_library_schema_v2,
+    assemble_placeholder_workout_store, build_workout_structure,
+    convert_placeholders_to_uuids, create_placeholder_schema,
+    ensure_requiresLoadCalibration, finalize_and_validate_exercise_definition,
+    reviewable_workout_artifact, EquipmentItem,
+)
+from .generation_audit import (
+    audit_workout_package, plan_audit_package, plan_timing_reps_by_exercise,
+    validate_audit_targets, audit_coverage_minimums, family_set_audit_options,
+    audit_programming_preferences,
+)
+from .logging_ui import LoadingIndicator
+from .plan_contract import (
+    ContractValidationError, hydrate_plan_index_from_exercise_library,
+    validate_plan_index_contract, validate_exercise_definitions_contract,
+    validate_workout_structures_contract, validate_assembled_workout_contract,
+    validate_uuid_conversion_parity,
+)
 from .plan_review import require_current_review
-from .generation_audit import (audit_workout_package, plan_audit_package,
-                               plan_timing_reps_by_exercise, validate_audit_targets,
-                               audit_coverage_minimums, family_set_audit_options)
-from .progress_migration import migrate_progress_schema_v2_layout_step
-
-
-FULL_BODYWEIGHT_NAME_HINTS = (
-    "pull-up",
-    "chin-up",
-    "chin up",
-    "dip",
-    "push-up",
-    "push up",
-)
-
-PARTIAL_BODYWEIGHT_NAME_HINTS = (
-    "ring row",
-    "inverted row",
-    "body row",
-)
-
-CONTRACT_REPAIR_MAX_WORKERS = 4
-
-
-def _extract_exercise_library_from_messages(messages):
-    marker = "EXERCISE LIBRARY (schema v2):\n"
-    for message in reversed(messages or []):
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str) or marker not in content:
-            continue
-        encoded = content.split(marker, 1)[1].split("\n", 1)[0].strip()
-        try:
-            definitions = json.loads(encoded)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(definitions, list):
-            return definitions
-    return []
-
-def _normalize_custom_prompt_equipment_ids(custom_prompt, uuid_to_placeholder):
-    """Rewrite raw equipment UUID references in custom prompts to planner-safe placeholders."""
-    if not custom_prompt or not uuid_to_placeholder:
-        return custom_prompt
-
-    normalized = custom_prompt
-    for original_uuid, placeholder_id in uuid_to_placeholder.items():
-        if not original_uuid or not placeholder_id:
-            continue
-        normalized = normalized.replace(original_uuid, placeholder_id)
-
-    normalized = normalized.replace(
-        "EQUIPMENT AVAILABLE (use these exact IDs):",
-        "EQUIPMENT AVAILABLE (use these exact placeholder IDs):",
-    )
-    return normalized
-
-
-def _extract_structured_generation_facts(custom_prompt):
-    """Extract exact numeric exercise facts from the raw generation prompt.
-
-    This is used as an authoritative supplement to the free-form conversation
-    summary so step 1 can keep bodyweight-load semantics intact.
-    """
-    if not custom_prompt:
-        return ""
-
-    lines = [line.strip() for line in custom_prompt.splitlines() if line.strip()]
-    exercise_facts = []
-
-    for line in lines:
-        normalized = line.lower()
-        if not (
-            re.match(r"^\d+\.\s", line)
-            or re.match(r"^exercise\s+\d+:", normalized)
-        ):
-            continue
-        if not any(
-            hint in normalized
-            for hint in FULL_BODYWEIGHT_NAME_HINTS + PARTIAL_BODYWEIGHT_NAME_HINTS
-        ):
-            continue
-
-        prefix_stripped = re.sub(r"^\d+\.\s*", "", line)
-        prefix_stripped = re.sub(r"^Exercise\s+\d+:\s*", "", prefix_stripped, flags=re.IGNORECASE)
-        exercise_name = re.split(r"\s+-\s|\s+\(", prefix_stripped, maxsplit=1)[0].strip()
-        if not exercise_name:
-            continue
-
-        additional_weight = None
-        additional_match = re.search(r"\+(\d+(?:\.\d+)?)\s*kg\b", line, flags=re.IGNORECASE)
-        if additional_match:
-            additional_weight = float(additional_match.group(1))
-
-        total_load = None
-        total_match = re.search(
-            r"(?:total\s+(\d+(?:\.\d+)?)\s*kg|(\d+(?:\.\d+)?)\s*kg\s+total)",
-            line,
-            flags=re.IGNORECASE,
-        )
-        if total_match:
-            total_load = float(total_match.group(1) or total_match.group(2))
-
-        explicit_percentage = None
-        explicit_pct_match = re.search(r"(\d+(?:\.\d+)?)\s*%", line)
-        if explicit_pct_match:
-            explicit_percentage = float(explicit_pct_match.group(1))
-
-        exercise_facts.append(
-            {
-                "exercise_name": exercise_name,
-                "source_line": line,
-                "additional_weight": additional_weight,
-                "total_effective_load": total_load,
-                "explicit_body_weight_percentage": explicit_percentage,
-                "is_full_bodyweight_candidate": any(
-                    hint in normalized for hint in FULL_BODYWEIGHT_NAME_HINTS
-                ),
-                "is_partial_bodyweight_candidate": any(
-                    hint in normalized for hint in PARTIAL_BODYWEIGHT_NAME_HINTS
-                ),
-            }
-        )
-
-    if not exercise_facts:
-        return ""
-
-    inferred_bodyweight_candidates = []
-    for fact in exercise_facts:
-        if (
-            fact["is_full_bodyweight_candidate"]
-            and fact["total_effective_load"] is not None
-            and fact["additional_weight"] is not None
-        ):
-            inferred_bodyweight_candidates.append(
-                round(fact["total_effective_load"] - fact["additional_weight"], 2)
-            )
-
-    inferred_bodyweight = None
-    if inferred_bodyweight_candidates:
-        baseline = inferred_bodyweight_candidates[0]
-        if all(abs(candidate - baseline) <= 1.0 for candidate in inferred_bodyweight_candidates[1:]):
-            inferred_bodyweight = round(
-                sum(inferred_bodyweight_candidates) / len(inferred_bodyweight_candidates),
-                2,
-            )
-
-    structured_lines = [
-        "Structured generation facts (authoritative for exact numeric/bodyweight details):"
-    ]
-    if inferred_bodyweight is not None:
-        structured_lines.append(
-            f"- Derived user bodyweight estimate from full-bodyweight totals: {inferred_bodyweight:g} kg"
-        )
-
-    for fact in exercise_facts:
-        detail_parts = [f"source='{fact['source_line']}'"]
-        if fact["additional_weight"] is not None:
-            detail_parts.append(f"additionalWeight={fact['additional_weight']:g} kg")
-        if fact["total_effective_load"] is not None:
-            detail_parts.append(f"totalEffectiveLoad={fact['total_effective_load']:g} kg")
-        if fact["explicit_body_weight_percentage"] is not None:
-            detail_parts.append(
-                f"explicitBodyWeightPercentage={fact['explicit_body_weight_percentage']:g}"
-            )
-        elif (
-            inferred_bodyweight is not None
-            and fact["total_effective_load"] is not None
-            and fact["additional_weight"] is not None
-        ):
-            derived_percentage = round(
-                ((fact["total_effective_load"] - fact["additional_weight"]) / inferred_bodyweight) * 100,
-                2,
-            )
-            detail_parts.append(f"derivedBodyWeightPercentage={derived_percentage:g}")
-        if fact["is_partial_bodyweight_candidate"]:
-            detail_parts.append("baselineHint=partial-bodyweight")
-        elif fact["is_full_bodyweight_candidate"]:
-            detail_parts.append("baselineHint=full-bodyweight")
-
-        structured_lines.append(f"- {fact['exercise_name']}: " + ", ".join(detail_parts))
-
-    return "\n".join(structured_lines)
+from .planning_tools import confirmed_draft, draft_coverage_assignments, active_requirement_result
+from .planning_decisions import execution_decision_definitions
+from .progress import load_generation_progress, save_generation_progress, delete_progress_file
+from .training_history import apply_native_load_calibration_policy
+from .domain_ops import save_validation_error
 
 
 def execute_workout_generation(
-    client,
-    messages,
-    custom_prompt="",
-    resume_session_id=None,
-    provided_equipment=None,
-    logger=None,
-    script_dir=None,
-    deps=None,
-    force_use_reasoner=None,
-    allow_educated_load_guesses=True,
-    training_history=None,
+    client, messages, custom_prompt="", resume_session_id=None,
+    provided_equipment=None, logger=None, script_dir=None,
+    force_use_reasoner=None, allow_educated_load_guesses=True, training_history=None,
 ):
-    deps = deps or resolve_pipeline_deps()
-    hash_conversation = deps.hash_conversation
-    PlaceholderIdManager = deps.PlaceholderIdManager
-    load_generation_progress = deps.load_generation_progress
-    summarize_conversation = deps.summarize_conversation
-    save_generation_progress = deps.save_generation_progress
-    generate_index = deps.generate_index
-    deduplicate_plan_index_accessories = deps.deduplicate_plan_index_accessories
-    validate_equipment_immutability = deps.validate_equipment_immutability
-    emit_equipment_item = deps.emit_equipment_item
-    emit_accessory_equipment_item = deps.emit_accessory_equipment_item
-    emit_exercise_definition = deps.emit_exercise_definition
-    emit_workout_structure = deps.emit_workout_structure
-    parallel_emit_items = deps.parallel_emit_items
-    assemble_placeholder_workout_store = deps.assemble_placeholder_workout_store
-    sync_exercises_from_definitions = deps.sync_exercises_from_definitions
-    sync_exercises_from_plan_index = deps.sync_exercises_from_plan_index
-    apply_accessory_id_rewrite = deps.apply_accessory_id_rewrite
-    validate_and_repair_placeholder_json = deps.validate_and_repair_placeholder_json
-    save_validation_error = deps.save_validation_error
-    convert_placeholders_to_uuids = deps.convert_placeholders_to_uuids
-    apply_exercise_library_schema_v2 = deps.apply_exercise_library_schema_v2
-    ensure_requiresLoadCalibration = deps.ensure_requiresLoadCalibration
-    save_workout_to_file = deps.save_workout_to_file
-    display_workout_summary = deps.display_workout_summary
-    display_timing_summary = deps.display_timing_summary
-    delete_progress_file = deps.delete_progress_file
-    format_equipment_for_llm = deps.format_equipment_for_llm
-    EquipmentItem = deps.EquipmentItem
-    _default_script_dir = deps.default_script_dir
-    """
-    Execute the complete workout generation process.
-    
-    Args:
-        client: OpenAI client
-        messages: Conversation messages
-        custom_prompt: Optional additional instructions for workout generation
-        resume_session_id: Optional session ID to resume from saved progress
-        provided_equipment: Optional dict with 'equipments' and 'accessoryEquipments' keys
-        logger: Optional ConversationLogger for debug logging
-        script_dir: Optional script directory (for progress/logs)
-    
-    Returns:
-        dict: Result with keys:
-            - success: bool
-            - filepath: str or None
-            - error: str or None
-    """
-    def _gen_print(msg):
-        if logger is not None:
-            logger.log_print(msg)
-        else:
-            print(msg)
+    """Compile without provider calls; confirmation and review remain authoritative."""
+    # These CLI-owned utilities remain public compatibility entry points.
+    from .cli import (PlaceholderIdManager, _default_script_dir, save_workout_to_file,
+                      display_workout_summary, display_timing_summary)
 
-    def _log_step_error(step_label, error, prefix="Error reason"):
-        err_text = str(error).strip()
-        if not err_text:
-            _gen_print(f"  {prefix} ({step_label}): <empty>")
-            return
-        lines = err_text.splitlines()
-        _gen_print(f"  {prefix} ({step_label}): {lines[0]}")
-        for line in lines[1:]:
-            _gen_print(f"    {line}")
+    def _gen_print(message):
+        logger.log_print(message) if logger is not None else print(message)
 
-    if script_dir is None:
-        try:
-            script_dir = _default_script_dir()
-        except (NameError, AttributeError):
-            script_dir = os.getcwd()
+    def _log_step_error(step, error, prefix="Error reason"):
+        _gen_print(f"{prefix} ({step}): {error}")
 
-    if not custom_prompt:
-        custom_prompt = "Generate workout JSON based on our conversation so far."
-    
-    # Start total timer
-    total_start_time = time.time()
-    
-    # Generate or use session ID
-    if resume_session_id:
-        session_id = resume_session_id
-        short_sid = session_id[:8] if len(session_id) >= 8 else session_id
-        if logger:
-            logger.log_section("generation run (resume) session " + short_sid)
-        _gen_print(f"Resuming generation from session: {short_sid}...")
-    else:
-        session_id = str(uuid.uuid4())
-        short_sid = session_id[:8] if len(session_id) >= 8 else session_id
-        if logger:
-            logger.log_section("generation run session " + short_sid)
-    
-    # Generate conversation hash
-    conversation_hash = hash_conversation(messages)
-    
-    # Initialize placeholder ID manager
-    id_manager = PlaceholderIdManager()
+    script_dir = script_dir or _default_script_dir()
     review_equipment = copy.deepcopy(provided_equipment or {})
-    
-    supplied_exercise_definitions = copy.deepcopy(
-        (provided_equipment or {}).get("exerciseDefinitions", [])
-        or _extract_exercise_library_from_messages(messages)
-    )
-    supplied_exercise_movements = copy.deepcopy(
-        (provided_equipment or {}).get("exerciseMovements", [])
-    )
-    canonical_snapshot = None
-    coverage_rules = []
-    audit_requirements = None
     try:
-        has_draft = any(call.get("function", {}).get("name") == "audit_workout_plan"
-                        for message in messages for call in message.get("tool_calls", []))
-        if has_draft:
-            canonical_snapshot = confirmed_draft(messages, review_equipment, allow_educated_load_guesses, require_confirmation=True)
-            # Reproduce derived evidence metadata from the same live backup when available.
-            require_current_review(canonical_snapshot, messages, review_equipment,
-                training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'))
-            _, approved_requirements = active_requirement_result(messages)
-            audit_requirements = approved_requirements.get('requirements', {})
-            coverage_rules = audit_requirements.get('requiredCoverage', [])
-            selected_definition_ids = list(dict.fromkeys(e["libraryDefinitionId"] for e in canonical_snapshot["planIndex"]["exercises"]))
-        else:
-            selected_definition_ids = selected_library_ids_from_messages(messages, supplied_exercise_definitions)
+        canonical_snapshot = confirmed_draft(messages, review_equipment,
+            allow_educated_load_guesses, require_confirmation=True)
+        history_fingerprint = (training_history if training_history is not None
+                               else canonical_snapshot.get('historyFingerprint'))
+        require_current_review(canonical_snapshot, messages, review_equipment, history_fingerprint)
+        _, approved_requirements = active_requirement_result(messages)
+        audit_requirements = approved_requirements.get('requirements', {})
+        coverage_rules = audit_requirements.get('requiredCoverage', [])
     except ValueError as error:
         return {"success": False, "filepath": None, "error": str(error)}
-    if selected_definition_ids:
-        known_ids = {definition["id"] for definition in supplied_exercise_definitions}
-        if set(selected_definition_ids) - known_ids:
-            return {"success": False, "filepath": None, "error": "Selected exercises are absent from the currently loaded library. Select available entries and confirm the preview again."}
-    if supplied_exercise_definitions and not provided_equipment:
-        provided_equipment = {
-            "equipments": [],
-            "accessoryEquipments": [],
-            "exerciseDefinitions": supplied_exercise_definitions,
-            "exerciseMovements": supplied_exercise_movements,
-        }
 
-    # Handle provided equipment if available
-    if provided_equipment:
-        # Convert UUIDs to placeholders and preserve original UUID mappings
-        converted_equipments = []
-        for equipment in provided_equipment.get("equipments", []):
-            converted_eq = id_manager.convert_equipment_uuids_to_placeholders(equipment, is_accessory=False)
-            converted_equipments.append(converted_eq)
-            # Also extract any placeholders that might already be in the structure
-            id_manager.extract_placeholders_from_json(converted_eq)
-        
-        converted_accessories = []
-        for accessory in provided_equipment.get("accessoryEquipments", []):
-            converted_acc = id_manager.convert_equipment_uuids_to_placeholders(accessory, is_accessory=True)
-            converted_accessories.append(converted_acc)
-            # Also extract any placeholders that might already be in the structure
-            id_manager.extract_placeholders_from_json(converted_acc)
-
-        planner_exercise_definitions = copy.deepcopy([
-            definition for definition in supplied_exercise_definitions
-            if not selected_definition_ids or definition["id"] in selected_definition_ids
-        ])
-        for definition in planner_exercise_definitions:
-            equipment_id = definition.get("equipmentId")
-            if equipment_id in id_manager.uuid_to_placeholder:
-                definition["equipmentId"] = id_manager.uuid_to_placeholder[equipment_id]
-            definition["requiredAccessoryEquipmentIds"] = [
-                id_manager.uuid_to_placeholder.get(accessory_id, accessory_id)
-                for accessory_id in definition.get("requiredAccessoryEquipmentIds") or []
-            ]
-        
-        # Update provided_equipment with converted versions (now using placeholders)
-        provided_equipment = {
-            "equipments": converted_equipments,
-            "accessoryEquipments": converted_accessories,
-            "exerciseDefinitions": planner_exercise_definitions,
-            "exerciseMovements": supplied_exercise_movements,
-            "selectedExerciseDefinitionIds": selected_definition_ids,
-        }
-        
-        _gen_print(f"Using provided equipment: {len(provided_equipment.get('equipments', []))} equipment(s), "
-              f"{len(provided_equipment.get('accessoryEquipments', []))} accessory(ies)")
-        if id_manager._equipment_counter > 0 or id_manager._accessory_counter > 0:
-            _gen_print(f"  → Converted {id_manager._equipment_counter} equipment UUID(s) and {id_manager._accessory_counter} accessory UUID(s) to placeholders (original UUIDs preserved)")
-        normalized_custom_prompt = _normalize_custom_prompt_equipment_ids(
-            custom_prompt,
-            id_manager.uuid_to_placeholder,
-        )
-        if normalized_custom_prompt != custom_prompt:
-            custom_prompt = normalized_custom_prompt
-            _gen_print("  → Normalized custom prompt equipment IDs to placeholders for planner compatibility")
-    
-    # Initialize timing data structure
-    timing_data = {
-        "total_time_seconds": 0.0,
-        "step_times": {},
-        "save_times": [],
-        "session_start_time": datetime.now().isoformat(),
-        "last_step_time": None
-    }
-
-    # Collect emitter conversations for persistence in conversation_history.json
-    aggregated_emitter_conversations = []
-
-    # Load progress if resuming
-    progress_data = None
-    previous_session_time = 0.0
+    session_id = resume_session_id or str(uuid.uuid4())
+    conversation_hash = hash_conversation(messages)
+    id_manager = PlaceholderIdManager()
+    timing_data = {"total_time_seconds": 0.0, "step_times": {}, "save_times": [],
+                   "session_start_time": datetime.now().isoformat(), "last_step_time": None}
     if resume_session_id:
-        progress_data = load_generation_progress(resume_session_id, script_dir)
-        if not progress_data:
-            return {"success": False, "filepath": None, "error": f"Could not load progress for session {resume_session_id[:8]}"}
-        
-        # Restore ID manager state
-        id_manager.restore_state(progress_data.get("id_manager_state", {}))
-        
-        # Load and restore timing data
-        saved_timing = progress_data.get("timing")
-        if saved_timing:
-            previous_session_time = saved_timing.get("total_time_seconds", 0.0)
-            timing_data["total_time_seconds"] = previous_session_time
-            # Normalize step_times keys to integers (JSON loads integer keys as strings)
-            saved_step_times = saved_timing.get("step_times", {})
-            normalized_step_times = {}
-            for k, v in saved_step_times.items():
-                normalized_key = int(k) if isinstance(k, str) and k.isdigit() else k
-                normalized_step_times[normalized_key] = v
-            timing_data["step_times"] = normalized_step_times
-            timing_data["save_times"] = saved_timing.get("save_times", []).copy()
-            timing_data["session_start_time"] = saved_timing.get("session_start_time", datetime.now().isoformat())
-            if previous_session_time > 0:
-                _gen_print(f"Previous session time: {previous_session_time:.2f}s")
-        
-        # Warn if conversation changed
-        saved_hash = progress_data.get("conversation_hash", "")
-        if saved_hash and saved_hash != conversation_hash:
-            _gen_print("Warning: Conversation has changed since this generation was started.")
-            _gen_print("Resuming anyway, but results may be inconsistent.")
-        
-        # Use saved custom prompt if available
-        if progress_data.get("custom_prompt"):
-            custom_prompt = progress_data["custom_prompt"]
-        
-        # Restore model preference from saved progress (or override via CLI when provided)
-        use_reasoner_for_emitting = progress_data.get("use_reasoner_for_emitting", True)
-        use_reasoner_for_plan_index = progress_data.get("use_reasoner_for_plan_index", use_reasoner_for_emitting)
-        if force_use_reasoner is not None:
-            if force_use_reasoner == "hybrid":
-                use_reasoner_for_plan_index = True
-                use_reasoner_for_emitting = False
-                _gen_print("Using CLI model preference override: hybrid-fast (reasoner for plan index, chat for emitting)")
-            else:
-                override_val = bool(force_use_reasoner)
-                use_reasoner_for_plan_index = override_val
-                use_reasoner_for_emitting = override_val
-                _gen_print(
-                    f"Using CLI model preference override: {'reasoner' if override_val else 'chat'} model for plan index and emitting"
-                )
-        elif "use_reasoner_for_emitting" in progress_data:
-            if use_reasoner_for_plan_index == use_reasoner_for_emitting:
-                _gen_print(
-                    f"Using saved model preference: {'reasoner' if use_reasoner_for_emitting else 'chat'} model for plan index and emitting"
-                )
-            else:
-                _gen_print(
-                    "Using saved model preference: hybrid-fast (reasoner for plan index, chat for emitting)"
-                )
-        
-        if migrate_progress_schema_v2_layout_step(progress_data):
-            _gen_print("  → Migrated saved generation progress (pre-layout schema → v2).")
+        progress = load_generation_progress(resume_session_id, script_dir)
+        if not progress:
+            return {"success": False, "filepath": None,
+                    "error": f"Could not load progress for session {resume_session_id[:8]}"}
+        id_manager.restore_state(progress.get('id_manager_state', {}))
+        _gen_print("Resuming by recompiling the current confirmed plan; saved emission artifacts are not authoritative.")
 
-        current_step = progress_data.get("current_step", -1)
-        _gen_print(f"Resuming from step {current_step + 1} (last completed: step {current_step})")
-    else:
-        current_step = -1
-        if force_use_reasoner is not None:
-            if force_use_reasoner == "hybrid":
-                use_reasoner_for_plan_index = True
-                use_reasoner_for_emitting = False
-                _gen_print("Using CLI model preference: hybrid-fast (reasoner for plan index, chat for emitting)")
-            else:
-                use_reasoner_for_plan_index = bool(force_use_reasoner)
-                use_reasoner_for_emitting = use_reasoner_for_plan_index
-                _gen_print(
-                    f"Using CLI model preference: {'reasoner' if use_reasoner_for_emitting else 'chat'} model for plan index and emitting"
-                )
-        else:
-            # Prompt user for model preference
-            while True:
-                user_input = input("Use reasoner model for plan index and emitting? (y/n, default: y): ").strip().lower()
-                if not user_input:
-                    use_reasoner_for_emitting = True
-                    use_reasoner_for_plan_index = True
-                    break
-                elif user_input in ('y', 'yes'):
-                    use_reasoner_for_emitting = True
-                    use_reasoner_for_plan_index = True
-                    break
-                elif user_input in ('n', 'no'):
-                    use_reasoner_for_emitting = False
-                    use_reasoner_for_plan_index = False
-                    break
-                else:
-                    _gen_print("Please enter 'y' or 'n' (or press Enter for default)")
-
-        if canonical_snapshot:
-            _gen_print(f"Approved draft supplies planning; using {'reasoner' if use_reasoner_for_emitting else 'chat'} for exercise emission only")
-        elif use_reasoner_for_plan_index and use_reasoner_for_emitting:
-            _gen_print("Using reasoner model for plan index and emitting (slower but potentially higher quality)")
-        elif (not use_reasoner_for_plan_index) and (not use_reasoner_for_emitting):
-            _gen_print("Using chat model for plan index and emitting (faster)")
-        else:
-            _gen_print("Using hybrid-fast model selection (reasoner for plan index, chat for emitting)")
-    
-    # Track step data for saving progress
     step_data = {}
-    
+    step_started = time.time()
+
+    def checkpoint(step, **artifacts):
+        nonlocal step_started
+        now = time.time()
+        step_data.update(artifacts)
+        timing_data['step_times'][step] = now - step_started
+        timing_data['last_step_time'] = datetime.now().isoformat()
+        save_generation_progress(session_id, step, step_data, custom_prompt,
+            conversation_hash, id_manager, script_dir, timing_data)
+        step_started = time.time()
+
     try:
-        # Step 0: Summarize conversation context (once per session)
-        if current_step < 0:
-            step_start_time = time.time()
-            _gen_print("Step 0: Loading approved structured draft..." if canonical_snapshot else "Step 0: Summarizing conversation context...")
-            context_summary = canonical_snapshot["preview"] if canonical_snapshot else summarize_conversation(client, messages, logger)
-            if context_summary is None:
-                return {"success": False, "filepath": None, "error": "Summarization cancelled"}
-            step_time = time.time() - step_start_time
-            timing_data["step_times"][0] = step_time
-            timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ {'Approved draft loaded' if canonical_snapshot else 'Conversation summarized'} ({step_time:.2f}s)")
-            structured_generation_facts = _extract_structured_generation_facts(custom_prompt)
-            step_data["step_0_context_summary"] = context_summary
-            step_data["step_0_structured_generation_facts"] = structured_generation_facts
-            timing_data["last_step_time"] = datetime.now().isoformat()
-            _, save_time = save_generation_progress(session_id, 0, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-        else:
-            context_summary = progress_data["step_data"].get("step_0_context_summary")
-            if not context_summary:
-                return {"success": False, "filepath": None, "error": "Missing context_summary in saved progress"}
-            structured_generation_facts = progress_data["step_data"].get("step_0_structured_generation_facts")
-            if structured_generation_facts is None:
-                structured_generation_facts = _extract_structured_generation_facts(custom_prompt)
-            step_data["step_0_context_summary"] = context_summary
-            step_data["step_0_structured_generation_facts"] = structured_generation_facts
-            _gen_print("Step 0: Using saved context summary")
+        plan_index = copy.deepcopy(canonical_snapshot['planIndex'])
+        execution_definitions = execution_decision_definitions(messages, review_equipment)
+        supplied_exercise_definitions = [copy.deepcopy(execution_definitions.get(definition['id'], definition))
+            for definition in review_equipment.get('exerciseDefinitions', [])]
+        supplied_exercise_movements = copy.deepcopy(review_equipment.get('exerciseMovements', []))
+        selected_ids = {item['libraryDefinitionId'] for item in plan_index['exercises']}
+        if selected_ids - {item['id'] for item in supplied_exercise_definitions}:
+            raise ContractValidationError("Selected exercises are absent from the currently loaded library. Select available entries and confirm the preview again.")
+        provided_equipment = copy.deepcopy(review_equipment)
+        for key, accessory in (('equipments', False), ('accessoryEquipments', True)):
+            provided_equipment[key] = [id_manager.convert_equipment_uuids_to_placeholders(item, is_accessory=accessory)
+                                      for item in review_equipment.get(key, [])]
+        provided_equipment['exerciseDefinitions'] = copy.deepcopy([
+            item for item in supplied_exercise_definitions if item['id'] in selected_ids])
+        for item in provided_equipment['exerciseDefinitions']:
+            item['equipmentId'] = id_manager.uuid_to_placeholder.get(item.get('equipmentId'), item.get('equipmentId'))
+            item['requiredAccessoryEquipmentIds'] = [id_manager.uuid_to_placeholder.get(i, i)
+                for i in item.get('requiredAccessoryEquipmentIds') or []]
+        plan_index['equipments'] = copy.deepcopy(provided_equipment['equipments'])
+        plan_index['accessoryEquipments'] = copy.deepcopy(provided_equipment['accessoryEquipments'])
+        hydrate_plan_index_from_exercise_library(plan_index, provided_equipment['exerciseDefinitions'])
+        validate_plan_index_contract(plan_index, provided_equipment)
+        validate_audit_targets(plan_index.get('auditTargets'))
+        expected_plan = copy.deepcopy(plan_index)
+        apply_native_load_calibration_policy(expected_plan, messages, review_equipment,
+            getattr(training_history, 'fingerprint', None) or canonical_snapshot.get('historyFingerprint'),
+            allow_educated_load_guesses=allow_educated_load_guesses)
+        if ([item.get('requiresLoadCalibration') for item in plan_index['exercises']]
+                != [item.get('requiresLoadCalibration') for item in expected_plan['exercises']]):
+            raise ContractValidationError("The approved draft's load-calibration flags do not match its current comparable history. Re-audit the draft before generation.")
+        plan_index = expected_plan
+        plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses),
+            plan_index.get('auditTargets') or {},
+            coverage_by_exercise=draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')),
+            **family_set_audit_options(audit_requirements or plan_index, review_equipment))
+        audit_coverage_minimums(plan_audit, coverage_rules)
+        audit_programming_preferences(plan_audit, plan_index, audit_requirements)
+        if plan_audit['issues']:
+            return {"success": False, "filepath": None, "error": "Programming audit requires a revised plan.",
+                    "requires_plan_revision": True, "programming_audit": plan_audit}
+        checkpoint(1, step_1_plan_index=plan_index, step_1_programming_audit=plan_audit)
 
-        # Step 1: Generate PlanIndex (planner stage)
-        if current_step < 1:
-            step_start_time = time.time()
-            _gen_print("Step 1: Using approved plan index..." if canonical_snapshot else "Step 1: Generating plan index...")
-            plan_index = copy.deepcopy(canonical_snapshot["planIndex"]) if canonical_snapshot else generate_index(
-                client,
-                context_summary,
-                custom_prompt,
-                use_reasoner_for_plan_index,
-                provided_equipment,
-                logger,
-                structured_generation_facts=structured_generation_facts,
-            )
-            if plan_index is None:
-                return {"success": False, "filepath": None, "error": "Plan index generation cancelled"}
-            if canonical_snapshot:
-                plan_index["equipments"] = copy.deepcopy(provided_equipment.get("equipments", []))
-                plan_index["accessoryEquipments"] = copy.deepcopy(provided_equipment.get("accessoryEquipments", []))
-            hydrate_plan_index_from_exercise_library(
-                plan_index,
-                provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
-            )
-            for rewrite in ([] if canonical_snapshot else normalize_dumbbell_pair_prescription_loads(plan_index)):
-                _gen_print(f"  {rewrite}")
-            try:
-                validate_plan_index_contract(plan_index, provided_equipment)
-                validate_audit_targets(plan_index.get("auditTargets"))
-                for entry in plan_index.get("exercises", []):
-                    if (not isinstance(entry.get("numWorkSets"), int) or isinstance(entry.get("numWorkSets"), bool)
-                            or entry["numWorkSets"] < 1 or not isinstance(entry.get("generateWarmUpSets"), bool)):
-                        raise ContractValidationError(f"Exercise {entry.get('id')} must provide numWorkSets and generateWarmUpSets for the programming audit.")
-                    if entry.get("exerciseType") in ("WEIGHT", "BODY_WEIGHT") and not isinstance(entry.get("maxReps"), int):
-                        raise ContractValidationError(f"Exercise {entry.get('id')} must provide maxReps for the duration audit.")
-            except ContractValidationError as error:
-                _log_step_error("Step 1", error, prefix="Contract validation failed")
-                failure = {"success": False, "filepath": None, "error": str(error)}
-                if not canonical_snapshot:
-                    failure.update(requires_plan_revision=True, programming_audit={
-                        "issues": [str(error)], "errors": [{
-                            "code": "plan_contract_requires_revision", "path": "/",
-                            "message": str(error),
-                            "repair": "Revise the plan through the planning workflow and obtain fresh confirmation. This contract error supplies no permitted schema-repair paths; do not regenerate the entire index as an automatic repair.",
-                        }]})
-                return failure
-            history_fingerprint = getattr(training_history, 'fingerprint', None)
-            if history_fingerprint is None and canonical_snapshot:
-                history_fingerprint = canonical_snapshot.get('historyFingerprint')
-            expected_plan_index = copy.deepcopy(plan_index)
-            apply_native_load_calibration_policy(
-                # Evidence receipts are bound to the original complete library and equipment.
-                # `provided_equipment` has already been reduced to selected definitions and
-                # placeholder IDs for generation, so it cannot identify those receipts.
-                expected_plan_index, messages, review_equipment, history_fingerprint,
-                allow_educated_load_guesses=allow_educated_load_guesses,
-            )
-            current_flags = [item.get('requiresLoadCalibration') for item in plan_index.get('exercises', [])]
-            expected_flags = [item.get('requiresLoadCalibration') for item in expected_plan_index.get('exercises', [])]
-            if canonical_snapshot and current_flags != expected_flags:
-                return {"success": False, "filepath": None,
-                        "error": "The approved draft's load-calibration flags do not match its current comparable history. Re-audit the draft before generation.",
-                        "requires_plan_revision": True}
-            plan_index = expected_plan_index
-            _gen_print("Step 1: Auditing planned volume and duration before emission...")
-            with LoadingIndicator("Auditing planned volume and duration"):
-                plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses), plan_index.get("auditTargets") or {},
-                    coverage_by_exercise=draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')) if canonical_snapshot else None,
-                    **family_set_audit_options(audit_requirements or plan_index, review_equipment))
-                audit_coverage_minimums(plan_audit, coverage_rules)
-            step_data["step_1_programming_audit"] = plan_audit
-            if plan_audit["issues"]:
-                _gen_print("Programming audit failed: " + " | ".join(plan_audit["issues"]))
-                return {"success": False, "filepath": None, "error": "Programming audit requires a revised plan.",
-                        "requires_plan_revision": True, "programming_audit": plan_audit}
-            _gen_print("✓ Planned volume and duration audit passed")
-
-            # Canonicalize provided equipment fields in plan_index by ID.
-            # The model sometimes returns equivalent labels (e.g., "Cable machine")
-            # for existing provided IDs, which should not fail immutable checks.
-            if provided_equipment:
-                provided_eq_by_id = {
-                    eq.get("id"): eq
-                    for eq in provided_equipment.get("equipments", [])
-                    if isinstance(eq, dict) and eq.get("id")
-                }
-                provided_acc_by_id = {
-                    acc.get("id"): acc
-                    for acc in provided_equipment.get("accessoryEquipments", [])
-                    if isinstance(acc, dict) and acc.get("id")
-                }
-                for eq in plan_index.get("equipments", []):
-                    eq_id = eq.get("id")
-                    if eq_id in provided_eq_by_id:
-                        provided_eq = provided_eq_by_id[eq_id]
-                        eq["type"] = provided_eq.get("type")
-                        eq["name"] = provided_eq.get("name")
-                for acc in plan_index.get("accessoryEquipments", []):
-                    acc_id = acc.get("id")
-                    if acc_id in provided_acc_by_id:
-                        provided_acc = provided_acc_by_id[acc_id]
-                        acc["type"] = provided_acc.get("type")
-                        acc["name"] = provided_acc.get("name")
-            # Collapse duplicate accessories: if plan_index lists same (type, name) as provided, use provided ID and remove duplicate
-            if provided_equipment:
-                step_data["step_1_accessory_duplicate_map"] = deduplicate_plan_index_accessories(plan_index, provided_equipment)
-            # Validate that provided equipment was not modified
-            if provided_equipment:
-                is_valid, error_msg = validate_equipment_immutability(
-                    provided_equipment,
-                    {"equipments": plan_index.get("equipments", []), "accessoryEquipments": plan_index.get("accessoryEquipments", [])}
-                )
-                if not is_valid:
-                    _log_step_error("Step 1", error_msg, prefix="Equipment validation failed")
-                    return {"success": False, "filepath": None, "error": f"Equipment validation failed: {error_msg}"}
-                
-                # Identify new equipment IDs (don't merge minimal plan_index entries yet - they'll be emitted in Step 2)
-                provided_eq_ids = {eq.get("id") for eq in provided_equipment.get("equipments", [])}
-                provided_acc_ids = {acc.get("id") for acc in provided_equipment.get("accessoryEquipments", [])}
-                new_equipment_ids = [eq.get("id") for eq in plan_index.get("equipments", []) if eq.get("id") and eq.get("id") not in provided_eq_ids]
-                new_accessory_ids = [acc.get("id") for acc in plan_index.get("accessoryEquipments", []) if acc.get("id") and acc.get("id") not in provided_acc_ids]
-                
-                if new_equipment_ids or new_accessory_ids:
-                    _gen_print(f"  → Detected {len(new_equipment_ids)} new equipment item(s), {len(new_accessory_ids)} new accessory(ies) to be created")
-                    # Register new equipment IDs in id_manager
-                    for eq_id in new_equipment_ids:
-                        id_manager.extract_placeholders_from_json({"id": eq_id})
-                    for acc_id in new_accessory_ids:
-                        id_manager.extract_placeholders_from_json({"id": acc_id})
-            
-            step_time = time.time() - step_start_time
-            timing_data["step_times"][1] = step_time
-            timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Generated plan index: {len(plan_index.get('equipments', []))} equipment(s), "
-                  f"{len(plan_index.get('accessoryEquipments', []))} accessory(ies), "
-                  f"{len(plan_index.get('exercises', []))} exercise(s), "
-                  f"{len(plan_index.get('workouts', []))} workout(s) ({step_time:.2f}s)")
-            step_data["step_1_plan_index"] = plan_index
-            step_data["step_1_provided_equipment"] = provided_equipment  # Save original provided equipment
-            timing_data["last_step_time"] = datetime.now().isoformat()
-            _, save_time = save_generation_progress(session_id, 1, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-        else:
-            plan_index = progress_data["step_data"].get("step_1_plan_index")
-            if not plan_index:
-                return {"success": False, "filepath": None, "error": "Missing plan_index in saved progress"}
-            try:
-                hydrate_plan_index_from_exercise_library(
-                    plan_index,
-                    provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
-                )
-                for rewrite in normalize_dumbbell_pair_prescription_loads(plan_index):
-                    _gen_print(f"  {rewrite}")
-                validate_plan_index_contract(plan_index, provided_equipment)
-            except ContractValidationError as e:
-                _log_step_error("Step 1", e, prefix="Contract validation failed")
-                return {"success": False, "filepath": None, "error": str(e)}
-            step_data["step_1_plan_index"] = plan_index
-            # Restore merged equipment if available
-            if "step_1_provided_equipment" in progress_data["step_data"]:
-                provided_equipment = progress_data["step_data"]["step_1_provided_equipment"]
-            _gen_print("Step 1: Using saved plan index")
-
-        # Step 2: Emit equipment items (chunked emitters) - parallelized
-        if current_step < 2:
-            step_start_time = time.time()
-            if provided_equipment:
-                # Use provided equipment directly, but also check for new equipment to emit
-                _gen_print("Step 2: Loading provided equipment and emitting new equipment...")
-                
-                # Convert provided equipment to EquipmentItem/AccessoryItem format
-                equipment_items = {}
-                for eq in provided_equipment.get("equipments", []):
-                    eq_id = eq.get("id")
-                    if eq_id:
-                        equipment_items[eq_id] = EquipmentItem(eq)
-                
-                accessory_items = {}
-                for acc in provided_equipment.get("accessoryEquipments", []):
-                    acc_id = acc.get("id")
-                    if acc_id:
-                        accessory_items[acc_id] = acc  # Accessory items are just dicts
-                
-                # Identify new equipment in plan_index that needs to be emitted
-                provided_eq_ids = {eq.get("id") for eq in provided_equipment.get("equipments", [])}
-                provided_acc_ids = {acc.get("id") for acc in provided_equipment.get("accessoryEquipments", [])}
-                
-                new_equipment_entries = [eq for eq in plan_index.get("equipments", []) if eq.get("id") and eq.get("id") not in provided_eq_ids]
-                new_accessory_entries = [acc for acc in plan_index.get("accessoryEquipments", []) if acc.get("id") and acc.get("id") not in provided_acc_ids]
-                
-                # Emit new equipment if any
-                if new_equipment_entries:
-                    _gen_print(f"  → Emitting {len(new_equipment_entries)} new equipment item(s)...")
-                    new_equipment_items_list = [
-                        (eq.get("id"), {"client": client, "context_summary": context_summary, "plan_index": plan_index, "use_reasoner": use_reasoner_for_emitting, "logger": logger})
-                        for eq in new_equipment_entries
-                    ]
-                    try:
-                        new_equipment_results, new_equipment_convs = parallel_emit_items(
-                            new_equipment_items_list,
-                            emit_equipment_item,
-                            "Step 2: Emitting new equipment",
-                            logger=logger
-                        )
-                    except Exception as e:
-                        _log_step_error("Step 2", e)
-                        return {"success": False, "filepath": None, "error": str(e)}
-                    aggregated_emitter_conversations.extend(new_equipment_convs)
-                    # Add new equipment to equipment_items
-                    for eq_id, eq_item in new_equipment_results.items():
-                        if eq_item is not None:
-                            equipment_items[eq_id] = eq_item
-                
-                # Emit new accessories if any
-                if new_accessory_entries:
-                    _gen_print(f"  → Emitting {len(new_accessory_entries)} new accessory(ies)...")
-                    new_accessory_items_list = [
-                        (acc.get("id"), {"client": client, "context_summary": context_summary, "plan_index": plan_index, "use_reasoner": use_reasoner_for_emitting, "logger": logger})
-                        for acc in new_accessory_entries
-                    ]
-                    try:
-                        new_accessory_results, new_accessory_convs = parallel_emit_items(
-                            new_accessory_items_list,
-                            emit_accessory_equipment_item,
-                            "Step 2: Emitting new accessory equipment",
-                            logger=logger
-                        )
-                    except Exception as e:
-                        _log_step_error("Step 2", e)
-                        return {"success": False, "filepath": None, "error": str(e)}
-                    aggregated_emitter_conversations.extend(new_accessory_convs)
-                    # Add new accessories to accessory_items
-                    for acc_id, acc_item in new_accessory_results.items():
-                        if acc_item is not None:
-                            accessory_items[acc_id] = acc_item
-                
-                # Update provided_equipment with newly emitted equipment
-                if new_equipment_entries or new_accessory_entries:
-                    # Rebuild provided_equipment to include new items
-                    updated_equipments = list(provided_equipment.get("equipments", []))
-                    updated_accessories = list(provided_equipment.get("accessoryEquipments", []))
-                    
-                    for eq_id, eq_item in equipment_items.items():
-                        if eq_id not in provided_eq_ids and isinstance(eq_item, dict):
-                            updated_equipments.append(eq_item)
-                    
-                    for acc_id, acc_item in accessory_items.items():
-                        if acc_id not in provided_acc_ids and isinstance(acc_item, dict):
-                            updated_accessories.append(acc_item)
-                    
-                    provided_equipment = {
-                        "equipments": updated_equipments,
-                        "accessoryEquipments": updated_accessories,
-                        "exerciseDefinitions": provided_equipment.get("exerciseDefinitions", []),
-                        "exerciseMovements": provided_equipment.get("exerciseMovements", []),
-                    }
-                
-                step_time = time.time() - step_start_time
-                timing_data["step_times"][2] = step_time
-                timing_data["total_time_seconds"] += step_time
-                _gen_print(f"✓ Loaded {len(equipment_items)} equipment item(s), {len(accessory_items)} accessory(ies) ({step_time:.2f}s)")
-                step_data["step_2_equipment_items"] = equipment_items
-                step_data["step_2_accessory_items"] = accessory_items
-                step_data["step_2_provided_equipment"] = provided_equipment  # Save for resume
-                timing_data["last_step_time"] = datetime.now().isoformat()
-                _, save_time = save_generation_progress(session_id, 2, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-            else:
-                # Normal emission path
-                _gen_print("Step 2: Emitting equipment items...")
-                equipment_entries = [eq for eq in plan_index.get("equipments", []) if eq.get("id")]
-                equipment_items_list = [
-                    (eq.get("id"), {"client": client, "context_summary": context_summary, "plan_index": plan_index, "use_reasoner": use_reasoner_for_emitting, "logger": logger})
-                    for eq in equipment_entries
-                ]
-                try:
-                    equipment_results, equipment_convs = parallel_emit_items(
-                        equipment_items_list,
-                        emit_equipment_item,
-                        "Step 2: Emitting equipment",
-                        logger=logger
-                    )
-                except Exception as e:
-                    _log_step_error("Step 2", e)
-                    return {"success": False, "filepath": None, "error": str(e)}
-                aggregated_emitter_conversations.extend(equipment_convs)
-                # Filter out None results (cancelled/failed items)
-                equipment_items = {k: v for k, v in equipment_results.items() if v is not None}
-                
-                # Emit accessory equipment items
-                accessory_entries = [acc for acc in plan_index.get("accessoryEquipments", []) if acc.get("id")]
-                accessory_items_list = [
-                    (acc.get("id"), {"client": client, "context_summary": context_summary, "plan_index": plan_index, "use_reasoner": use_reasoner_for_emitting, "logger": logger})
-                    for acc in accessory_entries
-                ]
-                try:
-                    accessory_results, accessory_convs = parallel_emit_items(
-                        accessory_items_list,
-                        emit_accessory_equipment_item,
-                        "Step 2: Emitting accessory equipment",
-                        logger=logger
-                    )
-                except Exception as e:
-                    _log_step_error("Step 2", e)
-                    return {"success": False, "filepath": None, "error": str(e)}
-                aggregated_emitter_conversations.extend(accessory_convs)
-                # Filter out None results (cancelled/failed items)
-                accessory_items = {k: v for k, v in accessory_results.items() if v is not None}
-                
-                step_time = time.time() - step_start_time
-                timing_data["step_times"][2] = step_time
-                timing_data["total_time_seconds"] += step_time
-                _gen_print(f"✓ Emitted {len(equipment_items)} equipment item(s), {len(accessory_items)} accessory(ies) ({step_time:.2f}s)")
-                step_data["step_2_equipment_items"] = equipment_items
-                step_data["step_2_accessory_items"] = accessory_items
-                
-                # Extract generated equipment and treat it as provided_equipment for consistent formatting/enforcement
-                # Convert equipment_items dict (id -> EquipmentItem) to list format
-                generated_equipment_list = [eq for eq in equipment_items.values() if isinstance(eq, dict)]
-                generated_accessory_list = [acc for acc in accessory_items.values() if isinstance(acc, dict)]
-                provided_equipment = {
-                    "equipments": generated_equipment_list,
-                    "accessoryEquipments": generated_accessory_list
-                }
-                step_data["step_2_provided_equipment"] = provided_equipment  # Save for resume and subsequent steps
-                
-                timing_data["last_step_time"] = datetime.now().isoformat()
-                _, save_time = save_generation_progress(session_id, 2, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-        else:
-            equipment_items = progress_data["step_data"].get("step_2_equipment_items", {})
-            accessory_items = progress_data["step_data"].get("step_2_accessory_items", {})
-            # Restore provided_equipment if it was saved (either from file or generated)
-            if "step_2_provided_equipment" in progress_data["step_data"]:
-                provided_equipment = progress_data["step_data"]["step_2_provided_equipment"]
-            elif not provided_equipment and equipment_items:
-                # If no provided_equipment was saved but we have equipment_items, extract them
-                # This handles cases where old progress files don't have provided_equipment
-                generated_equipment_list = [eq for eq in equipment_items.values() if isinstance(eq, dict)]
-                generated_accessory_list = [acc for acc in accessory_items.values() if isinstance(acc, dict)]
-                provided_equipment = {
-                    "equipments": generated_equipment_list,
-                    "accessoryEquipments": generated_accessory_list
-                }
-            if not equipment_items:
-                return {"success": False, "filepath": None, "error": "Missing equipment_items in saved progress"}
-            step_data["step_2_equipment_items"] = equipment_items
-            step_data["step_2_accessory_items"] = accessory_items
-            if provided_equipment:
-                step_data["step_2_provided_equipment"] = provided_equipment
-            _gen_print(f"Step 2: Using saved equipment items ({len(equipment_items)} items, {len(accessory_items)} accessories)")
-        
-        # Step 3: Emit exercise definitions (chunked emitters) - parallelized
-        if current_step < 3:
-            step_start_time = time.time()
-            _gen_print("Step 3: Emitting exercise definitions...")
-            exercise_entries = [ex for ex in plan_index.get("exercises", []) if ex.get("id")]
-            exercise_entry_by_id = {
-                ex["id"]: ex for ex in exercise_entries if ex.get("id")
-            }
-
-            def exercise_emitter_args(
-                ex_id,
-                *,
-                contract_error_context=None,
-                max_attempts=None,
-            ):
-                ex_entry = exercise_entry_by_id.get(ex_id, {})
-                equipment_id = ex_entry.get("equipmentId")
-                equipment_subset = []
-                if (
-                    equipment_id
-                    and equipment_id in equipment_items
-                    and isinstance(equipment_items[equipment_id], dict)
-                ):
-                    equipment_subset = [equipment_items[equipment_id]]
-                accessory_subset = [
-                    accessory_items[acc_id]
-                    for acc_id in ex_entry.get("requiredAccessoryEquipmentIds") or []
-                    if acc_id in accessory_items
-                    and isinstance(accessory_items[acc_id], dict)
-                ]
-                args = {
-                    "client": client,
-                    "context_summary": context_summary,
-                    "plan_index": plan_index,
-                    "equipment_subset": equipment_subset,
-                    "accessory_subset": accessory_subset or None,
-                    "use_reasoner": use_reasoner_for_emitting,
-                    "provided_equipment": provided_equipment,
-                    "allow_educated_load_guesses": allow_educated_load_guesses,
-                    "logger": logger,
-                }
-                if canonical_snapshot:
-                    args['deterministic'] = True
-                if contract_error_context is not None:
-                    args["contract_error_context"] = contract_error_context
-                if max_attempts is not None:
-                    args["max_attempts"] = max_attempts
-                return args
-
-            # Prepare equipment subsets for each exercise
-            exercise_items_list = [
-                (ex_id, exercise_emitter_args(ex_id))
-                for ex_id in exercise_entry_by_id
-            ]
-            try:
-                exercise_results, exercise_convs = parallel_emit_items(
-                    exercise_items_list,
-                    emit_exercise_definition,
-                    "Step 3: Emitting exercises",
-                    logger=logger,
-                    fail_fast=False,
-                )
-            except Exception as e:
-                _log_step_error("Step 3", e)
-                return {"success": False, "filepath": None, "error": str(e)}
-            aggregated_emitter_conversations.extend(exercise_convs)
-            # Filter out None results (cancelled/failed items)
-            exercise_definitions = {k: v for k, v in exercise_results.items() if v is not None}
-
-            contract_retry_budget = 2
-            contract_retry_count = 0
-            while True:
-                try:
-                    validate_exercise_definitions_contract(plan_index, exercise_definitions)
-                    break
-                except ContractValidationError as e:
-                    _log_step_error("Step 3", e, prefix="Contract validation failed")
-                    if canonical_snapshot or contract_retry_count >= contract_retry_budget:
-                        return {"success": False, "filepath": None, "error": str(e)}
-
-                    err_text = str(e)
-                    retry_ids = set()
-                    # Retry missing definitions and mismatch errors that identify an EXERCISE_X id.
-                    for match in re.finditer(r"Exercise '([^']+)'", err_text):
-                        ex_id = match.group(1)
-                        if isinstance(ex_id, str) and ex_id.startswith("EXERCISE_"):
-                            retry_ids.add(ex_id)
-                    for match in re.finditer(r"for '([^']+)'", err_text):
-                        ex_id = match.group(1)
-                        if isinstance(ex_id, str) and ex_id.startswith("EXERCISE_"):
-                            retry_ids.add(ex_id)
-
-                    if not retry_ids:
-                        return {"success": False, "filepath": None, "error": err_text}
-
-                    contract_retry_count += 1
-                    _gen_print(
-                        f"  → Contract retry {contract_retry_count}/{contract_retry_budget}: "
-                        f"re-emitting {len(retry_ids)} exercise(s) due to Step 3 mismatches..."
-                    )
-                    exercise_retry_items = []
-                    for ex_id in sorted(retry_ids):
-                        per_ex_error_lines = [
-                            line.strip()
-                            for line in err_text.splitlines()
-                            if ex_id in line
-                        ]
-                        per_ex_error_context = "\n".join(per_ex_error_lines) if per_ex_error_lines else err_text
-                        exercise_retry_items.append(
-                            (
-                                ex_id,
-                                exercise_emitter_args(
-                                    ex_id,
-                                    contract_error_context=per_ex_error_context,
-                                    max_attempts=1,
-                                ),
-                            )
-                        )
-                    retry_results, retry_conversations = parallel_emit_items(
-                        exercise_retry_items,
-                        emit_exercise_definition,
-                        "Step 3: Repairing exercise definitions",
-                        max_workers=min(
-                            CONTRACT_REPAIR_MAX_WORKERS, len(exercise_retry_items)
-                        ),
-                        logger=logger,
-                        fail_fast=False,
-                    )
-                    aggregated_emitter_conversations.extend(retry_conversations)
-                    exercise_definitions.update(
-                        {
-                            ex_id: result
-                            for ex_id, result in retry_results.items()
-                            if result is not None
-                        }
-                    )
-            step_time = time.time() - step_start_time
-            timing_data["step_times"][3] = step_time
-            timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Emitted {len(exercise_definitions)} exercise definition(s) ({step_time:.2f}s)")
-            step_data["step_3_exercise_definitions"] = exercise_definitions
-            timing_data["last_step_time"] = datetime.now().isoformat()
-            _, save_time = save_generation_progress(session_id, 3, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-        else:
-            exercise_definitions = progress_data["step_data"].get("step_3_exercise_definitions", {})
-            accessory_items = progress_data["step_data"].get("step_2_accessory_items", {})
-            if not exercise_definitions:
-                return {"success": False, "filepath": None, "error": "Missing exercise_definitions in saved progress"}
-            try:
-                validate_exercise_definitions_contract(plan_index, exercise_definitions)
-            except ContractValidationError as e:
-                _log_step_error("Step 3", e, prefix="Contract validation failed")
-                return {"success": False, "filepath": None, "error": str(e)}
-            step_data["step_3_exercise_definitions"] = exercise_definitions
-            _gen_print(f"Step 3: Using saved exercise definitions ({len(exercise_definitions)} exercises)")
-        
-        # Step 4: Construct structures locally from the validated plan.
-        if current_step < 4:
-            step_start_time = time.time()
-            _gen_print("Step 4: Building workout structures from the plan (no model call)...")
-            workout_entries = [wo for wo in plan_index.get("workouts", []) if wo.get("id")]
-            workout_items_list = [
-                (wo.get("id"), {
-                    "client": client,
-                    "context_summary": context_summary,
-                    "plan_index": plan_index,
-                    "exercise_index": exercise_definitions,
-                    "use_reasoner": use_reasoner_for_emitting,
-                    "logger": logger
-                })
-                for wo in workout_entries
-            ]
-            try:
-                workout_results, workout_convs = parallel_emit_items(
-                    workout_items_list,
-                    emit_workout_structure,
-                    "Step 4: Building workouts",
-                    logger=logger
-                )
-            except Exception as e:
-                _log_step_error("Step 4", e)
-                return {"success": False, "filepath": None, "error": str(e)}
-            aggregated_emitter_conversations.extend(workout_convs)
-            # Filter out None results (cancelled/failed items)
-            workout_structures = {k: v for k, v in workout_results.items() if v is not None}
-            contract_retry_budget = 2
-            contract_retry_count = 0
-            while True:
-                try:
-                    validate_workout_structures_contract(plan_index, workout_structures, exercise_definitions)
-                    break
-                except ContractValidationError as e:
-                    _log_step_error("Step 4", e, prefix="Contract validation failed")
-                    if contract_retry_count >= contract_retry_budget:
-                        return {"success": False, "filepath": None, "error": str(e)}
-
-                    err_text = str(e)
-                    retry_ids = set()
-                    for match in re.finditer(r"\((WORKOUT_[^)]+)\)", err_text):
-                        retry_ids.add(match.group(1))
-                    for match in re.finditer(r"for workout '([^']+)' \((WORKOUT_[^)]+)\)", err_text):
-                        retry_ids.add(match.group(2))
-
-                    if not retry_ids:
-                        return {"success": False, "filepath": None, "error": err_text}
-
-                    contract_retry_count += 1
-                    _gen_print(
-                        f"  → Contract retry {contract_retry_count}/{contract_retry_budget}: "
-                        f"re-emitting {len(retry_ids)} workout structure(s) due to Step 4 mismatches..."
-                    )
-                    workout_entry_by_id = {
-                        wo["id"]: wo for wo in workout_entries if wo.get("id")
-                    }
-                    workout_retry_items = []
-                    for wo_id in sorted(retry_ids):
-                        wo_entry = workout_entry_by_id.get(wo_id, {})
-                        wo_name = wo_entry.get("name")
-                        per_wo_error_lines = [
-                            line.strip()
-                            for line in err_text.splitlines()
-                            if wo_id in line or (wo_name and wo_name in line)
-                        ]
-                        per_wo_error_context = "\n".join(per_wo_error_lines) if per_wo_error_lines else err_text
-                        workout_retry_items.append(
-                            (
-                                wo_id,
-                                {
-                                    "client": client,
-                                    "context_summary": context_summary,
-                                    "plan_index": plan_index,
-                                    "exercise_index": exercise_definitions,
-                                    "use_reasoner": use_reasoner_for_emitting,
-                                    "logger": logger,
-                                    "contract_error_context": per_wo_error_context,
-                                },
-                            )
-                        )
-                    retry_results, retry_conversations = parallel_emit_items(
-                        workout_retry_items,
-                        emit_workout_structure,
-                        "Step 4: Repairing workout structures",
-                        max_workers=min(
-                            CONTRACT_REPAIR_MAX_WORKERS, len(workout_retry_items)
-                        ),
-                        logger=logger,
-                        fail_fast=False,
-                    )
-                    aggregated_emitter_conversations.extend(retry_conversations)
-                    workout_structures.update(
-                        {
-                            wo_id: result
-                            for wo_id, result in retry_results.items()
-                            if result is not None
-                        }
-                    )
-            step_time = time.time() - step_start_time
-            timing_data["step_times"][4] = step_time
-            timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Built {len(workout_structures)} workout structure(s) ({step_time:.2f}s)")
-            step_data["step_4_workout_structures"] = workout_structures
-            timing_data["last_step_time"] = datetime.now().isoformat()
-            _, save_time = save_generation_progress(session_id, 4, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-        else:
-            workout_structures = progress_data["step_data"].get("step_4_workout_structures", {})
-            if not workout_structures:
-                return {"success": False, "filepath": None, "error": "Missing workout_structures in saved progress"}
-            try:
-                validate_workout_structures_contract(plan_index, workout_structures, exercise_definitions)
-            except ContractValidationError as e:
-                _log_step_error("Step 4", e, prefix="Contract validation failed")
-                return {"success": False, "filepath": None, "error": str(e)}
-            step_data["step_4_workout_structures"] = workout_structures
-            _gen_print(f"Step 4: Using saved workout structures ({len(workout_structures)} workouts)")
-        
-        # Step 5: Assemble placeholder workout plan package
-        if current_step < 5:
-            step_start_time = time.time()
-            _gen_print("Step 5: Assembling placeholder workout plan package...")
-            placeholder_workout_store = assemble_placeholder_workout_store(
-                equipment_items, accessory_items, exercise_definitions, workout_structures, plan_index
-            )
-            placeholder_workout_store = sync_exercises_from_definitions(placeholder_workout_store, exercise_definitions)
-            placeholder_workout_store = sync_exercises_from_plan_index(placeholder_workout_store, plan_index)
-            strip_rep_range_fields_for_timed_exercises_in_workout_store(placeholder_workout_store)
-            # Rewrite any duplicate accessory IDs to provided IDs in emitted exercises
-            apply_accessory_id_rewrite(placeholder_workout_store, step_data.get("step_1_accessory_duplicate_map", {}))
-            step_time = time.time() - step_start_time
-            timing_data["step_times"][5] = step_time
-            timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Assembled placeholder workout plan package ({step_time:.2f}s)")
-            step_data["step_5_placeholder_workout_store"] = placeholder_workout_store
-            timing_data["last_step_time"] = datetime.now().isoformat()
-            _, save_time = save_generation_progress(session_id, 5, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-        else:
-            placeholder_workout_store = progress_data["step_data"].get("step_5_placeholder_workout_store")
-            if not placeholder_workout_store:
-                return {"success": False, "filepath": None, "error": "Missing placeholder_workout_store in saved progress"}
-            step_data["step_5_placeholder_workout_store"] = placeholder_workout_store
-            _gen_print("Step 5: Using saved placeholder workout plan package")
-        
-        # Step 6: Validate and repair placeholder JSON
-        if current_step < 6:
-            step_start_time = time.time()
-            _gen_print("Step 6: Validating and repairing placeholder JSON...")
-            try:
-                # Check if we're resuming step 6 (current_step == 5 means step 5 completed, step 6 may have partial progress)
-                resume_best_json = None
-                resume_best_error_count = None
-                
-                # Check for resume state from previous step 6 attempts
-                if current_step == 5:
-                    resume_best_json = progress_data["step_data"].get("step_6_best_json")
-                    resume_best_error_count = progress_data["step_data"].get("step_6_best_error_count")
-                    if resume_best_json is not None:
-                        _gen_print(f"  Resuming step 6 with best saved state (error count: {resume_best_error_count if resume_best_error_count is not None else 'N/A'})")
-                
-                validated_placeholder_store = validate_and_repair_placeholder_json(
-                    client, context_summary, placeholder_workout_store, max_attempts=1 if canonical_snapshot else 5,
-                    session_id=session_id, step_data=step_data, custom_prompt=custom_prompt,
-                    conversation_hash=conversation_hash, id_manager=id_manager, script_dir=script_dir,
-                    resume_best_json=resume_best_json, resume_best_error_count=resume_best_error_count,
-                    timing_data=timing_data, use_reasoner_for_emitting=use_reasoner_for_emitting,
-                    logger=logger
-                )
-                validated_placeholder_store = sync_exercises_from_definitions(validated_placeholder_store, exercise_definitions)
-                validated_placeholder_store = sync_exercises_from_plan_index(validated_placeholder_store, plan_index)
-                step_time = time.time() - step_start_time
-                timing_data["step_times"][6] = step_time
-                timing_data["total_time_seconds"] += step_time
-                _gen_print(f"✓ Placeholder validation passed ({step_time:.2f}s)")
-                step_data["step_6_validated_placeholder_store"] = validated_placeholder_store
-                timing_data["last_step_time"] = datetime.now().isoformat()
-                _, save_time = save_generation_progress(session_id, 6, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-            except Exception as validation_err:
-                step_time = time.time() - step_start_time
-                timing_data["step_times"][6] = step_time
-                timing_data["total_time_seconds"] += step_time
-                _gen_print(f"Validation/repair failed: {validation_err}")
-                # Save error for inspection
-                error_filepath = save_validation_error(validation_err, placeholder_workout_store, script_dir)
-                if error_filepath:
-                    _gen_print(f"Error details saved to: {error_filepath}")
-                return {"success": False, "filepath": None, "error": str(validation_err)}
-        else:
-            validated_placeholder_store = progress_data["step_data"].get("step_6_validated_placeholder_store")
-            if not validated_placeholder_store:
-                return {"success": False, "filepath": None, "error": "Missing validated_placeholder_store in saved progress"}
-            validated_placeholder_store = sync_exercises_from_definitions(validated_placeholder_store, exercise_definitions)
-            validated_placeholder_store = sync_exercises_from_plan_index(validated_placeholder_store, plan_index)
-            step_data["step_6_validated_placeholder_store"] = validated_placeholder_store
-            _gen_print("Step 6: Using saved validated placeholder store")
-        
-        validate_assembled_workout_contract(plan_index, validated_placeholder_store)
-
-        # Step 7: Convert placeholders to UUIDs (final step)
-        if current_step < 7:
-            step_start_time = time.time()
-            _gen_print("Step 7: Converting placeholders to UUIDs...")
-            data = convert_placeholders_to_uuids(validated_placeholder_store, id_manager, validate_final=True, logger=logger)
-            try:
-                validate_uuid_conversion_parity(validated_placeholder_store, data)
-            except ContractValidationError as e:
-                _log_step_error("Step 7", e, prefix="Contract validation failed")
-                return {"success": False, "filepath": None, "error": str(e)}
-            data = apply_exercise_library_schema_v2(
-                data, supplied_exercise_definitions, supplied_exercise_movements
-            )
-            step_time = time.time() - step_start_time
-            timing_data["step_times"][7] = step_time
-            timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Converted to UUID-based workout plan package ({step_time:.2f}s)")
-            step_data["step_7_final_workout_store"] = data
-            timing_data["last_step_time"] = datetime.now().isoformat()
-            _, save_time = save_generation_progress(session_id, 7, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
-        else:
-            data = progress_data["step_data"].get("step_7_final_workout_store")
-            if not data:
-                return {"success": False, "filepath": None, "error": "Missing final_workout_store in saved progress"}
-            if data.get("schemaVersion") != 2:
-                try:
-                    validate_uuid_conversion_parity(validated_placeholder_store, data)
-                except ContractValidationError as e:
-                    _log_step_error("Step 7", e, prefix="Contract validation failed")
-                    return {"success": False, "filepath": None, "error": str(e)}
-            data = apply_exercise_library_schema_v2(
-                data, supplied_exercise_definitions, supplied_exercise_movements
-            )
-            _gen_print("Step 7: Using saved final workout plan package")
-        
+        equipment_items = {item['id']: EquipmentItem(item) for item in provided_equipment['equipments']}
+        accessory_items = {item['id']: item for item in provided_equipment['accessoryEquipments']}
+        exercise_definitions = {}
+        for entry in plan_index['exercises']:
+            exercise = _materialize_exercise_definition(entry)
+            exercise_definitions[entry['id']] = finalize_and_validate_exercise_definition(
+                exercise, plan_entry=entry,
+                equipment_subset=[equipment_items[entry['equipmentId']]] if entry.get('equipmentId') in equipment_items else [],
+                accessory_subset=[accessory_items[i] for i in entry.get('requiredAccessoryEquipmentIds') or []],
+                all_equipment_candidates=list(equipment_items.values()),
+                allow_educated_load_guesses=allow_educated_load_guesses)
+        validate_exercise_definitions_contract(plan_index, exercise_definitions)
+        checkpoint(3, step_2_equipment_items=equipment_items, step_2_accessory_items=accessory_items,
+                   step_3_exercise_definitions=exercise_definitions)
+        workout_structures = {day['id']: build_workout_structure(day) for day in plan_index['workouts']}
+        validate_workout_structures_contract(plan_index, workout_structures, exercise_definitions)
+        placeholder_store = assemble_placeholder_workout_store(equipment_items, accessory_items,
+            exercise_definitions, workout_structures, plan_index)
+        validate_assembled_workout_contract(plan_index, placeholder_store)
+        Draft7Validator(create_placeholder_schema()).validate(placeholder_store)
+        checkpoint(6, step_4_workout_structures=workout_structures,
+                   step_5_placeholder_workout_store=placeholder_store,
+                   step_6_validated_placeholder_store=placeholder_store)
+        data = convert_placeholders_to_uuids(placeholder_store, id_manager, validate_final=False, logger=logger)
+        validate_uuid_conversion_parity(placeholder_store, data)
+        Draft7Validator(JSON_SCHEMA).validate(data)
+        data = apply_exercise_library_schema_v2(data, supplied_exercise_definitions, supplied_exercise_movements)
+        checkpoint(7, step_7_final_workout_store=data)
         _gen_print("Step 8: Auditing actual generated volume and duration...")
         audit_start = time.time()
         with LoadingIndicator("Auditing generated volume and duration"):
             setup_seconds = {id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['setupSeconds']
                              for e in plan_index['exercises'] if 'setupSeconds' in e}
-            coverage = ({id_manager.placeholder_to_uuid.get(identifier, identifier): keys for identifier, keys in
-                         draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')).items()}
-                        if canonical_snapshot else None)
+            coverage = {id_manager.placeholder_to_uuid.get(identifier, identifier): keys for identifier, keys in
+                        draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')).items()}
             timing_reps = {id_manager.placeholder_to_uuid.get(identifier, identifier): reps
                            for identifier, reps in plan_timing_reps_by_exercise(
                                plan_index, allow_educated_load_guesses).items()}
@@ -1319,6 +186,7 @@ def execute_workout_generation(
                 **family_set_audit_options(audit_requirements or plan_index, review_equipment),
                 )
             audit_coverage_minimums(final_audit, coverage_rules)
+            audit_programming_preferences(final_audit, canonical_snapshot['planIndex'], audit_requirements)
             emitted_audit = audit_workout_package(data, plan_index.get("auditTargets") or {},
                 setup_seconds_by_exercise=setup_seconds,
                 rep_duration_seconds_by_exercise={
@@ -1330,11 +198,10 @@ def execute_workout_generation(
                 conservative['emittedPrescriptionEstimatedSeconds'] = emitted['estimatedSeconds']
                 conservative['emittedPrescriptionTiming'] = copy.deepcopy(emitted['timing'])
         final_audit["prescriptionChanges"] = step_data.get("step_1_programming_audit", {}).get("prescriptionChanges", [])
-        if canonical_snapshot:
-            priority_receipt = canonical_snapshot.get('coordinatedJointPlanning') or canonical_snapshot.get('automaticAllocation') or {}
-            for field in ('priorityExecution', 'priorityTradeoffs'):
-                if field in priority_receipt:
-                    final_audit[field] = copy.deepcopy(priority_receipt[field])
+        priority_receipt = canonical_snapshot.get('coordinatedJointPlanning') or canonical_snapshot.get('automaticAllocation') or {}
+        for field in ('priorityExecution', 'priorityTradeoffs'):
+            if field in priority_receipt:
+                final_audit[field] = copy.deepcopy(priority_receipt[field])
         step_data["step_8_programming_audit"] = final_audit
         timing_data["step_times"][8] = time.time() - audit_start
         for workout_audit in final_audit["workouts"]:
@@ -1347,7 +214,7 @@ def execute_workout_generation(
             return {"success": False, "filepath": None, "error": "Final programming audit failed: " + " | ".join(final_audit["issues"]),
                     "requires_plan_revision": True, "programming_audit": final_audit}
         _gen_print("✓ Actual volume and duration audit passed (duration is an estimate under stated assumptions)")
-        _, save_time = save_generation_progress(session_id, 8, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
+        _, save_time = save_generation_progress(session_id, 8, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data)
 
         # Update final total time (including save times)
         save_times_total = sum(timing_data.get("save_times", []))
@@ -1361,18 +228,17 @@ def execute_workout_generation(
             allow_educated_load_guesses=allow_educated_load_guesses,
         )
 
-        program_guidance = None
-        if canonical_snapshot:
-            from .plan_review import _context
-            reviewed_context = _context(canonical_snapshot, messages, review_equipment,
-                training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'),
-                canonical_snapshot['review']['instructionBoundary'])
-            program_guidance = reviewed_context['finalArtifact']['programGuidance']
-            actual = reviewable_workout_artifact(canonical_snapshot['planIndex'], program_guidance,
-                data, id_manager.placeholder_to_uuid)
-            if actual != reviewed_context['finalArtifact']:
-                raise ContractValidationError('The final export differs from the independently reviewed artifact. Re-audit and review before export.')
+        from .plan_review import _context
+        reviewed_context = _context(canonical_snapshot, messages, review_equipment,
+            training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'),
+            canonical_snapshot['review']['instructionBoundary'])
+        program_guidance = reviewed_context['finalArtifact']['programGuidance']
+        actual = reviewable_workout_artifact(canonical_snapshot['planIndex'], program_guidance,
+            data, id_manager.placeholder_to_uuid)
+        if actual != reviewed_context['finalArtifact']:
+            raise ContractValidationError('The final export differs from the independently reviewed artifact. Re-audit and review before export.')
         
+
         # Save workout to file
         filepath = save_workout_to_file(data, script_dir)
         guidance_filepath = None
@@ -1391,15 +257,9 @@ def execute_workout_generation(
                 json.dump(final_audit, audit_file, indent=2, ensure_ascii=False)
             _gen_print(f"Programming audit saved to: {audit_filepath}")
         if filepath is None:
-            _gen_print("Warning: Failed to save workout to file, but generation was successful.")
-            _gen_print("\nGenerated Workout JSON:")
-            _gen_print("=" * 70)
-            _gen_print(json.dumps(data, indent=2))
-            _gen_print("=" * 70)
-        else:
-            # Display summary instead of full JSON
-            display_workout_summary(data, filepath, logger=logger)
-        
+            return {"success": False, "filepath": None, "error": "Could not save the compiled workout package."}
+        display_workout_summary(data, filepath, logger=logger)
+
         # Display timing summary
         display_timing_summary(timing_data, is_resume=(resume_session_id is not None), logger=logger)
         
@@ -1412,7 +272,7 @@ def execute_workout_generation(
             "filepath": filepath,
             "guidance_filepath": guidance_filepath,
             "error": None,
-            "emitter_conversations": aggregated_emitter_conversations,
+            "emitter_conversations": [],
         }
             
     except KeyboardInterrupt:

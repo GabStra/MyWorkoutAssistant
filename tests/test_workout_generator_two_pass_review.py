@@ -103,7 +103,6 @@ def test_two_calls_separate_discovery_from_disposition_and_ownership(monkeypatch
         validate(payload, options['output_schema'])
         return json.dumps(payload), None, None
     monkeypatch.setattr(review, '_review_call', respond)
-    monkeypatch.setattr(review, '_confirm_review_corrections', lambda *a, **k: pytest.fail('No third call'))
     result = review.review_draft(None, audited, messages, equipment, two_pass=True)
     assert len(calls) == 2
     assert 'assessment' in result['review'], result['review'].get('failure')
@@ -246,7 +245,6 @@ def test_carried_blocker_cannot_be_dropped_or_demoted(monkeypatch, status, dispo
                 'reason': 'The prior contradiction remains actionable.', 'errorKind': 'none',
                 'authorityEvidenceRefs': [], 'evidencePaths': [item['path'], *item['evidencePaths']]}],
             'repairPlan': 'Preserve the requirement while correcting the contradiction.'}
-    monkeypatch.setattr(review, 'assess_findings', adjudicate)
     if status == 'resolved_by_change':
         result = review._review_complete_draft(None, context, audited, messages, len(messages)-1, None)
         assert result['scopeResults']['execution']['blockerResolutions']['OBLIGATION_test']['status'] == 'open'
@@ -256,7 +254,6 @@ def test_carried_blocker_cannot_be_dropped_or_demoted(monkeypatch, status, dispo
         with pytest.raises(ValueError, match='cannot waive'):
             review._review_complete_draft(None, context, audited, messages, len(messages)-1, None)
     assert len(calls) == 1
-
 
 
 def test_disputed_withdrawal_stops_without_fabricating_confirmation(monkeypatch):
@@ -277,7 +274,6 @@ def test_disputed_withdrawal_stops_without_fabricating_confirmation(monkeypatch)
     def cannot_confirm(*args):
         confirmations.append(True)
         raise ValueError('Missing responsible independent review confirmation.')
-    monkeypatch.setattr(review, '_confirm_review_corrections', cannot_confirm)
     result = review.review_draft(None, audited, messages, equipment, two_pass=True)
     assert not result['passed'] and len(calls) == 2 and confirmations == [True]
     assert 'responsible independent review' in result['review']['failure']
@@ -291,97 +287,8 @@ def test_default_path_uses_bounded_review_without_a_harness_override(monkeypatch
         data = json.loads(args[1][-1]['content'])
         return json.dumps(discovery_payload([], data, kwargs)), None, None
     monkeypatch.setattr(review, '_review_call', respond)
-    monkeypatch.setattr(review, '_review_part', lambda *a, **k: pytest.fail('No split-review fan-out by default'))
     result = review.review_draft(None, audited, messages, equipment)
     assert result['passed'] and len(calls) == 1
-
-
-def test_explicit_split_review_remains_available_for_comparison(monkeypatch):
-    equipment, messages, audited = setup_case()
-    monkeypatch.setattr(review, '_review_complete_draft', lambda *a: pytest.fail('Explicit split-review control'))
-    monkeypatch.setattr(review, '_review_part', lambda *a, **k: {'findings': []})
-    result = review.review_draft(None, audited, messages, equipment, two_pass=False)
-    assert result['passed']
-
-
-@pytest.mark.parametrize('route', ['two_pass', 'execution', 'confirmation'])
-def test_every_review_route_keeps_historical_addresses_out_of_current_citations(monkeypatch, route):
-    equipment, messages, audited = setup_case()
-    boundary = len(messages)-1
-    context = review._context(audited, messages, equipment, None, boundary)
-    prior = {'severity': 'blocking', 'basis': 'established_violation', 'action': 'repair',
-        'path': '/draft/exercises/999', 'evidencePaths': ['/draft/exercises/999'],
-        'draftPath': '/workouts/0/exercises/999', 'reviewScope': 'execution',
-        'message': 'Old cue at FACT_998 (/draft/exercises/999) on EXERCISE_999 conflicts with the stop rule.',
-        'repair': 'Correct /workouts/0/exercises/999/placementNotes.', 'muscleTargets': []}
-    changes = ['/workouts/0/exercises/0/minReps']
-    context['reviewChecklist'] = {'findings': {'OBLIGATION_old': {'finding': prior,
-        'references': [], 'changedDraftPaths': changes, 'sourceCount': 100}},
-        'changedDraftPaths': changes, 'sourceCount': 100}
-    context['acceptedStructureReview'] = {'passed': True, 'version': 1, 'inputHash': 'old',
-        'findings': [copy.deepcopy(prior)], 'scopeResults': {'execution': {'findings': [copy.deepcopy(prior)]}}}
-    original = copy.deepcopy(context)
-    calls = []
-    def respond(client, request, **options):
-        data = json.loads(request[-1]['content']); calls.append(data)
-        summary = data['previousBlockingFindings']['ISSUE_0']
-        assert not {'path', 'evidencePaths', 'draftPath', 'newConflictEvidencePaths'} & summary.keys()
-        for past in (summary, data['acceptedStructureReview']):
-            text = json.dumps(past)
-            assert '/draft/exercises/999' not in text and '/workouts/0' not in text
-            assert 'FACT_998' not in text and 'EXERCISE_999' not in text
-            assert 'conflicts with the stop rule' in text
-        current = data['draft']['exercises'][0]['_reviewRef']
-        assert current in data['previousBlockingChangedPaths']['ISSUE_0']
-        allowed = options['output_schema']['$def']['reference']['enum']
-        assert set(data['previousBlockingChangedPaths']['ISSUE_0']) <= set(allowed)
-        item = {'status': 'resolved_by_change', 'reason': 'The affected cue changed.', 'evidencePaths': [current]}
-        if route == 'execution':
-            item['action'] = 'none'
-        elif route == 'confirmation':
-            item.update(status='withdrawn_review_error', disposition='withdrawn_review_error',
-                repairDimensions=[])
-        payload = {'findings': [], 'blockerResolutions': {'ISSUE_0': item}}
-        validate(payload, options['output_schema'])
-        return json.dumps(payload), None, None
-    monkeypatch.setattr(review, '_review_call', respond)
-    if route == 'two_pass':
-        result = review._review_complete_draft(None, context, audited, messages, boundary, None)
-        assert not result['findings']
-    else:
-        part = review._with_blocker_checklist('execution', review._execution_review_context(context), context)
-        if route == 'confirmation':
-            part['confirmationOnly'] = True
-        result = review._review_part(None, 'execution', part, context, audited, messages, boundary, None)
-        assert result['blockerResolutions']['OBLIGATION_old']['status'] != 'open'
-    assert len(calls) == 1 and context == original
-
-
-@pytest.mark.parametrize('failure', ['missing_authority', 'decision_is_not_source', 'invalid_path', 'invented_citation'])
-def test_code_carried_evidence_does_not_supply_missing_proof(monkeypatch, failure):
-    from workout_generator_pkg.review_assessment import assess_findings
-    context = {'draft': {'exercises': [{}]}, 'requirements': {}, 'resolvedDecisions': {'DECISION_0': {}}}
-    finding = {'severity': 'warning', 'action': 'repair', 'path': '/draft/exercises/0',
-        'evidencePaths': ['/draft/exercises/0'], 'message': 'Check this cue.'}
-    payload = assessment('withdrawn_review_error' if failure in ('missing_authority', 'decision_is_not_source') else 'advisory',
-        single_attempt=False)
-    if failure in ('missing_authority', 'decision_is_not_source'):
-        payload['groups'][0]['errorKind'] = 'contradicted_by_current_data'
-        if failure == 'decision_is_not_source':
-            finding['evidencePaths'].append('/resolvedDecisions/DECISION_0')
-    elif failure == 'invalid_path':
-        finding['evidencePaths'] = ['/draft/nonexistent']
-    else:
-        payload['groups'][0]['authorityEvidenceRefs'] = ['FACT_999999']
-    calls = []
-    def respond(*args, **kwargs):
-        calls.append(1)
-        return json.dumps(payload), None, None
-    monkeypatch.setattr(review, '_review_call', respond)
-    original = copy.deepcopy(finding)
-    with pytest.raises((ValueError, KeyError, ValidationError)):
-        assess_findings(None, context, {'inputHash': 'current', 'findings': [finding]}, single_attempt=True)
-    assert calls == [1, 1] and finding == original
 
 
 def test_retry_false_prevents_connection_retry_and_reasoning_fallback(monkeypatch):
@@ -395,104 +302,6 @@ def test_retry_false_prevents_connection_retry_and_reasoning_fallback(monkeypatc
     with pytest.raises(api_client.TruncatedResponseError):
         api_client.chat_call(None, [], retry=False)
     assert len(attempts) == 1
-
-
-def test_two_pass_assessment_uses_strict_provider_shape_and_full_local_validation(monkeypatch):
-    from types import SimpleNamespace
-    from workout_generator_pkg.review_assessment import assess_findings
-
-    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
-    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
-    monkeypatch.setattr(review, 'chat_call', api_client.chat_call)
-    requests = []
-
-    def create(**kwargs):
-        requests.append(kwargs)
-        arguments = json.dumps({'findingAssessments': {'FINDING_0': {'disposition': 'repair',
-            'repairDimensions': [], 'repairObjectives': [], 'reason': 'A correction is needed.',
-            'resolution': {'kind': 'candidate_edit',
-                'requirementPaths': [], 'unsupportedBehavior': None}}}, 'repairPlan': ''})
-        call = SimpleNamespace(function=SimpleNamespace(name='emit_result', arguments=arguments))
-        message = SimpleNamespace(content=None, tool_calls=[call], reasoning_content=None)
-        return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=message)], usage=None)
-
-    completions = SimpleNamespace(create=create)
-    configured = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-    client = SimpleNamespace(with_options=lambda **_: configured)
-    review_receipt = {'inputHash': 'review-input', 'findings': [{'severity': 'blocking',
-        'action': 'repair', 'path': '/draft/workouts/0', 'evidencePaths': ['/draft/workouts/0'],
-        'message': 'The correction needs a supported repair.'}]}
-
-    with pytest.raises(ValueError, match='repair dimension'):
-        assess_findings(client, {'draft': {'workouts': [{}]}, 'evaluationContract': {'active': True}},
-            review_receipt, single_attempt=True)
-
-    request = requests[0]
-    provider_schema = request['tools'][0]['function']['parameters']
-    group_schema = provider_schema['properties']['findingAssessments']['properties']['FINDING_0']
-    variants = group_schema['anyOf']
-    repair_variant = next(variant for variant in variants
-        if variant['properties']['disposition']['enum'] == ['repair'])
-    withdrawal_variant = next(variant for variant in variants
-        if variant['properties']['disposition']['enum'] == ['withdrawn_review_error'])
-    assert request['tools'][0]['function']['strict'] is True
-    assert request['extra_body']['thinking']['type'] == 'disabled'
-    assert 'reasoning_effort' not in request
-    assert provider_schema['type'] == 'object'
-    assert 'allOf' not in json.dumps(provider_schema)
-    assert 'uniqueItems' not in json.dumps(provider_schema)
-    assert 'minItems' not in json.dumps(provider_schema)
-    assert 'authorityEvidenceRefs' not in repair_variant['properties']
-    assert {'evidenceRefs', 'errorKind'} <= set(withdrawal_variant['required'])
-    assert {'type': 'null'} in repair_variant['properties']['resolution']['properties'][
-        'unsupportedBehavior']['anyOf']
-
-
-def test_assessment_wire_excludes_illegal_dispositions_from_saved_failure(monkeypatch):
-    from pathlib import Path
-    from workout_generator_pkg.review_assessment import assess_findings, _allowed_dispositions
-    from workout_generator_pkg.api_client import _strict_parameters_compatible
-    root = Path('build/workout_joint_priority_solver_20261023/fresh_review_boundary_continuation1_20261023')
-    saved = json.loads((root / 'independent_findings_assessment_response.json').read_text(encoding='utf-8'))
-    discovery = json.loads((root / 'independent_plan_review_response.json').read_text(encoding='utf-8'))
-    findings = [{**item, 'severity': review._finding_severity(item),
-        'path': '/draft/workouts/0', 'evidencePaths': ['/draft/workouts/0']}
-        for item in discovery['findings']]
-    # Include advisory and nonblocking repairable concerns to check both directions.
-    findings.extend([{'severity': 'warning', 'action': action, 'path': '/draft/workouts/0',
-        'evidencePaths': ['/draft/workouts/0'], 'message': 'Controlled concern.'}
-        for action in ('advisory', 'repair')])
-    calls = []
-    class Captured(Exception):
-        pass
-    def respond(client, request, **options):
-        calls.append(options)
-        schema = options['output_schema']
-        assert _strict_parameters_compatible(schema)
-        entries = schema['properties']['findingAssessments']['properties']
-        for index, finding in enumerate(findings):
-            offered = {v['properties']['disposition']['enum'][0]
-                       for v in entries[f'FINDING_{index}']['anyOf']}
-            assert offered == _allowed_dispositions(finding)
-        assert 'advisory' not in _allowed_dispositions(findings[2])
-        assert 'advisory' not in _allowed_dispositions(findings[3])
-        assert _allowed_dispositions(findings[4]) == {'advisory', 'withdrawn_review_error'}
-        assert len(_allowed_dispositions(findings[5])) == 4
-        payload = copy.deepcopy(saved)
-        for index in (4, 5):
-            payload['findingAssessments'][f'FINDING_{index}'] = {
-                'disposition': 'advisory', 'repairDimensions': [], 'repairObjectives': [], 'reason': 'Optional.'}
-        with pytest.raises(ValidationError):
-            validate(payload, schema)
-        for index in (2, 3):
-            payload['findingAssessments'][f'FINDING_{index}']['disposition'] = 'unresolved_capability'
-        validate(payload, schema)
-        raise Captured
-    monkeypatch.setattr(review, '_review_call', respond)
-    with pytest.raises(Captured):
-        assess_findings(None, {'draft': {'workouts': [{}]}},
-            {'inputHash': 'saved-boundary', 'findings': findings}, single_attempt=True)
-    assert len(calls) == 1 and calls[0]['retry'] is False
 
 
 @pytest.mark.parametrize('invalid_reference', [False, True])
@@ -522,7 +331,6 @@ def test_discovery_metadata_cannot_override_canonical_review(monkeypatch, invali
         assert len(set(finding['evidencePaths'])) == 9
         return json.dumps(assessment()), None, None
     monkeypatch.setattr(review, '_review_call', respond)
-    monkeypatch.setattr(review, '_confirm_review_corrections', lambda *a, **k: pytest.fail('No formatting repair'))
     result = review.review_draft(None, audited, messages, equipment, two_pass=True)
     assert not result['passed']
     if invalid_reference:

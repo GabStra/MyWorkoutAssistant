@@ -1,8 +1,79 @@
 """Type-specific exercise emission schemas and profiles."""
 
 import copy
+import math
 
 from .constants import JSON_SCHEMA, PLACEHOLDER_OR_UUID_PATTERN
+from .muscle_roles import MUSCLE_LABELS
+
+
+def _has_reviewed_source(fact):
+    return (isinstance(fact, dict)
+            and isinstance(fact.get('source'), str) and fact['source'].startswith('https://')
+            and isinstance(fact.get('basis'), str) and bool(fact['basis'].strip()))
+
+
+def execution_supporting_muscles(definition):
+    """Documented support involvement only; None means unknown, not absent or a volume credit."""
+    execution = definition.get('reviewedExecution')
+    if not _has_reviewed_source(execution):
+        return None
+    muscles = execution.get('supportingMuscles')
+    if (not isinstance(muscles, list) or not muscles
+            or not all(isinstance(muscle, str) for muscle in muscles)
+            or len(set(muscles)) != len(muscles) or set(muscles) - MUSCLE_LABELS.keys()):
+        return None
+    return set(muscles)
+
+
+def validate_setup_configuration(facts, resource_ids=None):
+    """Validate sourced partial setup requirements, optionally binding declared resources."""
+    if not isinstance(facts, list) or not facts:
+        raise ValueError('Reviewed setupConfiguration requires a nonempty list.')
+    seen_resources = set()
+    for fact in facts:
+        if (not isinstance(fact, dict) or set(fact) != {'resourceId', 'state', 'source', 'basis'}
+                or not _has_reviewed_source(fact)
+                or not isinstance(fact['resourceId'], str) or not fact['resourceId'].strip()
+                or fact['resourceId'] in seen_resources
+                or (resource_ids is not None and fact['resourceId'] not in resource_ids)):
+            raise ValueError('Reviewed setupConfiguration requires unique declared resources and sourced facts.')
+        seen_resources.add(fact['resourceId'])
+        state = fact['state']
+        if not isinstance(state, dict) or not state:
+            raise ValueError('Reviewed setupConfiguration.state requires explicit dimensions.')
+        for dimension, value in state.items():
+            if (not isinstance(dimension, str) or not dimension.strip()
+                    or not (isinstance(value, str) and bool(value.strip())
+                            or type(value) is bool
+                            or type(value) is int
+                            or type(value) is float and math.isfinite(value))):
+                raise ValueError('Reviewed setupConfiguration.state values must be nonempty strings, booleans or finite numbers.')
+    return copy.deepcopy(facts)
+
+
+def execution_set_mode(exercise, definition=None):
+    """single_sequence counts total reps/time; paired_sides repeats it on each side/direction."""
+    execution = (definition if definition is not None else exercise).get('reviewedExecution') or {}
+    return execution.get('setMode') if isinstance(execution, dict) else None
+
+
+def execution_semantics_problem(exercise, definition=None):
+    """Identify counting ambiguity without choosing a direction or changing the dose."""
+    mode = execution_set_mode(exercise, definition)
+    if mode is not None:
+        if mode not in ('single_sequence', 'paired_sides'):
+            return 'Reviewed execution setMode must be single_sequence or paired_sides.'
+        return None
+    execution = (definition if definition is not None else exercise).get('reviewedExecution') or {}
+    if isinstance(execution, dict) and execution.get('limbMode') == 'alternating':
+        return ('Alternating limb execution does not establish whether the prescribed reps/time '
+                'are total or repeated per side; source-backed setMode is required.')
+    roles = set(exercise.get('satisfiesCoverage') or ())
+    if 'rotational_core' in roles:
+        return ('Rotational or anti-rotational coverage does not establish direction or rep/time '
+                'counting; source-backed setMode is required before prescribing this exercise.')
+    return None
 
 
 def _build_type_specific_exercise_schema(

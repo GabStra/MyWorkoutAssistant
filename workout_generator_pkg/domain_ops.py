@@ -14,7 +14,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from .constants import JSON_SCHEMA, MUSCLE_GROUP_FIXES
-from .exercise_contracts import get_exercise_emission_profile
+from .exercise_contracts import get_exercise_emission_profile, execution_semantics_problem, execution_set_mode
 from .json_patching import build_allowed_patch_scope, collect_changed_json_paths, validate_changed_paths_scope
 
 try:
@@ -1622,7 +1622,7 @@ def apply_exercise_library_schema_v2(
         definition = copy.deepcopy(raw_definition)
         definition.pop("instructions", None)
         definition.pop("instructionEquipmentIds", None)
-        for key in ("programmingDemands", "anatomy", "reviewedExerciseFamily"):
+        for key in ("programmingDemands", "anatomy", "reviewedExerciseFamily", "reviewedExecution"):
             definition.pop(key, None)  # Generator evidence is not part of the app definition schema.
         existing = supplied_by_id.get(definition["id"])
         if existing is not None and existing != definition:
@@ -1678,6 +1678,7 @@ def apply_exercise_library_schema_v2(
 
         exercise["exerciseDefinitionId"] = definition["id"]
         exercise.pop("placementNotes", None)
+        exercise.pop("reviewedExecution", None)
         for field in DEFINITION_OWNED_FIELDS:
             if field in definition:
                 exercise[field] = copy.deepcopy(definition[field])
@@ -2468,6 +2469,11 @@ def fix_equipment_errors(equipments):
         item = copy.deepcopy(equipment)
         if item.get('type') == 'WEIGHTED_VEST':
             item['type'] = 'WEIGHTVEST'
+        if item.get('type') == 'WEIGHTVEST':
+            # Native WeightVest fixes these inherited fields and omits them from serialization.
+            for field, native_value in (('extraWeights', []), ('loadingPoints', 1), ('maxExtraWeightsPerLoadingPoint', 0)):
+                if type(item.get(field)) is type(native_value) and item[field] == native_value:
+                    item.pop(field)
         if item.get('type') == 'DUMBBELL' and 'dumbbellWeight' in item and 'dumbbells' not in item:
             item['dumbbells'] = [{'weight': item.pop('dumbbellWeight')}]
         for field in weight_arrays.get(item.get('type'), ()):
@@ -3302,6 +3308,15 @@ def WorkoutStructure(workout_structure_dict):
 
 def _materialize_exercise_definition(exercise_entry):
     """Build an exercise object when its approved PlanIndex has enough data."""
+    execution_problem = execution_semantics_problem(exercise_entry)
+    if execution_problem:
+        raise ValueError(execution_problem)
+    set_mode = execution_set_mode(exercise_entry)
+    side_rest = exercise_entry.get('intraSetRestInSeconds')
+    if set_mode == 'single_sequence' and side_rest is not None:
+        raise ValueError('single_sequence execution requires null intraSetRestInSeconds.')
+    if set_mode == 'paired_sides' and (type(side_rest) is not int or side_rest <= 0):
+        raise ValueError('paired_sides execution requires positive intraSetRestInSeconds.')
     exercise_id = exercise_entry.get("id")
     exercise_type = exercise_entry.get("exerciseType")
     if exercise_type not in {"WEIGHT", "BODY_WEIGHT", "COUNTDOWN", "COUNTUP", "RUNNING"}:

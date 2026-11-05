@@ -1,6 +1,45 @@
-from workout_generator_pkg.joint_planning import _canonicalize_objective_epigraphs
+from workout_generator_pkg.joint_planning import (_canonicalize_objective_epigraphs,
+    _objective_variable_bound)
 from workout_generator_pkg import joint_planning
+from workout_generator_pkg.cp_solver import SolverSession, _rational, solve
 from test_workout_generator_joint_prescriptions import _distribution_solver_case
+
+
+def test_interacting_group_goal_epigraphs_stay_on_the_verified_cp_lattice():
+    import math
+    from fractions import Fraction
+
+    import pytest
+
+    variables = [{'lower': 0, 'upper': 2, 'integer': False,
+        'objectiveCost': int(index == 2), 'domainIdentity': {'kind': kind}}
+        for index, kind in enumerate(('goal_target_miss', 'goal_target_miss', 'goal_tier_peak'))]
+    features = [
+        (('goal_target_miss', 0), 5701 / 9000, math.inf, 0, {0: 1}),
+        (('goal_target_miss', 1), -math.inf, 0, .77, {0: 1 / 300, 1: -1}),
+        (('goal_tier_peak', 0), -math.inf, 0, 0, {0: 1, 2: -1}),
+        (('goal_tier_peak', 1), -math.inf, 0, 0, {1: 1, 2: -1}),
+    ]
+    goals = [('goal_tier_0_worst', {2: 1}), ('goal_tier_0_total', {0: .5, 1: .5})]
+    session = SolverSession()
+    status, candidate = solve(variables, features, session=session)
+    assert status == 'optimal' and session.auxiliary_lattice == 9000
+    old_values = _canonicalize_objective_epigraphs(variables, features, candidate, goals)
+    assert old_values[1] == .7721114814814815
+    with pytest.raises(ValueError, match='exact supported rational'):
+        joint_planning._exact_objective_value(old_values, goals[1][1])
+    values = _canonicalize_objective_epigraphs(variables, features, candidate, goals,
+        auxiliary_lattice=session.auxiliary_lattice)
+    assert _rational(values[1]) == Fraction(6950, 9000)
+    assert all((_rational(value) * session.auxiliary_lattice).denominator == 1 for value in values)
+    assert session._validate_candidate(values, variables, features)
+    total = joint_planning._exact_objective_value(values, goals[1][1])
+    assert total == Fraction(5701 + 6950, 18000)
+    next_variables = [{**variable, 'objectiveCost': goals[1][1].get(index, 0)}
+        for index, variable in enumerate(variables)]
+    locked = [*features, (('prior_goal',), -math.inf, values[2], 0, {2: 1})]
+    status, result = solve(next_variables, locked, session=session, incumbent=values)
+    assert status == 'optimal' and session._validate_candidate(result, next_variables, locked)
 
 
 def test_objective_epigraphs_are_tightened_before_stage_scores_are_locked():
@@ -100,10 +139,66 @@ def test_complete_epigraph_row_failure_reports_identity_activity_and_slack():
     assert 'slack=(2.0, -2.0)' in message
 
 
+def test_objective_bound_shortcut_requires_a_finite_proven_variable_bound():
+    variables = [
+        {'lower': 2, 'upper': 8},
+        {'lower': 0, 'upper': 5},
+    ]
+    assert _objective_variable_bound(variables, {0: 3, 1: -2}, offset=4) == 0
+    assert _objective_variable_bound(variables, {0: 3}) == 6
+    assert _objective_variable_bound([{'lower': 0, 'upper': float('inf')}], {0: -1}) is None
+
+
+def test_duration_balance_bounds_are_canonicalized_together_on_the_selected_duration_face():
+    variables = [
+        {'lower': 0, 'upper': 5400, 'integer': False,
+         'domainIdentity': {'kind': 'duration_balance_bound', 'bound': 'maximum'}},
+        {'lower': 0, 'upper': 5400, 'integer': False,
+         'domainIdentity': {'kind': 'duration_balance_bound', 'bound': 'minimum'}},
+        {'lower': 0, 'upper': 5400, 'integer': False,
+         'domainIdentity': {'kind': 'duration_balance_excess'}},
+    ]
+    features = [
+        (('duration_balance', 0, 'maximum'), -float('inf'), 0, 4912, {0: -1}),
+        (('duration_balance', 0, 'minimum'), -float('inf'), 0, -4912, {1: 1}),
+        (('duration_balance', 1, 'maximum'), -float('inf'), 0, 4612, {0: -1}),
+        (('duration_balance', 1, 'minimum'), -float('inf'), 0, -4612, {1: 1}),
+        (('duration_balance', 'tolerance'), -float('inf'), 300, 0, {0: 1, 1: -1, 2: -1}),
+    ]
+
+    normalized = _canonicalize_objective_epigraphs(variables, features,
+        [4912, 4611.9999952, 0], [('duration_balance', {2: 1})])
+
+    assert normalized == [4912, 4612, 0]
+
+
+def test_duration_balance_canonicalization_preserves_real_tolerance_excess():
+    variables = [
+        {'lower': 0, 'upper': 5400, 'integer': False,
+         'domainIdentity': {'kind': 'duration_balance_bound', 'bound': 'maximum'}},
+        {'lower': 0, 'upper': 5400, 'integer': False,
+         'domainIdentity': {'kind': 'duration_balance_bound', 'bound': 'minimum'}},
+        {'lower': 0, 'upper': 5400, 'integer': False,
+         'domainIdentity': {'kind': 'duration_balance_excess'}},
+    ]
+    features = [
+        (('duration_balance', 0, 'maximum'), -float('inf'), 0, 5000, {0: -1}),
+        (('duration_balance', 0, 'minimum'), -float('inf'), 0, -5000, {1: 1}),
+        (('duration_balance', 1, 'maximum'), -float('inf'), 0, 4699.5, {0: -1}),
+        (('duration_balance', 1, 'minimum'), -float('inf'), 0, -4699.5, {1: 1}),
+        (('duration_balance', 'tolerance'), -float('inf'), 300, 0, {0: 1, 1: -1, 2: -1}),
+    ]
+
+    normalized = _canonicalize_objective_epigraphs(variables, features,
+        [4999.9999952, 4699.5, 0], [('duration_balance', {2: 1})])
+
+    assert normalized == [5000, 4699.5, 0.5]
+
+
 def test_prior_stage_slack_is_tightened_before_the_next_objective_receives_its_incumbent(monkeypatch):
     equipment, requirements, sessions, _ = _distribution_solver_case([7, 1])
     requirements['objectiveOrder'] = ['duration_balance', 'distribution']
-    original = joint_planning._milp_solve
+    original = joint_planning._cp_solve
     calls = []
 
     def bounded(variables, features, **options):
@@ -124,7 +219,7 @@ def test_prior_stage_slack_is_tightened_before_the_next_objective_receives_its_i
             calls.append(('distribution', 'canonical_incumbent'))
         return original(variables, features, **options)
 
-    monkeypatch.setattr(joint_planning, '_milp_solve', bounded)
+    monkeypatch.setattr(joint_planning, '_cp_solve', bounded)
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
         preserve_source_selection=True)
 

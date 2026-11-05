@@ -9,16 +9,51 @@ from .planning_tools import (library_fingerprint, requirements_approved, latest_
                              rejected_metadata_patch, approved_requirement_base, latest_requirement_candidate,
                              accepted_menu_preparation)
 from .json_patching import apply_json_patch
-from .training_history import compact_training_evidence, pool_execution_contexts
+from .training_history import compact_training_evidence, merge_training_evidence, pool_execution_contexts
 from .planning_decisions import resolved_decisions, latest_decision_receipt, _active_reusable_decision_state
 from .programming_guidelines import GUIDELINE_POLICY
 from .planning_tools import is_metadata_error, description_text_contract
-from .review_assessment import validate_assessment, VERSION as ASSESSMENT_VERSION
+from .review_assessment import validate_assessment
 
 _CANDIDATE_INDEX_FIELDS = ('name', 'exerciseType', 'movementRef', 'equipmentName', 'accessoryNames',
                            'muscleGroups', 'secondaryMuscleGroups',
                            'exerciseCategory', 'creditsPerWorkingSet', 'volumeAuditNote',
-                           'programmingDemandFacts')
+                           'programmingDemandFacts', 'reviewedExecution')
+
+
+def _decision_selection_projection(value, equipment):
+    """Show the same selectable labels in saved decisions and their input tool."""
+    from .planning_decisions import _selection_ids_by_name
+    definitions = {identifier: name for name, identifier in _selection_ids_by_name(
+        (equipment or {}).get('exerciseDefinitions', [])).items()}
+    resources = {identifier: name for name, identifier in _selection_ids_by_name([
+        item for key in ('equipments', 'accessoryEquipments')
+        for item in (equipment or {}).get(key, [])]).items()}
+
+    def project(item):
+        if isinstance(item, list):
+            return [project(child) for child in item]
+        if not isinstance(item, dict):
+            return item
+        result = {key: project(child) for key, child in item.items()}
+        shared = result.get('confirmedSharedStation')
+        if isinstance(shared, list) and all(identifier in resources for identifier in shared):
+            result['confirmedSharedStation'] = [resources[identifier] for identifier in shared]
+        prescription = result.get('executionPrescription')
+        if (isinstance(prescription, dict) and set(prescription) == {'definitionId', 'setMode'}
+                and prescription['definitionId'] in definitions):
+            result['executionPrescription'] = {'exercise': definitions[prescription['definitionId']],
+                'setMode': prescription['setMode']}
+        setup = result.get('confirmedSetupAccess')
+        if (isinstance(setup, dict) and set(setup) == {'independentDefinitionIds', 'retainedResourceIds'}
+                and all(identifier in definitions for identifier in setup['independentDefinitionIds'])
+                and all(identifier in resources for identifier in setup['retainedResourceIds'])):
+            result['confirmedSetupAccess'] = {
+                'independentExercises': [definitions[identifier] for identifier in setup['independentDefinitionIds']],
+                'retainedResources': [resources[identifier] for identifier in setup['retainedResourceIds']]}
+        return result
+
+    return project(value)
 
 
 def current_unresolved_joint_candidate(candidate, requirements, equipment, messages, training_history,
@@ -34,6 +69,7 @@ def current_unresolved_joint_candidate(candidate, requirements, equipment, messa
     from .joint_planning import prescription_fingerprint
     from .planning_tools import library_fingerprint
     from .planning_tools import _fingerprint
+    from .planning_tools import _strip_legacy_calibration_fields
     current_history_fingerprint = (history_fingerprint if history_fingerprint is not None
         else getattr(training_history, 'fingerprint', None))
     source_hash = hashlib.sha256(json.dumps(source_message_context(
@@ -57,7 +93,10 @@ def current_unresolved_joint_candidate(candidate, requirements, equipment, messa
             messages, restriction_policy=requirements.get('restrictionPolicy'),
             allow_educated_load_guesses=allow_educated_load_guesses,
             preserve_source_selection=joint.get('preserveSourceSelection', False))
-    if not valid or (expected_submission is not None and submission != expected_submission):
+    normalized_submission = _strip_legacy_calibration_fields(copy.deepcopy(submission))
+    normalized_expected = (_strip_legacy_calibration_fields(copy.deepcopy(expected_submission))
+        if expected_submission is not None else None)
+    if not valid or (normalized_expected is not None and normalized_submission != normalized_expected):
         return None
     return candidate
 
@@ -66,7 +105,7 @@ def _current_audit_assessment(audit, draft_id, context=None):
     review_data = audit.get('review') if isinstance(audit.get('review'), dict) else {}
     assessment = review_data.get('assessment') or audit.get('findingsAssessment')
     reviewed_id = audit.get('assessmentDraftId') or audit.get('currentDraftId')
-    if not assessment or not draft_id or reviewed_id != draft_id or assessment.get('version') != ASSESSMENT_VERSION:
+    if not assessment or not draft_id or reviewed_id != draft_id:
         return None
     review = copy.deepcopy(review_data) if review_data else {
         'inputHash': audit.get('reviewInputHash'),
@@ -108,7 +147,8 @@ def _movement_selection_context(state, *, selected_menu_definition_ids=None):
     candidates = {}
     demand_facts_by_candidate = {}
     demand_fields = ('exerciseType', 'exerciseCategory', 'movementRef', 'equipmentName',
-        'accessoryNames', 'muscleGroups', 'secondaryMuscleGroups', 'creditsPerWorkingSet')
+        'accessoryNames', 'muscleGroups', 'secondaryMuscleGroups', 'creditsPerWorkingSet',
+        'reviewedExecution')
     for collection in ('exerciseCandidates', 'cachedCandidateIndex', 'candidateAlternatives'):
         for reference, entry in (state.get(collection) or {}).items():
             if not isinstance(entry, dict):
@@ -151,13 +191,30 @@ def _movement_selection_context(state, *, selected_menu_definition_ids=None):
             history = entry.get('trainingEvidence')
             if isinstance(history, dict):
                 summary = {field: history[field] for field in ('status', 'totalSessions', 'daysSinceLatestSession',
-                    'loadSuitabilityConcerns', 'relatedHistoryStatus', 'uncertainty') if field in history}
+                    'loadSuitabilityConcerns', 'relatedHistoryStatus', 'candidateConfigurationHistory', 'uncertainty') if field in history}
                 headroom = history.get('loadHeadroom', {})
                 if headroom:
                     summary['loadHeadroom'] = {field: headroom[field] for field in (
                         'observedAtCurrentEquipmentMaximum', 'latestObservedLoadsNotSelectableNow', 'higherLoadOptionCount',
                         'maximumSelectableLoadKg', 'latestSessionHeaviestLoadKg', 'nextHigherSelectableLoadKg') if field in headroom}
                 entry['trainingEvidence'] = summary
+
+
+def _preparation_selection_context(state, messages, equipment, training_history):
+    if (not equipment or not state.get('requirementsApproved')
+            or not (state.get('constructionTask') or state.get('preparationRepairTask'))):
+        return
+    from .session_drafting import preparation_selection_options
+    options = preparation_selection_options(messages, equipment, training_history)
+    state['preparationSelectionOptions'] = options
+    admitted = set(options['admissibleDefinitionIds'])
+    for collection in ('exerciseCandidates', 'cachedCandidateIndex', 'candidateAlternatives'):
+        if collection in state:
+            state[collection] = {reference: entry for reference, entry in state[collection].items()
+                if reference in admitted}
+    if 'exerciseDemandEvidence' in state:
+        selected = (state.get('parallelPreparation') or {}).get('definition_ids')
+        _movement_selection_context(state, selected_menu_definition_ids=selected)
 
 
 def _retrieved_replacement_definition_references(planning_state):
@@ -361,6 +418,76 @@ def request_planning_state(messages):
         if message.get('role') == 'system' and content.startswith('Current planning state'):
             return json.loads(content.split('\n', 1)[1])
     return {}
+
+
+
+def compact_planner_request(messages):
+    """Remove duplicated receipts from the wire; backend task state stays complete."""
+    focused = copy.deepcopy(messages)
+    for message in focused:
+        content = message.get('content') or ''
+        if message.get('role') != 'system' or not content.startswith('Current planning state'):
+            continue
+        heading, serialized = content.split('\n', 1)
+        state = json.loads(serialized)
+        # Keep shared library evidence once, without discarding conflicting or extra facts.
+        candidates = {}
+        for collection in ('exerciseCandidates', 'cachedCandidateIndex', 'candidateAlternatives'):
+            for reference, entry in (state.get(collection) or {}).items():
+                if isinstance(entry, dict):
+                    candidates.setdefault(reference, []).append((collection, entry))
+        demand = state.get('exerciseDemandEvidence') or {}
+        for field in ('candidates', 'programmingDemandFacts'):
+            for reference, facts in (demand.get(field) or {}).items():
+                if not isinstance(facts, dict):
+                    continue
+                for collection, entry in candidates.get(reference, []):
+                    shared = entry.get(field) if field == 'programmingDemandFacts' else entry
+                    if (isinstance(shared, dict) and facts
+                            and all(key in shared and shared[key] == value for key, value in facts.items())):
+                        demand[field][reference] = {'factsRef': collection + '.' + reference
+                            + ('.programmingDemandFacts' if field == 'programmingDemandFacts' else '')}
+                        break
+        shared_facts = {}
+        for reference, entries in candidates.items():
+            for collection, entry in entries:
+                for field in ('regionalMuscleFacts', 'programmingDemandFacts'):
+                    facts = entry.get(field)
+                    if not isinstance(facts, dict) or 'factsRef' in facts:
+                        continue
+                    key = (field, json.dumps(facts, sort_keys=True, separators=(',', ':')))
+                    location = collection + '.' + reference + '.' + field
+                    if key not in shared_facts:
+                        shared_facts[key] = location
+                        continue
+                    replacement = {'factsRef': shared_facts[key]}
+                    if len(json.dumps(replacement)) < len(json.dumps(facts)):
+                        entry[field] = replacement
+        for preparation_name in ('parallelPreparation', 'rejectedWeekPreparation'):
+            authority = (state.get(preparation_name) or {}).get('sourceBudgetAuthority') or {}
+            if ('sourceMessages' in authority
+                    and authority['sourceMessages'] == state.get('sourceMessages')):
+                authority.pop('sourceMessages')
+                authority['sourceMessagesRef'] = 'sourceMessages'
+        audit = state.get('lastAudit') or {}
+        findings = audit.get('reviewFindings')
+        if isinstance(findings, list):
+            if all(item in findings for item in audit.get('reviewWarnings', [])):
+                audit.pop('reviewWarnings', None)
+            review = audit.get('review') or {}
+            if review.get('findings') == findings:
+                review.pop('findings', None)
+            if review.get('assessment') == audit.get('findingsAssessment'):
+                review.pop('assessment', None)
+        if audit.get('resolvedDecisions') == state.get('resolvedDecisions'):
+            audit.pop('resolvedDecisions', None)
+        for task_name in ('repairTask', 'editTask', 'alternativeRepairTask'):
+            task = state.get(task_name) or {}
+            for key in ('reviewFindings', 'findingsAssessment', 'repairContract'):
+                if key in task and task[key] == audit.get(key):
+                    audit.pop(key, None)
+        message['content'] = heading + '\n' + json.dumps(state, separators=(',', ':'), ensure_ascii=False)
+    return focused
 
 
 def _history_receipt_bindings(payload, tool_name):
@@ -1437,10 +1564,8 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
     unresolved_capability_error = next((error for error in errors
         if isinstance(error, dict) and error.get('code') == 'unresolved_review_capability'), None)
     if unresolved_capability_error and not state.get('savedDraftReaudit') and not state.get('decisionReaudit'):
-        from .plan_review import REVIEW_VERSION
         review = audit.get('review') if isinstance(audit.get('review'), dict) else {}
-        review_version = review.get('version', audit.get('reviewVersion'))
-        if review_version == REVIEW_VERSION:
+        if review.get('inputHash', audit.get('reviewInputHash')):
             assessment = _current_audit_assessment(audit, state.get('currentDraftId'),
                 _assessment_context(state.get('currentDraft'), state.get('requirements'), equipment or {}, restrictions))
             from .repair_capabilities import has_unresolved_capabilities
@@ -1649,7 +1774,7 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
         include(reference)
     state['trainingEvidenceSummary'] = {reference: {key: entry[key] for key in (
         'name', 'status', 'totalSessions', 'daysSinceLatestSession', 'loadHeadroom',
-        'loadSuitabilityConcerns', 'relatedHistoryStatus', 'uncertainty', 'candidateContext', 'otherSetupSessionCount') if key in entry}
+        'loadSuitabilityConcerns', 'relatedHistoryStatus', 'uncertainty', 'candidateContext', 'otherSetupSessionCount', 'candidateConfigurationHistory') if key in entry}
         for reference, entry in evidence.items() if reference in selected and reference not in detailed}
     state['trainingEvidence'] = {reference: entry for reference, entry in evidence.items() if reference in detailed}
     # Broad repair instructions in older receipts are replaced only in this request.
@@ -1674,11 +1799,9 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
                        'Full history is saved behind get_training_evidence. '
                        'If the latest user asks a question or changes the task, answer it instead of applying an unsolicited repair. '
                        'Ask about genuine ambiguity; never waive requirements. A passing preview and fresh confirmation remain mandatory.'}
-    from .plan_review import REVIEW_VERSION
     current_review = audit.get('review') if isinstance(audit.get('review'), dict) else {}
-    review_version = current_review.get('version', audit.get('reviewVersion'))
     review_input_hash = current_review.get('inputHash', audit.get('reviewInputHash'))
-    review_is_current = review_version == REVIEW_VERSION
+    review_is_current = bool(review_input_hash) and not current_review.get('failure')
     assessment_context = _assessment_context(
         state.get('currentDraft'), state.get('requirements'), equipment or {}, restrictions)
     assessment = (_current_audit_assessment(audit, state['currentDraftId'], assessment_context)
@@ -1964,6 +2087,7 @@ def planner_response_profile(state):
         selection_repair = not metadata_only and task.get('needsAlternatives', False)
         return {'max_tokens': 2048 if metadata_only else 16384, 'timeout': None,
                 'reasoning_effort': None if metadata_only or selection_repair else 'low',
+                **({'require_strict_tool_delivery': True} if selection_repair else {}),
                 'activity': 'Repairing weekly selection' if selection_repair else 'Repairing week preparation'}
     if state.get('metadataOnlyRepair'):
         activity = 'Correcting workout notes'
@@ -1973,7 +2097,8 @@ def planner_response_profile(state):
     if state.get('constructionTask'):
         task = state['constructionTask']
         if (task.get('stage') in ('discover_movements', 'choose_movements') or task.get('reviewAllocationBeforeDrafting')) and (task.get('remainingWeeklySessions') or 0) >= 2:
-            return {'reasoning_effort': None, 'activity': 'Selecting weekly movements', 'max_tokens': 16384, 'timeout': None}
+            return {'reasoning_effort': None, 'activity': 'Selecting weekly movements', 'max_tokens': 16384,
+                    'timeout': None, 'require_strict_tool_delivery': True}
         return {'reasoning_effort': 'low', 'activity': 'Drafting session', 'max_tokens':16384, 'timeout':None}
     if state.get('editTask'):
         return {'reasoning_effort': None, 'activity': 'Editing workout', 'max_tokens':16384, 'timeout':None}
@@ -2000,7 +2125,7 @@ def _focus_edit(state, evidence, fresh_references):
     detailed = compact_training_evidence(evidence[reference] for reference in fresh_references if reference in evidence)
     state['trainingEvidenceSummary'] = {reference: {key: value for key, value in item.items() if key in (
         'name', 'status', 'totalSessions', 'daysSinceLatestSession', 'loadHeadroom', 'loadSuitabilityConcerns',
-        'relatedHistoryStatus', 'candidateContext', 'otherSetupSessionCount', 'uncertainty')}
+        'relatedHistoryStatus', 'candidateContext', 'otherSetupSessionCount', 'candidateConfigurationHistory', 'uncertainty')}
         for reference, item in evidence.items() if reference not in detailed}
     state['trainingEvidence'] = detailed
 
@@ -2140,17 +2265,13 @@ def _focus_session_preparation(state, preparation, evidence, history_enabled, *,
         task['definition_ids'] = preparation['definition_ids']
         missing = sorted((references | set(state.get('selectedDefinitionReferences', []))) - set(evidence)) if history_enabled else []
         task.update(stage='retrieve_evidence' if missing else 'draft_sessions' if parallel else 'submit_session', missingEvidence=missing)
-    # Feasibility can force a poor menu; let selection see that evidence before paying workers.
+    # Compare quality on executable solved candidates, not a provisional count allocation.
     allocation = (parallel or {}).get('setAllocation', {})
     selection_preview = allocation.get('selectionPreview') if isinstance(allocation, dict) else None
     preview_reconsideration = _selection_preview_requires_reconsideration(selection_preview)
-    development_emphasis = any(isinstance(item, dict) and item.get('intent') == 'development'
-        for item in state.get('requirements', {}).get('requiredCoverage', []))
     task['reviewAllocationBeforeDrafting'] = bool(parallel
         and not selection_reconsidered
-        and (preview_reconsideration
-            or development_emphasis
-            or any(item.get('scope') == 'weekly' for item in allocation.get('allocationDiagnostics', [])))
+        and allocation.get('feasible') is False
         and failed_workers.get('preparationId') != parallel['preparationId'])
     menu_review = failed_workers.get('menuReview') or {}
     if (parallel and failed_workers.get('preparationId') == parallel['preparationId']
@@ -2161,7 +2282,7 @@ def _focus_session_preparation(state, preparation, evidence, history_enabled, *,
         task['reviewAllocationBeforeDrafting'] = False
         task['stage'] = 'retrieve_evidence' if task.get('missingEvidence') else 'draft_sessions'
     task['instruction'] = (
-        'Follow stage=' + task['stage'] + '. When two or more sessions remain, use prepare_workout_sessions with ordered blocks: blocks contain only movement references and coverage, without model-imposed bounds. Python solves the executable prescriptions and counts jointly; do not calculate or emit numWorkSets or invent narrow bounds. Choose the complete remaining schedule together. '
+        'Follow stage=' + task['stage'] + '. When two or more sessions remain, use prepare_workout_sessions with one weekly definition_ids shortlist. Python builds the calendar and recipe pool, then solves placement, counts, ordering and compatible grouping under the approved requirements. '
         'For a single session choose its exact movements with prepare_workout_session, '
         'Before committing, check required coverage and the supplied candidate menu against approved priorities; reuse completed queries and candidates. '
         'or submit the bounded session directly if ready. Preparation returns authoritative metadata and Python retrieves '
@@ -2188,7 +2309,7 @@ def _focus_session_preparation(state, preparation, evidence, history_enabled, *,
         detailed = {} if (task.get('remainingWeeklySessions') or 0) >= 2 else state['trainingEvidence']
     state['trainingEvidenceSummary'] = {reference: {key: item[key] for key in (
         'name', 'status', 'totalSessions', 'daysSinceLatestSession', 'loadHeadroom', 'loadSuitabilityConcerns',
-        'relatedHistoryStatus', 'candidateContext', 'otherSetupSessionCount', 'uncertainty') if key in item}
+        'relatedHistoryStatus', 'candidateContext', 'otherSetupSessionCount', 'candidateConfigurationHistory', 'uncertainty') if key in item}
         for reference, item in evidence.items() if reference not in detailed}
     state['trainingEvidence'] = detailed
     if references:
@@ -2257,6 +2378,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 and (item['id'] in proven_additions if proven_additions
                      else (not muscles or muscles & set(item['creditsPerWorkingSet'])))}
             _movement_selection_context(state)
+        _preparation_selection_context(state, original, equipment, training_history)
         return [{'role': 'system', 'content':
             'Repair the rejected preparation through prepare_workout_sessions. '
             'When blockRepair is supplied, use sessionBlocks: copy existing occurrence-reference strings into ordered blocks. '
@@ -2379,7 +2501,11 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     latest_audit_index = max((i for i, f, p in results if f['name'] == 'audit_workout_plan'
                               and not p.get('staleHistory')), default=-1)
     _, instruction_audit = _latest_result(original, 'audit_workout_plan')
-    pending_decision_edit = (decision_index > latest_audit_index
+    blocking_errors = instruction_audit.get('errors') or []
+    clarification_only = bool(blocking_errors) and all(
+        isinstance(error, dict) and error.get('action') == 'clarify' for error in blocking_errors)
+    # Recording an answer consumes a clarification; it does not imply a workout edit.
+    pending_decision_edit = (decision_index > latest_audit_index and not clarification_only
         and _active_reusable_decision_state(decision_receipt.get('decisions'))
         != _active_reusable_decision_state(instruction_audit.get('resolvedDecisions')))
     # Recording authorization does not apply the user's requested edit to the saved candidate.
@@ -2396,6 +2522,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     interrupted_submission = None
     prior_reviewed_audit = None
     active_alternatives, fresh_references, new_evidence_references, fresh_history_references = set(), set(), set(), set()
+    current_request_evidence = set()
     for index, function, payload in results:
         name = function['name']
         if payload.get('staleHistory'):
@@ -2471,6 +2598,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 prior_reviewed_audit = copy.deepcopy(previous_audit)
             state['lastAudit'] = {key: copy.deepcopy(value) for key, value in payload.items()
                                   if key not in ('submittedDraft', 'planIndex', 'preview')}
+            for field in ('jointCandidateComparison', 'jointPromotionGate'):
+                if isinstance(state['lastAudit'].get(field), dict):
+                    state['lastAudit'][field].pop('programmingArtifacts', None)
             menu_fingerprint = _audit_menu_fingerprint(payload)
             if menu_fingerprint is not None:
                 state['lastAudit']['candidateMenuFingerprint'] = menu_fingerprint
@@ -2599,8 +2729,10 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             evidence_pages.update(facts)
             discovery_batches.setdefault(result_batches[index], set()).update(facts)
             failed = set(requested) - returned.keys()
-            evidence.update({reference: item if index > last_user else _past_evidence(item)
-                             for reference, item in returned.items()})
+            for reference, item in returned.items():
+                evidence[reference] = merge_training_evidence(evidence.get(reference), item, equipment=equipment)
+            if index > last_user:
+                current_request_evidence.update(returned)
             if index > max(latest_audit_index, last_user):
                 active_alternatives.update(item['reference'] for item in payload.get('exercises', []))
                 fresh_references.update(returned)
@@ -2842,10 +2974,10 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             and payload.get('staleHistory') and payload.get('currentDraftId') == revision_id
             for index, function, payload in results)
         state['lastAuditStale'] = (current_receipt or {}).get('requirementsId', draft.get('requirementsId')) != requirements['requirementsId']
-        from .plan_review import REVIEW_VERSION
-        from .review_assessment import VERSION as ASSESSMENT_VERSION, validate_assessment
+        from .review_assessment import validate_assessment
         audit = state['lastAudit'] or {}
-        review_stale = audit.get('reviewVersion') not in (None, REVIEW_VERSION)
+        review_stale = bool(audit.get('review') or audit.get('reviewFindings')) and not (
+            (audit.get('review') or {}).get('inputHash') or audit.get('reviewInputHash'))
         # A saved prose finding cannot authorize repairs under the structured subject boundary.
         saved_findings = ((audit.get('review') or {}).get('findings') or audit.get('reviewFindings') or [])
         review_stale |= any(not finding.get('subjectRefs') or not finding.get('subjectFacts')
@@ -2853,9 +2985,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         raw_assessment = ((audit.get('review') or {}).get('assessment') or audit.get('findingsAssessment'))
         assessment = _current_audit_assessment(audit, revision_id,
             _assessment_context(draft, requirements.get('requirements'), equipment, restrictions))
-        if assessment:
-            review_stale |= assessment.get('version') != ASSESSMENT_VERSION
-        elif raw_assessment or (audit.get('review') or {}).get('findings'):
+        if not assessment and (raw_assessment or (audit.get('review') or {}).get('findings')):
             review_stale = True
         audit_stale = audit.get('auditVersion') not in (None, AUDIT_VERSION)
         review_retry = any(isinstance(error, dict) and error.get('code') in ('review_execution_failed', 'independent_review_pending', 'coordinated_joint_pending')
@@ -2968,7 +3098,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     audit_stale, stale_joint_receipt, state.get('evidenceReaudit')))):
             supersedes_pending_review = True
         if state['requirementsApproved'] and not supersedes_pending_review and (state['draftRequiresReaudit'] or state['lastAuditStale'] or stale_history_audit
-                or audit_stale or review_stale or review_retry or (audit.get('passed') and audit.get('reviewVersion') != REVIEW_VERSION)) and not candidate_validation_errors and not (
+                or audit_stale or review_stale or review_retry or (audit.get('passed') and not ((audit.get('review') or {}).get('inputHash') or audit.get('reviewInputHash')))) and not candidate_validation_errors and not (
                     prior_candidate_feedback and not (audit_stale or review_stale or review_retry)):
             state['savedDraftReaudit'] = {'requirementsId': requirements['requirementsId'], 'baseDraftId': revision_id, 'patch': []}
         if prior_candidate_feedback:
@@ -3021,6 +3151,8 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             relevant.update(json.loads(latest_history.get('arguments', '{}')).get('definition_ids', []))
         except (ValueError, TypeError):
             pass
+    evidence = {reference: item if reference in current_request_evidence else _past_evidence(item)
+                for reference, item in evidence.items()}
     state['trainingEvidence'] = compact_training_evidence(value for key, value in evidence.items() if key in relevant)
     if draft:
         state['cachedCandidateIndex'] = {ref: {key: entry[key] for key in _CANDIDATE_INDEX_FIELDS if key in entry}
@@ -3040,6 +3172,15 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         and not (finding.get('code') == 'independent_review_finding'
                  and finding.get('findingIndex') in adjudicated)
         for finding in findings)
+    _, pending_workers = _latest_result(original, 'draft_workout_sessions')
+    if (pending_workers.get('requirementsId') == state['requirementsId']
+            and pending_workers.get('libraryFingerprint') == fingerprint
+            and pending_workers.get('historyFingerprint') == history_fingerprint):
+        from .planning_decisions import execution_decision_definitions
+        execution_choices = execution_decision_definitions(original, equipment)
+        state['planningDecisionNeeded'] |= any(error.get('code') == 'execution_semantics_unresolved'
+            and error.get('canonicalDefinitionId') not in execution_choices
+            for error in pending_workers.get('errors', []) if isinstance(error, dict))
     if completed_searches:
         summaries = {}
         for item in completed_searches.values():
@@ -3192,7 +3333,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 source_menu_fingerprint = (_audit_menu_fingerprint(expansion_audit)
                     or candidate_menu_fingerprint(state['currentDraft']['workouts']))
                 blockers = [copy.deepcopy(error) for error in expansion_audit.get('errors', [])
-                    if isinstance(error, dict) and error.get('code') == 'required_coverage_missing']
+                    if isinstance(error, dict)]
                 expansion = {
                     'proofScope': 'exercise_selection_repair',
                     'stage': ('choose_candidate' if set(_retrieved_replacement_definition_references(state))
@@ -3318,7 +3459,6 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             from .conflict_resolution import CONFLICT_RESOLUTION_VERSION
             from .joint_planning import candidate_menu_fingerprint
             from .planning_tools import _fingerprint
-            from .plan_review import REVIEW_VERSION
             current_menu = candidate_menu_fingerprint(state['currentDraft']['workouts'])
             completed_index, completed_repair = _latest_result(original, 'repair_workout_alternative')
             if completed_index <= diagnosis_index:
@@ -3454,7 +3594,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     and isinstance(candidate.get('workouts'), list)
                     and isinstance(candidate.get('audit'), dict) and not candidate['audit'].get('errors')
                     and isinstance(assessment, dict) and isinstance(review.get('findings'), list)
-                    and review.get('version') == REVIEW_VERSION and not review.get('failure'))
+                    and review.get('inputHash') and not review.get('failure'))
                 valid_binding = valid_binding_without_decisions and decisions_current
                 if not valid_binding:
                     review_pending_binding = (
@@ -3483,7 +3623,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                         state['alternativeReviewAssessmentStale'] = True
                         stale_candidate = candidate
                     elif (review.get('failure') or (isinstance(review.get('assessment'), dict)
-                            and (assessment is None or review.get('version') != REVIEW_VERSION))):
+                            and assessment is None)):
                         state['alternativeReviewAssessmentStale'] = True
                         stale_candidate = candidate
                     if not candidate_authority_current:
@@ -3712,6 +3852,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         state['exerciseCandidates'], summaries = _pool_candidate_history(state['exerciseCandidates'])
         if summaries:
             state['candidateHistorySummaries'] = summaries
+    if state.get('planningDecisionNeeded'):
+        state.pop('constructionTask', None)
+        state.pop('parallelSubmission', None)
     state['displayedDraftId'] = next((m['canonicalDraftPreview'] for m in reversed(original) if m.get('canonicalDraftPreview')), None)
     preview_index = max((i for i, message in enumerate(original) if message.get('canonicalDraftPreview')), default=-1)
     if preview_index >= 0:
@@ -3720,6 +3863,33 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                         not in ('', '/continue', 'CONFIRM REQUIREMENTS', 'CONFIRM GENERATE')), None)
         if followup:
             state['pendingPreviewFollowup'] = followup
+    from .planning_decisions import _current_programming_decision_choices
+    from .repair_execution import resolved_programming_selection
+    choice_source, programming_choices = _current_programming_decision_choices(original)
+    if (programming_choices and choice_source.get('libraryFingerprint') == fingerprint
+            and choice_source.get('historyFingerprint') == history_fingerprint):
+        selection = resolved_programming_selection(original, choice_source)
+        state['programmingChoice'] = {
+            'choices': {key: {field: option[field] for field in ('label', 'selection')}
+                for key, option in programming_choices.items()},
+            'comparison': copy.deepcopy(choice_source['jointCandidateComparison']['programmingTradeoff']),
+            'selected': selection,
+        }
+        if not selection:
+            state['planningDecisionNeeded'] = True
+        if (choice_source.get('preparationId')
+                and (choice_source.get('jointCandidateComparison') or {}).get('programmingArtifacts')
+                and not choice_source.get('programmingDecision')):
+            state.pop('parallelSubmission', None)
+            state.pop('constructionTask', None)
+    from .session_drafting import selected_fresh_programming_artifact
+    selected_artifact = selected_fresh_programming_artifact(original, equipment, history_fingerprint)
+    if (selected_artifact and not draft and state['requirementsApproved']
+            and (not state.get('newInstructionPending') or last_instruction <= decision_index)):
+        # Selection already owns a native-audited artifact; audit it without another drafting handoff.
+        state['parallelSubmission'] = copy.deepcopy(selected_artifact['submittedDraft'])
+        state['parallelSubmissionHistoryFingerprint'] = history_fingerprint
+        state.pop('constructionTask', None)
     systems = [copy.deepcopy(m) for m in messages if m['role'] == 'system']
     # Omit both sides of completed tool exchanges, including their old reasoning.
     # The backend retains the protocol history; the next request starts from state.
@@ -3746,6 +3916,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             {'role':'system','content':'Current planning state (metadata repair data).\n' + json.dumps(state,separators=(',',':'),ensure_ascii=False)}]
     if not state['requirementsApproved']:
         work_order = 'Extract and review requirements from sourceMessages; prior confirmation commands are not new authorization.'
+    elif state.get('programmingChoice') and not state['programmingChoice']['selected']:
+        work_order = ('Use the displayed code-computed programming comparison. Record the authorized choice through '
+            'record_planning_decisions, or await a genuine user choice. Do not redraft or audit either artifact before selection.')
     elif state.get('newInstructionPending') and state.get('editTask'):
         work_order = ('Follow editTask for the latest user instruction before any older candidate diagnosis. '
             'Keep planningDecisionNeeded active; do not claim the remaining clarification is resolved.')
@@ -3819,6 +3992,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             summary['attempts'] = [{key: attempt[key] for key in ('scenario', 'status', 'elapsedSeconds', 'reason')
                 if key in attempt} for attempt in payload.get('attempts', [])]
         state['otherToolResults'][name] = summary
+    _preparation_selection_context(state, original, equipment, training_history)
     # Preserve stable evidence in the cacheable prefix across draft revisions.
     changing = {'currentDraft', 'currentDraftId', 'lastAudit', 'repairTask', 'alternativeRepairTask', 'candidateConflictDiagnosisTask', 'constructionTask', 'editTask',
                 'weeklyTargetBudget', 'allocationSlots', 'otherToolResults'}
@@ -3846,7 +4020,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         'Related history links refer to entries in trainingEvidence; records are stored once per movement. '
         'An executionContextRef resolves through historyExecutionContexts without losing any prescribed execution facts. '
         'Completed tool exchanges are represented by this state; the full transcript and confirmation gates remain in the backend.\n'
-        + json.dumps(state, separators=(',', ':'), ensure_ascii=False)}
+        + json.dumps(_decision_selection_projection(state, equipment), separators=(',', ':'), ensure_ascii=False)}
     return systems + [snapshot] + tail
 
 

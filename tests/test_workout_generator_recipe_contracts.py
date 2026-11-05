@@ -9,7 +9,7 @@ from workout_generator_pkg.planning_tools import (
     library_fingerprint,
     set_workout_requirements,
 )
-from test_workout_generator_planning_tools import planning_case
+from test_workout_generator_planning_tools import planning_case, requirement_messages
 
 
 def recipe_case(required_coverage=None):
@@ -66,6 +66,48 @@ def test_reviewed_exercise_family_annotations_group_only_sourced_definition_ids(
     assert evidence['familyByReference']['LIBRARY_3'] not in {nordic_family, rdl_family}
     assert evidence['sourcesByReference']['LIBRARY_0']['source'].startswith('https://')
     assert evidence['unclassifiedReferences'] == ['LIBRARY_6']
+
+
+def test_reviewed_annotation_loader_rejects_duplicate_keys(monkeypatch):
+    recipe_contracts._reviewed_exercise_annotations_by_definition.cache_clear()
+    monkeypatch.setattr(recipe_contracts.Path, 'read_text',
+        lambda *_args, **_kwargs: '{"byDefinitionId": {}, "byDefinitionId": {}}')
+    with pytest.raises(ValueError, match='Duplicate reviewed exercise annotation key'):
+        recipe_contracts._reviewed_exercise_annotations_by_definition()
+
+
+def test_lower_body_family_metadata_preserves_execution_and_distinct_patterns():
+    annotations = recipe_contracts._reviewed_exercise_annotations_by_definition()
+    front = annotations['7dd91414-c838-5750-b2f2-909665497ad5']
+    back = annotations['f0861ff6-c6c8-589a-beaf-4f5336f4befb']
+    rdl = annotations['683216a5-72dd-5200-9fb9-8e0ece4b969d']
+    stiff = annotations['efc53382-bea3-53c3-a6f5-4d4ddc93ff2e']
+    nordic = annotations['46b322a6-cee1-55eb-90ca-2df679f72999']
+    assert front['exerciseFamilyId'] == back['exerciseFamilyId']
+    assert front['execution']['limbMode'] == 'bilateral'
+    assert rdl['exerciseFamilyId'] == stiff['exerciseFamilyId'] != nordic['exerciseFamilyId']
+    split_family = annotations['9cadcbaf-2d08-580c-9565-9921d6a06755']['exerciseFamilyId']
+    for identifier in ('f9d1310a-1e37-5de9-b654-76699033bd73',
+            'dd461d5b-03a6-5983-88ef-6c96ba88cd7b', '0c3ae710-bc65-5991-81b7-4b263d81f7a1'):
+        annotation = annotations[identifier]
+        assert annotation['exerciseFamilyId'] == split_family != front['exerciseFamilyId']
+        assert annotation['execution']['limbMode'] == 'unilateral'
+
+
+def test_aggregate_muscle_coverage_is_derived_from_primary_groups_only():
+    supported = {'chest', 'biceps', 'upper_push'}
+    direct_press = recipe_contracts.canonical_qualified_roles(
+        {'muscleGroups': ['FRONT_CHEST'], 'secondaryMuscleGroups': ['FRONT_BICEPS']},
+        ['chest', 'biceps', 'upper_push'], supported)
+    arm_assist_only = recipe_contracts.canonical_qualified_roles(
+        {'muscleGroups': ['FRONT_CHEST'], 'secondaryMuscleGroups': ['FRONT_BICEPS']},
+        ['biceps', 'upper_push'], supported)
+
+    assert direct_press == ['chest', 'upper_push']
+    assert arm_assist_only == ['chest', 'upper_push']
+    assert 'biceps' not in arm_assist_only
+    assert {'chest', 'back', 'quads', 'hamstrings', 'glutes', 'shoulders',
+            'biceps', 'triceps'} <= recipe_contracts.CODE_OWNED_DIRECT_COVERAGE_ROLES
 
 
 def test_load_headroom_does_not_override_intended_dose_with_equipped_variants():
@@ -303,6 +345,32 @@ def test_coverage_contract_cache_reuses_only_matching_coverage_context(monkeypat
     assert len(calls) == 2
 
 
+def test_missing_recipe_contract_reuses_pinned_incumbent_without_overwriting_current(monkeypatch):
+    from workout_generator_pkg import repair_execution
+
+    equipment, _, _, stored, prepared = recipe_case(
+        [{'key': 'push', 'description': 'A pushing movement', 'scope': 'eachSession'}])
+    monkeypatch.setattr(recipe_contracts, 'chat_call', lambda *_args, **_kwargs: (
+        json.dumps({'contracts': [{'definition_id': ref, 'satisfiesCoverage': ['push']}
+            for ref in prepared['definition_ids']]}), None, None))
+    first = recipe_contracts.qualify_recipe_contracts(None, prepared, stored, equipment, [], {})
+    donor_messages = [{'role': 'tool', 'content': json.dumps({'recipeQualification': first})}]
+    source = {'libraryFingerprint': library_fingerprint(equipment), 'historyFingerprint': None,
+        'resolvedDecisions': {}, 'submittedDraft': {'workouts': [{'exercises': [
+            {'definition_id': 'LIBRARY_1', 'satisfiesCoverage': ['push'], 'workSetTemplate': {'weight': 99}}]}]}}
+    monkeypatch.setattr(repair_execution, '_incumbent_source', lambda _ref: (donor_messages, source, stored))
+    monkeypatch.setattr('workout_generator_pkg.planning_tools._latest_result', lambda *_args: (0, stored))
+    monkeypatch.setattr(recipe_contracts, 'chat_call', lambda *_args, **_kwargs: pytest.fail('Unexpected provider call'))
+    messages = [{'role': 'system', 'incumbentPlan': {'pinned': 'receipt'}}]
+    cached = copy.deepcopy(first)
+    cached['contracts'] = cached['contracts'][:1]
+    result = recipe_contracts.qualify_recipe_contracts(None, prepared, stored, equipment, messages, {}, cached)
+    assert result == first
+    cached['contracts'].append({'definition_id': 'LIBRARY_1', 'satisfiesCoverage': []})
+    current = recipe_contracts.qualify_recipe_contracts(None, prepared, stored, equipment, messages, {}, cached)
+    assert current['contracts'] == cached['contracts']
+
+
 def test_recipe_roles_remain_pinned_to_first_valid_same_hash_batch_receipt(monkeypatch):
     equipment, _, _, stored, prepared = recipe_case(
         [{'key': 'push', 'description': 'A pushing movement', 'scope': 'eachSession'}])
@@ -426,6 +494,32 @@ def test_passed_reviewed_role_replaces_old_base_pin_after_feedback_resolves(monk
         None, {}, None, qualification=later_receipt)
     assert comparison_context['qualifiedRoleEvidence']['LIBRARY_0'] == ['push']
     assert retained_definition_maps[0]['LIBRARY_0']['id'] == equipment['exerciseDefinitions'][0]['id']
+
+
+def test_automatic_search_forwards_current_recipe_receipt_into_comparison_context(monkeypatch):
+    equipment, requirements, sessions, stored, _ = recipe_case(required_coverage=[])
+    messages = requirement_messages(stored)
+    qualification = {'inputHashes': {'LIBRARY_0': 'hash-0', 'LIBRARY_1': 'hash-1'},
+        'contracts': [{'definition_id': 'LIBRARY_0', 'satisfiesCoverage': []},
+                      {'definition_id': 'LIBRARY_1', 'satisfiesCoverage': []}]}
+    result = {'passed': True, 'requirementsId': stored['requirementsId'],
+        'currentDraftId': 'REVISION_1', 'draftId': 'REVISION_1',
+        'submittedDraft': {'requirementsId': stored['requirementsId'],
+            'name': 'Candidate', 'workouts': copy.deepcopy(sessions)},
+        'libraryFingerprint': library_fingerprint(equipment), 'historyFingerprint': None,
+        'audit': {'errors': [], 'weeklyVolume': {}, 'workouts': []},
+        'errors': [{'code': 'duration_exceeded'}], 'recipeQualification': qualification}
+    captured = []
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', lambda *_args, **_kwargs: {
+        'feasible': False, 'status': 'unproven', 'errors': [], 'objectiveProgress': []})
+    monkeypatch.setattr(allocation, '_joint_candidate_comparison_context',
+        lambda *args, **kwargs: captured.append(kwargs.get('qualification')) or {})
+    monkeypatch.setattr(joint_planning, 'compare_audited_joint_candidates', lambda *_args, **_kwargs: {
+        'decision': 'retain_baseline', 'baselineAuditErrors': []})
+
+    allocation.auto_allocate_workout(result, equipment, messages)
+
+    assert captured == [qualification]
 
 
 def test_audit_reuses_preparation_recipe_authority_after_unrelated_dialogue(monkeypatch):
@@ -713,3 +807,205 @@ def test_reviewed_metadata_overlay_preserves_unknowns_and_separates_regional_cre
     assert recipe_contracts.regional_muscle_credits({'id': 'unreviewed'}) == {}
     assert payload['exerciseDefinitions'][0].get('anatomy') is None
     assert payload['exerciseDefinitions'][1].get('programmingDemands') is None
+
+
+def test_reviewed_execution_properties_are_definition_scoped_and_unknown_stays_unknown():
+    equipment = {'exerciseDefinitions': [
+        {'id': 'f0861ff6-c6c8-589a-beaf-4f5336f4befb'},
+        {'id': '9cadcbaf-2d08-580c-9565-9921d6a06755'},
+        {'id': 'e6f75beb-edb8-52c4-b4fd-b4f8e21f57fc'},
+        {'id': 'unreviewed-definition'},
+        {'id': 'f9d1310a-1e37-5de9-b654-76699033bd73'},
+        {'id': '7dd91414-c838-5750-b2f2-909665497ad5'},
+        {'id': 'dd461d5b-03a6-5983-88ef-6c96ba88cd7b'},
+        {'id': '0c3ae710-bc65-5991-81b7-4b263d81f7a1'},
+    ]}
+
+    overlaid = recipe_contracts.apply_reviewed_exercise_annotations(equipment)
+
+    expected_properties = {
+        'f0861ff6-c6c8-589a-beaf-4f5336f4befb': {'limbMode': 'bilateral'},
+        '9cadcbaf-2d08-580c-9565-9921d6a06755': {'limbMode': 'unilateral'},
+        'e6f75beb-edb8-52c4-b4fd-b4f8e21f57fc': {'limbMode': 'alternating'},
+        'f9d1310a-1e37-5de9-b654-76699033bd73': {'limbMode': 'unilateral', 'balanceControl': True},
+        '7dd91414-c838-5750-b2f2-909665497ad5': {'limbMode': 'bilateral'},
+        'dd461d5b-03a6-5983-88ef-6c96ba88cd7b': {'limbMode': 'unilateral'},
+        '0c3ae710-bc65-5991-81b7-4b263d81f7a1': {'limbMode': 'unilateral'},
+    }
+    for definition_id, expected in expected_properties.items():
+        resolved = recipe_contracts.reviewed_execution_properties(
+            {'exerciseDefinitions': [{'id': definition_id}]}
+        )
+        assert resolved['propertiesByReference'] == {'LIBRARY_0': expected}
+        execution = next(item['reviewedExecution'] for item in overlaid['exerciseDefinitions']
+                         if item['id'] == definition_id)
+        assert resolved['sourcesByReference'] == {'LIBRARY_0': {
+            'source': execution['source'], 'basis': execution['basis']}}
+        resolved['sourcesByReference']['LIBRARY_0']['basis'] = 'Changed result only.'
+        assert recipe_contracts.reviewed_execution_properties(
+            {'exerciseDefinitions': [{'id': definition_id}]})['sourcesByReference']['LIBRARY_0']['basis'] == execution['basis']
+        assert resolved['unclassifiedReferences'] == []
+    unresolved = recipe_contracts.reviewed_execution_properties(
+        {'exerciseDefinitions': [{'id': 'unreviewed-definition'}]}
+    )
+    assert unresolved['propertiesByReference'] == {}
+    assert unresolved['sourcesByReference'] == {}
+    assert unresolved['unclassifiedReferences'] == ['LIBRARY_0']
+    execution_by_id = {item['id']: item.get('reviewedExecution') for item in overlaid['exerciseDefinitions']}
+    assert execution_by_id['f0861ff6-c6c8-589a-beaf-4f5336f4befb']['limbMode'] == 'bilateral'
+    assert execution_by_id['f0861ff6-c6c8-589a-beaf-4f5336f4befb']['source'].startswith('https://')
+    assert execution_by_id['9cadcbaf-2d08-580c-9565-9921d6a06755']['limbMode'] == 'unilateral'
+    assert execution_by_id['9cadcbaf-2d08-580c-9565-9921d6a06755']['basis']
+    assert execution_by_id['e6f75beb-edb8-52c4-b4fd-b4f8e21f57fc']['limbMode'] == 'alternating'
+    assert execution_by_id['unreviewed-definition'] is None
+    assert execution_by_id['f9d1310a-1e37-5de9-b654-76699033bd73']['balanceControl'] is True
+    assert execution_by_id['f9d1310a-1e37-5de9-b654-76699033bd73']['source'].startswith('https://')
+    assert execution_by_id['7dd91414-c838-5750-b2f2-909665497ad5']['limbMode'] == 'bilateral'
+    assert execution_by_id['dd461d5b-03a6-5983-88ef-6c96ba88cd7b']['limbMode'] == 'unilateral'
+    assert execution_by_id['0c3ae710-bc65-5991-81b7-4b263d81f7a1']['limbMode'] == 'unilateral'
+
+
+def test_reviewed_execution_support_preserves_sources_and_muscle_volume():
+    from workout_generator_pkg.exercise_contracts import execution_supporting_muscles
+    from workout_generator_pkg.exercise_library_tools import _selection_entry
+    from workout_generator_pkg.generation_audit import muscle_credits_per_set
+
+    definitions = [
+        {'id': '683216a5-72dd-5200-9fb9-8e0ece4b969d',
+         'muscleGroups': ['BACK_HAMSTRING', 'BACK_GLUTEAL'], 'secondaryMuscleGroups': ['BACK_ADDUCTORS']},
+        {'id': '3c366a30-29b9-5b1d-86d6-3bc55935584a',
+         'muscleGroups': ['BACK_UPPER_BACK'], 'secondaryMuscleGroups': ['FRONT_BICEPS', 'BACK_DELTOIDS']},
+    ]
+    original = copy.deepcopy(definitions)
+    annotated = recipe_contracts.apply_reviewed_exercise_annotations({'exerciseDefinitions': definitions})
+    assert definitions == original
+    for before, after in zip(definitions, annotated['exerciseDefinitions']):
+        assert execution_supporting_muscles(after) == {'lowerBack', 'abs'}
+        execution = after['reviewedExecution']
+        candidate = _selection_entry(after, {}, 'LIBRARY_0')
+        context = recipe_contracts._recipe_context({'candidates': {'LIBRARY_0': candidate}}, {}, 'LIBRARY_0')
+        assert context['candidate']['reviewedExecution'] == execution
+        evidence = recipe_contracts.reviewed_execution_properties({'exerciseDefinitions': [before]})
+        assert evidence['propertiesByReference'] == {'LIBRARY_0': {'supportingMuscles': ['lowerBack', 'abs']}}
+        assert evidence['sourcesByReference'] == {'LIBRARY_0': {
+            'source': execution['source'], 'basis': execution['basis']}}
+        evidence['propertiesByReference']['LIBRARY_0']['supportingMuscles'].clear()
+        assert recipe_contracts.reviewed_execution_properties({'exerciseDefinitions': [before]})[
+            'propertiesByReference']['LIBRARY_0']['supportingMuscles'] == ['lowerBack', 'abs']
+        assert after['muscleGroups'] == before['muscleGroups']
+        assert after['secondaryMuscleGroups'] == before['secondaryMuscleGroups']
+        assert muscle_credits_per_set(after) == muscle_credits_per_set(before)
+    assert execution_supporting_muscles({'name': 'Barbell Romanian Deadlift'}) is None
+    for muscles in ([], ['lowerBack', 'lowerBack'], ['BACK_LOWER_BACK'], ['unrecognized']):
+        assert execution_supporting_muscles({'reviewedExecution': {
+            'supportingMuscles': muscles, 'source': execution['source'], 'basis': execution['basis']}}) is None
+    assert execution_supporting_muscles({'reviewedExecution': {'supportingMuscles': ['abs']}}) is None
+
+
+def test_reviewed_setup_configuration_projects_partial_sourced_declared_resources(monkeypatch):
+    from workout_generator_pkg.exercise_contracts import validate_setup_configuration
+
+    facts = [{'resourceId': 'bench', 'state': {'inclination': 'flat'},
+        'source': 'https://example.org/technique', 'basis': 'Controlled setup requirements fixture.'}]
+    monkeypatch.setattr(recipe_contracts, '_reviewed_exercise_annotations_by_definition',
+        lambda: {'definition': {'execution': {'setupConfiguration': facts}}})
+    equipment = {'exerciseDefinitions': [{'id': 'definition', 'equipmentId': 'bar',
+        'requiredAccessoryEquipmentIds': ['bench']}]}
+    original = copy.deepcopy(equipment)
+    annotated = recipe_contracts.apply_reviewed_exercise_annotations(equipment)
+    evidence = recipe_contracts.reviewed_execution_properties(equipment)
+    assert evidence['propertiesByReference'] == {'LIBRARY_0': {'setupConfiguration': facts}}
+    assert evidence['sourcesByReference'] == {}  # Each partial fact retains its own source and basis.
+    assert evidence['unclassifiedReferences'] == []
+    assert annotated['exerciseDefinitions'][0]['reviewedExecution']['setupConfiguration'] == facts
+    assert equipment == original
+    annotated['exerciseDefinitions'][0]['reviewedExecution']['setupConfiguration'][0]['state']['inclination'] = 'changed'
+    assert facts[0]['state'] == {'inclination': 'flat'}
+    equipment['exerciseDefinitions'][0]['requiredAccessoryEquipmentIds'] = []
+    with pytest.raises(ValueError, match='declared resources'):
+        recipe_contracts.apply_reviewed_exercise_annotations(equipment)
+    for state in ({}, {'angle': float('nan')}, {'angle': []}, {'angle': ''}):
+        with pytest.raises(ValueError, match='state'):
+            validate_setup_configuration([{**facts[0], 'state': state}], {'bench'})
+    with pytest.raises(ValueError, match='nonempty list'):
+        validate_setup_configuration([])
+    with pytest.raises(ValueError, match='unique declared resources'):
+        validate_setup_configuration(facts + facts, {'bench'})
+
+
+def test_reviewed_execution_loader_validates_support_and_partial_setup_facts(monkeypatch):
+    identifier = '00000000-0000-0000-0000-000000000123'
+    setup = {'setupConfiguration': [{'resourceId': 'bench', 'state': {'inclination': 'flat'},
+        'source': 'https://example.org/technique', 'basis': 'Controlled setup fixture.'}]}
+    support = {'supportingMuscles': ['lowerBack'], 'source': 'https://example.org/technique',
+        'basis': 'Controlled support fixture.'}
+    try:
+        with monkeypatch.context() as patch:
+            for execution in (setup, support):
+                recipe_contracts._reviewed_exercise_annotations_by_definition.cache_clear()
+                patch.setattr(recipe_contracts.Path, 'read_text', lambda *_args, **_kwargs:
+                    json.dumps({'byDefinitionId': {identifier: {'execution': execution}}}))
+                assert recipe_contracts._reviewed_exercise_annotations_by_definition()[identifier]['execution'] == execution
+            for execution in ({**support, 'supportingMuscles': []},
+                    {'setupConfiguration': [{**setup['setupConfiguration'][0], 'physicalIndependence': True}]}):
+                recipe_contracts._reviewed_exercise_annotations_by_definition.cache_clear()
+                patch.setattr(recipe_contracts.Path, 'read_text', lambda *_args, **_kwargs:
+                    json.dumps({'byDefinitionId': {identifier: {'execution': execution}}}))
+                with pytest.raises(ValueError):
+                    recipe_contracts._reviewed_exercise_annotations_by_definition()
+    finally:
+        recipe_contracts._reviewed_exercise_annotations_by_definition.cache_clear()
+
+
+def test_recipe_qualification_uses_approved_sources_across_later_choices_but_refreshes_real_changes(monkeypatch):
+    equipment, _, _, stored, prepared = recipe_case(
+        [{'key': 'push', 'description': 'A pushing movement', 'scope': 'eachSession'}])
+    calls = []
+    def qualify(_, request, **kwargs):
+        context = json.loads(request[-1]['content'])
+        calls.append(context)
+        return json.dumps({'contracts': [{'definition_id': item['definition_id'], 'satisfiesCoverage': ['push']}
+            for item in context['recipes']]}), None, None
+    monkeypatch.setattr(recipe_contracts, 'chat_call', qualify)
+    initial = recipe_contracts.qualify_recipe_contracts(None, prepared, stored, equipment, [], {})
+    later = copy.deepcopy(prepared)
+    later['sourceMessages']['SOURCE_1'] = {'role': 'user', 'content': 'Choose weighted pull-up and count woodchoppers per direction.'}
+    before = copy.deepcopy(later)
+    reused = recipe_contracts.qualify_recipe_contracts(None, later, stored, equipment, [], {}, initial)
+    assert reused == initial and len(calls) == 1
+    assert later == before
+    changes = []
+    changed_source = copy.deepcopy(stored)
+    changed_source['sourceMessages'].append({'role': 'user', 'content': 'Count only horizontal pushes for this role.'})
+    changes.append((later, changed_source))
+    changed_coverage = copy.deepcopy(stored)
+    changed_coverage['requirements']['requiredCoverage'][0]['description'] = 'Only horizontal pushing movements'
+    changes.append((later, changed_coverage))
+    feedback = copy.deepcopy(later)
+    feedback['reviewFeedbackByDefinition'] = {'LIBRARY_0': [{'reason': 'Recheck whether this satisfies the push role.'}]}
+    changes.append((feedback, stored))
+    for candidate, requirements in changes:
+        refreshed = recipe_contracts.qualify_recipe_contracts(None, candidate, requirements, equipment, [], {}, initial)
+        assert refreshed['inputHashes']['LIBRARY_0'] != initial['inputHashes']['LIBRARY_0']
+    assert len(calls) == 4
+    expanded_equipment = copy.deepcopy(equipment)
+    expanded_equipment['exerciseDefinitions'].append({**equipment['exerciseDefinitions'][0],
+        'id': 'zz_new', 'name': 'Another pushing movement'})
+    expanded = copy.deepcopy(later)
+    expanded['definition_ids'].append('LIBRARY_2')
+    expanded['candidates']['LIBRARY_2'] = expanded_equipment['exerciseDefinitions'][-1]
+    qualified = recipe_contracts.qualify_recipe_contracts(None, expanded, stored, expanded_equipment, [], {}, initial)
+    assert [item['definition_id'] for item in calls[-1]['recipes']] == ['LIBRARY_2']
+    assert len(qualified['contracts']) == 3 and len(calls) == 5
+
+
+def test_recipe_context_legacy_source_fallback_and_pinned_snapshot_are_independent_copies():
+    _, requirements, _, stored, prepared = recipe_case()
+    legacy = recipe_contracts._recipe_context(prepared, requirements, 'LIBRARY_0')
+    assert legacy['sourceMessages'] == prepared['sourceMessages']
+    pinned = recipe_contracts._recipe_context(prepared, requirements, 'LIBRARY_0',
+        source_messages=stored['sourceMessages'])
+    from workout_generator_pkg.planning_tools import source_message_context
+    assert pinned['sourceMessages'] == source_message_context(stored['sourceMessages'])
+    pinned['sourceMessages']['SOURCE_0']['content'] = 'Only the copied projection changes.'
+    assert stored['sourceMessages'][0]['content'] != pinned['sourceMessages']['SOURCE_0']['content']

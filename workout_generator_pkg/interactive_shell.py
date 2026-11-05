@@ -23,7 +23,7 @@ from .planning_tools import (
     set_workout_requirements, audit_workout_plan, confirmed_draft,
     planning_tool_failure, requirements_approved, require_approved_requirements, PlanningInputError,
     _latest_result, requirement_sources,
-    latest_draft_submission, latest_draft_audit,
+    latest_draft_submission, latest_draft_audit, _resolve_draft_submission,
     GET_WORKOUT_DRAFT_TOOL, get_workout_draft,
     prepare_workout_session,
     validate_repair_scope, uses_menu_selection,
@@ -32,17 +32,16 @@ from .session_drafting import PREPARATION_PATCH_TOOL, preparation_patch_tool, pr
 from .conversation_store import normalize_conversation_messages
 from .logging_ui import LoadingIndicator, print_markdown, print_question, format_question
 from .usage_reporting import report_usage
-from .user_interaction import ASK_USER_TOOL, clarification_question, pending_question, answer_question, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL, repair_workout_alternative_tool
+from .user_interaction import ASK_USER_TOOL, clarification_question, pending_question, answer_question, answered_execution_decision, execution_preparation_arguments, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL, repair_workout_alternative_tool
 from .image_attachments import save_image, image_message
 from .training_history import TrainingHistory, GET_TRAINING_EVIDENCE_TOOL, HISTORY_PLANNING_INSTRUCTION, PRESCRIPTION_EVIDENCE_INSTRUCTION
 from .plan_review import review_draft, review_followup_instructions, review_requirements, record_planning_decisions, pending_review_checkpoint
 from .planning_decisions import record_planning_decisions_tool, render_decisions
 from .generation_audit import audit_policy, available_muscle_targets
-from .planner_context import focus_planner_context, focus_alternative_repair_request, request_planning_state, pending_reaudit, planner_response_profile, pending_evidence, discovery_tool_failure, construction_tool_failure, current_unresolved_joint_candidate, _sanitize_stale_history_receipts, _retrieved_replacement_definition_references, submitted_unretrieved_replacement_references
+from .planner_context import compact_planner_request, focus_planner_context, focus_alternative_repair_request, request_planning_state, pending_reaudit, planner_response_profile, pending_evidence, discovery_tool_failure, construction_tool_failure, current_unresolved_joint_candidate, _sanitize_stale_history_receipts, _retrieved_replacement_definition_references, submitted_unretrieved_replacement_references
 from .lookup_batch import execute_lookup_batch, LOOKUP_TOOLS
-from .deps import resolve_shell_deps
 from .allocation import ALLOCATE_WORKOUT_SETS_TOOL, allocate_workout_sets, auto_allocate_workout
-from .requirement_accounting import MINIMUM_TARGET_POLICY
+from .requirement_accounting import MINIMUM_TARGET_POLICY, REQUIREMENT_INTAKE_POLICY
 from .planning_tools import planning_failure_signature, metadata_patch_tool, is_metadata_error
 from .api_metrics import api_metrics_scope, start_planning_budget, record_submission_rejection, record_tool_rejections
 from jsonschema import ValidationError, validate
@@ -57,6 +56,7 @@ CANONICAL_PLANNING_INSTRUCTION = (
     "Follow the current backend work order and supplied constructionTask, repairTask and discoveryPaused instructions. Tool schemas define the permitted arguments. "
     "Record source-backed requirements before planning. Preserve quantities, units, scope, exceptions and qualifiers; never relax them to pass validation. "
     + MINIMUM_TARGET_POLICY + ' '
+    + REQUIREMENT_INTAKE_POLICY + ' '
     "Before recording requirements, cross-check every explicit source category and qualifier together: targets, movement/muscle coverage and scope, restrictions/exceptions, order, rest, effort, warm-up and recovery. Do not defer independent omissions to later submissions. "
     "Use resolvedDecisions and existing delegation. Ask only about material ambiguity or a concrete new conflict, using ask_user and waiting for an answer. "
     "Record requirement interpretations with planningDecisions in set_workout_requirements, or record_planning_decisions when they must be resolved first. "
@@ -81,6 +81,29 @@ CANONICAL_PLANNING_INSTRUCTION = (
 def _resolve_api_key() -> str:
     """Resolve API key for the configured LLM endpoint, loading .env when present."""
     return require_api_key(resolve_llm_endpoint())
+
+
+
+def _bind_planning_intent(messages, incumbent=None):
+    """Bind only an explicit replacement request; resuming retains its own intent."""
+    owner = next((message for message in messages if message.get('role') == 'system'), None)
+    if owner is None:
+        return
+    if incumbent is not None:
+        from .repair_execution import bind_incumbent_reference
+        bind_incumbent_reference(messages, incumbent)
+    owner['planningIntent'] = 'edit' if owner.get('incumbentPlan') else 'fresh'
+
+
+
+def _solver_menu_decline_question(result):
+    if (result.get('userQuestionRequired') or any(error.get('code') == 'solver_menu_declined'
+            for error in result.get('errors', []) if isinstance(error, dict))):
+        result.setdefault('userQuestion', {
+            'question': 'The available compiled repair was declined. How should this repair proceed?',
+            'reason': 'The saved candidate and approved requirements remain unchanged.',
+            'options': ['Keep the saved candidate and stop this repair.',
+                        'Provide a different repair direction within the approved requirements.']})
 
 
 def _timestamp_now() -> str:
@@ -118,53 +141,74 @@ def _message(role: str, **fields: Any) -> Dict[str, Any]:
     return payload
 
 
+def _structured_requirements_amendment(messages):
+    """Route a newer authoritative document through intake without model reconstruction."""
+    from .planning_tools import (_structured_requirement_source, requirement_sources,
+                                 latest_requirement_candidate)
+    authority = _structured_requirement_source(requirement_sources(messages))
+    _, base = latest_requirement_candidate(messages)
+    if (authority and base.get('requirementsId') and authority['sourceMessageIndex'] > max(
+            (source['messageIndex'] for source in base.get('sourceMessages', [])), default=-1)):
+        return {'updates': {}}
+    return None
+
+
 def _requirements_review_retry_arguments(messages, user_input):
-    """Return the saved extraction only for an explicit retry of a failed source review."""
+    """Retry the last real source-review candidate, skipping later rejected tool forms."""
     if user_input.strip().lower() != '/continue':
         return None
-
-    calls = {}
-    for message in messages:
-        if message.get('role') != 'assistant':
+    from .planning_tools import latest_requirement_candidate
+    index, candidate = latest_requirement_candidate(messages)
+    source_review = candidate.get('sourceReview', {})
+    if not (source_review.get('passed') is False and source_review.get('failure')
+            and any(error.get('code') == 'requirements_review_failed' for error in candidate.get('errors', []))):
+        return None
+    calls = {call.get('id'): call.get('function', {}).get('name')
+        for message in messages for call in message.get('tool_calls', [])}
+    later_user = False
+    for message in messages[index + 1:]:
+        if message.get('role') == 'user':
+            later_user = True
             continue
-        for call in message.get('tool_calls', []):
-            function = call.get('function', {})
-            if function.get('name') == 'set_workout_requirements':
-                calls[call.get('id')] = function.get('arguments')
-
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if message.get('role') != 'tool' or message.get('tool_call_id') not in calls:
+        if message.get('role') != 'tool':
             continue
         try:
             result = json.loads(message.get('content') or '{}')
-            arguments = json.loads(calls[message.get('tool_call_id')])
         except (TypeError, ValueError):
             return None
+        if not isinstance(result, dict):
+            return None
+        name = calls.get(message.get('tool_call_id'))
+        if name == 'record_planning_decisions' and result.get('passed'):
+            return None
+        if name == 'set_workout_requirements' and not (
+                result.get('passed') is False and result.get('errors') and all(
+                    error.get('code') in ('invalid_arguments', 'structured_requirement_source_changed',
+                                         'requirements_review_base_missing') for error in result['errors'])):
+            return None
+    return {'updates': {}} if later_user else None
 
-        source_review = result.get('sourceReview', {}) if isinstance(result, dict) else {}
-        errors = result.get('errors', []) if isinstance(result, dict) else []
-        retryable_failure = (
-            isinstance(arguments, dict)
-            and isinstance(result, dict)
-            and result.get('requirementsId')
-            and source_review.get('passed') is False
-            and source_review.get('failure')
-            and any(isinstance(error, dict) and error.get('code') == 'requirements_review_failed'
-                    for error in errors)
-        )
-        if not retryable_failure:
-            return None
 
-        later_users = [item.get('content', '').strip().lower() for item in messages[index + 1:]
-                       if item.get('role') == 'user']
-        if not later_users or any(content != '/continue' for content in later_users):
-            return None
-        if any(item.get('role') == 'assistant' and item.get('tool_calls')
-               for item in messages[index + 1:]):
-            return None
-        return arguments
-    return None
+def _recompile_requirements_review_candidate(messages, equipment, client=None, progress=None):
+    from .planning_tools import latest_requirement_candidate, _structured_requirement_source, requirement_sources
+    _, saved = latest_requirement_candidate(messages)
+    if not saved.get('requirementsId'):
+        raise PlanningInputError('requirements_review_base_missing',
+            'The saved source-review candidate is unavailable.', '/',
+            'Restore the failed requirements result before retrying its review.')
+    authority = _structured_requirement_source(requirement_sources(messages))
+    if authority and authority['sourceMessageIndex'] > max(
+            (source['messageIndex'] for source in saved.get('sourceMessages', [])), default=-1):
+        raise PlanningInputError('requirements_review_source_amended',
+            'A newer structured user source requires the normal requirements amendment path.', '/sourceMessages',
+            'Apply the marked source through set_workout_requirements updates before reviewing it.')
+    candidate = set_workout_requirements({'baseRequirementsId': saved['requirementsId'], 'updates': {}},
+        messages, equipment or {}, client, progress)
+    if candidate['requirements'] != saved['requirements']:
+        raise PlanningInputError('requirements_review_policy_changed',
+            'Recompiling the source-review candidate changed its policy.', '/requirements',
+            'Review the changed policy through the normal requirements update path; do not relabel the old receipt.')
+    return candidate
 
 
 def _merge_completed_tool_checkpoint(failure: Dict[str, Any], checkpoint: Dict[str, Any]) -> Dict[str, Any]:
@@ -272,7 +316,7 @@ def _candidate_menu_expansion_tools(request_tools, task):
 
 def _strict_assessed_menu_repair_tools(request_tools, coordinated_tool, task):
     if (not (task or {}).get('findingsAssessment')
-            or 'sessionBlocks' not in coordinated_tool['function']['parameters']['properties']):
+            or not {'sessionBlocks', 'useSolverMenu'} & coordinated_tool['function']['parameters']['properties'].keys()):
         return request_tools, False
     excluded = {'allocate_workout_sets', 'propose_workout_alternatives', 'generate_workout'}
     return ([tool for tool in request_tools if tool.get('function', {}).get('name') not in excluded], True)
@@ -426,6 +470,35 @@ def _active_draft_edit_route(planning_state, repair_task):
     return (edit_task if planning_state.get('newInstructionPending') else repair_task or edit_task), False
 
 
+def _is_saved_draft_revalidation(arguments, planning_state):
+    """A base-only audit reads the current approved candidate; it selects no repair."""
+    return (isinstance(arguments, dict)
+        and {'requirementsId', 'baseDraftId'} <= set(arguments)
+        <= {'requirementsId', 'baseDraftId', 'useSolverMenu'}
+        and ('useSolverMenu' not in arguments or arguments['useSolverMenu'] is False)
+        and planning_state.get('requirementsApproved') is True
+        and bool(planning_state.get('requirementsId'))
+        and bool(planning_state.get('currentDraftId'))
+        and arguments['requirementsId'] == planning_state['requirementsId']
+        and arguments['baseDraftId'] == planning_state['currentDraftId'])
+
+
+def _current_preview_is_valid(planning_state, current_audit, preview, history_fingerprint):
+    return (not planning_state.get('savedDraftReaudit')
+        and not planning_state.get('newInstructionPending')
+        and not planning_state.get('planningDecisionNeeded')
+        and not planning_state.get('decisionReaudit')
+        and not planning_state.get('evidenceReaudit')
+        and current_audit.get('historyFingerprint') == history_fingerprint
+        and not planning_state.get('draftRequiresReaudit')
+        and current_audit.get('passed') is True
+        and current_audit.get('draftId') == preview.get('draft_id')
+        and current_audit.get('preview') == preview.get('draft_preview')
+        and current_audit.get('requirementsId') == planning_state.get('requirementsId')
+        and (planning_state.get('currentDraftId') is None
+             or current_audit.get('currentDraftId') == planning_state.get('currentDraftId')))
+
+
 def _repair_cap_pause(failures):
     error = next((item for item in failures if isinstance(item, dict)
         and item.get('code') == 'repair_round_cap_reached'), None)
@@ -551,7 +624,11 @@ def _admit_repair_scope(function_args, repair_task, current_draft, messages, att
     if function_args.get('patch') == []:
         raise PlanningInputError('empty_repair_noop', 'An empty edit cannot repair the saved draft.', '/edits',
             'Submit a concrete typed stable-reference edit for the current candidate. Internal revalidation is handled separately.')
-    selection = uses_menu_selection(repair_task) and ('sessionBlocks' in function_args or 'useSolverMenu' in function_args)
+    from .planning_tools import coordinated_repair_tool
+    validate(function_args, coordinated_repair_tool(
+        {**repair_task, 'currentDraft': current_draft})['function']['parameters'])
+    selection = ('useSolverMenu' in function_args or (uses_menu_selection(repair_task)
+        and 'sessionBlocks' in function_args))
     if 'edits' not in function_args and not selection:
         raise PlanningInputError('repair_edit_contract_required', 'A saved-draft edit requires typed stable references.', '/edits',
             'Submit the intended changes through WORKOUT_n and EXERCISE_n edits. Raw patches are reserved for internal revalidation.')
@@ -893,7 +970,7 @@ def _ensure_tool_responses(messages: List[Dict[str, Any]]) -> tuple[List[Dict[st
 
 def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, training_history=None, provided_equipment=None) -> List[Dict[str, Any]]:
     repaired, _ = _ensure_tool_responses(messages)
-    result = [{key: value for key, value in message.items() if key not in ("canonicalDraftPreview", "canonicalRequirementsPreview", "unvalidatedProposal", "userInteraction", "candidateMenuExpansionAttempt", "_internalAuditActions")}
+    result = [{key: value for key, value in message.items() if key not in ("canonicalDraftPreview", "canonicalRequirementsPreview", "unvalidatedProposal", "userInteraction", "candidateMenuExpansionAttempt", "_internalAuditActions", "incumbentPlan", "planningIntent")}
               for message in repaired if message.get("role") != "emitter"]
     tool_names = {call["id"]: call["function"]["name"] for message in result
                   for call in message.get("tool_calls", [])}
@@ -947,7 +1024,6 @@ def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, tr
                 for workout in audit.get("workouts", [])]
             payload = compact
         elif name == "propose_workout_alternatives":
-            from .plan_review import REVIEW_VERSION
             from .review_assessment import validate_assessment
             for field in ('alternativeRepairCandidates', 'proposals'):
                 candidates = payload.get(field)
@@ -955,7 +1031,7 @@ def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, tr
                     continue
                 for candidate in candidates:
                     review = candidate.get('review') if isinstance(candidate, dict) else None
-                    if (not isinstance(review, dict) or review.get('version') != REVIEW_VERSION
+                    if (not isinstance(review, dict)
                             or review.get('failure') or review.get('inProgress')):
                         continue
                     try:
@@ -1080,8 +1156,9 @@ def handle_function_call(
     alternative_repair_task=None,
     preserve_prior_menu=False,
 ):
-    deps = deps or resolve_shell_deps()
-    execute_workout_generation = deps.execute_workout_generation
+    from .generation_pipeline import execute_workout_generation
+    if deps is not None:
+        execute_workout_generation = deps.execute_workout_generation
     """
     Handle function call execution.
 
@@ -1205,7 +1282,9 @@ def handle_function_call(
         arguments = dict(function_args)
         decisions = arguments.pop('planningDecisions', None)
         result = set_workout_requirements(arguments, messages, provided_equipment or {}, client, progress)
-        review_options = {'planning_decisions': decisions} if decisions is not None else {}
+        review_options = {'equipment': provided_equipment}
+        if decisions is not None:
+            review_options['planning_decisions'] = decisions
         result = review_requirements(client, result, messages, logger, progress, **review_options)
         if not result['passed']:
             if result.get('requirementsReviewQuestion'):
@@ -1221,80 +1300,44 @@ def handle_function_call(
 
     if function_name == 'propose_workout_alternatives':
         if function_args.get('staleAlternativeAssessment'):
-            from .conflict_resolution import CONFLICT_RESOLUTION_VERSION
             from .conflict_resolution import latest_candidate_diagnosis
-            diagnosis_index, previous = latest_candidate_diagnosis(
+            _, previous = latest_candidate_diagnosis(
                 messages, function_args.get('requirementsId'), function_args.get('baseDraftId'))
-            repair_index, repair_result = _latest_result(messages, 'repair_workout_alternative')
             requested_candidate_id = function_args.get('repairCandidateId')
-            candidate = next((item for item in previous.get('alternativeRepairCandidates', [])
-                if item.get('repairCandidateId') == requested_candidate_id), None)
-            source_candidate_id = candidate.get('repairCandidateId') if candidate else None
-            if (candidate is None and repair_index > diagnosis_index
-                    and repair_result.get('attemptStatus') in ('review_timeout', 'review_pending')):
-                pending_snapshot = repair_result.get('candidateSnapshot')
-                if (isinstance(pending_snapshot, dict)
-                        and pending_snapshot.get('reviewPending') is True
-                        and pending_snapshot.get('repairCandidateId') == requested_candidate_id):
-                    source_candidate_id = pending_snapshot.get('diagnosisCandidateId')
-                    source_candidate = next((item for item in previous.get('alternativeRepairCandidates', [])
-                        if item.get('repairCandidateId') == source_candidate_id), None)
-                    if (source_candidate is not None
-                            and pending_snapshot.get('parentRepairCandidateId') == repair_result.get('repairCandidateId')
-                            and pending_snapshot.get('requirementsId') == source_candidate.get('requirementsId')
-                            and pending_snapshot.get('originalRequirementsId') == source_candidate.get('originalRequirementsId')
-                            and pending_snapshot.get('sourceDraftId') == source_candidate.get('sourceDraftId', source_candidate.get('baseDraftId'))):
-                        candidate = copy.deepcopy(pending_snapshot)
-            if (repair_index > diagnosis_index
-                    and repair_result.get('repairCandidateId') in (requested_candidate_id, source_candidate_id)):
-                from .alternative_repair import _fresh_binding, _latest_materialized_reviewed_candidate
-                from .planning_decisions import resolved_decisions
-                source_candidate = (next((item for item in previous.get('alternativeRepairCandidates', [])
-                    if item.get('repairCandidateId') == candidate.get('diagnosisCandidateId')), None)
-                    if candidate and candidate.get('reviewPending') is True else candidate)
-                for possible_source in previous.get('alternativeRepairCandidates', []):
-                    reviewed_candidate = _latest_materialized_reviewed_candidate(
-                        messages, possible_source, diagnosis_index)
-                    if (reviewed_candidate is not None
-                            and reviewed_candidate.get('repairCandidateId') == requested_candidate_id):
-                        source_candidate = possible_source
-                        candidate = reviewed_candidate
-                        source_candidate_id = possible_source.get('repairCandidateId')
-                        break
-                if source_candidate is not None and candidate is not None:
-                    _, original_record = _latest_result(messages, 'set_workout_requirements')
-                    candidate_binding = copy.deepcopy(candidate)
-                    candidate_binding['resolvedDecisions'] = copy.deepcopy(resolved_decisions(messages))
-                    if not _fresh_binding(candidate_binding, messages, original_record.get('requirements', {}),
-                            provided_equipment or {}, training_history, resolved_decisions(messages)):
-                        candidate = None
-                    else:
-                        candidate = candidate_binding
-                        source_candidate_id = source_candidate.get('repairCandidateId')
-            if candidate:
-                from .alternative_repair import _fresh_binding
-                from .planning_decisions import resolved_decisions
-                _, original_record = _latest_result(messages, 'set_workout_requirements')
-                current_decisions = resolved_decisions(messages)
-                refreshed_binding = copy.deepcopy(candidate)
-                refreshed_binding['resolvedDecisions'] = copy.deepcopy(current_decisions)
-                if _fresh_binding(refreshed_binding, messages, original_record.get('requirements', {}),
-                        provided_equipment or {}, training_history, current_decisions):
-                    candidate = refreshed_binding
-            if (candidate and previous.get('diagnosisVersion') == CONFLICT_RESOLUTION_VERSION
-                    and candidate.get('diagnosisVersion') in (None, CONFLICT_RESOLUTION_VERSION)):
+            candidate = None
+            calls = {call.get('id'): call.get('function', {}).get('name')
+                for message in messages for call in message.get('tool_calls', [])}
+            for message in reversed(messages):
+                if (message.get('role') != 'tool' or calls.get(message.get('tool_call_id')) not in
+                        ('propose_workout_alternatives', 'repair_workout_alternative')):
+                    continue
+                try:
+                    saved = json.loads(message.get('content') or '{}')
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(saved, dict):
+                    continue
+                snapshots = [saved.get('candidateSnapshot'), *saved.get('alternativeRepairCandidates', [])]
+                candidate = next((item for item in snapshots if isinstance(item, dict)
+                    and item.get('repairCandidateId') == requested_candidate_id), None)
+                if candidate is not None:
+                    break
+            if candidate is None:
+                candidate = next((item for item in previous.get('alternativeRepairCandidates', [])
+                    if item.get('repairCandidateId') == requested_candidate_id), None)
+            if candidate is not None:
+                source_candidate_id = candidate.get('diagnosisCandidateId') or requested_candidate_id
                 from .alternative_repair import refresh_candidate_assessment
                 candidate = copy.deepcopy(candidate)
-                candidate['diagnosisVersion'] = previous['diagnosisVersion']
                 refreshed = refresh_candidate_assessment(candidate, messages, provided_equipment or {},
                     training_history, allow_educated_load_guesses, client, logger, progress)
                 refreshed_candidate = copy.deepcopy(refreshed['candidate'])
                 result = copy.deepcopy(previous)
                 refreshed_candidate['diagnosisCandidateId'] = (candidate.get('diagnosisCandidateId')
                     or source_candidate_id or candidate['repairCandidateId'])
-                result['alternativeRepairCandidates'] = [
-                    refreshed_candidate if item.get('repairCandidateId') == source_candidate_id
-                    else copy.deepcopy(item) for item in previous.get('alternativeRepairCandidates', [])]
+                result['alternativeRepairCandidates'] = [copy.deepcopy(item)
+                    for item in previous.get('alternativeRepairCandidates', [])
+                    if item.get('repairCandidateId') not in (requested_candidate_id, source_candidate_id)] + [refreshed_candidate]
                 result['assessmentRefresh'] = {'status': refreshed['status'],
                     'repairCandidateId': candidate['repairCandidateId'],
                     **({'reason': refreshed['reason']} if refreshed.get('reason') else {})}
@@ -1322,7 +1365,7 @@ def handle_function_call(
                 return {'result': json.dumps(result, ensure_ascii=False), 'alternative_previews': previews,
                     'should_exit': False, 'generation_result': None}
 
-            raise ValueError('The saved review-refresh candidate could not be resolved against its diagnosis lineage; conflict diagnosis was not run.')
+            raise ValueError('The requested saved candidate is unavailable. Restore its artifact before requesting a new audit and semantic review.')
 
         from .conflict_resolution import diagnose_conflict_and_propose
         from .conflict_resolution import CONFLICT_RESOLUTION_VERSION
@@ -1527,7 +1570,7 @@ def handle_function_call(
         preference_baseline = None
         if comparison_requested:
             from .plan_review import (_context as review_context, _review_base_hash,
-                _review_checklist, _review_ledger_fingerprint, _review_input_hash, REVIEW_VERSION,
+                _review_checklist, _review_ledger_fingerprint, _review_input_hash,
                 _source_message_items, _followup_context, _hash)
             from .review_assessment import validate_assessment
             from .user_interaction import preference_comparison_concerns, preference_comparison_priorities
@@ -1553,7 +1596,6 @@ def handle_function_call(
                     or not isinstance(baseline_result.get('audit'), dict)
                     or baseline_result['audit'].get('errors')
                     or not isinstance(baseline_review, dict)
-                    or baseline_review.get('version') != REVIEW_VERSION
                     or baseline_review.get('failure') or baseline_review.get('inProgress')):
                 raise ValueError('Preference comparison needs the exact current audited workout and its completed review receipt.')
             approved_order = stored['requirements'].get('objectiveOrder')
@@ -1788,12 +1830,14 @@ def handle_function_call(
             training_history, allow_educated_load_guesses, client, logger, progress)
         if isinstance(result, dict) and alternative_repair_task.get('trainingHistoryFingerprint') is not None:
             result['trainingHistoryFingerprint'] = alternative_repair_task['trainingHistoryFingerprint']
+        _solver_menu_decline_question(result)
         previews = []
         if result.get('outcome') == 'alternatives_ready' and result.get('repairStatus') == 'repaired_and_reviewed':
             from .conflict_resolution import render_alternative_preview
             previews = [{'id': result['proposal']['proposalId'],
                 'text': render_alternative_preview(result['proposal'])}]
         return {'result': json.dumps(result, ensure_ascii=False), 'alternative_previews': previews,
+                'waiting_for_user': bool(result.get('userQuestion')),
                 'should_exit': False, 'generation_result': None,
                 'decision_preview': None if previews else result.get('reason', result.get('outcome'))}
 
@@ -1838,6 +1882,15 @@ def handle_function_call(
                 'should_exit': False, 'generation_result': None}
 
     if function_name == "audit_workout_plan":
+        _, stored_requirements = _latest_result(messages, 'set_workout_requirements')
+        current_draft_before_audit, current_revision = latest_draft_submission(messages, provided_equipment or {})
+        read_only_revalidation = _is_saved_draft_revalidation(function_args, {
+            'requirementsApproved': requirements_approved(messages, stored_requirements),
+            'requirementsId': stored_requirements.get('requirementsId'), 'currentDraftId': current_revision})
+        if read_only_revalidation:
+            function_args = {'requirementsId': function_args['requirementsId'],
+                'baseDraftId': function_args['baseDraftId'], 'patch': []}
+            coordinated_repair = False
         qualification = None
         if coordinated_repair:
             from .allocation import qualify_coordinated_candidate
@@ -1845,20 +1898,78 @@ def handle_function_call(
                 messages, training_history, logger,
                 coordinated_repair_context=coordinated_repair if isinstance(coordinated_repair, dict) else None)
         _, prior_candidate = _latest_result(messages, 'audit_workout_plan')
-        _, stored_requirements = _latest_result(messages, 'set_workout_requirements')
         worker_index, workers = _latest_result(messages, 'draft_workout_sessions')
         audit_index, prior_audit = _latest_result(messages, 'audit_workout_plan')
-        unresolved_record = ((workers.get('jointUnresolvedCandidate') or {}) if worker_index > audit_index
-            else (prior_audit.get('jointUnresolvedCandidate') or {}))
-        current_draft_before_audit, current_revision = latest_draft_submission(messages, provided_equipment or {})
+        worker_unresolved = workers.get('jointUnresolvedCandidate') or {}
+        audit_unresolved = prior_audit.get('jointUnresolvedCandidate') or {}
         _, contract_owner = latest_draft_audit(messages, current_draft_before_audit)
-        retained_unresolved = current_unresolved_joint_candidate(unresolved_record, stored_requirements,
-            provided_equipment or {}, messages, training_history, current_revision,
-            allow_educated_load_guesses, expected_submission=function_args)
+        try:
+            lineage_submission, _ = _resolve_draft_submission(
+                function_args, messages, provided_equipment or {})
+        except PlanningInputError:
+            lineage_submission = None
+        candidate_sources = ([('worker', worker_unresolved), ('audit', audit_unresolved)]
+            if worker_index > audit_index else [('audit', audit_unresolved), ('worker', worker_unresolved)])
+        retained_unresolved = None
+        for candidate_source, unresolved_record in candidate_sources:
+            if not unresolved_record or lineage_submission is None:
+                continue
+            unresolved_base_revision = current_revision
+            if candidate_source == 'worker' and worker_index >= 0:
+                # A failed coordinated solve can materialize the unchanged recipe
+                # pool as REVISION_n. Validate it against the draft that existed
+                # before recipe qualification, not that failure checkpoint revision.
+                _, unresolved_base_revision = latest_draft_submission(
+                    messages[:worker_index], provided_equipment or {})
+            candidate = current_unresolved_joint_candidate(unresolved_record, stored_requirements,
+                provided_equipment or {}, messages, training_history, unresolved_base_revision,
+                allow_educated_load_guesses, expected_submission=lineage_submission)
+            if (candidate and prior_candidate.get('recipeQualification')
+                    and prior_candidate.get('recipeQualification') != candidate.get('recipeQualification')):
+                continue
+            if candidate:
+                retained_unresolved = candidate
+                break
         if not qualification and retained_unresolved:
             qualification = copy.deepcopy(retained_unresolved['recipeQualification'])
         if not qualification and prior_candidate.get('coordinatedCandidatePending'):
             qualification = prior_candidate.get('recipeQualification')
+        if not coordinated_repair:
+            comparison_gate = prior_candidate.get('jointPromotionGate') or {}
+            gate_errors = set(comparison_gate.get('baselineAuditErrors', [])) | set(
+                comparison_gate.get('candidateAuditErrors', []))
+            prior_joint = (prior_candidate.get('coordinatedJointPlanning')
+                or prior_candidate.get('automaticAllocation') or {})
+            prior_draft = prior_candidate.get('submittedDraft') or {}
+            from .joint_planning import prescription_fingerprint
+            matched_code_selected_plan = bool(lineage_submission
+                and prior_candidate.get('passed') is True
+                and isinstance(prior_candidate.get('audit'), dict)
+                and isinstance(prior_candidate.get('review'), dict)
+                and prior_joint.get('feasible') is True
+                and prior_joint.get('status') in ('feasible', 'optimal')
+                and isinstance(prior_draft.get('workouts'), list)
+                and prescription_fingerprint(prior_draft['workouts']) == prescription_fingerprint(
+                    lineage_submission.get('workouts', []))
+                and not prior_candidate.get('coordinatedCandidatePending')
+                and not prior_candidate.get('jointPlanningStopped'))
+            refresh_selected_context = ('exercise_outside_shared_qualification_union' in gate_errors
+                or matched_code_selected_plan)
+            if (refresh_selected_context and lineage_submission
+                    and requirements_approved(messages, stored_requirements)):
+                from .allocation import (qualify_coordinated_candidate,
+                    recipe_qualification_is_current)
+                candidate_qualification = qualification or prior_candidate.get('recipeQualification')
+                if recipe_qualification_is_current(candidate_qualification, lineage_submission['workouts'],
+                        stored_requirements, provided_equipment or {}, messages, training_history):
+                    qualification = candidate_qualification
+                else:
+                    # A previous comparison can be incomparable only because its
+                    # selected recipes were qualified under an older source context.
+                    # Requalify this exact saved selection; the normal pending
+                    # checkpoint below persists it before any joint solve.
+                    function_args, qualification = qualify_coordinated_candidate(client, function_args,
+                        provided_equipment or {}, messages, training_history, logger)
         try:
             result = audit_workout_plan(function_args, provided_equipment or {}, messages, allow_educated_load_guesses, training_history)
         except PlanningInputError as error:
@@ -2098,6 +2209,11 @@ def handle_function_call(
                         }])],
                         instruction=joint.get('instruction',
                             'The joint solver did not establish feasibility. Preserve the candidate and constraints; do not export it.'))
+                    if retained_unresolved:
+                        # Keep the raw recipe pool marked as pending across failure
+                        # checkpoints so a later /continue does not pin it as an
+                        # already selected workout.
+                        result['coordinatedCandidatePending'] = True
                 result['coordinatedJointPlanning'] = {key: value for key, value in joint.items() if key not in ('sessions', 'audit')}
                 if repair_contract:
                     result['repairContract'] = copy.deepcopy(repair_contract)
@@ -2119,8 +2235,57 @@ def handle_function_call(
                         'recipeQualification': copy.deepcopy(qualification),
                     }
         elif not qualification and not inherited_contract_error:
-            result = auto_allocate_workout(result, provided_equipment or {}, messages, allow_educated_load_guesses,
-                                            training_history, logger, progress)
+            from .session_drafting import accepted_fresh_programming_artifact
+            accepted_programming_selection = accepted_fresh_programming_artifact(
+                result, provided_equipment or {}, messages, getattr(training_history, 'fingerprint', None))
+            if (not accepted_programming_selection
+                    and result.get('passed') is True and isinstance(result.get('submittedDraft'), dict)
+                    and isinstance(result['submittedDraft'].get('workouts'), list)
+                    and not coordinated_repair and not retained_unresolved
+                    and not worker_unresolved and not audit_unresolved
+                    and not prior_candidate.get('coordinatedCandidatePending')
+                    and not prior_candidate.get('jointUnresolvedCandidate')
+                    and not workers.get('coordinatedCandidatePending')
+                    and not workers.get('jointUnresolvedCandidate')):
+                planning_state = request_planning_state(messages)
+                pending_menu = any(planning_state.get(key) for key in (
+                    'candidateMenuExpansionTask', 'menuExpansionUnresolved', '_unresolvedJointCandidate'))
+                prior_qualification = (result.get('recipeQualification')
+                    or prior_candidate.get('recipeQualification') or workers.get('recipeQualification'))
+                if (not pending_menu and prior_qualification and stored_requirements.get('requirements')
+                        and requirements_approved(messages, stored_requirements)):
+                    from .allocation import qualify_coordinated_candidate, recipe_qualification_is_current
+                    current_submission = result['submittedDraft']
+                    current_qualification = prior_qualification
+                    try:
+                        qualification_current = recipe_qualification_is_current(
+                            prior_qualification, current_submission['workouts'], stored_requirements,
+                            provided_equipment or {}, messages, training_history)
+                    except (ValueError, KeyError, TypeError):
+                        qualification_current = False
+                    qualified_roles = {item.get('definition_id'): item.get('satisfiesCoverage')
+                        for item in prior_qualification.get('contracts', [])
+                        if isinstance(item, dict)}
+                    claims_match = (len(qualified_roles) == len(prior_qualification.get('contracts', []))
+                        and all(item.get('satisfiesCoverage', []) == qualified_roles.get(item.get('definition_id'))
+                            for day in current_submission['workouts'] for item in day.get('exercises', [])))
+                    qualification_current = qualification_current and claims_match
+                    if not qualification_current:
+                        qualified_submission, current_qualification = qualify_coordinated_candidate(
+                            client, current_submission, provided_equipment or {}, messages,
+                            training_history, logger)
+                        result = audit_workout_plan(qualified_submission, provided_equipment or {}, messages,
+                            allow_educated_load_guesses, training_history)
+                        result['recipeQualification'] = copy.deepcopy(current_qualification)
+                        if current_submission.get('repairContract') and not result.get('repairContract'):
+                            result['repairContract'] = copy.deepcopy(current_submission['repairContract'])
+                        if checkpoint:
+                            checkpoint(pending_review_checkpoint(result))
+                    elif result.get('recipeQualification') is None:
+                        result['recipeQualification'] = copy.deepcopy(current_qualification)
+            if not read_only_revalidation:
+                result = auto_allocate_workout(result, provided_equipment or {}, messages, allow_educated_load_guesses,
+                                                training_history, logger, progress)
         if qualification:
             result['recipeQualification'] = qualification
         if training_history:
@@ -2154,7 +2319,7 @@ def handle_function_call(
                     source_working_set_budget=source_budget, qualification=qualification,
                     review_feedback_by_definition=review_feedback)
                 if comparison is not None:
-                    result = apply_repair_promotion_gate(result, comparison)
+                    result = apply_repair_promotion_gate(result, comparison, messages=messages)
         from .requirement_accounting import outcome
         result['planningOutcome'] = outcome(result)
         for error in result.get('errors', []):
@@ -2162,6 +2327,7 @@ def handle_function_call(
         if not result.get('passed'):
             result.pop('planIndex', None)
         return {"result": json.dumps(result, ensure_ascii=False), "draft_preview": None if result.get("cached") else result.get("preview"),
+                'waiting_for_user': bool(result.get('userQuestion')),
                 "draft_id": result.get("draftId", result["requirementsId"]), "should_exit": False, "generation_result": None}
 
     if function_name == 'get_training_evidence':
@@ -2217,27 +2383,41 @@ def handle_function_call(
 
 
 def main(deps=None):
-    deps = deps or resolve_shell_deps()
-    _default_script_dir = deps.default_script_dir
-    load_equipment_from_file = deps.load_equipment_from_file
-    load_conversation_record = deps.load_conversation_record
-    list_conversations = deps.list_conversations
-    set_active_conversation = deps.set_active_conversation
-    resolve_conversation_id = deps.resolve_conversation_id
-    has_equipment_in_messages = deps.has_equipment_in_messages
-    format_equipment_for_conversation = deps.format_equipment_for_conversation
-    BASE_SYSTEM_PROMPT = deps.base_system_prompt
-    get_log_dir = deps.get_log_dir
-    ConversationLogger = deps.ConversationLogger
-    chat_call_with_loading = deps.chat_call_with_loading
-    GENERATE_WORKOUT_TOOL = deps.generate_workout_tool
-    handle_function_call_dep = deps.handle_function_call
-    execute_workout_generation = deps.execute_workout_generation
-    save_conversation = deps.save_conversation
-    list_available_progress = deps.list_available_progress
-    delete_progress_file = deps.delete_progress_file
-    OpenAI = deps.OpenAI
-    httpx = deps.httpx
+    from .cli import _default_script_dir, load_equipment_from_file
+    from .constants import BASE_SYSTEM_PROMPT, GENERATE_WORKOUT_TOOL
+    from .conversation_store import (load_conversation_record, list_conversations,
+        set_active_conversation, resolve_conversation_id, save_conversation)
+    from .domain_ops import has_equipment_in_messages, format_equipment_for_conversation
+    from .paths import get_log_dir
+    from .logging_ui import ConversationLogger
+    from .api_client import chat_call_with_loading
+    from .generation_pipeline import execute_workout_generation
+    from .progress import list_available_progress, delete_progress_file
+    from openai import OpenAI
+    import httpx
+
+    handle_function_call_dep = handle_function_call
+    if deps is not None:
+        _default_script_dir = deps.default_script_dir
+        load_equipment_from_file = deps.load_equipment_from_file
+        load_conversation_record = deps.load_conversation_record
+        list_conversations = deps.list_conversations
+        set_active_conversation = deps.set_active_conversation
+        resolve_conversation_id = deps.resolve_conversation_id
+        has_equipment_in_messages = deps.has_equipment_in_messages
+        format_equipment_for_conversation = deps.format_equipment_for_conversation
+        BASE_SYSTEM_PROMPT = deps.base_system_prompt
+        get_log_dir = deps.get_log_dir
+        ConversationLogger = deps.ConversationLogger
+        chat_call_with_loading = deps.chat_call_with_loading
+        GENERATE_WORKOUT_TOOL = deps.generate_workout_tool
+        handle_function_call_dep = deps.handle_function_call
+        execute_workout_generation = deps.execute_workout_generation
+        save_conversation = deps.save_conversation
+        list_available_progress = deps.list_available_progress
+        delete_progress_file = deps.delete_progress_file
+        OpenAI = deps.OpenAI
+        httpx = deps.httpx
 
     parser = argparse.ArgumentParser(description="Workout Assistant & Generator")
     parser.add_argument(
@@ -2251,6 +2431,8 @@ def main(deps=None):
         help="Path to a schema-v2 WorkoutStore or JSON object containing exerciseDefinitions",
     )
     parser.add_argument('--history-backup-file', help='AppBackup containing actual workout history; also supplies the exercise library when no --exercise-library-file is given')
+    parser.add_argument('--incumbent-conversation',
+        help='Explicitly edit/replace the reviewed plan in this saved messages.json; applies to conversations started in this invocation')
     parser.add_argument('--max-repair-rounds', type=int, default=3,
         help='Maximum candidate-changing repair submissions in the current attempt (default: 3)')
     parser.add_argument('--repair-attempt-start-index', type=int, default=None,
@@ -2259,17 +2441,17 @@ def main(deps=None):
     reasoner_group.add_argument(
         "--use-reasoner",
         action="store_true",
-        help="Use reasoner model for plan index/emitting without interactive prompt",
+        help="Retained reasoning-mode compatibility flag; deterministic export makes no model calls",
     )
     reasoner_group.add_argument(
         "--no-reasoner",
         action="store_true",
-        help="Use chat model for plan index/emitting without interactive prompt",
+        help="Retained chat-mode compatibility flag; deterministic export makes no model calls",
     )
     reasoner_group.add_argument(
         "--hybrid-fast",
         action="store_true",
-        help="Use reasoner for plan index and chat model for emitters (faster overall)",
+        help="Retained hybrid-mode compatibility flag; deterministic export makes no model calls",
     )
     calibration_group = parser.add_mutually_exclusive_group()
     calibration_group.add_argument(
@@ -2308,6 +2490,17 @@ def main(deps=None):
         script_dir = _default_script_dir()
     except (NameError, AttributeError):
         script_dir = os.getcwd()
+
+    from .conversation_meta import save_incumbent_reference
+    from .repair_execution import (bind_incumbent_reference, reviewed_incumbent_reference,
+                                   select_incumbent_conversation)
+    selected_incumbent = None
+    if args.incumbent_conversation:
+        try:
+            selected_incumbent = select_incumbent_conversation(args.incumbent_conversation)
+            save_incumbent_reference(selected_incumbent, script_dir)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            parser.error(f'Cannot select incumbent: {error}')
 
     provided_equipment = None
     if args.equipment_file:
@@ -2357,6 +2550,7 @@ def main(deps=None):
         format_equipment_for_conversation,
         exercise_definitions,
     )
+    _bind_planning_intent(messages, selected_incumbent)
     metadata = {}
 
     logger, log_path = _create_logger(ConversationLogger, script_dir, conversation_id)
@@ -2371,6 +2565,13 @@ def main(deps=None):
     }
 
     def persist_current(metadata_update: Optional[Dict[str, Any]] = None) -> None:
+        exported_incumbent = None
+        if (metadata_update or {}).get('last_generation_result', {}).get('success'):
+            _, reviewed = _latest_result(state['messages'], 'audit_workout_plan')
+            if reviewed.get('review'):
+                exported_incumbent = reviewed_incumbent_reference(
+                    os.path.join(script_dir, 'workouts', 'conversation_sessions', state['conversation_id'], 'messages.json'),
+                    reviewed)
         # Normalize a saved copy; placeholder responses for pending calls must not enter live state.
         saved_messages, _ = _ensure_tool_responses(state["messages"])
         has_non_system_turns = any(
@@ -2383,6 +2584,7 @@ def main(deps=None):
         merged_metadata = existing_metadata.copy()
         if metadata_update:
             merged_metadata.update(metadata_update)
+        merged_metadata["planningIntent"] = next((m.get("planningIntent", "fresh") for m in state["messages"] if m.get("role") == "system"), "fresh")
         merged_metadata["log_filename"] = os.path.basename(state["log_path"])
         save_conversation(
             saved_messages,
@@ -2390,6 +2592,8 @@ def main(deps=None):
             script_dir=script_dir,
             metadata=merged_metadata,
         )
+        if exported_incumbent is not None:
+            save_incumbent_reference(exported_incumbent, script_dir)
         if state.get('logger'):
             state['logger'].log(f"Conversation checkpoint saved: {len(saved_messages)} turns.")
 
@@ -2415,6 +2619,7 @@ def main(deps=None):
         next_logger, next_log_path = _create_logger(ConversationLogger, script_dir, next_conversation_id)
         close_logger()
         next_messages, _ = _ensure_tool_responses(next_messages)
+        _bind_planning_intent(next_messages, selected_incumbent)
         state["conversation_id"] = next_conversation_id
         state["messages"] = next_messages
         state['pending_images'] = []
@@ -2897,7 +3102,7 @@ def main(deps=None):
             search_tool = exercise_library_search_tool(provided_equipment)
             tools = [GENERATE_WORKOUT_TOOL]
             if exercise_definitions:
-                tools = [requirements_tool, record_planning_decisions_tool(state['messages'])]
+                tools = [requirements_tool, record_planning_decisions_tool(state['messages'], provided_equipment)]
                 if requirements_approved(state['messages']):
                     tools.extend([GENERATE_WORKOUT_TOOL, search_tool, GET_EXERCISE_CANDIDATES_TOOL,
                                   AUDIT_WORKOUT_PLAN_TOOL, ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL])
@@ -2913,6 +3118,9 @@ def main(deps=None):
             planning_pause = None
             tool_round = 0
             metadata_failures = 0
+            execution_preparation_retry = None
+            execution_preparation_id = None
+            execution_preparation_source = None
             repair_attempt_start_index = (args.repair_attempt_start_index if args.repair_attempt_start_index is not None
                                           else len(state['messages']))
             start_planning_budget()
@@ -2920,6 +3128,21 @@ def main(deps=None):
                 persist_current()
                 api_messages = _messages_for_api(state["messages"], bool(exercise_definitions), training_history, provided_equipment)
                 planning_state = request_planning_state(api_messages)
+                if tool_round == 0 and user_input.strip() in ('/continue', EXACT_GENERATION_CONFIRMATION):
+                    audit_index, current_audit = _latest_result(state['messages'], 'audit_workout_plan')
+                    preview = {'draft_id': current_audit.get('draftId'), 'draft_preview': current_audit.get('preview')}
+                    if (not _structured_requirements_amendment(state['messages'])
+                            and _current_preview_is_valid(planning_state, current_audit, preview,
+                                getattr(training_history, 'fingerprint', None))
+                            and not any(message.get('canonicalDraftPreview') == preview['draft_id']
+                                and message.get('content') == preview['draft_preview']
+                                for message in state['messages'][audit_index + 1:])):
+                        state['messages'].append(_message('assistant', content=preview['draft_preview'],
+                            canonicalDraftPreview=preview['draft_id']))
+                        print_markdown(preview['draft_preview'], logger)
+                        persist_current()
+                        preview_ready = True
+                        break
                 capability_pause = _repair_capability_pause(planning_state, user_input)
                 if capability_pause:
                     planning_pause = capability_pause
@@ -2980,18 +3203,24 @@ def main(deps=None):
                 selection_tools_task = ({**menu_expansion_task, 'missingDraftReferences': omitted_references}
                     if menu_expansion_task else None)
                 request_tools = _candidate_menu_expansion_tools(request_tools, selection_tools_task)
-                if planning_state.get('preparationRepairTask'):
+                selection_options = planning_state.get('preparationSelectionOptions') or {}
+                configuration_clarification = (selection_options.get('admissibleDefinitionIds') == []
+                    and bool(selection_options.get('unresolvedConfigurations')))
+                if planning_state.get('preparationRepairTask') and not configuration_clarification:
                     request_tools = _preparation_repair_tools(planning_state['preparationRepairTask'])
                 needs_week_preparation = (
                     planning_state.get('metadataOnlyRepair')
                     and planning_state.get('metadataRepairTool') == 'prepare_workout_sessions'
                 ) or (construction_task and (construction_task.get('remainingWeeklySessions') or 0) >= 2)
-                week_preparation_tool = (prepare_workout_sessions_tool(messages, provided_equipment)
+                week_preparation_tool = (prepare_workout_sessions_tool(messages, provided_equipment, training_history,
+                    selection_options=planning_state.get('preparationSelectionOptions'))
                     if needs_week_preparation else None)
-                session_preparation_tool = (prepare_workout_session_tool(messages, provided_equipment)
+                session_preparation_tool = (prepare_workout_session_tool(messages, provided_equipment, training_history,
+                    selection_options=planning_state.get('preparationSelectionOptions'))
                     if construction_task else None)
                 empty_repair_domain = (planning_state.get('preparationRepairTask') or {}).get('allowedDefinitionIds') == []
-                if (empty_repair_domain or (needs_week_preparation and week_preparation_tool is None)
+                if ((empty_repair_domain and not configuration_clarification)
+                        or (needs_week_preparation and week_preparation_tool is None)
                         or (construction_task and session_preparation_tool is None)):
                     planning_pause = ('No eligible exercises have the reviewed evidence needed for the approved '
                         'demand/family priorities. Review candidate evidence or explicitly revise that policy before selection.')
@@ -3029,7 +3258,17 @@ def main(deps=None):
                     request_tools = [repair_workout_alternative_tool(alternative_repair_task), ASK_USER_TOOL]
                 if (planning_state.get('requirementsApproved') and not planning_state.get('planningDecisionNeeded')
                         and not planning_state.get('newInstructionPending')):
-                    request_tools = [tool for tool in request_tools if tool.get('function', {}).get('name') != 'record_planning_decisions']
+                    request_tools = copy.deepcopy(request_tools)
+                    for tool in request_tools[:]:
+                        if tool.get('function', {}).get('name') != 'record_planning_decisions':
+                            continue
+                        item_schema = tool['function']['parameters']['properties']['decisions']['items']
+                        typed_fields = [field for field in ('confirmedSetupAccess', 'executionPrescription',
+                            'confirmedCapabilityReference') if field in item_schema['properties']]
+                        if typed_fields:
+                            item_schema['anyOf'] = [{'required': [field]} for field in typed_fields]
+                        else:
+                            request_tools.remove(tool)
                 if (not (repair_task or planning_state.get('editTask')) or (repair_task or {}).get('metadataFields')
                         or ((repair_task or {}).get('allocationNeedsStructuralChange')
                             and not (repair_task or {}).get('structuralAllocationAvailable'))):
@@ -3063,29 +3302,41 @@ def main(deps=None):
                 if active_draft_edit_task and not saved_reaudit:
                     request_tools = [REPAIR_WORKOUT_PLAN_TOOL if tool.get('function', {}).get('name') == 'audit_workout_plan' else tool
                                      for tool in request_tools]
-                    from .planning_tools import coordinated_repair_tool
+                    from .planning_tools import coordinated_repair_tool, numeric_menu_repair
                     full_repair_draft, _ = latest_draft_submission(state['messages'], provided_equipment)
-                    if (menu_expansion_task and menu_expansion_task.get('proofScope') != 'exercise_selection_repair'
+                    numeric_menu_task = numeric_menu_repair(active_draft_edit_task)
+                    if (menu_expansion_task and (menu_expansion_task.get('proofScope') != 'exercise_selection_repair'
+                            or numeric_menu_task)
                             and not saved_reaudit):
-                        from .joint_planning import solve_prescribed_week
                         from .restriction_policy import effective_restrictions
-                        from .repair_execution import current_reviewed_joint_source
+                        from .repair_execution import solve_repair_candidate
+                        from .repair_contract import redistribution_solver_constraints
                         _, approved_record = _latest_result(state['messages'], 'set_workout_requirements')
-                        reviewed_source = current_reviewed_joint_source(None,
-                            requirements_id=approved_record['requirementsId'], equipment=provided_equipment,
-                            messages=state['messages'], training_history=training_history)
+                        repair_contract = (active_draft_edit_task.get('repairContract')
+                            or (planning_state.get('lastAudit') or {}).get('repairContract'))
                         logger.log_print('Computing a feasible menu from cached recipes before model selection...')
-                        joint_menu = solve_prescribed_week(full_repair_draft['workouts'],
+                        joint_menu, _, carry_error, contract_errors = solve_repair_candidate(full_repair_draft['workouts'],
                             approved_record['requirements'], provided_equipment,
                             effective_restrictions(approved_record, provided_equipment),
+                            repair_contract=repair_contract, requirements_id=approved_record['requirementsId'],
                             training_history=training_history, messages=state['messages'],
                             allow_educated_load_guesses=args.allow_educated_load_guesses,
                             preserve_source_selection=False,
-                            reviewed_baseline_workouts=(reviewed_source['submittedDraft']['workouts']
-                                if reviewed_source else None))
+                            redistribution_constraints=redistribution_solver_constraints(repair_contract))
+                        if carry_error or contract_errors:
+                            joint_menu = {**joint_menu, 'feasible': False, 'status': 'repair_contract_conflict',
+                                'errors': contract_errors, 'instruction': str(carry_error) if carry_error else ''}
                         logger.log_response('candidate_menu_solver', json.dumps(joint_menu), truncate_at=0)
                         if joint_menu.get('feasible'):
                             active_draft_edit_task['solverMenu'] = joint_menu
+                        elif numeric_menu_task:
+                            planning_pause = (
+                                'Code could not produce an audited numerical repair from the current recipes '
+                                f"(solver status: {joint_menu.get('status', 'unproven')}). "
+                                'The candidate and requirements are preserved. Exercise selection, missing setup '
+                                'evidence or an explicitly approved tradeoff must change before another attempt; '
+                                'this result does not prove that every possible plan is infeasible.')
+                            break
                     schema_task = {**active_draft_edit_task,
                         'requirementsId': planning_state.get('requirementsId'),
                         'baseDraftId': planning_state.get('currentDraftId'),
@@ -3126,19 +3377,37 @@ def main(deps=None):
                         ASK_USER_TOOL['function']['name'])]
                     request_options.update(require_strict_tool_delivery=True, reasoning_effort=None,
                                            activity='Extracting workout requirements')
-                requirements_retry = (_requirements_review_retry_arguments(state['messages'], user_input)
+                requirements_amendment = (_structured_requirements_amendment(state['messages'])
                     if tool_round == 0 else None)
-                if tool_round == 0 and user_input == EXACT_GENERATION_CONFIRMATION:
+                requirements_retry = requirements_amendment or (_requirements_review_retry_arguments(state['messages'], user_input)
+                    if tool_round == 0 else None)
+                execution_decision = (answered_execution_decision(state['messages'], provided_equipment,
+                    getattr(training_history, 'fingerprint', None)) if tool_round == 0 and exercise_definitions else None)
+                if execution_decision is not None:
+                    logger.log_print('Recording your selected execution counting convention for independent review...')
+                    content, reasoning_content = None, None
+                    tool_calls = [SimpleNamespace(id='execution_choice_' + uuid.uuid4().hex[:12], type='function',
+                        function=SimpleNamespace(name='record_planning_decisions',
+                            arguments=json.dumps(execution_decision, ensure_ascii=False)))]
+                elif requirements_retry is not None:
+                    logger.log_print('Applying explicit structured requirements or retrying the saved source review before draft work.')
+                    content, reasoning_content = None, None
+                    prefix = 'requirements_amendment_' if requirements_amendment else 'requirements_review_'
+                    tool_calls = [SimpleNamespace(id=prefix + uuid.uuid4().hex[:12], type='function',
+                        function=SimpleNamespace(name='set_workout_requirements',
+                            arguments=json.dumps(requirements_retry, ensure_ascii=False)))]
+                elif execution_preparation_retry is not None:
+                    logger.log_print('Resuming the saved movement menu with your reviewed counting convention...')
+                    content, reasoning_content = None, None
+                    tool_calls = [SimpleNamespace(id='execution_prepare_' + uuid.uuid4().hex[:12], type='function',
+                        function=SimpleNamespace(name='prepare_workout_sessions',
+                            arguments=json.dumps(execution_preparation_retry, ensure_ascii=False)))]
+                    execution_preparation_retry = None
+                elif tool_round == 0 and user_input == EXACT_GENERATION_CONFIRMATION:
                     logger.log_print('Checking the confirmed draft for export...')
                     content, reasoning_content = None, None
                     tool_calls = [SimpleNamespace(id='confirm_' + uuid.uuid4().hex[:12], type='function', function=SimpleNamespace(
                         name='generate_workout', arguments='{}'))]
-                elif requirements_retry is not None:
-                    logger.log_print('Retrying only the saved requirements source review; the extraction and choices are unchanged.')
-                    content, reasoning_content = None, None
-                    tool_calls = [SimpleNamespace(id='requirements_review_' + uuid.uuid4().hex[:12], type='function',
-                        function=SimpleNamespace(name='set_workout_requirements',
-                            arguments=json.dumps(requirements_retry, ensure_ascii=False)))]
                 elif conflict_diagnosis:
                     logger.log_print('Refreshing the saved alternative assessment...' if conflict_diagnosis.get('staleAlternativeAssessment')
                                      else 'Diagnosing the saved menu conflict and validating negotiable alternatives...')
@@ -3165,7 +3434,8 @@ def main(deps=None):
                         name='audit_workout_plan', arguments=json.dumps({key: value for key, value in saved_reaudit.items()
                             if key != '_internalAuditAction'})))]
                 elif (construction_task and construction_task.get('stage') == 'draft_sessions'
-                      and not construction_task.get('reviewAllocationBeforeDrafting')):
+                      and (not construction_task.get('reviewAllocationBeforeDrafting')
+                           or (execution_preparation_id and (planning_state.get('parallelPreparation') or {}).get('preparationId') == execution_preparation_id))):
                     logger.log_print('Drafting prepared sessions concurrently...')
                     content, reasoning_content = None, None
                     tool_calls = [SimpleNamespace(id='sessions_' + uuid.uuid4().hex[:12], type='function', function=SimpleNamespace(
@@ -3174,8 +3444,14 @@ def main(deps=None):
                     planning_pause = 'Required session evidence could not be retrieved. Completed lookups are saved; use /continue to retry the missing records.'
                     break
                 else:
+                    if configuration_clarification:
+                        request_tools = [ASK_USER_TOOL]
+                        request_options.update(activity='Clarifying exercise configuration',
+                            tool_choice={'type': 'function', 'function': {'name': ASK_USER_TOOL['function']['name']}})
                     model_messages = (focus_alternative_repair_request(api_messages, planning_state)
                                       if alternative_repair_task else api_messages)
+                    if exercise_definitions:
+                        model_messages = compact_planner_request(model_messages)
                     if exercise_definitions:
                         logger.log(f"Planner context: {len(state['messages'])} saved messages -> {len(api_messages)} request messages; "
                                    f"{len(json.dumps(model_messages, ensure_ascii=False))} serialized model characters")
@@ -3415,27 +3691,33 @@ def main(deps=None):
                                 raise PlanningInputError('invalid_tool_json',
                                     f'Tool arguments are invalid JSON: {argument_error.msg} at character {argument_error.pos}.', '/',
                                     'Return one complete valid JSON object matching the tool schema. Preserve the intended fields; no arguments were executed.')
+                            read_only_revalidation = (function_name == 'audit_workout_plan'
+                                and _is_saved_draft_revalidation(function_args, planning_state))
+                            if read_only_revalidation:
+                                assistant_message.setdefault('_internalAuditActions', {})[tool_call.id] = 'saved_candidate_revalidation'
                             requirements_review_retry_call = (function_name == 'set_workout_requirements'
                                 and tool_call.id.startswith('requirements_review_'))
                             if function_name == 'set_workout_requirements' and not requirements_review_retry_call:
                                 validate(function_args, workout_requirements_tool(
                                     provided_equipment or {}, state['messages'])['function']['parameters'])
-                            if construction_task and function_name == 'audit_workout_plan' and not saved_reaudit and not parallel_submission:
+                            if construction_task and function_name == 'audit_workout_plan' and not saved_reaudit and not parallel_submission and not read_only_revalidation:
                                 from .planning_tools import validate_construction_submission
                                 validate_construction_submission(function_args, construction_task)
                             if (function_name == 'record_planning_decisions' and planning_state.get('requirementsApproved')
-                                    and not planning_state.get('planningDecisionNeeded') and not planning_state.get('newInstructionPending')):
+                                    and not planning_state.get('planningDecisionNeeded') and not planning_state.get('newInstructionPending')
+                                    and not any(item.get('confirmedSetupAccess') or item.get('executionPrescription')
+                                        or item.get('confirmedCapabilityReference') for item in function_args.get('decisions', []))):
                                 raise PlanningInputError('planning_decision_not_needed', 'No pending user authorization or requirement interpretation needs recording.', '/',
                                     'Apply ordinary exercise substitutions and prescriptions through a draft patch and audit. Ask about genuine new ambiguity instead of inventing a requirement decision.')
                             active_draft_edit_task, sparse_repair_edits = _active_draft_edit_route(planning_state, repair_task)
-                            if active_draft_edit_task and function_name == 'audit_workout_plan' and (not saved_reaudit or 'edits' in saved_reaudit):
+                            if active_draft_edit_task and function_name == 'audit_workout_plan' and not read_only_revalidation and (not saved_reaudit or 'edits' in saved_reaudit):
                                 if not isinstance(function_args, dict) or not ('edits' in function_args or (
                                         uses_menu_selection(active_draft_edit_task)
                                         and ('sessionBlocks' in function_args or 'useSolverMenu' in function_args))):
                                     raise PlanningInputError('repair_edit_contract_required',
                                         'A saved-draft edit requires the current typed edit contract.', '/edits',
                                         'Submit stable WORKOUT_n and EXERCISE_n edits. For metadata-only repairs, change only explicitly permitted metadata fields. Do not send raw JSON Patch.')
-                            if active_draft_edit_task and function_name == 'audit_workout_plan' and (not saved_reaudit or 'edits' in saved_reaudit):
+                            if active_draft_edit_task and function_name == 'audit_workout_plan' and not read_only_revalidation and (not saved_reaudit or 'edits' in saved_reaudit):
                                 current_repair_draft, _ = latest_draft_submission(state['messages'], provided_equipment)
                                 if isinstance(function_args, dict) and ('edits' in function_args or 'sessionBlocks' in function_args or 'useSolverMenu' in function_args):
                                     coordinated_edit_submission = copy.deepcopy(function_args)
@@ -3466,7 +3748,7 @@ def main(deps=None):
                                     return_context=True, submission_context=coordinated_edit_submission,
                                     history_fingerprint=(training_history.fingerprint if training_history else None))
                             discovery_failure = (construction_tool_failure(function_name, function_args, planning_state)
-                                                 or discovery_tool_failure(function_name, planning_state)) if not saved_reaudit else None
+                                                 or discovery_tool_failure(function_name, planning_state)) if not saved_reaudit and not read_only_revalidation else None
                             if discovery_failure:
                                 function_result = {'result': json.dumps(discovery_failure), 'should_exit': False, 'generation_result': None}
                             elif function_name == 'draft_workout_sessions':
@@ -3484,14 +3766,12 @@ def main(deps=None):
                             elif tool_call.id in grouped_searches:
                                 function_result = {"result": json.dumps(grouped_searches[tool_call.id]), "should_exit": False, "generation_result": None}
                             elif requirements_review_retry_call:
-                                _, saved_candidate = _latest_result(state['messages'], 'set_workout_requirements')
-                                if not saved_candidate.get('requirementsId'):
-                                    raise PlanningInputError('requirements_review_base_missing',
-                                        'The saved source-review candidate is unavailable.', '/',
-                                        'Restore the failed requirements result before retrying its review.')
+                                saved_candidate = _recompile_requirements_review_candidate(
+                                    state['messages'], provided_equipment, client,
+                                    ((lambda stage: loading.update(stage)) if loading else None))
                                 payload = review_requirements(client, saved_candidate, state['messages'], logger,
                                     progress=((lambda stage: loading.update(stage)) if loading else None),
-                                    planning_decisions=function_args.get('planningDecisions'))
+                                    planning_decisions=function_args.get('planningDecisions'), equipment=provided_equipment)
                                 if not payload['passed'] and payload.get('requirementsReviewQuestion'):
                                     payload['userQuestion'] = payload['requirementsReviewQuestion']
                                     function_result = {'result': json.dumps(payload, ensure_ascii=False),
@@ -3601,7 +3881,9 @@ def main(deps=None):
                                     failure['currentDraft'] = copy.deepcopy(coordinated_base_draft)
                             if latest_tool_checkpoint is not None:
                                 failure = _merge_completed_tool_checkpoint(failure, latest_tool_checkpoint)
+                            _solver_menu_decline_question(failure)
                             function_result = {
+                                "waiting_for_user": bool(failure.get('userQuestion')),
                                 "result": json.dumps(failure, ensure_ascii=False),
                                 "should_exit": False,
                                 "generation_result": None,
@@ -3699,6 +3981,20 @@ def main(deps=None):
                         except (ValueError, TypeError):
                             feedback = {}
                         if isinstance(feedback, dict):
+                            if (function_name == 'record_planning_decisions' and tool_call.id.startswith('execution_choice_')
+                                    and feedback.get('passed') is True
+                                    and feedback.get('decisionReview', {}).get('passed') is True):
+                                execution_preparation_retry = execution_preparation_arguments(state['messages'],
+                                    provided_equipment, getattr(training_history, 'fingerprint', None))
+                                if execution_preparation_retry is not None:
+                                    _, execution_preparation_source = _latest_result(state['messages'], 'prepare_workout_sessions')
+                            elif (function_name == 'prepare_workout_sessions' and tool_call.id.startswith('execution_prepare_')
+                                    and feedback.get('preparationId') and not feedback.get('errors')
+                                    and execution_preparation_source
+                                    and all(feedback.get(key) == execution_preparation_source.get(key) for key in (
+                                        'recipeSessions', 'sourceWorkingSetBudget', 'requirementsId',
+                                        'baseDraftId', 'libraryFingerprint', 'historyFingerprint'))):
+                                execution_preparation_id = feedback['preparationId']
                             if (function_name in ('record_planning_decisions', 'set_workout_requirements', 'audit_workout_plan')
                                     and feedback.get('passed') is False) or function_result.get('requirements_pending'):
                                 batch_blocked = f'{function_name} must be resolved before dependent work can run.'
@@ -3757,7 +4053,7 @@ def main(deps=None):
                         if function_result.get("continue_planning"):
                             requires_plan_revision = True
                             tools = [search_tool, GET_EXERCISE_CANDIDATES_TOOL, requirements_tool,
-                                     record_planning_decisions_tool(state['messages']), AUDIT_WORKOUT_PLAN_TOOL, ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL] if exercise_definitions else []
+                                     record_planning_decisions_tool(state['messages'], provided_equipment), AUDIT_WORKOUT_PLAN_TOOL, ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL] if exercise_definitions else []
                             if training_history:
                                 tools.append(GET_TRAINING_EVIDENCE_TOOL)
 
@@ -3773,7 +4069,7 @@ def main(deps=None):
                             persist_current()
                             preview_ready = True
                         if function_result.get('requirements_pending'):
-                            tools = [requirements_tool, record_planning_decisions_tool(state['messages'])]
+                            tools = [requirements_tool, record_planning_decisions_tool(state['messages'], provided_equipment)]
                             preview_ready = True
                         if function_name == "audit_workout_plan":
                             pending_preview = function_result if function_result.get("draft_preview") else None
@@ -3799,7 +4095,7 @@ def main(deps=None):
                             if generation_result.get("requires_plan_revision"):
                                 requires_plan_revision = True
                                 tools = [search_tool, GET_EXERCISE_CANDIDATES_TOOL, requirements_tool,
-                                         record_planning_decisions_tool(state['messages']), AUDIT_WORKOUT_PLAN_TOOL, ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL] if exercise_definitions else []
+                                         record_planning_decisions_tool(state['messages'], provided_equipment), AUDIT_WORKOUT_PLAN_TOOL, ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL] if exercise_definitions else []
                                 if training_history:
                                     tools.append(GET_TRAINING_EVIDENCE_TOOL)
                             current_record = load_conversation_record(state["conversation_id"], script_dir) or {}
@@ -3822,18 +4118,8 @@ def main(deps=None):
                     audit_index, current_audit = _latest_result(state['messages'], 'audit_workout_plan')
                     preview_id = deferred_preview.get('draft_id')
                     preview_text = deferred_preview.get('draft_preview')
-                    current_preview_is_valid = (
-                        not planning_state.get('savedDraftReaudit')
-                        and not planning_state.get('decisionReaudit')
-                        and not planning_state.get('evidenceReaudit')
-                        and not planning_state.get('staleHistoryBoundReceipts')
-                        and not planning_state.get('draftRequiresReaudit')
-                        and current_audit.get('passed') is True
-                        and current_audit.get('draftId') == preview_id
-                        and current_audit.get('preview') == preview_text
-                        and current_audit.get('requirementsId') == planning_state.get('requirementsId')
-                        and (planning_state.get('currentDraftId') is None
-                            or current_audit.get('currentDraftId') == planning_state.get('currentDraftId')))
+                    current_preview_is_valid = _current_preview_is_valid(planning_state, current_audit,
+                        deferred_preview, getattr(training_history, 'fingerprint', None))
                     already_displayed = any(message.get('canonicalDraftPreview') == preview_id
                         and message.get('content') == preview_text
                         for message in state['messages'][audit_index + 1:])

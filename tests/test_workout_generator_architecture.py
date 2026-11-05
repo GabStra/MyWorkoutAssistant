@@ -222,7 +222,6 @@ def test_nested_api_calls_share_call_cap_without_elapsed_deadline():
     try:
         api_metrics.start_planning_budget(max_calls=1)
         api_metrics.begin_api_request('test')
-        assert api_metrics.remaining_request_timeout(180) == 180
         with pytest.raises(RuntimeError, match='call budget'):
             api_metrics.begin_api_request('test')
     finally:

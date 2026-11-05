@@ -87,6 +87,17 @@ RECOVERY_ADJUSTMENT_GUIDANCE = (
 )
 
 CODE_OWNED_BEHAVIORS = {
+    'requirements_confirmation': (
+        'Requirements are source-reviewed before their preview and confirmation gate. All extracted values, '
+        'including exerciseExposure proposals, are displayed for approval before planning applies them. '
+        'Pending confirmation during source review is the enforced workflow state, not a missing requirement '
+        'or permission to apply an unapproved proposal.'),
+    'fixed_bodyweight_capability': (
+        'Exercise admission and the final audit check fixed unweighted configurations with no supported '
+        'difficulty reduction. Comparable capability evidence or an explicit factual confirmation bound to '
+        'that library configuration is required. Selection or accepting uncertainty does not supply that '
+        'confirmation. Missing exact history remains unverified; related history is not an interchangeable '
+        'working-load prescription. App calibration does not bypass the fixed-unweighted capability gate.'),
     'hypothetical_alternative_evaluation': (
         'Python binds the exact source-authorized numerical proposal for candidate evaluation. Listed changes '
         'are hypothetical exceptions to only those clauses, including older decisions. All unlisted requirements '
@@ -99,7 +110,12 @@ CODE_OWNED_BEHAVIORS = {
         'The typed prescription owns these criteria.'),
     'native_load_calibration': (
         'The app-native requiresLoadCalibration flag is code-owned and derived from exercise type, equipment, and '
-        'available load history. It is not a model-editable per-exercise calibration protocol.'),
+        'available load history. It is not a model-editable per-exercise calibration protocol. '
+        'For enabled prescriptions, unknown personal load response remains an advisory uncertainty, not an '
+        'unsupported capability. A blocking capacity objection contradicted by enabled calibration is withdrawn '
+        'as a review error, including carried objections; it is not a factual capability confirmation or an accepted tradeoff. '
+        'The ledger compiles a typed review-error resolution without requiring a duplicate finding. '
+        'This does not establish personal capacity or waive the separate fixed-unweighted admission gate.'),
     'app_native_rep_load_progression': (
         'finalArtifact.progressionMode is authoritative: DOUBLE_PROGRESSION and AUTO_REGULATION use app double progression; AUTO_REGULATION adds per-set RIR except the last work set; OFF has none. Do not require a generator method or prose.'),
     'execution_instructions': (
