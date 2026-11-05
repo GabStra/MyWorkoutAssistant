@@ -89,6 +89,9 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         
         val birthDateYear = jsonObject.get("birthDateYear")?.asInt ?: 0
         val weightKg = jsonObject.get("weightKg")?.asDouble ?: 0.0
+        val heightCm = jsonObject.get("heightCm")?.let {
+            if (it.isJsonNull) null else it.asInt
+        }
         val progressionPercentageAmount = jsonObject.get("progressionPercentageAmount")?.asDouble ?: 0.0
         val deloadConfig = jsonObject.get("deloadConfig")?.let { element ->
             if (element.isJsonNull) {
@@ -121,6 +124,7 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             if (it.isJsonNull) null else it.asInt
         }
         val sex = jsonObject.get("sex")?.takeUnless { it.isJsonNull }?.asBoolean
+        val gender = jsonObject.get("gender")?.takeUnless { it.isJsonNull }?.asInt
         val estimatedVo2MaxMlKgMin = jsonObject.get("estimatedVo2MaxMlKgMin")?.takeUnless { it.isJsonNull }?.asDouble
         val vo2MaxSource = jsonObject.get("vo2MaxSource")?.takeUnless { it.isJsonNull }?.asString
         val vo2MaxEstimatedAtEpochDay = jsonObject.get("vo2MaxEstimatedAtEpochDay")?.takeUnless { it.isJsonNull }?.asLong
@@ -136,11 +140,13 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             externalHeartRateConfigs = migratedExternalConfigs,
             birthDateYear = birthDateYear,
             weightKg = weightKg,
+            heightCm = heightCm,
             progressionPercentageAmount = progressionPercentageAmount,
             deloadConfig = deloadConfig,
             measuredMaxHeartRate = measuredMaxHeartRate,
             restingHeartRate = restingHeartRate,
             sex = sex,
+            gender = gender,
             estimatedVo2MaxMlKgMin = estimatedVo2MaxMlKgMin,
             vo2MaxSource = vo2MaxSource,
             vo2MaxEstimatedAtEpochDay = vo2MaxEstimatedAtEpochDay,

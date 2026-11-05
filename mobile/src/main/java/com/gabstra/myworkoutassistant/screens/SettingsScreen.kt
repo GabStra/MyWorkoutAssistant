@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.screens
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +49,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.HeightRecord
+import androidx.health.connect.client.records.WeightRecord
 import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
@@ -60,6 +65,7 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
 import com.gabstra.myworkoutassistant.getHistoricalVo2MaxFromHealthConnect
+import com.gabstra.myworkoutassistant.getLatestBodyMeasurementsFromHealthConnect
 import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
 import com.gabstra.myworkoutassistant.insights.RemoteOpenAiConfig
 import com.gabstra.myworkoutassistant.insights.RemoteModelCatalog
@@ -116,6 +122,7 @@ fun SettingsScreen(
     val whoopDisplayNameState = remember { mutableStateOf(whoopConfig?.displayName ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear.toString()) }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
+    val heightState = remember { mutableStateOf(workoutStore.heightCm?.toString() ?: "") }
     val distanceUnitState = remember { mutableStateOf(workoutStore.distanceUnit) }
     val measuredMaxHeartRateState = remember { mutableStateOf(workoutStore.measuredMaxHeartRate?.toString() ?: "") }
     val restingHeartRateState = remember {
@@ -178,8 +185,18 @@ fun SettingsScreen(
 
     var isLoadingRestingHeartRate by remember { mutableStateOf(false) }
     var isLoadingVo2Max by remember { mutableStateOf(false) }
-    // true = female, false = male, null = not set (calorie-engine semantics)
-    val sexState = remember { mutableStateOf(workoutStore.sex) }
+    var isLoadingBodyMeasurements by remember { mutableStateOf(false) }
+    // TrackerUserProfile convention: 0 = male, 1 = female, null = unset (watch reads gender by name).
+    // Falls back to the legacy sex flag so existing users keep their selection.
+    val genderState = remember {
+        mutableStateOf(
+            workoutStore.gender ?: when (workoutStore.sex) {
+                true -> 1
+                false -> 0
+                null -> null
+            }
+        )
+    }
     val vo2MaxState = remember {
         mutableStateOf(workoutStore.estimatedVo2MaxMlKgMin?.toString() ?: "")
     }
@@ -213,6 +230,87 @@ fun SettingsScreen(
             if (remaining > 0L) {
                 delay(remaining)
             }
+        }
+    }
+
+    // Fills the height/weight editors from the latest Health Connect measurements; the values
+    // persist (and sync to the watch) through the normal Save flow. Only fields with an actual
+    // record are touched, so a missing record never clears an existing value.
+    suspend fun populateBodyMeasurementsFromHealthConnect() {
+        val startedAt = System.currentTimeMillis()
+        try {
+            if (HealthConnectClient.getSdkStatus(context) != HealthConnectClient.SDK_AVAILABLE) {
+                Toast.makeText(
+                    context,
+                    "Health Connect is not available on this device.",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+            val grantedPermissions = try {
+                healthConnectClient.permissionController.getGrantedPermissions()
+            } catch (_: Exception) {
+                emptySet()
+            }
+            val canReadHeight = grantedPermissions.contains(HealthPermission.getReadPermission(HeightRecord::class))
+            val canReadWeight = grantedPermissions.contains(HealthPermission.getReadPermission(WeightRecord::class))
+            if (!canReadHeight && !canReadWeight) {
+                Toast.makeText(
+                    context,
+                    "Height and weight permissions were not granted.",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+
+            val measurements = getLatestBodyMeasurementsFromHealthConnect(healthConnectClient)
+            var filledAny = false
+            measurements.heightCm?.let {
+                heightState.value = it.toString()
+                filledAny = true
+            }
+            measurements.weightKg?.let {
+                weightState.value = it.toString()
+                filledAny = true
+            }
+            Toast.makeText(
+                context,
+                if (filledAny) {
+                    "Height and weight loaded from Health Connect. Press Save to keep them."
+                } else {
+                    "No height or weight records were found in Health Connect."
+                },
+                Toast.LENGTH_SHORT
+            ).show()
+        } catch (_: Exception) {
+            Toast.makeText(
+                context,
+                "Couldn't read measurements from Health Connect.",
+                Toast.LENGTH_SHORT
+            ).show()
+        } finally {
+            val elapsed = System.currentTimeMillis() - startedAt
+            val remaining = 1000L - elapsed
+            if (remaining > 0L) {
+                delay(remaining)
+            }
+            isLoadingBodyMeasurements = false
+        }
+    }
+
+    val bodyMeasurementPermissions = remember {
+        setOf(
+            HealthPermission.getReadPermission(HeightRecord::class),
+            HealthPermission.getReadPermission(WeightRecord::class)
+        )
+    }
+
+    val bodyMeasurementPermissionLauncher = rememberLauncherForActivityResult(
+        PermissionController.createRequestPermissionResultContract()
+    ) {
+        coroutineScope.launch {
+            isLoadingBodyMeasurements = true
+            populateBodyMeasurementsFromHealthConnect()
         }
     }
     
@@ -333,8 +431,22 @@ fun SettingsScreen(
                             .padding(vertical = Spacing.xs)
                     )
 
+                    OutlinedTextField(
+                        value = heightState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                heightState.value = input
+                            }
+                        },
+                        label = { Text("Height (cm, optional)") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Spacing.xs)
+                    )
+
                     ContentSubtitle(
-                        text = "Sex (used for calorie estimates; leave unset for an averaged estimate).",
+                        text = "Gender (used for calorie estimates; Unspecified for an averaged estimate).",
                         modifier = Modifier.padding(vertical = Spacing.xs)
                     )
                     Row(
@@ -344,20 +456,62 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
                     ) {
                         AppPrimaryOutlinedButton(
-                            text = if (sexState.value == true) "Female ✓" else "Female",
+                            text = if (genderState.value == 0) "Male ✓" else "Male",
                             onClick = {
-                                sexState.value = if (sexState.value == true) null else true
+                                genderState.value = if (genderState.value == 0) null else 0
                             },
                             modifier = Modifier.weight(1f)
                         )
                         AppPrimaryOutlinedButton(
-                            text = if (sexState.value == false) "Male ✓" else "Male",
+                            text = if (genderState.value == 1) "Female ✓" else "Female",
                             onClick = {
-                                sexState.value = if (sexState.value == false) null else false
+                                genderState.value = if (genderState.value == 1) null else 1
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        AppPrimaryOutlinedButton(
+                            text = if (genderState.value == null) "Unspecified ✓" else "Unspecified",
+                            onClick = {
+                                genderState.value = null
                             },
                             modifier = Modifier.weight(1f)
                         )
                     }
+
+                    AppPrimaryOutlinedButton(
+                        text = if (isLoadingBodyMeasurements) {
+                            "Loading from Health Connect..."
+                        } else {
+                            "Populate from Health Connect"
+                        },
+                        onClick = {
+                            if (isLoadingBodyMeasurements) {
+                                return@AppPrimaryOutlinedButton
+                            }
+                            coroutineScope.launch {
+                                val missingPermissions = try {
+                                    bodyMeasurementPermissions -
+                                        healthConnectClient.permissionController.getGrantedPermissions()
+                                } catch (_: Exception) {
+                                    bodyMeasurementPermissions
+                                }
+                                if (missingPermissions.isEmpty()) {
+                                    isLoadingBodyMeasurements = true
+                                    populateBodyMeasurementsFromHealthConnect()
+                                } else {
+                                    bodyMeasurementPermissionLauncher.launch(missingPermissions)
+                                }
+                            }
+                        },
+                        enabled = !isLoadingBodyMeasurements,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Spacing.xs)
+                    )
+                    ContentSubtitle(
+                        text = "Fills height and weight from your latest Health Connect measurements; press Save to keep them. Gender is not stored in Health Connect and must be set manually.",
+                        modifier = Modifier.padding(vertical = Spacing.xs)
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
@@ -936,8 +1090,16 @@ fun SettingsScreen(
                         }
 
                         val weight = weightState.value.toDoubleOrNull()
-                        if (weight == null || weight <= 0) {
-                            Toast.makeText(context, "Enter a valid body weight.", Toast.LENGTH_SHORT).show()
+                        if (weight == null || weight !in 20.0..400.0) {
+                            Toast.makeText(context, "Enter a body weight between 20 and 400 kg.", Toast.LENGTH_SHORT).show()
+                            return@AppPrimaryButton
+                        }
+
+                        val heightCm = heightState.value.toIntOrNull()
+                        if (heightState.value.isNotBlank() &&
+                            (heightCm == null || heightCm !in 80..250)
+                        ) {
+                            Toast.makeText(context, "Enter a height between 80 and 250 cm.", Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
@@ -1035,6 +1197,7 @@ fun SettingsScreen(
                             externalHeartRateConfigs = externalHeartRateConfigs,
                             birthDateYear = birthDateYear,
                             weightKg = weight,
+                            heightCm = heightCm,
                             deloadConfig = DeloadConfig(
                                 failedSessionsThreshold = deloadFailedSessionsThreshold,
                                 completedSessionsInterval = deloadCompletedSessionsInterval,
@@ -1044,7 +1207,10 @@ fun SettingsScreen(
                             ),
                             measuredMaxHeartRate = measuredMaxHeartRate,
                             restingHeartRate = restingHeartRate,
-                            sex = sexState.value,
+                            gender = genderState.value,
+                            // Keep the legacy calorie-engine flag in step with gender
+                            // (true = female, false = male, null = unset).
+                            sex = genderState.value?.let { it == 1 },
                             estimatedVo2MaxMlKgMin = vo2Max,
                             vo2MaxSource = newVo2MaxSource,
                             vo2MaxEstimatedAtEpochDay = newVo2MaxEstimatedAtEpochDay,

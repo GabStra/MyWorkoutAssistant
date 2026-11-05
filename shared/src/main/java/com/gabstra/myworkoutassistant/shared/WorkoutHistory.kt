@@ -19,6 +19,8 @@ data class WorkoutHistory(
     val startTime: LocalDateTime,
     val duration: Int,
     val heartBeatRecords: List<Int>,
+    /** Beat-to-beat intervals per tick, index-aligned with [heartBeatRecords]; empty on pre-IBI records. */
+    val ibiRecords: List<List<Int>> = emptyList(),
     val isDone : Boolean,
     val hasBeenSentToHealth: Boolean,
     val globalId: UUID,

@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,9 +46,12 @@ internal fun PermissionRequestDialog(
             contentAlignment = Alignment.Center,
         ) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
                 Text(
@@ -56,13 +61,13 @@ internal fun PermissionRequestDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
+                // Natural button size (like other dialogs) — fillMaxWidth clips
+                // at the round bezel edges.
                 WearPrimaryButton(
-                    modifier = Modifier.fillMaxWidth(),
                     text = continueLabel,
                     onClick = onContinue,
                 )
                 ButtonWithText(
-                    modifier = Modifier.fillMaxWidth(),
                     text = "Not now",
                     onClick = onDismiss,
                 )
@@ -74,13 +79,31 @@ internal fun PermissionRequestDialog(
 internal fun missingWorkoutPermissions(
     context: Context,
     heartRateSource: HeartRateSource,
+    useSamsungHeartRate: Boolean = false,
 ): List<String> = buildList {
-    when (heartRateSource) {
-        HeartRateSource.WATCH_SENSOR -> add(
+    when {
+        // Samsung Health raw trackers need only BODY_SENSORS + ACTIVITY_RECOGNITION
+        // on every supported API level (developer-mode HealthPlatform).
+        useSamsungHeartRate && heartRateSource == HeartRateSource.WATCH_SENSOR -> {
+            if (Build.VERSION.SDK_INT >= 36) {
+                // The service switches to its granular permission map when the device runs
+                // API 36+: raw PPG/ECG/BIA/EDA then need Samsung's (dangerous-level)
+                // READ_ADDITIONAL_HEALTH_DATA, HR/SpO2 need Health Connect grants. Harmless
+                // to declare below 36; we only request it where the map actually applies.
+                add("com.samsung.android.hardware.sensormanager.permission.READ_ADDITIONAL_HEALTH_DATA")
+                add("android.permission.health.READ_HEART_RATE")
+                add("android.permission.health.READ_OXYGEN_SATURATION")
+                add(Manifest.permission.ACTIVITY_RECOGNITION)
+            } else {
+                add(Manifest.permission.BODY_SENSORS)
+                add(Manifest.permission.ACTIVITY_RECOGNITION)
+            }
+        }
+        heartRateSource == HeartRateSource.WATCH_SENSOR -> add(
             if (Build.VERSION.SDK_INT >= 36) "android.permission.health.READ_HEART_RATE"
             else Manifest.permission.BODY_SENSORS,
         )
-        HeartRateSource.POLAR_BLE, HeartRateSource.WHOOP_BLE -> {
+        else -> {
             add(Manifest.permission.BLUETOOTH_SCAN)
             add(Manifest.permission.BLUETOOTH_CONNECT)
         }
@@ -95,7 +118,8 @@ internal fun missingWorkoutPermissions(
 internal fun workoutPermissionMessage(permissions: List<String>): String = buildList {
     if (permissions.any {
             it == Manifest.permission.BODY_SENSORS ||
-                it == "android.permission.health.READ_HEART_RATE"
+                it == "android.permission.health.READ_HEART_RATE" ||
+                it == "com.samsung.android.hardware.sensormanager.permission.READ_ADDITIONAL_HEALTH_DATA"
         }
     ) add("Heart-rate access lets the workout record your pulse.")
     if (permissions.any {

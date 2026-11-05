@@ -134,6 +134,7 @@ class WorkoutPersistenceCoordinatorTest {
             currentWorkoutHistory = null,
             endReason = com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason.COMPLETED,
             heartBeatRecords = emptyList(),
+            ibiRecords = emptyList(),
             progressionByExerciseId = emptyMap(),
             comparisonBaselineByExerciseId = emptyMap()
         ) ?: error("Expected snapshot")
@@ -201,6 +202,7 @@ class WorkoutPersistenceCoordinatorTest {
             currentWorkoutHistory = existingHistory,
             endReason = WorkoutSessionEndReason.COMPLETED,
             heartBeatRecords = listOf(100, 105, 110),
+            ibiRecords = emptyList(),
             progressionByExerciseId = emptyMap(),
             comparisonBaselineByExerciseId = emptyMap()
         ) ?: error("Expected snapshot")

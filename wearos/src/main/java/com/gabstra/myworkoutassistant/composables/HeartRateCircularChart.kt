@@ -828,7 +828,10 @@ fun HeartRateStandard(
 
     LaunchedEffect(Unit) {
         while (true) {
-            appViewModel.registerHeartBeat(hrViewModel.heartRateBpm.value ?: 0)
+            appViewModel.registerHeartBeat(
+                hrViewModel.heartRateBpm.value ?: 0,
+                hrViewModel.heartRateIbi.value,
+            )
             heartRateChangeViewModel.registerHeartRate(hrViewModel.heartRateBpm.value ?: 0)
             delay(1000)
         }

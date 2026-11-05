@@ -41,10 +41,12 @@ import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.HeightRecord
 import androidx.health.connect.client.records.RestingHeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.Vo2MaxRecord
+import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
@@ -694,6 +696,82 @@ suspend fun getHistoricalRestingHeartRateFromHealthConnect(
     val selectedEstimates = if (inliers.isNotEmpty()) inliers else estimates
 
     return weightedMedianValue(selectedEstimates).roundToInt().coerceIn(30, 120)
+}
+
+/** Latest height (cm) and weight (kg) readable from Health Connect; each is null when absent. */
+data class HealthConnectBodyMeasurements(
+    val heightCm: Int?,
+    val weightKg: Double?
+)
+
+/**
+ * Most recent HeightRecord and WeightRecord from Health Connect, or null members when the
+ * matching permission is missing or no in-range record exists. Requires the
+ * READ_HEIGHT / READ_WEIGHT permissions; gender has no Health Connect record.
+ */
+suspend fun getLatestBodyMeasurementsFromHealthConnect(
+    healthConnectClient: HealthConnectClient
+): HealthConnectBodyMeasurements {
+    val heightPermission = HealthPermission.getReadPermission(HeightRecord::class)
+    val weightPermission = HealthPermission.getReadPermission(WeightRecord::class)
+    val grantedPermissions = try {
+        healthConnectClient.permissionController.getGrantedPermissions()
+    } catch (_: Exception) {
+        emptySet()
+    }
+    val canReadHeight = grantedPermissions.contains(heightPermission)
+    val canReadWeight = grantedPermissions.contains(weightPermission)
+    if (!canReadHeight && !canReadWeight) {
+        return HealthConnectBodyMeasurements(heightCm = null, weightKg = null)
+    }
+
+    var heightCm: Int? = null
+    if (canReadHeight) {
+        val response = try {
+            healthConnectClient.readRecords(
+                ReadRecordsRequest(
+                    recordType = HeightRecord::class,
+                    timeRangeFilter = TimeRangeFilter.between(
+                        Instant.now().minus(Duration.ofDays(365)),
+                        Instant.now()
+                    )
+                )
+            )
+        } catch (exception: Exception) {
+            Log.e("WorkoutCoreUtils", "Failed reading height from Health Connect", exception)
+            null
+        }
+        val latest = response?.records?.maxByOrNull { it.time }
+        val meters = latest?.height?.inMeters
+        if (meters != null && meters in 0.5..2.5) {
+            heightCm = (meters * 100).roundToInt()
+        }
+    }
+
+    var weightKg: Double? = null
+    if (canReadWeight) {
+        val response = try {
+            healthConnectClient.readRecords(
+                ReadRecordsRequest(
+                    recordType = WeightRecord::class,
+                    timeRangeFilter = TimeRangeFilter.between(
+                        Instant.now().minus(Duration.ofDays(365)),
+                        Instant.now()
+                    )
+                )
+            )
+        } catch (exception: Exception) {
+            Log.e("WorkoutCoreUtils", "Failed reading weight from Health Connect", exception)
+            null
+        }
+        val latest = response?.records?.maxByOrNull { it.time }
+        val kilograms = latest?.weight?.inKilograms
+        if (kilograms != null && kilograms in 20.0..400.0) {
+            weightKg = (kilograms * 10).roundToInt() / 10.0
+        }
+    }
+
+    return HealthConnectBodyMeasurements(heightCm = heightCm, weightKg = weightKg)
 }
 
 private data class WeightedEstimate(

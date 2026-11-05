@@ -268,11 +268,57 @@ class WorkoutStoreAdapterTest {
         )
 
         assertTrue(workoutStore.weeklyProgressOverrides.isEmpty())
+        assertNull(workoutStore.heightCm)
+        assertNull(workoutStore.gender)
         assertEquals(2, workoutStore.deloadConfig.failedSessionsThreshold)
         assertEquals(null, workoutStore.deloadConfig.completedSessionsInterval)
         assertEquals(0.9, workoutStore.deloadConfig.weightFactor, 0.0)
         assertEquals(2, workoutStore.deloadConfig.repsDrop)
         assertEquals(null, workoutStore.deloadConfig.cutSetsTo)
+    }
+
+    @Test
+    fun heightAndGender_roundTripThroughWorkoutStoreJson() {
+        val original = WorkoutStore(
+            workouts = emptyList(),
+            equipments = emptyList(),
+            accessoryEquipments = emptyList(),
+            workoutPlans = emptyList(),
+            birthDateYear = 1990,
+            weightKg = 82.5,
+            heightCm = 178,
+            progressionPercentageAmount = 0.1,
+            sex = true,
+            gender = 1
+        )
+
+        val roundTripped = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(original))
+
+        assertEquals(178, roundTripped.heightCm)
+        assertEquals(1, roundTripped.gender)
+        assertEquals(true, roundTripped.sex)
+    }
+
+    @Test
+    fun heightAndGender_defaultToNullWhenMissingFromJson() {
+        val workoutStore = fromJSONToWorkoutStore(
+            """
+            {
+              "workouts": [],
+              "equipments": [],
+              "accessoryEquipments": [],
+              "workoutPlans": [],
+              "birthDateYear": 1990,
+              "weightKg": 82.5,
+              "progressionPercentageAmount": 0.1,
+              "heightCm": null,
+              "gender": null
+            }
+            """.trimIndent()
+        )
+
+        assertNull(workoutStore.heightCm)
+        assertNull(workoutStore.gender)
     }
 
     @Test

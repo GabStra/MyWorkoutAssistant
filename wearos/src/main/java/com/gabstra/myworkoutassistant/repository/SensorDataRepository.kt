@@ -94,5 +94,12 @@ class SensorDataRepository(
 }
 
 sealed class MeasureMessageSensor {
-    class MeasureData(val bpm: Int) : MeasureMessageSensor()
+    class MeasureData(
+        val bpm: Int,
+        /** Beat-to-beat intervals in ms; non-empty only on the Samsung tracker path. */
+        val ibiList: List<Int> = emptyList(),
+        /** Sensor-reported HR quality status; null on the stock sensor path. */
+        val heartRateStatus: Int? = null,
+        val timestampMs: Long = 0L,
+    ) : MeasureMessageSensor()
 }

@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.ExerciseSessionSnaps
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ListIntConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.IbiRecordsTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ListSimpleSetTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ProgressionStateTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.RestHistoryScopeTypeConverter
@@ -41,7 +42,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeCo
         MotionCaptureSessionEntity::class,
         MotionCaptureSegmentEntity::class
     ],
-    version = 62,
+    version = 63,
     exportSchema = false
 )
 @TypeConverters(
@@ -53,6 +54,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeCo
     UUIDConverter::class,
     UIntConverter::class,
     ListIntConverter::class,
+    IbiRecordsTypeConverter::class,
     ExerciseSessionSnapshotTypeConverter::class,
     ListSimpleSetTypeConverter::class,
     ProgressionStateTypeConverter::class,
@@ -78,6 +80,12 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_60_61 = object : Migration(60, 61) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE workout_history ADD COLUMN runningResults TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+
+        private val MIGRATION_62_63 = object : Migration(62, 63) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN ibiRecords TEXT NOT NULL DEFAULT '[]'")
             }
         }
 
@@ -144,7 +152,7 @@ abstract class AppDatabase : RoomDatabase() {
                         AppDatabase::class.java,
                         "app_database_2",
                     )
-                        .addMigrations(MIGRATION_60_61, MIGRATION_61_62)
+                        .addMigrations(MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63)
                         .fallbackToDestructiveMigration(dropAllTables = true)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onOpen(db: SupportSQLiteDatabase) {

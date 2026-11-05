@@ -11,6 +11,11 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.BODY_SENSORS" />
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <!-- Granular-map permissions: only enforced by HealthPlatform when this app targets
+         API 36+ AND the watch runs API 36+. READ_ADDITIONAL_HEALTH_DATA is a Samsung
+         dangerous-level (runtime-grantable) permission from SemSensorPermission. -->
+    <uses-permission android:name="com.samsung.android.hardware.sensormanager.permission.READ_ADDITIONAL_HEALTH_DATA" />
+    <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -115,7 +120,7 @@
             android:name=".services.RunningTrackingService"
             android:exported="false"
             android:foregroundServiceType="health|location" />
-        
+
         <!-- Register receivers -->
         <receiver
             android:name=".receivers.WorkoutAlarmReceiver"

@@ -952,6 +952,9 @@ open class WorkoutViewModel(
 
     protected val heartBeatHistory: ConcurrentLinkedQueue<Int> = ConcurrentLinkedQueue()
 
+    /** Beat-to-beat intervals per tick, index-aligned with [heartBeatHistory]; empty on non-Samsung paths. */
+    protected val ibiHistory: ConcurrentLinkedQueue<List<Int>> = ConcurrentLinkedQueue()
+
     /**
      * State machine managing workout state progression.
      * Replaces manual queue/history management.
@@ -1740,6 +1743,11 @@ open class WorkoutViewModel(
             _hasWorkoutRecord.value = true
 
             heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
+            // Keep the two queues index-aligned; pre-IBI histories get empty entries.
+            ibiHistory.addAll(currentWorkoutHistory!!.ibiRecords)
+            repeat((heartBeatHistory.size - ibiHistory.size).coerceAtLeast(0)) {
+                ibiHistory.add(emptyList())
+            }
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(currentWorkoutHistory!!.id)
             startWorkoutTime = workoutSessionOrchestrator.deriveStartWorkoutTimeFromCompletedSetHistories(setHistories)
 
@@ -2282,6 +2290,7 @@ open class WorkoutViewModel(
         executedSetStore.clear()
         executedRestStore.clear()
         heartBeatHistory.clear()
+        ibiHistory.clear()
         startWorkoutTime = null
         currentWorkoutHistory = null
         _isPaused.value = false
@@ -2383,8 +2392,9 @@ open class WorkoutViewModel(
         initializeExercisesMaps(selectedWorkout.value)
     }
 
-    open fun registerHeartBeat(heartBeat: Int) {
+    open fun registerHeartBeat(heartBeat: Int, ibiList: List<Int> = emptyList()) {
         heartBeatHistory.add(heartBeat)
+        ibiHistory.add(ibiList)
         _latestHeartRateBpm.intValue = heartBeat
     }
 
@@ -2726,6 +2736,7 @@ open class WorkoutViewModel(
                     runningResults = pendingRunningResults.values.toList(),
                     endReason = endReason,
                     heartBeatRecords = heartBeatHistory.toList(),
+                    ibiRecords = ibiHistory.toList(),
                     progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
                     comparisonBaselineByExerciseId = exercisesById.keys.associateWith { exerciseId ->
                         getProgressionComparisonBaselineSets(exerciseId).orEmpty()

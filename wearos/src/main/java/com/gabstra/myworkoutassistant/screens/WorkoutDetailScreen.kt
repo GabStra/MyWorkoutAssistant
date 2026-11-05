@@ -146,7 +146,11 @@ fun WorkoutDetailScreen(
     }
 
     fun requestPermissionsOrStartWorkout() {
-        val missingPermissions = missingWorkoutPermissions(context, workout.heartRateSource)
+        val missingPermissions = missingWorkoutPermissions(
+            context,
+            workout.heartRateSource,
+            viewModel.useSamsungHeartRate.value
+        )
         if (missingPermissions.isEmpty()) {
             startWorkoutAfterPermissions()
         } else {
@@ -157,7 +161,11 @@ fun WorkoutDetailScreen(
     }
 
     fun requestPermissionsOrResumeWorkout() {
-        val missingPermissions = missingWorkoutPermissions(context, workout.heartRateSource)
+        val missingPermissions = missingWorkoutPermissions(
+            context,
+            workout.heartRateSource,
+            viewModel.useSamsungHeartRate.value
+        )
         if (missingPermissions.isEmpty()) {
             resumeWorkoutAfterPermissions()
         } else {

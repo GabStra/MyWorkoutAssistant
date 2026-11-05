@@ -79,6 +79,7 @@ import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
 import com.gabstra.myworkoutassistant.e2e.E2eRuntimePreferences
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
+import com.gabstra.myworkoutassistant.repository.SamsungSensorDataRepository
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.screens.LoadingScreen
@@ -424,7 +425,8 @@ fun WearApp(
 
         val hrViewModel: SensorDataViewModel = viewModel(
             factory = SensorDataViewModelFactory(
-                sensorDataRepository = SensorDataRepository(localContext)
+                sensorDataRepository = SensorDataRepository(localContext),
+                samsungSensorDataRepository = SamsungSensorDataRepository(localContext)
             )
         )
         hrViewModel.initApplicationContext(localContext)
@@ -696,7 +698,11 @@ fun WearApp(
                 val heartRateSource = appViewModel.workoutStore.workouts
                     .firstOrNull { it.id == incompleteWorkout.workoutId }
                     ?.heartRateSource ?: HeartRateSource.WATCH_SENSOR
-                val missingPermissions = missingWorkoutPermissions(localContext, heartRateSource)
+                val missingPermissions = missingWorkoutPermissions(
+                    localContext,
+                    heartRateSource,
+                    appViewModel.useSamsungHeartRate.value
+                )
                 if (missingPermissions.isEmpty()) {
                     appViewModel.hideRecoveryPrompt()
                     appViewModel.setPendingRecoveryResumeOptions(recoveryOptions)

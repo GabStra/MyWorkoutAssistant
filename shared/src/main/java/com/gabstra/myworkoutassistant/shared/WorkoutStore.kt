@@ -17,10 +17,13 @@ data class WorkoutStore(
     val externalHeartRateConfigs: List<ExternalHeartRateConfig> = emptyList(),
     val birthDateYear: Int,
     val weightKg: Double,
+    val heightCm: Int? = null,
     val progressionPercentageAmount: Double,
     val measuredMaxHeartRate: Int? = null,
     val restingHeartRate: Int? = null,
     val sex: Boolean? = null,
+    // TrackerUserProfile convention: 0 = male, 1 = female; null = unset
+    val gender: Int? = null,
     val estimatedVo2MaxMlKgMin: Double? = null,
     val vo2MaxSource: String? = null,
     val vo2MaxEstimatedAtEpochDay: Long? = null,

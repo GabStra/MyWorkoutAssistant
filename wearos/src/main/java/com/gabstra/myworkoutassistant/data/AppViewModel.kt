@@ -83,6 +83,7 @@ import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoic
 import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoveryCheckpoint
 import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoverySnapshotCodec
 import com.gabstra.myworkoutassistant.repository.MotionSensorRepository
+import com.gabstra.myworkoutassistant.repository.SamsungHeartRatePreferences
 
 internal enum class WorkoutHistorySyncRequestMode {
     Debounced,
@@ -189,6 +190,7 @@ open class AppViewModel : WorkoutViewModel() {
         applicationContext = context.applicationContext
         _alertSoundEnabled.value = AlertSoundPreferences.isEnabled(context.applicationContext)
         _calorieDisplayEnabled.value = CalorieDisplayPreferences.isEnabled(context.applicationContext)
+        _useSamsungHeartRate.value = SamsungHeartRatePreferences.isSamsungHeartRateEnabled(context.applicationContext)
         (context.applicationContext as? MyApplication)?.coroutineExceptionHandler?.let {
             coroutineExceptionHandler = it
         }
@@ -260,6 +262,13 @@ open class AppViewModel : WorkoutViewModel() {
         if (_calorieDisplayEnabled.value == enabled) return
         CalorieDisplayPreferences.setEnabled(context, enabled)
         _calorieDisplayEnabled.value = enabled
+    }
+
+    fun setUseSamsungHeartRate(enabled: Boolean) {
+        val context = applicationContext ?: return
+        if (_useSamsungHeartRate.value == enabled) return
+        SamsungHeartRatePreferences.setSamsungHeartRateEnabled(context, enabled)
+        _useSamsungHeartRate.value = enabled
     }
     private fun checkpointStore(): WorkoutRecoveryCheckpointStore? {
         val context = applicationContext ?: return null
@@ -366,6 +375,9 @@ open class AppViewModel : WorkoutViewModel() {
 
     private val _calorieDisplayEnabled = mutableStateOf(CalorieDisplayPreferences.DEFAULT_CALORIES_ENABLED)
     val calorieDisplayEnabled: State<Boolean> = _calorieDisplayEnabled
+
+    private val _useSamsungHeartRate = mutableStateOf(SamsungHeartRatePreferences.DEFAULT_USE_SAMSUNG_HEART_RATE)
+    val useSamsungHeartRate: State<Boolean> = _useSamsungHeartRate
 
     fun consumeRecoveredWorkoutNotice() {
         _showRecoveredWorkoutNotice.value = false

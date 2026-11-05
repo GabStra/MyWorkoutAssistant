@@ -93,6 +93,7 @@ internal class WorkoutPersistenceCoordinator(
         val runningResults: List<RunningResult>,
         val endReason: WorkoutSessionEndReason,
         val heartBeatRecords: List<Int>,
+        val ibiRecords: List<List<Int>> = emptyList(),
         val executedSetsHistory: List<SetHistory>,
         val executedRestHistories: List<RestHistory>,
         val progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
@@ -270,6 +271,7 @@ internal class WorkoutPersistenceCoordinator(
         runningResults: List<RunningResult> = emptyList(),
         endReason: WorkoutSessionEndReason,
         heartBeatRecords: List<Int>,
+        ibiRecords: List<List<Int>>,
         progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
         comparisonBaselineByExerciseId: Map<UUID, List<SimpleSet>>
     ): PushWorkoutDataSnapshot? {
@@ -283,6 +285,7 @@ internal class WorkoutPersistenceCoordinator(
             runningResults = runningResults,
             endReason = endReason,
             heartBeatRecords = heartBeatRecords,
+            ibiRecords = ibiRecords,
             executedSetsHistory = executedSetsSnapshot,
             executedRestHistories = executedRestSnapshot,
             progressionByExerciseId = progressionByExerciseId,
@@ -321,6 +324,7 @@ internal class WorkoutPersistenceCoordinator(
                 date = snapshot.capturedAt.toLocalDate(),
                 duration = duration.seconds.toInt(),
                 heartBeatRecords = snapshot.heartBeatRecords,
+                ibiRecords = snapshot.ibiRecords,
                 time = snapshot.capturedAt.toLocalTime(),
                 startTime = snapshot.startWorkoutTime,
                 isDone = isDone,
@@ -333,6 +337,7 @@ internal class WorkoutPersistenceCoordinator(
             currentWorkoutHistorySnapshot = currentWorkoutHistorySnapshot.copy(
                 duration = duration.seconds.toInt(),
                 heartBeatRecords = snapshot.heartBeatRecords,
+                ibiRecords = snapshot.ibiRecords,
                 time = snapshot.capturedAt.toLocalTime(),
                 isDone = isDone,
                 hasBeenSentToHealth = false,

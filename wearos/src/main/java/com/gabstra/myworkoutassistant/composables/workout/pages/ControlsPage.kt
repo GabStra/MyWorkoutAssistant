@@ -207,7 +207,7 @@ fun ControlsPage(
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             // Handle go back for calibration flow:
-                            // CalibrationRIRSelection → Set(isCalibrationSet) → CalibrationLoadSelection → previous non-Rest state
+                            // CalibrationRIRSelection â†’ Set(isCalibrationSet) â†’ CalibrationLoadSelection â†’ previous non-Rest state
                             // Use undo() for CalibrationRIRSelection and Set(isCalibrationSet) to maintain proper state sequence
                             // Use goToPreviousNonRestState() for CalibrationLoadSelection to skip Rest states
                             when (currentWorkoutState) {
@@ -471,6 +471,68 @@ fun ControlsPage(
                         Switch(
                             checked = calorieDisplayEnabled,
                             onCheckedChange = updateCalorieDisplayEnabled,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.onBackground,
+                                uncheckedTrackColor = MediumLightGray,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.onBackground,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            item {
+                val useSamsungHeartRate = viewModel.useSamsungHeartRate.value
+                val updateUseSamsungHeartRate: (Boolean) -> Unit = { enabled ->
+                    viewModel.setUseSamsungHeartRate(enabled)
+                    hapticsViewModel.doGentleVibration()
+                }
+
+                WearTonalContentButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        ),
+                    transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                    onClick = {
+                        updateUseSamsungHeartRate(!useSamsungHeartRate)
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        ) {
+                            Text(
+                                text = "Samsung heart rate",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Start,
+                            )
+                            Text(
+                                text = if (useSamsungHeartRate) {
+                                    "Raw sensor via Samsung Health"
+                                } else {
+                                    "Standard watch sensor"
+                                },
+                                style = MaterialTheme.typography.bodyExtraSmall,
+                                textAlign = TextAlign.Start,
+                                color = MaterialTheme.colorScheme.tertiaryContent
+                            )
+                        }
+                        Switch(
+                            checked = useSamsungHeartRate,
+                            onCheckedChange = updateUseSamsungHeartRate,
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,

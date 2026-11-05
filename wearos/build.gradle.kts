@@ -50,7 +50,11 @@ android {
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
         minSdk = 34
-        targetSdk = 36
+        // Must stay 35: Samsung Health raw trackers flip from BODY_SENSORS to an
+        // unobtainable Samsung privileged permission when the app targets SDK 36
+        // on an API 36 device, which kills the Samsung sensor path
+        // (see repository/SamsungSensorDataRepository.kt).
+        targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
