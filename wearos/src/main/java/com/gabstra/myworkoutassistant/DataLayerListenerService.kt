@@ -274,7 +274,7 @@ class DataLayerListenerService : WearableListenerService() {
         scope.launch {
             localNodeId = resolveLocalNodeId()
         }
-        
+
         // Detect service restart and handle incomplete syncs. A re-bind within the
         // same process is not a restart: the sync state is not stale and transfer
         // or processing may be mid-flight, so auto-heal must not fire.

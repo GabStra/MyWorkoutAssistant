@@ -55,7 +55,6 @@ import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.PermissionRequestDialog
 import com.gabstra.myworkoutassistant.composables.RecoveryDialog
-import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.missingWorkoutPermissions
 import com.gabstra.myworkoutassistant.composables.workoutPermissionMessage
@@ -639,12 +638,6 @@ fun WearApp(
                                 )
                             }
                         }
-                        SyncStatusBadge(
-                            viewModel = appViewModel,
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .zIndex(2f)
-                        )
                     }
                 }
             }

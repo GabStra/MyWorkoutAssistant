@@ -9,6 +9,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -84,6 +89,7 @@ fun LoadingOverlay(
     text: String = "Loading...",
     useOpaqueBackground: Boolean = false,
     progress: Float? = null,
+    completed: Boolean = false,
     onCancel: (() -> Unit)? = null,
 ) {
     if (isVisible) {
@@ -105,7 +111,14 @@ fun LoadingOverlay(
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (progress == null) {
+                if (completed) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(64.dp),
+                    )
+                } else if (progress == null) {
                     CircularProgressIndicator(
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = MediumDarkGray,

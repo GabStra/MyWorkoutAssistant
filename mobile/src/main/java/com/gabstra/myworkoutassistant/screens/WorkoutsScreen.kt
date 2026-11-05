@@ -1,15 +1,11 @@
 package com.gabstra.myworkoutassistant.screens
 
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+import com.gabstra.myworkoutassistant.utils.sync.WatchConnectionMonitor
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
@@ -29,7 +25,9 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -57,7 +55,6 @@ import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
 import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
-import com.gabstra.myworkoutassistant.composables.SyncStatusCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
@@ -137,6 +134,7 @@ fun WorkoutsScreen(
         animationSpec = tween(durationMillis = 400),
         label = "Wear-acknowledged sync progress"
     )
+    val watchReachable by WatchConnectionMonitor.watchReachable.collectAsState()
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
     val context = LocalContext.current
     val externalSessionDatabase = remember(context) {
@@ -673,11 +671,23 @@ fun WorkoutsScreen(
                             }
                         },
                         actions = {
-                            IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Back"
-                                )
+                            if (watchReachable) {
+                                // Visible only while the watch is detected; tapping
+                                // starts the same manual sync as the settings entry.
+                                IconButton(onClick = onSyncClick) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Watch,
+                                        contentDescription = "Sync with watch"
+                                    )
+                                }
+                            } else {
+                                // Invisible placeholder keeps the title centered.
+                                IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        contentDescription = "Back"
+                                    )
+                                }
                             }
                         }
                     )
@@ -1033,22 +1043,22 @@ fun WorkoutsScreen(
         )
 
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
-        // Manual sync never modifies phone data, so it runs as a non-modal banner
-        // and the rest of the screen stays interactive.
-        AnimatedVisibility(
-            visible = isSyncing,
-            modifier = Modifier.align(Alignment.TopCenter),
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-        ) {
-            SyncStatusCard(
-                phase = syncPhase,
-                // Determinate only while chunks are transferring; the progress
-                // value is stale/meaningless in the other phases.
-                progress = animatedSyncProgress.takeIf { syncPhase == SyncPhase.TRANSFERRING },
-                onCancel = onCancelSync,
-            )
-        }
+        // Manual sync mirrors the watch's own sync screen: full-screen stage-based
+        // loader, determinate only while chunks transfer, check mark when done.
+        LoadingOverlay(
+            isVisible = isSyncing,
+            text = when (syncPhase) {
+                SyncPhase.CONNECTING -> "Connecting to phone"
+                SyncPhase.TRANSFERRING -> "Sending data"
+                SyncPhase.PROCESSING -> "Processing data"
+                SyncPhase.COMPLETED -> "Sync complete"
+                null -> "Connecting to phone"
+            },
+            useOpaqueBackground = true,
+            progress = animatedSyncProgress.takeIf { syncPhase == SyncPhase.TRANSFERRING },
+            completed = syncPhase == SyncPhase.COMPLETED,
+            onCancel = if (syncPhase == SyncPhase.COMPLETED) null else onCancelSync,
+        )
         LoadingOverlay(
             isVisible = rememberMinimumLoadingVisibility(
                 isLoading = isExportingWorkoutDataForLlm,

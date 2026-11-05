@@ -7,6 +7,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import android.net.Uri
 import com.gabstra.myworkoutassistant.checkWearSyncEndpoint
+import com.gabstra.myworkoutassistant.utils.sync.WatchConnectionMonitor
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.calculateWorkoutStoreHash
@@ -132,6 +133,7 @@ object PhoneToWatchSyncCoordinator {
         if (installed) return
         installed = true
         val appContext = context.applicationContext
+        WatchConnectionMonitor.install(appContext)
         restoreAutomaticFingerprintState(appContext)
         scope.launch {
             WorkManager.getInstance(appContext)
@@ -271,6 +273,10 @@ object PhoneToWatchSyncCoordinator {
             }
         }
 
+        if (WatchConnectionMonitor.isResolved && !WatchConnectionMonitor.watchReachable.value) {
+            Log.d(TAG, "manual sync: watch not reachable (capability listener); not starting")
+            return false
+        }
         if (!checkWearSyncEndpoint(appContext)) {
             Log.d(TAG, "manual sync: Wear endpoint unavailable; foreground sync not started")
             return false
