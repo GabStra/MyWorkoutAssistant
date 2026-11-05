@@ -2,7 +2,9 @@ package com.gabstra.myworkoutassistant.screens
 
 import androidx.activity.compose.BackHandler
 import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -12,14 +14,16 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
@@ -39,13 +43,16 @@ import com.gabstra.myworkoutassistant.data.ExternalHeartRateConnectionState
 import com.gabstra.myworkoutassistant.data.ExternalHeartRateDeviceController
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.isReady
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private const val EXTERNAL_HR_SKIP_DELAY_MS = 30_000
+
+/** Fixed slot so a longer/shorter status never moves the spinner or the buttons. */
+private val STATUS_LINE_HEIGHT = 66.dp
 
 @Composable
 fun PreparingExternalHeartRateScreen(
@@ -70,16 +77,19 @@ fun PreparingExternalHeartRateScreen(
 
     var currentMillis by remember { mutableIntStateOf(0) }
     var hasTriggeredNextState by remember { mutableStateOf(false) }
-    val canSkip = !connectionState.isReady && (
+    val isStreaming = connectionState is ExternalHeartRateConnectionState.Streaming
+    // Skip stays available whenever no heart-rate samples are arriving; the controller reports
+    // Connected as soon as GATT subscribes, which alone doesn't mean the strap is sending data.
+    val canSkip = !isStreaming && (
         currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS ||
             connectionState is ExternalHeartRateConnectionState.Error ||
             connectionState is ExternalHeartRateConnectionState.MissingConfiguration
         )
 
-    LaunchedEffect(source, isSessionHydrationInFlight) {
-        if (isSessionHydrationInFlight) {
-            return@LaunchedEffect
-        }
+    LaunchedEffect(source) {
+        // Wait for any in-flight session hydration, but don't re-initialise when the hydration
+        // flag flips: that reset the controller and silently cleared the user's Skip.
+        snapshotFlow { isSessionHydrationInFlight }.first { !it }
         currentMillis = 0
         val config = viewModel.getExternalHeartRateConfig(source)
         externalHeartRateController.initialize(context, config)
@@ -106,7 +116,7 @@ fun PreparingExternalHeartRateScreen(
     ) {
         if (hasTriggeredNextState || isSessionHydrationInFlight) return@LaunchedEffect
 
-        val isReady = connectionState.isReady && state.dataLoaded && currentMillis >= 3000
+        val isReady = isStreaming && state.dataLoaded && currentMillis >= 3000
         if (isReady) {
             if (!viewModel.isCurrentPreparingState(state)) {
                 hasTriggeredNextState = true
@@ -143,20 +153,11 @@ fun PreparingExternalHeartRateScreen(
         ExternalHeartRateConnectionState.Idle -> "Preparing ${source.displayName()}"
     }.trimEnd('.')
 
-    if (!canSkip || connectionState.isReady) {
-        FullScreenLoadingIndicator(
-            text = "Getting your ${source.displayName()} ready",
-        ) {
-            Text(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 5.dp),
-                text = statusMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.tertiaryContent,
-                textAlign = TextAlign.Center,
-            )
-        }
+    if (!canSkip || isStreaming) {
+        // One stable line while connecting: the per-state messages flashed through
+        // scanning/connecting/connected in well under a second on a fast link. Errors and
+        // the skip hint still appear in the buttons view below.
+        FullScreenLoadingIndicator(text = "Preparing ${source.displayName()}")
         return
     }
 
@@ -191,31 +192,17 @@ fun PreparingExternalHeartRateScreen(
             state = transformingLazyColumnState,
         ) {
             item {
-                ListHeader(
+                // Single status line in a fixed-height slot: no duplicate header, and the
+                // buttons below stay put while the message changes length.
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .transformedHeight(this, spec),
-                    transformation = SurfaceTransformation(spec)
+                        .transformedHeight(this, spec)
+                        .height(STATUS_LINE_HEIGHT),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "Getting your ${source.displayName()} ready",
-                        style = MaterialTheme.typography.titleMedium,
-                        textAlign = TextAlign.Center
-                    )
+                    StatusText(statusMessage)
                 }
-            }
-
-            item {
-                Text(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .transformedHeight(this, spec),
-                    text = statusMessage,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.tertiaryContent,
-                    textAlign = TextAlign.Center
-                )
             }
             item {
                 WearPrimaryButton(
@@ -266,4 +253,17 @@ fun PreparingExternalHeartRateScreen(
             }
         }
     }
+}
+
+@Composable
+private fun StatusText(message: String) {
+    Text(
+        modifier = Modifier.fillMaxWidth(),
+        text = message,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.tertiaryContent,
+        textAlign = TextAlign.Center,
+        maxLines = 3,
+        overflow = TextOverflow.Ellipsis,
+    )
 }

@@ -19,7 +19,7 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
 @Composable
 fun FullScreenLoadingIndicator(
-    text: String,
+    text: String? = null,
     modifier: Modifier = Modifier,
     progress: Float? = null,
     completed: Boolean = false,
@@ -60,12 +60,14 @@ fun FullScreenLoadingIndicator(
             modifier = Modifier.padding(horizontal = 15.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            LoadingText(
-                baseText = text,
-                modifier = Modifier.fillMaxWidth(),
-                maxLines = 2,
-                textAlign = TextAlign.Center,
-            )
+            if (text != null) {
+                LoadingText(
+                    baseText = text,
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                )
+            }
             content()
         }
     }

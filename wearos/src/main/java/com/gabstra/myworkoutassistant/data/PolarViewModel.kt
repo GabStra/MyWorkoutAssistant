@@ -37,7 +37,7 @@ class PolarHrBpmSource(private val api: PolarBleApi) : HrBpmSource {
 
 class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE) {
     private var deviceId: String? = null
-    private lateinit var api: PolarBleApi
+    private var api: PolarBleApi? = null
 
     private val _deviceConnectionState = MutableStateFlow<PolarDeviceInfo?>(null)
     val deviceConnectionState = _deviceConnectionState.asStateFlow()
@@ -57,7 +57,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
 
     override fun onInitialize(config: ExternalHeartRateConfig) {
         val polarConfig = config as PolarHeartRateConfig
-        applicationContext?.let { initializePolarApi(it, polarConfig.deviceId) }
+        applicationContext?.let { ensureApi(it, polarConfig.deviceId) }
     }
 
     override fun connectToConfiguredDevice(config: ExternalHeartRateConfig) {
@@ -71,9 +71,8 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
             return
         }
 
-        if (!::api.isInitialized) {
-            applicationContext?.let { initializePolarApi(it, polarConfig.deviceId) }
-        }
+        val context = applicationContext ?: return
+        val api = ensureApi(context, polarConfig.deviceId)
 
         publishConnectionState(
             ExternalHeartRateConnectionState.Connecting(
@@ -102,7 +101,8 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
         clearHrStreamingState()
         disposables.clear()
 
-        if (!::api.isInitialized) {
+        val api = api
+        if (api == null) {
             deviceId = null
             _deviceConnectionState.value = null
             _batteryLevelState.value = null
@@ -120,6 +120,9 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
         } catch (exception: Exception) {
             Log.w("PolarViewModel", "Error shutting down Polar API", exception)
         } finally {
+            // Drop the reference: a shut-down API cannot reconnect, so the next connect
+            // attempt must build a fresh instance.
+            this.api = null
             deviceId = null
             _deviceConnectionState.value = null
             _batteryLevelState.value = null
@@ -127,9 +130,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
     }
 
     override fun foregroundEntered() {
-        if (::api.isInitialized) {
-            api.foregroundEntered()
-        }
+        api?.foregroundEntered()
     }
 
     private fun clearHrStreamingState() {
@@ -143,52 +144,58 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
         isHrStreamingActive.set(false)
     }
 
-    private fun initializePolarApi(applicationContext: Context, deviceId: String) {
+    private fun ensureApi(applicationContext: Context, deviceId: String): PolarBleApi {
+        api?.let { return it }
+
         this.deviceId = deviceId
-        api = PolarBleApiDefaultImpl.defaultImplementation(
+        val created = PolarBleApiDefaultImpl.defaultImplementation(
             applicationContext,
+            // Only the features this app uses: every extra feature adds GATT setup work
+            // that can fail or delay the HR link on a watch.
             setOf(
                 PolarBleApi.PolarBleSdkFeature.FEATURE_HR,
-                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_SDK_MODE,
                 PolarBleApi.PolarBleSdkFeature.FEATURE_BATTERY_INFO,
-                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_H10_EXERCISE_RECORDING,
-                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_OFFLINE_RECORDING,
-                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_ONLINE_STREAMING,
-                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_DEVICE_TIME_SETUP,
-                PolarBleApi.PolarBleSdkFeature.FEATURE_DEVICE_INFO,
-                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_LED_ANIMATION
             )
         )
+        api = created
 
-        api.setAutomaticReconnection(true)
-        api.setMtu(70)
+        created.setAutomaticReconnection(true)
+        created.setMtu(70)
+        created.setApiCallback(createApiCallback(created))
+        return created
+    }
 
-        api.setApiCallback(object : PolarBleApiCallback() {
+    private fun createApiCallback(owner: PolarBleApi): PolarBleApiCallback =
+        object : PolarBleApiCallback() {
+            // A released instance may still deliver a queued callback; ignore it so a stale
+            // event cannot overwrite the state of the replacement instance.
+            private fun isCurrent(): Boolean = api === owner
+
             override fun blePowerStateChanged(powered: Boolean) {
+                if (!isCurrent()) return
                 viewModelScope.launch(appCeh) {
                     _bluetoothEnabledState.value = powered
                 }
             }
 
             override fun deviceConnected(polarDeviceInfo: PolarDeviceInfo) {
+                if (!isCurrent()) return
                 val deviceName = polarDeviceInfo.name
                 markConnectedThisSession()
                 publishConnectionState(
                     ExternalHeartRateConnectionState.Connected(
                         source = source,
-                        message = "Connected to $deviceName.",
+                        message = "Connected. Waiting for heart rate…",
                         deviceLabel = deviceName
                     )
                 )
-                if (!isHrStreamingActive.get()) {
-                    startHrStreaming(polarDeviceInfo.deviceId)
-                }
                 viewModelScope.launch(appCeh) {
                     _deviceConnectionState.value = polarDeviceInfo
                 }
             }
 
             override fun deviceConnecting(polarDeviceInfo: PolarDeviceInfo) {
+                if (!isCurrent()) return
                 val deviceName = polarDeviceInfo.name
                 publishConnectionState(
                     ExternalHeartRateConnectionState.Connecting(
@@ -199,6 +206,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
             }
 
             override fun deviceDisconnected(polarDeviceInfo: PolarDeviceInfo) {
+                if (!isCurrent()) return
                 val deviceName = polarDeviceInfo.name
                 clearHrStreamingState()
                 viewModelScope.launch(appCeh) {
@@ -229,7 +237,14 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
             override fun bleSdkFeatureReady(
                 identifier: String,
                 feature: PolarBleApi.PolarBleSdkFeature,
-            ) = Unit
+            ) {
+                if (!isCurrent()) return
+                // Streaming before the HR feature is ready is a known way to get a failed
+                // or silently dead subscription.
+                if (feature == PolarBleApi.PolarBleSdkFeature.FEATURE_HR) {
+                    startHrStreaming(identifier)
+                }
+            }
 
             override fun disInformationReceived(identifier: String, uuid: UUID, value: String) = Unit
 
@@ -239,6 +254,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
             ) = Unit
 
             override fun batteryLevelReceived(identifier: String, level: Int) {
+                if (!isCurrent()) return
                 viewModelScope.launch(appCeh) {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
@@ -250,8 +266,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
                     _batteryLevelState.value = level
                 }
             }
-        })
-    }
+        }
 
     private fun startHrStreaming(deviceId: String) {
         if (!isHrStreamingActive.compareAndSet(false, true)) {
@@ -266,6 +281,11 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
             }
         }
         hrStreamDisposable = null
+
+        val api = api ?: run {
+            isHrStreamingActive.set(false)
+            return
+        }
 
         val stream = PolarHrBpmSource(api).bpmStream(deviceId)
 

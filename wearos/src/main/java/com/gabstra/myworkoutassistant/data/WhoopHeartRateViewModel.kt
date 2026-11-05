@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.data
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -139,13 +140,19 @@ private class WhoopBleClient(
         private val CLIENT_CHARACTERISTIC_CONFIG_UUID =
             UUID.fromString("00002902-0000-1000-8000-00805F9B34FB")
         private const val SCAN_TIMEOUT_MS = 10_000L
+        private const val CACHED_ADDRESS_TIMEOUT_MS = 3_000L
+        private const val PREF_LAST_ADDRESS = "last_address"
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val prefs = context.getSharedPreferences("whoop_ble", Context.MODE_PRIVATE)
     private var scanCallback: ScanCallback? = null
     private var bluetoothGatt: BluetoothGatt? = null
     private var flowEmitter: FlowableEmitter<Int>? = null
     private var manualDisconnect = false
+    private var linkEstablished = false
+    private var usingCachedAddress = false
+    private var cachedAddressFallback: Runnable? = null
     private val loggedScanDeviceAddresses = mutableSetOf<String>()
 
     private fun hasPermission(permission: String): Boolean =
@@ -315,6 +322,9 @@ private class WhoopBleClient(
     fun cleanup() {
         stopScan()
         handler.removeCallbacksAndMessages(null)
+        cachedAddressFallback = null
+        linkEstablished = false
+        usingCachedAddress = false
         bluetoothGatt?.let { gatt ->
             if (hasBluetoothConnectPermission()) {
                 disconnectGattQuietly(gatt)
@@ -336,6 +346,9 @@ private class WhoopBleClient(
             return
         }
 
+        linkEstablished = false
+        usingCachedAddress = false
+
         val explicitDeviceId = config.deviceId?.trim().orEmpty()
         if (explicitDeviceId.isNotEmpty()) {
             val device = runCatching { adapter.getRemoteDevice(explicitDeviceId) }.getOrNull()
@@ -355,6 +368,38 @@ private class WhoopBleClient(
             return
         }
 
+        // Remembering the address skips the advertising wait (seconds) on later connects.
+        // If the strap no longer answers there, fall back to a scan and forget the address.
+        val cachedAddress = prefs.getString(PREF_LAST_ADDRESS, null)?.trim().orEmpty()
+        if (explicitDeviceId.isEmpty() && cachedAddress.isNotEmpty()) {
+            val device = runCatching { adapter.getRemoteDevice(cachedAddress) }.getOrNull()
+            if (device != null) {
+                Log.d(TAG, "Trying remembered WHOOP address $cachedAddress before scanning")
+                usingCachedAddress = true
+                connectToGatt(device)
+                val fallback = Runnable {
+                    if (!linkEstablished) {
+                        Log.d(TAG, "Remembered WHOOP address did not answer; clearing it and scanning")
+                        prefs.edit().remove(PREF_LAST_ADDRESS).apply()
+                        usingCachedAddress = false
+                        bluetoothGatt?.let { gatt ->
+                            if (hasBluetoothConnectPermission()) disconnectGattQuietly(gatt)
+                        }
+                        bluetoothGatt = null
+                        scanForWhoop(adapter, scanner)
+                    }
+                }
+                cachedAddressFallback = fallback
+                handler.postDelayed(fallback, CACHED_ADDRESS_TIMEOUT_MS)
+                return
+            }
+        }
+
+        scanForWhoop(adapter, scanner)
+    }
+
+    private fun scanForWhoop(adapter: BluetoothAdapter, scanner: BluetoothLeScanner) {
+        usingCachedAddress = false
         loggedScanDeviceAddresses.clear()
         Log.d(
             TAG,
@@ -378,11 +423,14 @@ private class WhoopBleClient(
                 val didMatch = matchesDevice(result)
                 logDiscoveredDevice(result, didMatch)
                 if (!didMatch) return
+                val address = deviceAddressOrUnknown(result.device)
                 Log.d(
                     TAG,
-                    "WHOOP scan matched device ${deviceAddressOrUnknown(result.device)}; " +
-                        "stopping scan and connecting"
+                    "WHOOP scan matched device $address; stopping scan and connecting"
                 )
+                if (address.isNotBlank() && address != "<unknown>") {
+                    prefs.edit().putString(PREF_LAST_ADDRESS, address).apply()
+                }
                 stopScan()
                 connectToGatt(result.device)
             }
@@ -532,10 +580,11 @@ private class WhoopBleClient(
 
         val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
         if (descriptor == null) {
+            // Subscribed, but don't claim streaming until the strap actually sends a sample.
             onStateChange(
-                ExternalHeartRateConnectionState.Streaming(
+                ExternalHeartRateConnectionState.Connected(
                     source = HeartRateSource.WHOOP_BLE,
-                    message = "Streaming from your WHOOP.",
+                    message = "Connected. Enable Broadcast HR.",
                     deviceLabel = config.displayName ?: config.deviceId
                 )
             )
@@ -570,6 +619,10 @@ private class WhoopBleClient(
                     "name=${gattDeviceName(gatt) ?: "<none>"}, status=$status, newState=$newState"
             )
             if (status != BluetoothGatt.GATT_SUCCESS && newState != BluetoothGatt.STATE_CONNECTED) {
+                // A remembered address that no longer answers must not be retried next time.
+                if (usingCachedAddress && !linkEstablished) {
+                    prefs.edit().remove(PREF_LAST_ADDRESS).apply()
+                }
                 if (!manualDisconnect) {
                     failTerminal("WHOOP connection failed ($status).")
                 }
@@ -578,6 +631,9 @@ private class WhoopBleClient(
 
             when (newState) {
                 BluetoothGatt.STATE_CONNECTED -> {
+                    linkEstablished = true
+                    cachedAddressFallback?.let { handler.removeCallbacks(it) }
+                    cachedAddressFallback = null
                     onStateChange(
                         ExternalHeartRateConnectionState.Connected(
                             source = HeartRateSource.WHOOP_BLE,
@@ -649,10 +705,11 @@ private class WhoopBleClient(
                 failTerminal("Couldn't enable WHOOP heart-rate notifications.")
                 return
             }
+            // Subscribed, but don't claim streaming until the strap actually sends a sample.
             onStateChange(
-                ExternalHeartRateConnectionState.Streaming(
+                ExternalHeartRateConnectionState.Connected(
                     source = HeartRateSource.WHOOP_BLE,
-                    message = "Streaming from your WHOOP.",
+                    message = "Connected. Enable Broadcast HR.",
                     deviceLabel = gattLabel(gatt)
                 )
             )

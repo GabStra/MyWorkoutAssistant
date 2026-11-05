@@ -13,6 +13,36 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+internal const val HEART_RATE_RECOVERY_TICK_MS = 5_000L
+internal const val HEART_RATE_STALE_AFTER_MS = 20_000L
+internal const val HEART_RATE_RETRY_BASE_DELAY_MS = 5_000L
+internal const val HEART_RATE_RETRY_MAX_DELAY_MS = 60_000L
+
+internal enum class HeartRateRecoveryAction { None, DropStaleLink, RetryConnection }
+
+/** Decides whether a paired HR link needs recovery; retries only after a first successful connect. */
+internal fun planHeartRateRecovery(
+    connectionState: ExternalHeartRateConnectionState,
+    hasEverConnectedThisSession: Boolean,
+    heartRateIdleMs: Long?,
+    hasReceivedSampleSinceConnect: Boolean,
+    retryDue: Boolean,
+): HeartRateRecoveryAction = when {
+    // Only treat a link as stale if it was streaming and then went quiet. A strap that is
+    // connected but has never sent a sample (e.g. WHOOP with Broadcast HR off) would otherwise
+    // be torn down and rescanned every 20 s forever.
+    connectionState.isReady &&
+        hasReceivedSampleSinceConnect &&
+        heartRateIdleMs != null &&
+        heartRateIdleMs > HEART_RATE_STALE_AFTER_MS -> HeartRateRecoveryAction.DropStaleLink
+
+    connectionState is ExternalHeartRateConnectionState.Error &&
+        hasEverConnectedThisSession &&
+        retryDue -> HeartRateRecoveryAction.RetryConnection
+
+    else -> HeartRateRecoveryAction.None
+}
+
 sealed class ExternalHeartRateConnectionState {
     data object Idle : ExternalHeartRateConnectionState()
     data class Connecting(val source: HeartRateSource, val message: String) :
@@ -68,6 +98,10 @@ abstract class BaseExternalHeartRateViewModel(
 
     private var releaseInProgress = false
     private var connectionAttemptId = 0L
+    private var heartRateLastReceivedAtMs = 0L
+    private var receivedSampleSinceConnect = false
+    private var nextRetryAtMs = 0L
+    private var retryDelayMs = HEART_RATE_RETRY_BASE_DELAY_MS
 
     protected val appCeh
         get() = (applicationContext as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
@@ -88,6 +122,15 @@ abstract class BaseExternalHeartRateViewModel(
     private val _hasEverConnectedThisSession = MutableStateFlow(false)
     final override val hasEverConnectedThisSession = _hasEverConnectedThisSession.asStateFlow()
 
+    init {
+        viewModelScope.launch(appCeh) {
+            while (true) {
+                delay(HEART_RATE_RECOVERY_TICK_MS)
+                evaluateConnectionRecovery()
+            }
+        }
+    }
+
     protected val isSessionSkipped: Boolean
         get() = _isSkippedForSession.value
 
@@ -103,6 +146,7 @@ abstract class BaseExternalHeartRateViewModel(
         _isSkippedForSession.value = false
         _hasEverConnectedThisSession.value = false
         _hrBpm.value = null
+        resetRecoverySchedule()
 
         if (!hasUsableConfig(config)) {
             _connectionState.value = ExternalHeartRateConnectionState.MissingConfiguration(
@@ -123,6 +167,13 @@ abstract class BaseExternalHeartRateViewModel(
             return
         }
 
+        // Already connected/connecting: re-issuing connect on a live link is what makes the
+        // link drop on every screen wake.
+        val state = _connectionState.value
+        if (state.isReady || state is ExternalHeartRateConnectionState.Connecting) {
+            return
+        }
+
         val config = currentConfig
         if (!hasUsableConfig(config)) {
             _connectionState.value = ExternalHeartRateConnectionState.MissingConfiguration(
@@ -132,6 +183,8 @@ abstract class BaseExternalHeartRateViewModel(
             return
         }
 
+        heartRateLastReceivedAtMs = nowMs()
+        receivedSampleSinceConnect = false
         val attemptId = ++connectionAttemptId
         connectToConfiguredDevice(config!!)
         viewModelScope.launch(appCeh) {
@@ -159,6 +212,7 @@ abstract class BaseExternalHeartRateViewModel(
         connectionAttemptId++
         _isSkippedForSession.value = true
         _hrBpm.value = null
+        resetRecoverySchedule()
         releaseDeviceConnection()
         _connectionState.value = ExternalHeartRateConnectionState.Skipped(
             source = source,
@@ -169,6 +223,7 @@ abstract class BaseExternalHeartRateViewModel(
     final override fun disconnectFromDevice() {
         connectionAttemptId++
         val skipped = isSessionSkipped
+        resetRecoverySchedule()
         releaseDeviceConnection()
         _hrBpm.value = null
         _connectionState.value = if (skipped) {
@@ -182,8 +237,68 @@ abstract class BaseExternalHeartRateViewModel(
     }
 
     protected fun publishHeartRate(bpm: Int?) {
+        if (bpm != null) {
+            heartRateLastReceivedAtMs = nowMs()
+            receivedSampleSinceConnect = true
+        }
         _hrBpm.value = bpm
     }
+
+    private fun evaluateConnectionRecovery() {
+        if (isReleaseInProgress || isSessionSkipped || !hasUsableConfig(currentConfig)) {
+            return
+        }
+        if (_connectionState.value.isReady) {
+            retryDelayMs = HEART_RATE_RETRY_BASE_DELAY_MS
+        }
+        val now = nowMs()
+        val idleMs = heartRateLastReceivedAtMs
+            .takeIf { it != 0L }
+            ?.let { now - it }
+        when (
+            planHeartRateRecovery(
+                connectionState = _connectionState.value,
+                hasEverConnectedThisSession = _hasEverConnectedThisSession.value,
+                heartRateIdleMs = idleMs,
+                hasReceivedSampleSinceConnect = receivedSampleSinceConnect,
+                retryDue = now >= nextRetryAtMs,
+            )
+        ) {
+            HeartRateRecoveryAction.None -> Unit
+
+            HeartRateRecoveryAction.DropStaleLink -> {
+                // Link is up but the device stopped producing samples: tear it down so the
+                // retry below rebuilds it instead of streaming silence for the rest of the set.
+                releaseDeviceConnection()
+                heartRateLastReceivedAtMs = 0L
+                receivedSampleSinceConnect = false
+                _connectionState.value = ExternalHeartRateConnectionState.Error(
+                    source = source,
+                    message = "Lost the heart-rate signal from ${source.displayName()}.",
+                )
+                scheduleNextRetry(now)
+            }
+
+            HeartRateRecoveryAction.RetryConnection -> {
+                scheduleNextRetry(now)
+                connectToDevice()
+            }
+        }
+    }
+
+    private fun scheduleNextRetry(now: Long) {
+        nextRetryAtMs = now + retryDelayMs
+        retryDelayMs = minOf(retryDelayMs * 2, HEART_RATE_RETRY_MAX_DELAY_MS)
+    }
+
+    private fun resetRecoverySchedule() {
+        heartRateLastReceivedAtMs = 0L
+        receivedSampleSinceConnect = false
+        nextRetryAtMs = 0L
+        retryDelayMs = HEART_RATE_RETRY_BASE_DELAY_MS
+    }
+
+    private fun nowMs(): Long = System.nanoTime() / 1_000_000
 
     protected fun publishConnectionState(state: ExternalHeartRateConnectionState) {
         if (!isSessionSkipped || state is ExternalHeartRateConnectionState.Skipped) {
