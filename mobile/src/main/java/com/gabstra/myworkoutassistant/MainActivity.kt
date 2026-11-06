@@ -2141,6 +2141,8 @@ fun MyWorkoutAssistantNavHost(
                         if (screenData.exerciseDefinitionId == null && !screenData.skipLibrary) {
                             ExerciseLibraryPickerScreen(
                                 definitions = appViewModel.workoutStore.exerciseDefinitions,
+                                equipments = appViewModel.workoutStore.equipments +
+                                    appViewModel.workoutStore.accessoryEquipments,
                                 onSelect = { definition ->
                                     appViewModel.setScreenData(
                                         ScreenData.NewExercise(screenData.workoutId, definition.id)
