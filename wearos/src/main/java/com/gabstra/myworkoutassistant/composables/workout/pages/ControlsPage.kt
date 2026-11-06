@@ -730,7 +730,7 @@ fun ControlsPage(
                                     )
                                 ),
                             transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                            text = "Set orderâ€¦",
+                            text = "Set order…",
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 orderBuilder = emptyList()
