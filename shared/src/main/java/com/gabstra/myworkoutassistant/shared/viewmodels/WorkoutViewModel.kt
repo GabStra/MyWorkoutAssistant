@@ -41,6 +41,7 @@ import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.latestWorkoutHistoryComparator
 import com.gabstra.myworkoutassistant.shared.coroutines.DefaultDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.coroutines.DispatcherProvider
+import com.gabstra.myworkoutassistant.shared.datalayer.StagedPhaseDisplay
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -774,6 +775,7 @@ open class WorkoutViewModel(
     val backupProgress: State<Float> = _backupProgress
     private var _backupSyncPhase = mutableStateOf(SyncPhase.CONNECTING)
     val backupSyncPhase: State<SyncPhase> = _backupSyncPhase
+    private val backupPhaseDisplay = StagedPhaseDisplay(viewModelScope)
 
     private var _selectedWorkoutId = mutableStateOf<UUID?>(null)
     val selectedWorkoutId: State<UUID?> get() = _selectedWorkoutId
@@ -781,10 +783,15 @@ open class WorkoutViewModel(
     // Create a function to update the backup progress
     fun setBackupProgress(progress: Float) {
         _backupProgress.floatValue = progress
+        backupPhaseDisplay.onUiUpdated()
     }
 
     fun setBackupSyncPhase(phase: SyncPhase) {
-        _backupSyncPhase.value = phase
+        // Hold each phase on screen (measured from the last UI update) so fast syncs
+        // don't skip visible steps or cut the 100% progress ring short.
+        backupPhaseDisplay.show(phase, _backupSyncPhase.value) { shownPhase ->
+            _backupSyncPhase.value = shownPhase
+        }
     }
 
     val allWorkoutStates: List<WorkoutState>

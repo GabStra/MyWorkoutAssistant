@@ -621,8 +621,8 @@ fun WearApp(
                                 )
 
                                 val syncStageText = when (syncPhase) {
-                                    SyncPhase.CONNECTING -> "Connecting to phone"
-                                    SyncPhase.TRANSFERRING -> "Receiving data"
+                                    SyncPhase.CONNECTING -> "Connecting"
+                                    SyncPhase.TRANSFERRING -> "Transferring data"
                                     SyncPhase.PROCESSING -> "Processing data"
                                     SyncPhase.COMPLETED -> "Sync complete"
                                 }

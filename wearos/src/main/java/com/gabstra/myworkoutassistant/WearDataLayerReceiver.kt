@@ -92,7 +92,17 @@ internal class WearDataLayerReceiver(
         appViewModel.setBackupProgress(progress)
         SyncPhase.fromWireValue(
             intent.getStringExtra(DataLayerListenerService.APP_BACKUP_PHASE_UPDATE)
-        )?.let(appViewModel::setBackupSyncPhase)
+        )?.let { phase ->
+            appViewModel.setBackupSyncPhase(phase)
+            if (phase == SyncPhase.CONNECTING) {
+                // Show the loading screen as soon as the handshake starts so the
+                // watch mirrors the phone's stage sequence from the first step.
+                val currentRoute = navController.currentBackStackEntry?.destination?.route
+                if (currentRoute != Screen.Workout.route) {
+                    navController.navigate(Screen.Loading.route)
+                }
+            }
+        }
     }
 
     private fun handleSyncComplete(intent: Intent, context: Context) {

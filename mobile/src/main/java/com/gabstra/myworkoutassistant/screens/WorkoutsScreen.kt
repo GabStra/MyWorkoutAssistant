@@ -1048,11 +1048,11 @@ fun WorkoutsScreen(
         LoadingOverlay(
             isVisible = isSyncing,
             text = when (syncPhase) {
-                SyncPhase.CONNECTING -> "Connecting to phone"
-                SyncPhase.TRANSFERRING -> "Sending data"
+                SyncPhase.CONNECTING -> "Connecting"
+                SyncPhase.TRANSFERRING -> "Transferring data"
                 SyncPhase.PROCESSING -> "Processing data"
                 SyncPhase.COMPLETED -> "Sync complete"
-                null -> "Connecting to phone"
+                null -> "Connecting"
             },
             useOpaqueBackground = true,
             progress = animatedSyncProgress.takeIf { syncPhase == SyncPhase.TRANSFERRING },

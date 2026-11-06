@@ -1014,6 +1014,15 @@ class DataLayerListenerService : WearableListenerService() {
                             // still had events queued; the process could be killed before Tasks.await ran,
                             // causing phone handshake timeouts and "Service disconnected before delivering all events".
                             DataLayerSyncForegroundHelper.startIfNeeded(this@DataLayerListenerService)
+                            // Surface the CONNECTING step on the watch UI too, so both devices
+                            // show the same stage sequence from the moment the handshake starts.
+                            sendBroadcast(
+                                Intent(INTENT_ID).apply {
+                                    putExtra(APP_BACKUP_PROGRESS_UPDATE, "0.0")
+                                    putExtra(APP_BACKUP_PHASE_UPDATE, SyncPhase.CONNECTING.name)
+                                    setPackage(packageName)
+                                }
+                            )
                             try {
                                 runBlocking(Dispatchers.IO) {
                                     val ackPath = DataLayerPaths.buildPath(

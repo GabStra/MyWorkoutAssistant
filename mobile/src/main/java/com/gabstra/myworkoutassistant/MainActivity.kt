@@ -1412,6 +1412,7 @@ fun MyWorkoutAssistantNavHost(
                             isExportingWorkoutDataForLlm = isExportingWorkoutDataForLlm,
                             workoutDataExportStatus = workoutDataExportStatus,
                             onSyncClick = {
+                                PhoneToWatchSyncCoordinator.showSyncStartingState()
                                 syncWithWatch()
                             },
                             onCancelSync = {

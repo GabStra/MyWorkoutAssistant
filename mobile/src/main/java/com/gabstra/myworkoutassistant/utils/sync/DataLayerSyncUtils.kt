@@ -251,6 +251,7 @@ object SyncHandshakeManager {
     }
 }
 
+
 /**
  * Checks if at least one Wear node is connected before attempting background sync.
  * Retries up to 3 times with exponential backoff.
@@ -728,9 +729,13 @@ suspend fun sendAppBackup(
             Tasks.await(dataClient.putDataItem(request))
 
         }
-        // All payload bytes have left the phone. Stop the transfer indicator locally instead of
-        // depending on a best-effort Wear phase message during the longer processing wait.
-        onProgress(SyncPhase.PROCESSING, 1f)
+        // Stay on TRANSFERRING until the Wear confirms it has every chunk and moved to
+        // processing (SYNC_PHASE PROCESSING message): only that confirmation means the
+        // sent packages were actually received, not just that the bytes left the phone.
+        // No local fallback: DataItem delivery to the Wear trails the send loop by
+        // seconds per chunk, so a timer here fires mid-transfer and freezes the
+        // progress below 100%. A truly lost message just skips the PROCESSING step;
+        // the completion ack still ends the sync.
 
         // Wear can spend several minutes applying a full backup after every chunk has arrived.
         // Keep one bounded completion wait instead of interpreting short processing waits as

@@ -11,6 +11,7 @@ import com.gabstra.myworkoutassistant.utils.sync.WatchConnectionMonitor
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.calculateWorkoutStoreHash
+import com.gabstra.myworkoutassistant.shared.datalayer.StagedPhaseDisplay
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,7 @@ object PhoneToWatchSyncCoordinator {
     private const val KEY_LAST_COMPLETED_AUTO_FINGERPRINT = "last_completed_auto_fingerprint"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val phaseDisplay = StagedPhaseDisplay(scope)
     private val mutex = Mutex()
     private var debounceJob: Job? = null
     private val pendingFollowUp = AtomicBoolean(false)
@@ -257,8 +259,19 @@ object PhoneToWatchSyncCoordinator {
     /**
      * User chose "Sync with Watch" from the menu: cancel debounce and ensure a sync runs (or pending tail if busy).
      */
+    /** Called directly from the sync tap so the loader paints before any suspend work. */
+    fun showSyncStartingState() {
+        if (_manualSyncUiState.value == null) {
+            setManualSyncState(SyncPhase.CONNECTING, 0f)
+        }
+    }
+
     suspend fun requestManualSyncToWatch(context: Context): Boolean {
         val appContext = context.applicationContext
+        // Show the loader before any probe/save work: the dialog must appear instantly on tap.
+        if (_manualSyncUiState.value == null) {
+            setManualSyncState(SyncPhase.CONNECTING, 0f)
+        }
         val hasRunningWork = hasRunningSyncWork(appContext)
         mutex.withLock {
             debounceJob?.cancel()
@@ -275,10 +288,12 @@ object PhoneToWatchSyncCoordinator {
 
         if (WatchConnectionMonitor.isResolved && !WatchConnectionMonitor.watchReachable.value) {
             Log.d(TAG, "manual sync: watch not reachable (capability listener); not starting")
+            clearManualSyncState()
             return false
         }
         if (!checkWearSyncEndpoint(appContext)) {
             Log.d(TAG, "manual sync: Wear endpoint unavailable; foreground sync not started")
+            clearManualSyncState()
             return false
         }
         val workerStartedDuringEndpointProbe = hasRunningSyncWork(appContext)
@@ -351,6 +366,10 @@ object PhoneToWatchSyncCoordinator {
         wasManualSync: Boolean
     ) {
         _isSyncingToWatch.value = false
+        // Mirror the watch: hold the "Sync complete" step briefly before dismissing.
+        phaseDisplay.show(SyncPhase.COMPLETED, _manualSyncUiState.value?.phase) { shownPhase ->
+            setManualSyncState(ManualSyncUiState(shownPhase, 1f))
+        }
         scope.launch {
             delay(FOLLOW_UP_ENQUEUE_DELAY_MS)
             mutex.withLock {
@@ -367,10 +386,8 @@ object PhoneToWatchSyncCoordinator {
                     } else {
                         Log.d(TAG, "after successful sync, skipped pending follow-up because latest automatic state was already sent")
                     }
-                    if (wasManualSync || _manualSyncProgress.value != null) {
-                        clearManualSyncState()
-                    }
-                } else if (wasManualSync || _manualSyncProgress.value != null) {
+                    clearManualSyncState()
+                } else {
                     clearManualSyncState()
                 }
             }
@@ -420,8 +437,15 @@ object PhoneToWatchSyncCoordinator {
             SyncPhase.PROCESSING,
             SyncPhase.COMPLETED -> false
         }
-        if (_manualSyncUiState.value != null) {
-            setManualSyncState(state)
+        // Always publish: the watch shows its stage loader for background syncs too,
+        // so the phone must mirror the same steps instead of only during manual syncs.
+        // Rapid phase flips are held on screen so every step stays visible.
+        // Rapid phase flips are held on screen (measured from the last UI update,
+        // progress ticks included) so every step — the 100% ring included — stays visible.
+        phaseDisplay.show(phase, _manualSyncUiState.value?.phase) { shownPhase ->
+            setManualSyncState(
+                ManualSyncUiState(shownPhase, activeWorkerSyncState.get()?.progress ?: 0f)
+            )
         }
     }
 
@@ -434,11 +458,13 @@ object PhoneToWatchSyncCoordinator {
     }
 
     private fun setManualSyncState(state: ManualSyncUiState) {
+        phaseDisplay.onUiUpdated()
         _manualSyncProgress.value = state.progress
         _manualSyncUiState.value = state
     }
 
     private fun clearManualSyncState() {
+        phaseDisplay.cancel()
         activeTransactionId.set(null)
         activeWorkerSyncState.set(null)
         _isSyncingToWatch.value = false
