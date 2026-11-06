@@ -31,6 +31,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.RunningSet
@@ -141,6 +142,23 @@ fun buildExerciseTemplatePreviewItems(
                             secondaryValue = targetWeightText?.let { formatTime(set.timeInMillis / 1000) },
                             primaryLabel = if (targetWeightText != null) "LOAD" else "DURATION",
                             secondaryLabel = if (targetWeightText != null) "DURATION" else null,
+                        )
+                    ),
+                )
+            }
+
+            is WeightedEffortSet -> {
+                val distanceText = set.targetDistanceMeters?.let { "${it.toInt()} m" }
+                val targetWeightText = set.targetWeight?.let { equipment?.formatWeight(it) ?: "$it kg" }
+                previewItems += SetPreviewItemUiModel(
+                    setId = set.id,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = identifierCounter.nextIdentifier(null),
+                            primaryValue = distanceText ?: targetWeightText ?: formatTime((set.timeInMillis ?: 0) / 1000),
+                            secondaryValue = listOfNotNull(targetWeightText, set.timeInMillis?.let { formatTime(it / 1000) }).joinToString(" / ").ifEmpty { null },
+                            primaryLabel = "LOAD",
+                            secondaryLabel = if (targetWeightText != null) "DISTANCE" else null,
                         )
                     ),
                 )

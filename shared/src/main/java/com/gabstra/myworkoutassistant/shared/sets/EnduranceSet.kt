@@ -10,6 +10,7 @@ data class EnduranceSet(
     override val shouldReapplyHistoryToSet: Boolean = true,
     val targetWeight: Double? = null,
     val targetDistanceMeters: Double? = null,
-    val targetCalories: Double? = null
+    val targetCalories: Double? = null,
+    override val note: String? = null
 )
     : Set(id, shouldReapplyHistoryToSet)

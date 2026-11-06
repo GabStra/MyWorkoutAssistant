@@ -419,6 +419,7 @@ fun WeightSetScreen(
                     }
                     SetScreen(customModifier = Modifier)
                     targetRepRange?.let { TargetRepRangeLabel(it) }
+                    state.set.note?.let { SetNoteLabel(it) }
                 }
             }
         }

@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.AlertSoundPreferences
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -79,7 +80,7 @@ fun PageButtons(
     val exerciseSets = exercise.sets
     val setIndex = exerciseSets.indexOfFirst { it.id == updatedState.set.id }
     val isLastSet = setIndex == exerciseSets.size - 1
-    val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet
+    val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet || updatedState.set is WeightedEffortSet
     val currentWorkoutState = viewModel.workoutState.collectAsState().value
     val isActiveSetPage = currentWorkoutState is WorkoutState.Set &&
         currentWorkoutState.exerciseId == updatedState.exerciseId &&

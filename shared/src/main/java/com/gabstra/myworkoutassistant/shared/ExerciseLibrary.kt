@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.RunningSet
@@ -238,6 +239,7 @@ private fun Set.withFreshId(): Set = when (this) {
     is EnduranceSet -> copy(id = UUID.randomUUID())
     is RestSet -> copy(id = UUID.randomUUID())
     is RunningSet -> copy(id = UUID.randomUUID())
+    is WeightedEffortSet -> copy(id = UUID.randomUUID())
     is TimedDurationSet -> copy(id = UUID.randomUUID())
     is WeightSet -> copy(id = UUID.randomUUID())
 }

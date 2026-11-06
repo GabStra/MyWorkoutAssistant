@@ -57,8 +57,10 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlinx.coroutines.launch
 
 
@@ -92,12 +94,23 @@ fun ControlsPage(
     val setIndex = exerciseSets.indexOfFirst { it.id == updatedState.set.id }
     val isLastSet = setIndex == exerciseSets.size - 1
 
-    val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet
+    val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet || updatedState.set is WeightedEffortSet
     val isActiveSetPage =
         currentWorkoutState is WorkoutState.Set &&
             currentWorkoutState.exerciseId == updatedState.exerciseId &&
             currentWorkoutState.set.id == updatedState.set.id
     val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
+    val cadenceSuperset = viewModel.getCurrentSupersetId()?.let { supersetId ->
+        viewModel.selectedWorkout.value.workoutComponents
+            .filterIsInstance<Superset>()
+            .firstOrNull { it.id == supersetId }
+    }
+    val cadenceRotationOrder = cadenceSuperset?.let { viewModel.getSupersetRotationOrder(it.id) }.orEmpty()
+    val cadenceStartName = cadenceSuperset?.exercises?.getOrNull(
+        cadenceRotationOrder.firstOrNull() ?: 0
+    )?.name.orEmpty()
+    val memberCount = cadenceSuperset?.exercises?.size ?: 0
+    val canChooseStartMember = cadenceSuperset != null && viewModel.canChooseSupersetStartMember()
     val scrollState = rememberScrollState()
     val showNavigationSection = !isHistoryEmpty || isActiveSetPage
     val showExerciseSection =

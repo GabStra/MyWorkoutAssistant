@@ -9,5 +9,6 @@ import java.util.UUID
  */
 data class RunningSet(
     override val id: UUID,
-    override val shouldReapplyHistoryToSet: Boolean = false
+    override val shouldReapplyHistoryToSet: Boolean = false,
+    override val note: String? = null
 ) : Set(id, shouldReapplyHistoryToSet)

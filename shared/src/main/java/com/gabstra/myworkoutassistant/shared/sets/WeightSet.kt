@@ -8,5 +8,6 @@ data class WeightSet(
     val reps: Int,
     val weight: Double,
     val subCategory: SetSubCategory = SetSubCategory.WorkSet,
-    override val shouldReapplyHistoryToSet: Boolean = true
+    override val shouldReapplyHistoryToSet: Boolean = true,
+    override val note: String? = null
 ) : Set(id, shouldReapplyHistoryToSet)

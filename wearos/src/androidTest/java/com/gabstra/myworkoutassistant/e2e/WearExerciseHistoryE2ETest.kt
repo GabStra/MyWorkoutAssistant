@@ -2281,6 +2281,11 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
                 // Verify setData type matches set type
                 when (set) {
+                    is com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet -> {
+                        require(setHistory.setData is com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData) {
+                            "SetHistory setData should be EnduranceSetData for WeightedEffortSet"
+                        }
+                    }
                     is com.gabstra.myworkoutassistant.shared.sets.RunningSet -> {
                         require(setHistory.setData is com.gabstra.myworkoutassistant.shared.setdata.RunningSetData) {
                             "SetHistory setData should be RunningSetData for RunningSet"

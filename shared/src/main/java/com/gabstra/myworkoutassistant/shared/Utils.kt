@@ -38,6 +38,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.RunningSet
@@ -587,6 +588,7 @@ fun initializeSetData(set: Set): SetData = when (set) {
     is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0,set.subCategory)
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop, actualWeight = set.targetWeight, durationProgressionSnapshot = set.durationProgressionSnapshot)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
+    is WeightedEffortSet -> EnduranceSetData(set.timeInMillis ?: 0,0,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds,set.subCategory)
     is RunningSet -> RunningSetData()
 }
@@ -598,6 +600,7 @@ fun getNewSet(set: Set): Set = when (set) {
     is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet, set.targetWeight)
     is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds,set.subCategory, set.shouldReapplyHistoryToSet)
     is RunningSet -> RunningSet(UUID.randomUUID(),set.shouldReapplyHistoryToSet)
+    is WeightedEffortSet -> WeightedEffortSet(UUID.randomUUID(),set.targetDistanceMeters,set.timeInMillis,set.targetWeight,set.autoStart,set.autoStop,set.shouldReapplyHistoryToSet,set.note)
 }
 
 fun copySetData(setData: SetData): SetData = when (setData) {
@@ -617,6 +620,7 @@ fun isSetDataValid(set: Set, setData: SetData): Boolean {
         is EnduranceSet -> setData is EnduranceSetData
         is RestSet -> setData is RestSetData
         is RunningSet -> setData is RunningSetData
+        is WeightedEffortSet -> setData is EnduranceSetData
     }
 }
 
@@ -1220,6 +1224,7 @@ fun getSetTypeFromSet(set: Set): SetType {
         is EnduranceSet -> SetType.COUNTUP_SET
         is TimedDurationSet -> SetType.COUNTDOWN_SET
         is RunningSet -> SetType.RUNNING_SET
+        is WeightedEffortSet -> SetType.COUNTUP_SET
         is RestSet -> throw IllegalArgumentException("RestSet is not a valid set type")
     }
 }

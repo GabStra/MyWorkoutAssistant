@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgres
 
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.RunningSet
@@ -28,12 +29,14 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             is TimedDurationSet -> "TimedDurationSet"
             is EnduranceSet -> "EnduranceSet"
             is RunningSet -> "RunningSet"
+            is WeightedEffortSet -> "WeightedEffortSet"
             is RestSet -> "RestSet"
         }
 
         jsonObject.addProperty("id", src.id.toString())
         jsonObject.addProperty("type", exerciseType)
         jsonObject.addProperty("shouldReapplyHistoryToSet", src.shouldReapplyHistoryToSet)
+        src.note?.let { jsonObject.addProperty("note", it) }
 
         when (src) {
             is WeightSet -> {
@@ -70,6 +73,13 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             is RunningSet ->{
                 // No payload: the goal lives on the exercise's runningPrescription.
             }
+            is WeightedEffortSet ->{
+                jsonObject.addProperty("targetDistanceMeters", src.targetDistanceMeters)
+                src.timeInMillis?.let { jsonObject.addProperty("timeInMillis", it) }
+                src.targetWeight?.let { jsonObject.addProperty("targetWeight", it) }
+                jsonObject.addProperty("autoStart", src.autoStart)
+                jsonObject.addProperty("autoStop", src.autoStop)
+            }
         }
         return jsonObject
     }
@@ -79,6 +89,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
 
         val id = UUID.fromString(jsonObject.get("id").asString)
         val type = resolveSetType(jsonObject)
+        val note = jsonObject.get("note")?.takeUnless { it.isJsonNull }?.asString
 
         return when (type) {
             "WeightSet" -> {
@@ -105,7 +116,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 } else {
                     true
                 }
-                WeightSet(id,reps, weight,subCategory, shouldReapplyHistoryToSet)
+                WeightSet(id,reps, weight,subCategory, shouldReapplyHistoryToSet, note)
             }
             "BodyWeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
@@ -131,7 +142,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 } else {
                     true
                 }
-                BodyWeightSet(id,reps,additionalWeight,subCategory, shouldReapplyHistoryToSet)
+                BodyWeightSet(id,reps,additionalWeight,subCategory, shouldReapplyHistoryToSet, note)
             }
             "TimedDurationSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
@@ -148,7 +159,8 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 TimedDurationSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight, targetDistanceMeters, targetCalories,
                     jsonObject.get("durationProgressionSnapshot")?.takeUnless { it.isJsonNull }?.let {
                         context.deserialize(it, DurationProgressionSnapshot::class.java)
-                    })
+                    },
+                    note)
             }
             "EnduranceSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
@@ -162,7 +174,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 val targetWeight = if (jsonObject.has("targetWeight")) jsonObject.get("targetWeight").asDouble else null
                 val targetDistanceMeters = jsonObject.get("targetDistanceMeters")?.takeUnless { it.isJsonNull }?.asDouble
                 val targetCalories = jsonObject.get("targetCalories")?.takeUnless { it.isJsonNull }?.asDouble
-                EnduranceSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight, targetDistanceMeters, targetCalories)
+                EnduranceSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight, targetDistanceMeters, targetCalories, note)
             }
             "RestSet" -> {
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt
@@ -182,7 +194,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 } else {
                     false
                 }
-                RestSet(id,timeInSeconds,subCategory, shouldReapplyHistoryToSet)
+                RestSet(id,timeInSeconds,subCategory, shouldReapplyHistoryToSet, note)
             }
 
             "RunningSet" -> {
@@ -191,7 +203,21 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 } else {
                     false
                 }
-                RunningSet(id, shouldReapplyHistoryToSet)
+                RunningSet(id, shouldReapplyHistoryToSet, note)
+            }
+
+            "WeightedEffortSet" -> {
+                val targetDistanceMeters = jsonObject.get("targetDistanceMeters")?.takeUnless { it.isJsonNull }?.asDouble
+                val timeInMillis = jsonObject.get("timeInMillis")?.takeUnless { it.isJsonNull }?.asInt
+                val targetWeight = jsonObject.get("targetWeight")?.takeUnless { it.isJsonNull }?.asDouble
+                val autoStart = if (jsonObject.has("autoStart")) jsonObject.get("autoStart").asBoolean else true
+                val autoStop = if (jsonObject.has("autoStop")) jsonObject.get("autoStop").asBoolean else false
+                val shouldReapplyHistoryToSet = if (jsonObject.has("shouldReapplyHistoryToSet")) {
+                    jsonObject.get("shouldReapplyHistoryToSet").asBoolean
+                } else {
+                    false
+                }
+                WeightedEffortSet(id, targetDistanceMeters, timeInMillis, targetWeight, autoStart, autoStop, shouldReapplyHistoryToSet, note)
             }
 
             else -> throw RuntimeException("Unsupported set type")

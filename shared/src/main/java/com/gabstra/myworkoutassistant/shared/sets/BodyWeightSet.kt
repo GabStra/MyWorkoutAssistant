@@ -8,7 +8,8 @@ data class BodyWeightSet(
     val reps: Int,
     val additionalWeight:Double,
     val subCategory: SetSubCategory = SetSubCategory.WorkSet,
-    override val shouldReapplyHistoryToSet: Boolean = true
+    override val shouldReapplyHistoryToSet: Boolean = true,
+    override val note: String? = null
 ) : Set(id, shouldReapplyHistoryToSet){
     fun getWeight(relativeBodyWeight:Double): Double {
         return relativeBodyWeight + additionalWeight

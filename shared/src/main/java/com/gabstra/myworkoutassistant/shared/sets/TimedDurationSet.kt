@@ -13,5 +13,6 @@ data class TimedDurationSet(
     val targetWeight: Double? = null,
     val targetDistanceMeters: Double? = null,
     val targetCalories: Double? = null,
-    val durationProgressionSnapshot: DurationProgressionSnapshot? = null
+    val durationProgressionSnapshot: DurationProgressionSnapshot? = null,
+    override val note: String? = null
 ) : Set(id, shouldReapplyHistoryToSet)

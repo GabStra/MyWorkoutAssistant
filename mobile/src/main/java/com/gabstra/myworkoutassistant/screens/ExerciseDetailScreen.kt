@@ -101,6 +101,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -686,6 +687,7 @@ fun ExerciseDetailScreen(
                                                         is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is RunningSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                        is WeightedEffortSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is RestSet -> it.copy(id = java.util.UUID.randomUUID())
                                                     }
                                                 }

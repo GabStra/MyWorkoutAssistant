@@ -7,5 +7,6 @@ data class RestSet(
     override val id: UUID,
     val timeInSeconds: Int,
     val subCategory: SetSubCategory = SetSubCategory.WorkSet,
-    override val shouldReapplyHistoryToSet: Boolean = false
+    override val shouldReapplyHistoryToSet: Boolean = false,
+    override val note: String? = null
 ): Set(id, shouldReapplyHistoryToSet)

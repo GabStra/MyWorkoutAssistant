@@ -15,6 +15,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.time.LocalDateTime
 
@@ -154,6 +155,33 @@ fun ExerciseDetail(
             customComponentWrapper = customComponentWrapper
         )
         }
+
+        is WeightedEffortSet -> EnduranceSetScreen(
+            viewModel = viewModel,
+            hapticsViewModel = hapticsViewModel,
+            modifier = Modifier.fillMaxSize(),
+            state = updatedState,
+            onTimerEnd = {
+                if (!MyApplication.isAppInForeground()) {
+                    showTimerCompletedNotification(
+                        context = context,
+                        workoutGlobalId = viewModel.selectedWorkout.value.globalId,
+                        title = "Set timer finished",
+                        message = "Time for your next set"
+                    )
+                }
+                viewModel.storeSetData()
+                viewModel.pushAndStoreWorkoutData(false, context) {
+                    viewModel.goToNextState()
+                    viewModel.lightScreenUp()
+                }
+            },
+            onTimerDisabled = onTimerDisabled,
+            onTimerEnabled = onTimerEnabled,
+            extraInfo = extraInfo,
+            exerciseTitleComposable = exerciseTitleComposable,
+            customComponentWrapper = customComponentWrapper
+        )
 
         is RunningSet -> {
             val runningPrescription = viewModel.exercisesById[updatedState.exerciseId]?.runningPrescription

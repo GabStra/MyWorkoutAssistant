@@ -590,6 +590,10 @@ fun BodyWeightSetScreen(
                     Spacer(modifier = Modifier.height(7.5.dp))
                     TargetRepRangeLabel(targetRepRange = it)
                 }
+                state.set.note?.let {
+                    Spacer(modifier = Modifier.height(7.5.dp))
+                    SetNoteLabel(note = it)
+                }
             }
 
             if (isRepsInEditMode || isWeightInEditMode) {

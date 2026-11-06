@@ -424,6 +424,7 @@ fun EnduranceSetScreen (
                             state.currentSetData = currentSet
                         },
                     )
+                    state.set.note?.let { SetNoteLabel(it) }
                     if (extraInfo != null) {
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
