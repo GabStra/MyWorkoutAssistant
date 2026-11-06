@@ -14999,6 +14999,9 @@ def test_prefetch_exercise_motion_contracts_reuses_one_parallel_ranker_and_cache
 
     assert first_report["counts"] == {"generated": 2, "reused": 0, "failed": 0}
     assert second_report["counts"] == {"generated": 0, "reused": 2, "failed": 0}
+    for report in (first_report, second_report):
+        assert all("motionContext" in result and "exerciseMotionContract" in result
+                   for result in report["exercises"])
     first_contract_hashes = {
         result["exerciseId"]: result["sourceSelectionContractSha256"]
         for result in first_report["exercises"]

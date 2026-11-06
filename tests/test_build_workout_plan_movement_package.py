@@ -186,17 +186,27 @@ def test_iter_package_exercises_includes_library_definitions():
     ]
 
 
-def test_library_definition_can_receive_movement_ref_and_backup(tmp_path, monkeypatch):
+@pytest.mark.parametrize("referenced_plan", [False, True])
+def test_library_definition_can_receive_movement_ref_and_backup(tmp_path, monkeypatch, referenced_plan):
     movement_path = tmp_path / "movement.json"
     manifest_path = tmp_path / "selection_manifest.json"
     write_reviewed_movement(movement_path, manifest_path)
     package_path = tmp_path / "library.json"
+    source = {
+        "format": "myworkoutassistant.exercise-library",
+        "exerciseDefinitions": [{"id": "definition-a", "name": "Exercise A"}],
+    }
+    if referenced_plan:
+        source["exerciseDefinitions"].append({"id": "unused", "name": "Exercise A"})
+        source["workouts"] = [{"workoutComponents": [
+            {"type": "Exercise", "id": "one", "exerciseDefinitionId": "definition-a", "sets": [{"reps": 8}]},
+            {"type": "Superset", "exercises": [
+                {"type": "Exercise", "id": "two", "exerciseDefinitionId": "definition-a", "sets": [{"reps": 12}]},
+            ]},
+        ]}]
     package_path.write_text(
         json.dumps(
-            {
-                "format": "myworkoutassistant.exercise-library",
-                "exerciseDefinitions": [{"id": "definition-a", "name": "Exercise A"}],
-            }
+            source
         ),
         encoding="utf-8",
     )
@@ -244,6 +254,15 @@ def test_library_definition_can_receive_movement_ref_and_backup(tmp_path, monkey
         movement_state=json.loads(movement_path.read_text(encoding="utf-8"))["artifactState"],
     )
     assert packaged_state["history"] == ["full_clip_bake", "packaged_movement"]
+    if referenced_plan:
+        assert "movementRef" not in output["exerciseDefinitions"][1]
+        occurrences = [exercise for exercise, location in BUILDER.iter_package_exercises(output)
+                       if not location.startswith("exerciseDefinitions[")]
+        assert len(occurrences) == 2
+        assert all(exercise.pop("movementRef") == movement_ref for exercise in occurrences)
+        output["exerciseDefinitions"][0].pop("movementRef")
+        output.pop("exerciseMovements")
+        assert output == source
 
 
 def test_summary_without_explicit_success_status_is_not_approved():

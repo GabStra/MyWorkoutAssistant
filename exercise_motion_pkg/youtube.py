@@ -1593,6 +1593,14 @@ def extract_workout_plan_exercises(
     include_disabled: bool = False,
     equipment_payload: Any | None = None,
 ) -> list[ExerciseEntry]:
+    store = payload.get("WorkoutStore", payload) if isinstance(payload, dict) else {}
+    definitions_by_id: dict[str, dict[str, Any]] = {}
+    for definition in store.get("exerciseDefinitions", []) if isinstance(store, dict) else []:
+        if isinstance(definition, dict) and definition.get("id"):
+            identifier = str(definition["id"])
+            if identifier in definitions_by_id:
+                raise ValueError(f"Duplicate exercise definition id: {identifier}")
+            definitions_by_id[identifier] = definition
     equipment_by_id = extract_equipment_lookup(payload)
     if equipment_payload is not None:
         equipment_by_id.update(extract_equipment_lookup(equipment_payload, include_root_records=True))
@@ -1622,6 +1630,9 @@ def extract_workout_plan_exercises(
         derived_context = {
             "exerciseType": node.get("exerciseType"),
             "exerciseCategory": node.get("exerciseCategory"),
+            "equipmentId": equipment_id,
+            "requiredAccessoryEquipmentIds": accessory_ids,
+            "bodyWeightPercentage": node.get("bodyWeightPercentage"),
             "muscleGroups": list(node.get("muscleGroups") or []),
             "secondaryMuscleGroups": list(node.get("secondaryMuscleGroups") or []),
             "primaryEquipment": equipment_summary(primary),
@@ -1724,6 +1735,26 @@ def extract_workout_plan_exercises(
         if is_disabled(node) or is_rest(node, is_library_definition=is_library_definition):
             return
 
+        if node.get("exerciseDefinitionId") is not None:
+            identifier = str(node["exerciseDefinitionId"])
+            definition = definitions_by_id.get(identifier)
+            if definition is None:
+                raise ValueError(f"Exercise references missing definition: {identifier}")
+            # An occurrence can change its prescription, not silently redefine the movement.
+            for key in ("exerciseType", "equipmentId", "bodyWeightPercentage", "requiredAccessoryEquipmentIds"):
+                if key in node and node[key] != definition.get(key):
+                    raise ValueError(f"Exercise {identifier} overrides {key}; use a distinct exercise definition")
+            for key, value in (node.get("motionContext") or {}).items():
+                base_context = definition.get("motionContext") or {}
+                if key in base_context and base_context[key] != value:
+                    raise ValueError(f"Conflicting motion context for exercise definition: {identifier}")
+            node = {**node, **definition, "motionContext": {
+                **(definition.get("motionContext") or {}), **(node.get("motionContext") or {}),
+            }}
+            if is_rest(node):
+                return
+            is_library_definition = True
+
         name = None if is_group_container(node) else extract_exercise_name(node)
         if name:
             source_name = extract_source_exercise_name(node) or name
@@ -1759,9 +1790,7 @@ def extract_workout_plan_exercises(
     if isinstance(payload, dict) and isinstance(payload.get("WorkoutStore"), dict):
         visit(payload["WorkoutStore"].get("workouts", []))
     elif isinstance(payload, dict) and isinstance(payload.get("workouts"), list):
-        for workout in payload["workouts"]:
-            if isinstance(workout, dict):
-                visit(workout.get("workoutComponents", []))
+        visit(payload["workouts"])
     elif isinstance(payload, dict) and isinstance(payload.get("exercises"), list):
         visit(payload["exercises"])
     elif isinstance(payload, dict) and isinstance(payload.get("exerciseDefinitions"), list):
@@ -1771,6 +1800,7 @@ def extract_workout_plan_exercises(
 
     entries: list[ExerciseEntry] = []
     seen: set[str] = set()
+    definition_contexts: dict[str, tuple[str, dict[str, Any]]] = {}
     for source_id, source_name, equipment_qualified_name, is_library_definition, context in raw_entries:
         name = equipment_qualified_name
         normalized = normalize_exercise_name(name)
@@ -1779,6 +1809,11 @@ def extract_workout_plan_exercises(
             if is_library_definition and source_id
             else f"name:{normalized}"
         )
+        if is_library_definition and source_id:
+            identity = (name, context)
+            if source_id in definition_contexts and definition_contexts[source_id] != identity:
+                raise ValueError(f"Conflicting motion context for exercise definition: {source_id}")
+            definition_contexts[source_id] = identity
         if not normalized or dedupe_key in seen:
             continue
         seen.add(dedupe_key)
@@ -5890,6 +5925,8 @@ def prefetch_exercise_motion_contracts(
         result = {
             "exerciseId": exercise.exercise_id,
             "exerciseName": exercise.name,
+            "motionContext": exercise.motion_context,
+            "exerciseMotionContract": cached,
             "status": "reused",
             "cachePath": cached.get("cachePath"),
             "generationElapsedSeconds": cached.get("generationElapsedSeconds"),
@@ -5927,6 +5964,8 @@ def prefetch_exercise_motion_contracts(
                 return {
                     "exerciseId": exercise.exercise_id,
                     "exerciseName": exercise.name,
+                    "motionContext": exercise.motion_context,
+                    "exerciseMotionContract": contract,
                     "status": "generated" if cache_path is not None else "failed",
                     "cachePath": str(cache_path) if cache_path is not None else None,
                     "generationElapsedSeconds": contract.get("generationElapsedSeconds"),

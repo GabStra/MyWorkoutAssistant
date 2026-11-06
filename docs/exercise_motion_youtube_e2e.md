@@ -123,6 +123,67 @@ If you do not pass `-SegmentStartSeconds` and `-SegmentEndSeconds`, this script 
 
 Use this when you want to generate selected motions for every exercise in a workout plan. If you have an equipment export, pass it so exercise searches can use the equipment-qualified exercise name where available.
 
+For current exported plans, only definitions referenced by enabled exercises are
+queued, including superset members. Targets use `exerciseDefinitionId`, so one
+validated movement covers repeated occurrences across sessions. Unused library
+definitions stay out of the queue; missing references and conflicting equipment
+or movement contexts stop preparation instead of falling back to names.
+
+### Prepare movement descriptions before discovery
+
+Extract the targets and their description-readiness report without starting a
+model, searching YouTube or reconstructing motion:
+
+```powershell
+python -m exercise_motion_pkg.cli list-workout-plan-exercises `
+  --workout-plan-json "path/to/plan.json" `
+  --out-json "build/exercise_motion/my-plan/targets.json" `
+  --definition-readiness-report-json "build/exercise_motion/my-plan/readiness.json"
+```
+
+For each unresolved target, prepare an editable pending review. No discovery
+manifest is required:
+
+```powershell
+python -m exercise_motion_pkg.cli review-motion-definition `
+  --workout-plan-json "path/to/plan.json" `
+  --exercise-id "DEFINITION_ID" `
+  --review-json "build/exercise_motion/my-plan/reviews/DEFINITION_ID.json"
+```
+
+Fill in its `definition.definingAction`, `completionMode`, and relevant
+`variantQualifiers`; optional `requiredPhases` describe action evidence rather
+than invented joint angles, timing or poses. The file remains pending until
+explicit approval. To get model proposals first, run the existing
+`find-youtube-videos --contract-prefetch-only` command with the plan, output
+report and local llama settings. That mode prepares descriptions without video
+discovery and without treating them as approved. Its report can be supplied to
+`review-motion-definition --candidates-json` to populate the pending review.
+
+Approve each reviewed description into a new working copy of the plan:
+
+```powershell
+python -m exercise_motion_pkg.cli review-motion-definition `
+  --workout-plan-json "path/to/plan.json" `
+  --exercise-id "DEFINITION_ID" `
+  --review-json "build/exercise_motion/my-plan/reviews/DEFINITION_ID.json" `
+  --approve --out-plan-json "build/exercise_motion/my-plan/approved-step-1.json"
+```
+
+Use the previous approved output as the next command's input so approvals
+accumulate. Reviews follow movement identity and equipment context, so changing
+sets or scheduling alone does not require a new description. For reviewed
+registries, use `-ApprovedExerciseDefinitionsJson` on the runner; exact identity,
+context and review-artifact checks still apply. Unresolved descriptions cannot
+enter video discovery or reconstruction.
+
+Run `scripts/run_exercise_motion_workout_plan.ps1` with the approved working copy,
+a dedicated `-WorkspaceRoot`, `-ReuseExistingSelected` to revalidate and reuse
+compatible outputs, and `-MobilePackageOutputJson` pointing to a separate
+`plan_with_movements.json`. Packaging attaches each selected movement to the
+definition and all its occurrences, including supersets. The original plan,
+exercise selection, prescriptions and ordering are preserved.
+
 Both the single-exercise and workout-plan wrappers maintain
 `build/exercise_motion/source_outcome_index.json` by default. Each source video is
 counted once per run, even when several windows from that video are attempted. The

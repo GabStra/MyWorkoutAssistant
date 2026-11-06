@@ -28,7 +28,7 @@ from exercise_motion_pkg.bake_and_rank import (
     SOURCE_SELECTION_POLICY_VERSION,
     source_selection_clearance_for_workspace,
 )
-from exercise_motion_pkg.youtube import EXERCISE_MOTION_CONTRACT_POLICY_VERSION
+from exercise_motion_pkg.youtube import EXERCISE_MOTION_CONTRACT_POLICY_VERSION, extract_workout_plan_exercises
 
 
 MOVEMENT_FORMAT = "wear_skeleton_json_v1"
@@ -477,9 +477,18 @@ def main() -> int:
 
     id_index: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
     name_index: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
+    targets = extract_workout_plan_exercises(workout_plan_package)
+    target_ids = {normalize_key(target.exercise_id) for target in targets}
     for exercise, location in iter_package_exercises(workout_plan_package):
+        definition_id = exercise.get("exerciseDefinitionId")
         exercise_id = exercise.get("id")
-        if exercise_id is not None and str(exercise_id).strip():
+        if location.startswith("exerciseDefinitions[") and normalize_key(exercise_id) not in target_ids:
+            continue
+        if definition_id is not None:
+            if normalize_key(definition_id) not in target_ids:
+                continue
+            id_index[normalize_key(definition_id)].append((exercise, location))
+        elif exercise_id is not None and str(exercise_id).strip():
             id_index[normalize_key(exercise_id)].append((exercise, location))
 
         exercise_name = exercise.get("name")

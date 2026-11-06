@@ -649,7 +649,7 @@ def build_parser() -> argparse.ArgumentParser:
     definition_review.add_argument("--equipment-json", type=Path)
     definition_review.add_argument("--exercise-id", required=True)
     definition_review.add_argument("--review-json", required=True, type=Path)
-    definition_review.add_argument("--candidates-json", type=Path, help="Required when exporting a pending review.")
+    definition_review.add_argument("--candidates-json", type=Path, help="Optional description-prefetch or discovery manifest; omit to prepare a blank pending review.")
     definition_review.add_argument("--approve", action="store_true", help="Explicitly approve the edited definition; never called automatically.")
     definition_review.add_argument("--out-plan-json", type=Path, help="New plan path required with --approve.")
 
@@ -1435,8 +1435,6 @@ def main() -> None:
             print(json.dumps(result, indent=2))
             print("Resume the existing runner with -WorkoutPlanJson pointing to this plan and the same -WorkspaceRoot.")
         else:
-            if args.candidates_json is None:
-                parser.error("Export requires --candidates-json")
             export_definition_review(**common, candidates_path=args.candidates_json)
             print(f"Pending review written to {args.review_json}. Edit definition, then explicitly run --approve.")
         return
@@ -1741,12 +1739,13 @@ def main() -> None:
         )
         if args.definition_readiness_report_json:
             write_definition_readiness_report(args.definition_readiness_report_json, definition_readiness)
-        try:
-            require_definition_readiness(definition_readiness)
-        except ValueError as exc:
-            if args.definition_readiness_report_json:
-                raise ValueError(f"{exc} Full report: {args.definition_readiness_report_json.resolve()}") from exc
-            raise
+        if not args.contract_prefetch_only:
+            try:
+                require_definition_readiness(definition_readiness)
+            except ValueError as exc:
+                if args.definition_readiness_report_json:
+                    raise ValueError(f"{exc} Full report: {args.definition_readiness_report_json.resolve()}") from exc
+                raise
         out_json = Path(args.out_json)
         preview_cache_dir = args.youtube_preview_cache_dir or (out_json.parent / "youtube-preview-cache")
         excluded_candidate_keys = load_youtube_candidate_exclusion_keys(

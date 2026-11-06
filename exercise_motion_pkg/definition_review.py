@@ -31,8 +31,9 @@ def _exercise_nodes(node, target):
         for child in node:
             yield from _exercise_nodes(child, target)
     elif isinstance(node, dict):
-        if (extract_exercise_id(node) == target.exercise_id
-                and extract_exercise_name(node) in {target.name, target.source_name, target.equipment_qualified_name}):
+        if (node.get("exerciseDefinitionId") == target.exercise_id
+                or (extract_exercise_id(node) == target.exercise_id
+                    and extract_exercise_name(node) in {target.name, target.source_name, target.equipment_qualified_name})):
             yield node
             return
         for key in ("WorkoutStore", "workouts", "exerciseDefinitions", "workoutComponents", "components",
@@ -46,10 +47,11 @@ def _target_fingerprint(plan_path, target):
     nodes = list(_exercise_nodes(plan, target))
     if not nodes:
         raise ValueError("No writable exercise with this explicit id was found in the plan")
-    return _digest({"exercise": asdict(target), "occurrences": nodes})
+    # Description approval follows movement identity, not weekly doses or placement.
+    return _digest(asdict(target))
 
 
-def export_definition_review(*, plan_path: Path, candidates_path: Path,
+def export_definition_review(*, plan_path: Path, candidates_path: Path | None = None,
                              exercise_id: str, review_path: Path,
                              equipment_path: Path | None = None):
     from .bake_and_rank import write_json_atomic
@@ -57,14 +59,16 @@ def export_definition_review(*, plan_path: Path, candidates_path: Path,
     if review_path.exists():
         raise FileExistsError(f"Review already exists; edit it instead of overwriting: {review_path}")
     target = _target(plan_path, exercise_id, equipment_path)
-    candidates = json.loads(candidates_path.read_text(encoding="utf-8-sig"))
-    entries = [entry for entry in candidates.get("exercises", []) if entry.get("exerciseId") == exercise_id]
-    if len(entries) != 1:
-        raise ValueError("Expected one matching exercise in the discovery manifest")
-    entry = entries[0]
-    if entry.get("exerciseName") != target.name or entry.get("motionContext") != target.motion_context:
-        raise ValueError("Discovery target differs from the current plan; use a current manifest")
-    contract = entry.get("exerciseMotionContract") or {}
+    contract = {}
+    if candidates_path is not None:
+        candidates = json.loads(candidates_path.read_text(encoding="utf-8-sig"))
+        entries = [entry for entry in candidates.get("exercises", []) if entry.get("exerciseId") == exercise_id]
+        if len(entries) != 1:
+            raise ValueError("Expected one matching exercise in the description or discovery manifest")
+        entry = entries[0]
+        if entry.get("exerciseName") != target.name or entry.get("motionContext") != target.motion_context:
+            raise ValueError("Discovery target differs from the current plan; use a current manifest")
+        contract = entry.get("exerciseMotionContract") or {}
     action = contract.get("definingAction") or "; ".join(contract.get("requiredPhases") or [])
     review = {
         "schemaVersion": 1,
@@ -75,7 +79,7 @@ def export_definition_review(*, plan_path: Path, candidates_path: Path,
         "targetContext": asdict(target),
         "proposalContractSha256": _digest(contract),
         "proposalNotes": contract.get("advisoryText") or "",
-        "sourceManifest": str(candidates_path.resolve()),
+        "sourceManifest": str(candidates_path.resolve()) if candidates_path is not None else None,
         "definition": {
             "definingAction": action,
             "completionMode": contract.get("completionMode") or "",

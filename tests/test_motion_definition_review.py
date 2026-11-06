@@ -122,6 +122,94 @@ def test_cli_requires_explicit_approval_to_persist(files, monkeypatch):
     assert approved["review"]["status"] == "approved"
 
 
+def test_definition_review_before_discovery_preserves_plan_and_covers_repeated_occurrences(tmp_path):
+    from copy import deepcopy
+    from exercise_motion_pkg.definition_ingestion import prepare_workout_plan_definition_readiness
+    from exercise_motion_pkg.definition_review import _target_fingerprint
+
+    plan = tmp_path / "plan.json"
+    payload = {"exerciseDefinitions": [
+        {"id": "press", "name": "Press", "equipmentId": "bar"},
+        {"id": "other-press", "name": "Press", "equipmentId": "dumbbell"},
+        {"id": "unused", "name": "Unused"},
+        {"id": "timer", "name": "Warm-up timer", "exerciseType": "COUNTDOWN"},
+    ], "workouts": [{"workoutComponents": [
+        {"type": "Exercise", "id": "monday", "exerciseDefinitionId": "press", "sets": [{"reps": 8}]},
+        {"type": "Superset", "exercises": [
+            {"type": "Exercise", "id": "friday", "exerciseDefinitionId": "press", "sets": [{"reps": 10}]},
+            {"type": "Exercise", "id": "variant", "exerciseDefinitionId": "other-press"},
+        ]},
+        {"type": "Exercise", "id": "warmup", "exerciseDefinitionId": "timer"},
+    ]}, {"enabled": False, "workoutComponents": [
+        {"type": "Exercise", "id": "disabled", "exerciseDefinitionId": "unused"},
+    ]}]}
+    plan.write_text(json.dumps(payload))
+    original = plan.read_bytes()
+    targets = load_workout_plan_exercises(plan)
+    assert [item.exercise_id for item in targets] == ["press", "other-press"]
+    review_path = tmp_path / "review.json"
+    review = export_definition_review(plan_path=plan, exercise_id="press", review_path=review_path)
+    assert review["sourceManifest"] is None and review["status"] == "pending"
+    assert prepare_workout_plan_definition_readiness(plan_path=plan)[2]["readyCount"] == 0
+    fingerprint = _target_fingerprint(plan, targets[0])
+    changed_dose = deepcopy(payload)
+    changed_dose["workouts"][0]["workoutComponents"][0]["sets"] = [{"reps": 12}]
+    plan.write_text(json.dumps(changed_dose))
+    assert _target_fingerprint(plan, load_workout_plan_exercises(plan)[0]) == fingerprint
+    review["definition"] = {"definingAction": "Press the bar overhead and return under control.",
+                            "completionMode": "return_to_start", "variantQualifiers": []}
+    review_path.write_text(json.dumps(review))
+    output = tmp_path / "approved.json"
+    result = approve_definition_review(plan_path=plan, exercise_id="press", review_path=review_path, output_path=output)
+    assert result["updatedOccurrences"] == 3  # Definition and both session occurrences.
+    _, _, report = prepare_workout_plan_definition_readiness(plan_path=output)
+    assert report["readyCount"] == 1 and report["unresolvedCount"] == 1
+    approved = json.loads(output.read_text())
+    for node in [approved["exerciseDefinitions"][0], approved["workouts"][0]["workoutComponents"][0],
+                 approved["workouts"][0]["workoutComponents"][1]["exercises"][0]]:
+        node.pop("motionContext")
+    assert approved == changed_dose
+    assert json.loads(original) == payload
+    assert json.loads(plan.read_text()) == changed_dose
+
+
+@pytest.mark.parametrize("change, expected", [
+    ({"exerciseDefinitionId": "missing"}, "missing definition"),
+    ({"equipmentId": "different"}, "overrides equipmentId"),
+    ({"motionContext": {"stance": "different"}}, "Conflicting motion context"),
+])
+def test_referenced_plan_rejects_missing_or_conflicting_movement_identity(tmp_path, change, expected):
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"exerciseDefinitions": [{"id": "a", "name": "Press", "equipmentId": "bar"}],
+        "workouts": [{"workoutComponents": [
+            {"type": "Exercise", "id": "one", "exerciseDefinitionId": "a"},
+            {"type": "Exercise", "id": "two", "exerciseDefinitionId": "a", **change},
+        ]}]}))
+    with pytest.raises(ValueError, match=expected):
+        load_workout_plan_exercises(plan)
+
+
+def test_cli_can_prepare_proposals_without_admitting_unapproved_discovery(files, monkeypatch, tmp_path):
+    from exercise_motion_pkg import cli
+
+    arguments, _ = files
+    called = []
+    def prefetch(**kwargs):
+        called.append(kwargs)
+        return {"counts": {"generated": 1}}
+    monkeypatch.setattr(cli, "prefetch_exercise_motion_contracts", prefetch)
+    monkeypatch.setattr(cli, "discover_and_rank_youtube_candidates",
+                        lambda **kwargs: pytest.fail("Unapproved descriptions reached video discovery"))
+    command = ["exercise-motion", "find-youtube-videos", "--workout-plan-json", str(arguments["plan_path"]),
+               "--out-json", str(tmp_path / "proposals.json")]
+    monkeypatch.setattr("sys.argv", [*command, "--contract-prefetch-only"])
+    cli.main()
+    assert len(called) == 1
+    monkeypatch.setattr("sys.argv", command)
+    with pytest.raises(ValueError, match="definition"):
+        cli.main()
+
+
 def test_resume_reopens_definition_review_after_target_approval(files, tmp_path):
     arguments, output = files
     export_definition_review(**arguments)
