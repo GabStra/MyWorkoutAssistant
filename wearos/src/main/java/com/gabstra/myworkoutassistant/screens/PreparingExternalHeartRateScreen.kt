@@ -92,8 +92,13 @@ fun PreparingExternalHeartRateScreen(
         snapshotFlow { isSessionHydrationInFlight }.first { !it }
         currentMillis = 0
         val config = viewModel.getExternalHeartRateConfig(source)
-        externalHeartRateController.initialize(context, config)
-        externalHeartRateController.connectToDevice()
+        // A link still streaming from the previous session is healthy: keep it instead of
+        // tearing it down and making resume wait for a full reconnect (which also flashes
+        // the skip view when the transient state passes through Error).
+        if (externalHeartRateController.connectionState.value !is ExternalHeartRateConnectionState.Streaming) {
+            externalHeartRateController.initialize(context, config)
+            externalHeartRateController.connectToDevice()
+        }
 
         scope.launch {
             while (true) {
@@ -150,14 +155,14 @@ fun PreparingExternalHeartRateScreen(
             (connectionState as ExternalHeartRateConnectionState.Error).message
         is ExternalHeartRateConnectionState.Skipped ->
             (connectionState as ExternalHeartRateConnectionState.Skipped).message
-        ExternalHeartRateConnectionState.Idle -> "Preparing ${source.displayName()}"
+        ExternalHeartRateConnectionState.Idle -> "Waiting for ${source.displayName()} heart rate"
     }.trimEnd('.')
 
     if (!canSkip || isStreaming) {
         // One stable line while connecting: the per-state messages flashed through
         // scanning/connecting/connected in well under a second on a fast link. Errors and
         // the skip hint still appear in the buttons view below.
-        FullScreenLoadingIndicator(text = "Preparing ${source.displayName()}")
+        FullScreenLoadingIndicator(text = "Waiting for ${source.displayName()} heart rate")
         return
     }
 

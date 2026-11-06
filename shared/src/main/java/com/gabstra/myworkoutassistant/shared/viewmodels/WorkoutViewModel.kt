@@ -731,8 +731,10 @@ open class WorkoutViewModel(
      */
     fun isCurrentPreparingState(expectedState: WorkoutState.Preparing): Boolean {
         val phase = _sessionPhase.value
+        // Value comparison: rebuildScreenState() de-duplicates structurally, so a newer, equal
+        // Preparing instance may never reach the screen while _workoutState holds it.
         return (phase == WorkoutSessionPhase.PREPARING || phase == WorkoutSessionPhase.READY) &&
-            _workoutState.value === expectedState
+            _workoutState.value == expectedState
     }
 
     private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
