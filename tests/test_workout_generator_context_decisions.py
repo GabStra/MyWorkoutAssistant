@@ -175,7 +175,10 @@ def test_original_physical_source_names_resolve_to_current_canonical_definitions
     assert 'decisionReview' not in proposal
 
 
-def test_complete_structured_intake_reviews_and_compiles_physical_context_without_changing_policy(monkeypatch):
+@pytest.mark.parametrize('accepted', [True, False])
+@pytest.mark.parametrize('cached_source_failure', [True, False])
+def test_complete_structured_intake_reviews_and_compiles_physical_context_without_changing_policy(
+        monkeypatch, accepted, cached_source_failure):
     from workout_generator_pkg import planning_tools
     from workout_generator_pkg.joint_planning import _superset_pair_rejection
     from workout_generator_pkg.planner_context import _decision_selection_projection
@@ -197,6 +200,8 @@ def test_complete_structured_intake_reviews_and_compiles_physical_context_withou
         executionRules=[{'kind': 'supersetNoReconfiguration', 'coverageKey': None,
             'confirmedIndependentPairs': []}])
     requirements.pop('objectiveTiers', None)
+    if not accepted:
+        messages[0]['content'] = 'I own the equipment; choose suitable supersets for me.'
     messages[0]['content'] += (' Barbell and Bench are one shared physical station.\n'
         + STRUCTURED_REQUIREMENTS_MARKER + '\n' + json.dumps(requirements))
     arguments['decisions'] = [arguments['decisions'][0], {
@@ -208,17 +213,53 @@ def test_complete_structured_intake_reviews_and_compiles_physical_context_withou
     with pytest.raises(ValidationError):
         validate({'planningDecisions': {'decisions': [{
             'topic': 'Policy', 'choice': 'Invent another rule.', 'sourceReferences': ['SOURCE_0']}]}}, schema)
+    if cached_source_failure:
+        candidate = planning_tools.set_workout_requirements({}, messages, equipment)
+        proposal = propose_decisions(arguments, messages, equipment)
+        candidate['resolvedDecisions'] = copy.deepcopy(proposal['decisions'])
+        candidate['jointDecisionReview'] = {'version': 1, 'newDecisionIds': proposal['newDecisionIds'],
+            'proposalHash': plan_review._hash({'decisions': proposal['decisions'],
+                                              'newDecisionIds': proposal['newDecisionIds']})}
+        candidate['sourceReview'] = {'version': plan_review.REQUIREMENTS_REVIEW_VERSION,
+            'inputHash': plan_review._hash(plan_review._requirements_context(candidate)),
+            'passed': False, 'findings': [], 'failure': 'StructuredResponseError: mixed-scope response',
+            'instructionBoundary': 0}
+        candidate['passed'] = False
+        store(messages, 'set_workout_requirements', tool_arguments, candidate, 'old-source-failure')
     calls = []
 
     def accept(client, request, **options):
-        calls.append(json.loads(request[-1]['content']))
+        context = json.loads(request[-1]['content'])
+        calls.append(context)
+        assert request[0]['content'].startswith('Check the new or revalidated planning choices')
+        assert 'factual physical-access assertion' in request[0]['content']
+        assert 'implementationChecks' not in context and 'structuredAuthority' not in context
+        assert context['sourceMessages']['SOURCE_0']['content'] == messages[0]['content']
+        if not accepted:
+            return json.dumps({'findings': [{'severity': 'blocking', 'basis': 'established_violation',
+                'path': context['decisions']['DECISION_0']['_reviewRef'],
+                'message': 'Equipment possession and delegation do not establish floor-space access.',
+                'evidencePaths': [context['sourceMessages']['SOURCE_0']['_reviewRef']],
+                'repair': 'Ask for an explicit physical access statement.'}]}), None, None
         return '{"findings":[]}', None, None
 
     monkeypatch.setattr(plan_review, '_review_call', accept)
     result = json.loads(handle_function_call(None, messages, 'set_workout_requirements',
         tool_arguments, equipment)['result'])
-    assert result['passed'] and result['jointDecisionReview']['passed'] and len(calls) == 1
+    assert len(calls) == 1
+    assert result['sourceReview']['codeAnsweredChecks'][0]['check'] == 'complete_structured_requirements'
     assert result['requirements'] == planning_tools.set_workout_requirements({}, messages, equipment)['requirements']
+    if not accepted:
+        assert not result['passed'] and not result['sourceReview']['passed']
+        assert not result['jointDecisionReview']['passed']
+        assert result['decisions'] == result['resolvedDecisions'] == {}
+        assert 'requirementsPreview' not in result
+        store(messages, 'set_workout_requirements', tool_arguments, result, 'rejected-physical-intake')
+        assert not confirmed_setup_access(messages, equipment, result['requirements'])['bindings']
+        assert set(result['proposedDecisions']) == {'DECISION_0', 'DECISION_1'}
+        return
+    assert result['passed'] and result['jointDecisionReview']['passed']
+    assert result['sourceReview']['inputHash'] == plan_review._hash(plan_review._requirements_context(result))
     original = copy.deepcopy(result['requirements'])
     store(messages, 'set_workout_requirements', tool_arguments, result, 'physical-intake')
     bound = confirmed_setup_access(messages, equipment, original)
@@ -439,3 +480,25 @@ def test_final_review_projects_only_exact_programming_choice_without_semantic_wa
             stale[changed] = 'changed'
         assert plan_review._context(stale, messages, equipment, None,
             len(messages) - 1)['acceptedProgrammingChoices'] == {}
+
+
+def test_unchanged_choice_refreshes_references_without_replacing_decision(monkeypatch):
+    from workout_generator_pkg.planning_decisions import resolved_decisions
+    equipment, requirements, messages, arguments = context_case()
+    arguments = {'decisions': [arguments['decisions'][1]]}
+    monkeypatch.setattr(plan_review, 'chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
+    first = json.loads(handle_function_call(None, messages, 'record_planning_decisions', arguments, equipment)['result'])
+    assert first['passed']
+    store(messages, 'record_planning_decisions', arguments, first, 'first-counting')
+    messages.insert(0, {'role': 'user', 'content': 'Use Cable Crunch instead of weighted dumbbell crunch.'})
+    refreshed_arguments = copy.deepcopy(arguments)
+    refreshed_arguments['decisions'][0]['sourceReferences'] = ['SOURCE_1']
+    proposal = propose_decisions(refreshed_arguments, messages, equipment)
+    assert set(proposal['decisions']) == {'DECISION_0'}
+    assert proposal['newDecisionIds'] == ['DECISION_0']
+    assert proposal['decisions']['DECISION_0']['sourceReferences'] == ['SOURCE_1']
+    assert proposal['decisions']['DECISION_0']['sourceCountAtResolution'] == len(proposal['sourceMessages'])
+    assert proposal['decisions']['DECISION_0']['executionPrescription'] == first['decisions']['DECISION_0']['executionPrescription']
+    assert 'supersededBy' not in proposal['decisions']['DECISION_0']
+    # Fresh authorization review is still required before the refreshed proposal is saved.
+    assert resolved_decisions(messages)['DECISION_0']['sourceReferences'] == ['SOURCE_0']

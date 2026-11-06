@@ -259,7 +259,9 @@ def test_unexecuted_one_set_rest_is_not_normalized_or_described_as_applicable():
         sorted(equipment['exerciseDefinitions'], key=lambda value: value['id']))}
     rule = stored['requirements']['executionRules'][0]
     variants = list(_rest_options([item], stored['requirements'], definitions, 1))
-    assert variants == [[item]]
+    assert len(variants) == 1
+    assert variants[0][0]['restBetweenSetsSeconds'] == item['restBetweenSetsSeconds']
+    assert variants[0][0]['restAfterExerciseSeconds'] == 120
     variants = list(_rest_options([item], stored['requirements'], definitions, 2))
     assert len(variants) == 2 and variants[-1][0]['restBetweenSetsSeconds'] == 120
     assert 'only when at least two working sets are prescribed' in render_execution_rule(rule)
@@ -340,15 +342,17 @@ def test_default_setup_replaces_missing_value_and_explicit_estimate_reaches_fina
 
 
 def test_rest_rules_select_immutable_library_category_without_coverage_labels():
+    from test_workout_generator_planning_tools import capability_requirement_messages
     rule = {'kind': 'rest', 'coverageKey': None, 'exerciseCategory': 'MODERATE_COMPOUND',
             'context': 'straightSets', 'minimumSeconds': 90, 'maximumSeconds': 150}
     equipment, _, stored, draft = case([rule])
     item = draft['workouts'][0]['exercises'][1]
     item['restBetweenSetsSeconds'] = 60
-    failed = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    messages = capability_requirement_messages(stored, equipment)
+    failed = audit_workout_plan(draft, equipment, messages)
     assert any(e['code'] == 'execution_rest' and e['path'].endswith('/1/restBetweenSetsSeconds') for e in failed['errors'])
     item['restBetweenSetsSeconds'] = 90
-    assert audit_workout_plan(draft, equipment, requirement_messages(stored))['passed']
+    assert audit_workout_plan(draft, equipment, messages)['passed']
 
 
 def test_weekly_schedule_checks_full_rest_days_including_wraparound():

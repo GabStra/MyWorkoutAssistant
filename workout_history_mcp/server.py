@@ -68,6 +68,28 @@ def _with_store_list(
         return ToolFailure.unexpected(exc, tool=label).as_dict()
 
 
+def _user_memory(store: WorkoutHistoryStore, kind: str | None = None) -> dict[str, Any]:
+    from workout_user_memory import facts_for, resolve_profile
+
+    backup_path = backup_path_from_env()
+    root = os.environ.get("MYWORKOUT_USER_MEMORY_DIR")
+    profile_id = resolve_profile(history_path=backup_path, root=root)
+    if not profile_id:
+        return {"configured": False, "facts": [], "unavailableFacts": []}
+
+    result = facts_for(
+        profile_id,
+        equipment=store.workout_store,
+        root=root,
+    )
+    if kind:
+        result["facts"] = [fact for fact in result.get("facts", []) if fact.get("kind") == kind]
+        result["unavailableFacts"] = [
+            fact for fact in result.get("unavailableFacts", []) if fact.get("kind") == kind
+        ]
+    return {"configured": True, **result}
+
+
 def create_mcp() -> FastMCP:
     host = os.environ.get("MYWORKOUT_MCP_HOST", "127.0.0.1")
     port = int(os.environ.get("MYWORKOUT_MCP_PORT", "8000"))
@@ -104,6 +126,11 @@ def create_mcp() -> FastMCP:
     def current_plan_resource() -> dict[str, Any]:
         """Current active workouts, exercise prescriptions, progression settings, and equipment."""
         return _with_store_dict(lambda store: current_training_plan_data(store), label="workout-history://current-plan")
+
+    @mcp.resource("workout-history://user-memory")
+    def user_memory_resource() -> dict[str, Any]:
+        """Return read-only, profile-scoped user memory applicable to current equipment."""
+        return _with_store_dict(lambda store: _user_memory(store), label="workout-history://user-memory")
 
     @mcp.tool()
     def get_athlete_profile() -> dict[str, Any]:
@@ -186,6 +213,11 @@ def create_mcp() -> FastMCP:
             lambda store: current_training_plan_data(store, active_only=active_only),
             label="get_current_training_plan",
         )
+
+    @mcp.tool()
+    def get_user_memory(kind: str | None = None) -> dict[str, Any]:
+        """Return read-only profile facts; optionally filter by fact kind."""
+        return _with_store_dict(lambda store: _user_memory(store, kind), label="get_user_memory")
 
     return mcp
 

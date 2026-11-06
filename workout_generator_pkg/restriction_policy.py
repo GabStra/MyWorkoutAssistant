@@ -25,13 +25,19 @@ def _phrase_matches(phrase, text):
         for start in range(len(actual) - len(wanted) + 1))
 
 
-def resolve_restrictions(restrictions, equipment, client=None, progress=None, *, source_messages=None):
+def resolve_restrictions(restrictions, equipment, client=None, progress=None, *, source_messages=None,
+                         retained_policy=None):
     from .planning_tools import (PlanningInputError, library_fingerprint,
                                  source_message_context, _structured_requirement_source)
     definitions = sorted(equipment.get('exerciseDefinitions', []), key=lambda d: d['id'])
     by_ref = {f'LIBRARY_{i}': d for i, d in enumerate(definitions)}
     gear = {g['id']: g.get('name', '') for key in ('equipments', 'accessoryEquipments') for g in equipment.get(key, [])}
     matches, pending = [], []
+    retained = retained_policy or {}
+    retained_matches = (retained.get('matches', []) if
+        retained.get('resolutionVersion') == RESTRICTION_POLICY_VERSION
+        and retained.get('libraryFingerprint') == library_fingerprint(equipment) else [])
+    available_ids = {definition['id'] for definition in definitions}
     for kind, field in (('exclude', 'excludeNameTerms'), ('exception', 'exceptNameTerms')):
         for term in dict.fromkeys(restrictions.get(field, [])):
             ids = []
@@ -42,6 +48,13 @@ def resolve_restrictions(restrictions, equipment, client=None, progress=None, *,
                     names += [gear.get(key, '') for key in definition.get('requiredAccessoryEquipmentIds', [])]
                 if any(_phrase_matches(term, name) for name in names):
                     ids.append(definition['id'])
+            if not ids:
+                previous = next((item.get('definitionIds') for item in retained_matches
+                    if item.get('kind') == kind and item.get('term') == term), None)
+                if (isinstance(previous, list) and previous
+                        and all(isinstance(key, str) for key in previous)
+                        and set(previous) <= available_ids):
+                    ids = list(previous)
             item = {'kind': kind, 'term': term, 'definitionIds': ids}
             (matches if ids else pending).append(item)
     if pending and client is not None and definitions:

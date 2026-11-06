@@ -1206,14 +1206,11 @@ def test_review_correction_can_repair_citations_before_selecting_same_catalog_ob
             responses.append(('initial', plan_ref, source_ref))
             return json.dumps(response_for(data, schema, [finding])), None, None
 
-        selector = schema['properties']['findingCorrections']['properties']['FINDING_0']['properties'][
-            'repairObjectiveChoiceIds']
-        assert selector['items']['enum'] == ['OBJECTIVE_0']
+        fields = schema['properties']['findingCorrections']['properties']['FINDING_0']['properties']
+        assert set(fields) == {'evidenceRefs'}
         _, plan_ref, source_ref = responses[0]
         correction = {'findingCorrections': {'FINDING_0': {
-            'evidenceRefs': [source_ref, plan_ref],
-            'repairDimensions': ['exercise_selection'],
-            'repairObjectiveChoiceIds': ['OBJECTIVE_0']}}}
+            'evidenceRefs': [source_ref, plan_ref]}}}
         responses.append(('correction', correction))
         return json.dumps(correction), None, None
 
@@ -1261,11 +1258,9 @@ def test_carried_advisory_bad_citation_uses_one_support_only_correction(monkeypa
             return json.dumps(payload), None, None
 
         assert len(calls) == 2
-        assert set(schema['properties']) == {'findingCorrections', 'blockerResolutions'}
+        assert set(schema['properties']) == {'findingCorrections'}
         assert set(schema['properties']['findingCorrections']['properties']['FINDING_0']['properties']) == {'evidenceRefs'}
-        return json.dumps({'findingCorrections': {'FINDING_0': {'evidenceRefs': [current_ref]}},
-            'blockerResolutions': {'ISSUE_0': {'reason': 'execution_conflict',
-                'evidenceRefs': [current_ref]}}}), None, None
+        return json.dumps({'findingCorrections': {'FINDING_0': {'evidenceRefs': [current_ref]}}}), None, None
 
     monkeypatch.setattr(review, '_review_call', respond)
     result = review._review_complete_draft(None, context, audited, messages, boundary, None)

@@ -86,7 +86,7 @@ def build_workout_structure(workout_entry):
                 "componentType": "Superset", "enabled": group.get("enabled", True),
                 "exerciseIds": list(members), "restSecondsByExercise": copy.deepcopy(superset_rest_map(workout_entry, group)),
             }
-            for field in ("timeCapSeconds", "roundDurationSeconds", "amrap"):
+            for field in ("timeCapSeconds", "roundDurationSeconds", "amrap", "cadenceMode"):
                 if field in group:
                     component[field] = group[field]
             components.append(component)
@@ -145,7 +145,7 @@ def reviewable_workout_artifact(plan, guidance, workout_store=None, id_map=None)
                 components.append({'type': kind, **exercise_view(item)})
             elif kind == 'Superset':
                 components.append({'type': kind, 'enabled': item.get('enabled', True), **{key: normalize(item[key]) for key in (
-                    'restSecondsByExercise', 'timeCapSeconds', 'roundDurationSeconds', 'amrap') if key in item},
+                    'restSecondsByExercise', 'timeCapSeconds', 'roundDurationSeconds', 'amrap', 'cadenceMode') if key in item},
                     'exercises': [exercise_view(e) for e in item['exercises']]})
             else:
                 components.append({'type': kind, 'enabled': item.get('enabled', True), 'timeInSeconds': item['timeInSeconds']})
@@ -247,6 +247,11 @@ def validate_exercise_type_consistency(exercise):
         return True, None  # Unknown exercise type, skip validation
     
     allowed_set_types = set(expected_set_types[exercise_type] + ["RestSet"])
+    if exercise_type in ("WEIGHT", "BODY_WEIGHT", "COUNTDOWN") and any(
+            isinstance(set_item, dict) and set_item.get("type") == "WeightedEffortSet"
+            for set_item in sets):
+        # Weighted distance-goal sets carry the load; see WeightedEffortSet.
+        allowed_set_types |= {"WeightedEffortSet", "EnduranceSet", "TimedDurationSet"}
     
     for set_item in sets:
         set_type = set_item.get("type")
@@ -273,6 +278,11 @@ def validate_reps_for_exercise_type(exercise):
     if not exercise_type:
         return True, None
     
+    if exercise_type in ["WEIGHT", "BODY_WEIGHT", "COUNTDOWN"] and any(
+            isinstance(set_item, dict) and set_item.get("type") == "WeightedEffortSet"
+            for set_item in exercise.get("sets", []) or []):
+        return True, None
+
     if exercise_type in ["WEIGHT", "BODY_WEIGHT"]:
         if min_reps is None or max_reps is None or min_reps <= 0 or max_reps <= 0:
             return False, f"Exercise '{exercise.get('name', 'Unknown')}' has exerciseType '{exercise_type}' but minReps={min_reps}, maxReps={max_reps}. WEIGHT/BODY_WEIGHT exercises must have minReps > 0 and maxReps > 0."
@@ -710,9 +720,15 @@ def validate_exercise_type_profile(
 
     errors: List[str] = []
     exercise_name = exercise.get("name", "Unknown")
+    goal_work_sets = any(
+        isinstance(set_item, dict) and set_item.get("type") == "WeightedEffortSet"
+        for set_item in (exercise.get("sets") or [])
+    )
 
     if require_full_shape:
         for field in profile["required_top_level_fields"]:
+            if field in ("minReps", "maxReps") and goal_work_sets:
+                continue
             if field not in exercise:
                 errors.append(
                     f"Exercise '{exercise_name}' is missing required top-level field '{field}' for {exercise_type}."
@@ -744,7 +760,7 @@ def validate_exercise_type_profile(
             errors.append(
                 f"Exercise '{exercise_name}' must not emit minReps or maxReps for timed exercises."
             )
-    elif require_full_shape:
+    elif require_full_shape and not goal_work_sets:
         for rep_field in ("minReps", "maxReps"):
             if rep_field not in exercise:
                 errors.append(
@@ -765,16 +781,16 @@ def validate_exercise_type_profile(
             errors.append(f"Exercise '{exercise_name}' sets[{idx}] must be an object.")
             continue
         set_type = set_item.get("type")
-        if set_type == allowed_work_set_type:
+        if set_type == allowed_work_set_type or (goal_work_sets and set_type == "WeightedEffortSet"):
             work_set_count += 1
-            if require_full_shape:
+            if require_full_shape and set_type == allowed_work_set_type:
                 for field in profile["required_set_level_fields"]:
                     if field not in set_item:
                         errors.append(
                             f"Exercise '{exercise_name}' {allowed_work_set_type} at sets[{idx}] is missing required field '{field}'."
                         )
             for field in profile["forbidden_set_level_fields"]:
-                if field in set_item:
+                if field in set_item and set_type == allowed_work_set_type:
                     errors.append(
                         f"Exercise '{exercise_name}' {allowed_work_set_type} at sets[{idx}] must not include field '{field}'."
                     )
@@ -799,7 +815,9 @@ def validate_exercise_type_profile(
                 rest_values.append(time_in_seconds)
             prev_type = sets[idx - 1].get("type") if idx > 0 and isinstance(sets[idx - 1], dict) else None
             next_type = sets[idx + 1].get("type") if idx + 1 < len(sets) and isinstance(sets[idx + 1], dict) else None
-            if prev_type != allowed_work_set_type or next_type != allowed_work_set_type:
+            prev_is_work = prev_type == allowed_work_set_type or (goal_work_sets and prev_type == "WeightedEffortSet")
+            next_is_work = next_type == allowed_work_set_type or (goal_work_sets and next_type == "WeightedEffortSet")
+            if not prev_is_work or not next_is_work:
                 errors.append(
                     f"Exercise '{exercise_name}' RestSet at sets[{idx}] must appear only between adjacent {allowed_work_set_type} work sets."
                 )
@@ -1958,16 +1976,24 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                         "targetValue": distance,
                     }
                 # Running exercises count up until the distance goal is reached.
-                # The set id must satisfy the placeholder-ID pattern (no hyphens)
-                # or the step-6 self-heal rewrites the whole set.
-                safe_id = re.sub(r"[^A-Za-z0-9_]", "_", str(exercise.get("id")))
-                exercise["sets"] = [
-                    {
-                        "id": f"SET_{safe_id}_RUN",
-                        "type": "RunningSet",
-                        "shouldReapplyHistoryToSet": False,
-                    }
-                ]
+                # Set ids must satisfy the canonical placeholder pattern, so reuse
+                # the materializer's numeric block (EXERCISE_N -> SET_{N*50+n}).
+                match = re.fullmatch(r"EXERCISE_(\d+)", str(exercise.get("id")))
+                set_number = int(match.group(1)) * 50 if match else 0
+                set_count = plan_exercise.get("numWorkSets")
+                if not isinstance(set_count, int) or set_count < 1:
+                    set_count = 1
+                rest_seconds = plan_exercise.get("restBetweenSetsSeconds", 0)
+                if not isinstance(rest_seconds, int) or rest_seconds < 0:
+                    rest_seconds = 0
+                rebuilt = []
+                for index in range(set_count):
+                    if index:
+                        rebuilt.append({"id": f"SET_{set_number + len(rebuilt)}", "type": "RestSet",
+                                        "timeInSeconds": rest_seconds, "subCategory": "WorkSet"})
+                    rebuilt.append({"id": f"SET_{set_number + len(rebuilt)}", "type": "RunningSet",
+                                    "shouldReapplyHistoryToSet": False})
+                exercise["sets"] = rebuilt
             return
         if plan_exercise.get("exerciseType") not in ("COUNTUP", "COUNTDOWN"):
             return
@@ -2090,6 +2116,8 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                             superset_component["roundDurationSeconds"] = plan_group["roundDurationSeconds"]
                         if plan_group.get("amrap"):
                             superset_component["amrap"] = True
+                        if plan_group.get("cadenceMode") is not None:
+                            superset_component["cadenceMode"] = plan_group["cadenceMode"]
                     workout_components.append(superset_component)
                 else:
                     print(f"  Warning: Superset component has no valid exercises, skipping")
@@ -3357,7 +3385,24 @@ def _materialize_exercise_definition(exercise_entry):
         sets.append({"id": f"SET_{set_number + len(sets)}", "type": "RestSet", "timeInSeconds": rest, "subCategory": "WorkSet"})
 
     running_prescription = None
-    if exercise_type in {"WEIGHT", "BODY_WEIGHT"}:
+    goal_distance = exercise_entry.get("targetDistanceMeters")
+    goal_weight = exercise_entry.get("targetWeight")
+    goal_fields = {}
+    if goal_distance is not None:
+        goal_fields["targetDistanceMeters"] = goal_distance
+    if goal_weight is not None:
+        goal_fields["targetWeight"] = goal_weight
+    if goal_fields and exercise_type in {"WEIGHT", "BODY_WEIGHT", "COUNTDOWN"}:
+        # Weighted distance effort (sled push, farmer carry): dedicated count-up set
+        # carrying the load, instead of invented reps or a fabricated duration.
+        load_label = f" @ {int(goal_weight)} kg" if goal_weight is not None else ""
+        set_note = f"{int(goal_distance)} m{load_label}" if goal_distance is not None else None
+        for index in range(count):
+            append_work_set({"type": "WeightedEffortSet", "autoStart": True,
+                "autoStop": False, "note": set_note, **goal_fields})
+            if index < count - 1:
+                append_rest_set()
+    elif exercise_type in {"WEIGHT", "BODY_WEIGHT"}:
         min_reps, max_reps = exercise_entry.get("minReps"), exercise_entry.get("maxReps")
         if not isinstance(min_reps, int) or isinstance(min_reps, bool) or min_reps < 1:
             raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires positive minReps.")
@@ -3433,9 +3478,13 @@ def _materialize_exercise_definition(exercise_entry):
                 "targetType": "DISTANCE",
                 "targetValue": exercise_entry["targetDistanceMeters"],
             }
-        if count != 1 or not isinstance(running_prescription, dict):
+        if not isinstance(running_prescription, dict):
             raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires one explicit runningPrescription.")
-        append_work_set({"type": "RunningSet"})
+        # N identical sets repeat the exercise-level prescription (one per rotation cycle).
+        for index in range(count):
+            append_work_set({"type": "RunningSet"})
+            if index < count - 1:
+                append_rest_set()
 
     if exercise_entry.get("progressionMode") is not None:
         progression_mode = exercise_entry["progressionMode"]
@@ -3463,7 +3512,7 @@ def _materialize_exercise_definition(exercise_entry):
         "muscleGroups": copy.deepcopy(exercise_entry["muscleGroups"]),
         "secondaryMuscleGroups": copy.deepcopy(exercise_entry["secondaryMuscleGroups"]),
         "requiredAccessoryEquipmentIds": copy.deepcopy(exercise_entry["requiredAccessoryEquipmentIds"]),
-        "requiresLoadCalibration": supports_load_calibration and (
+        "requiresLoadCalibration": supports_load_calibration and not goal_fields and (
             exercise_entry.get("requiresLoadCalibration") is True or not exercise_entry.get("targetSetPrescriptions")
         ),
         "exerciseCategory": exercise_entry["exerciseCategory"],
@@ -3471,6 +3520,9 @@ def _materialize_exercise_definition(exercise_entry):
     if exercise_type == "RUNNING":
         item["runningPrescription"] = copy.deepcopy(running_prescription)
     if exercise_type in {"WEIGHT", "BODY_WEIGHT"}:
-        item["minReps"] = exercise_entry["minReps"]
-        item["maxReps"] = exercise_entry["maxReps"]
+        # Distance-goal exercises prescribe no reps, so min/max stay absent.
+        if "minReps" in exercise_entry:
+            item["minReps"] = exercise_entry["minReps"]
+        if "maxReps" in exercise_entry:
+            item["maxReps"] = exercise_entry["maxReps"]
     return item

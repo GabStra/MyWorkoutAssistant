@@ -288,8 +288,48 @@ def pending_question(messages):
                     continue
                 return {**validated, 'messageIndex': index,
                     **({'executionChoices': copy.deepcopy(question['executionChoices'])}
-                       if question.get('executionChoices') else {})}
+                       if question.get('executionChoices') else {}),
+                    **({'programmingChoices': copy.deepcopy(payload['programmingDecisionChoices'])}
+                       if payload.get('programmingDecisionChoices') else {})}
     return None
+
+
+def answered_programming_decision(messages, equipment, history_fingerprint=None):
+    """Compile an exact answer to the current code-owned artifact comparison."""
+    from .planning_decisions import _current_programming_decision_choices
+    from .planning_tools import library_fingerprint, requirement_sources
+
+    user_index = max((index for index, message in enumerate(messages)
+                      if message.get('role') == 'user'), default=-1)
+    if user_index < 0:
+        return None
+    interaction = messages[user_index].get('userInteraction') or {}
+    question = interaction.get('question') or {}
+    if not question or question != pending_question(messages[:user_index]):
+        return None
+    result_index, _ = max((_latest_result(messages, name) for name in
+        ('audit_workout_plan', 'draft_workout_sessions')), key=lambda item: item[0])
+    result, choices = _current_programming_decision_choices(messages)
+    if (result_index != question.get('messageIndex') or not choices
+            or not requirements_approved(messages)
+            or result.get('libraryFingerprint') != library_fingerprint(equipment)
+            or result.get('historyFingerprint') != history_fingerprint
+            or question.get('programmingChoices') != choices
+            or question.get('options') != [choice['label'] for choice in choices.values()]):
+        return None
+    answer = interaction.get('input')
+    if isinstance(answer, str) and answer.isdecimal():
+        option = int(answer) - 1
+        answer = question['options'][option] if 0 <= option < len(choices) else None
+    selected = next(((identifier, choice) for identifier, choice in choices.items()
+                     if answer == choice['label']), None)
+    if selected is None or messages[user_index].get('content') != answer_question(question, interaction['input']):
+        return None
+    identifier, choice = selected
+    references = [f'SOURCE_{index}' for index, source in enumerate(requirement_sources(messages))
+                  if source['messageIndex'] == user_index]
+    return {'decisions': [{'topic': 'Displayed programming choice', 'choice': choice['label'],
+        'sourceReferences': references, 'acceptedConcernGroupId': identifier}]}
 
 
 def answered_execution_decision(messages, equipment, history_fingerprint=None):

@@ -365,18 +365,23 @@ def test_implementation_finding_cannot_omit_its_code_owned_check():
 
 @pytest.mark.parametrize('corrected', [True, False])
 def test_schema_rejected_review_gets_one_bounded_correction(monkeypatch, corrected):
+    from types import SimpleNamespace
+    from workout_generator_pkg.api_metrics import response_fingerprint
+
     schema = {'type': 'object', 'properties': {'check': {'enum': ['source_omission']}},
               'required': ['check'], 'additionalProperties': False}
     rejected = {'check': 'source_conflict'}
+    second_rejected = {**rejected, 'details': 'Retain the complete second rejected response. ' * 20}
     calls = []
 
     def respond(client, request, **options):
         calls.append(request)
         if len(calls) == 1 or not corrected:
+            payload = rejected if len(calls) == 1 else second_rejected
             try:
-                validate(rejected, schema)
+                validate(payload, schema)
             except ValidationError as error:
-                raise plan_review.StructuredResponseError(json.dumps(rejected), error)
+                raise plan_review.StructuredResponseError(json.dumps(payload), error)
         return json.dumps({'check': 'source_omission'}), None, None
 
     monkeypatch.setattr(plan_review, 'chat_call', respond)
@@ -384,8 +389,19 @@ def test_schema_rejected_review_gets_one_bounded_correction(monkeypatch, correct
         result, _, _ = plan_review._review_call(None, [], retry=True, output_schema=schema)
         validate(json.loads(result), schema)
     else:
-        with pytest.raises(plan_review.StructuredResponseError):
+        with pytest.raises(plan_review.StructuredResponseError) as failure:
             plan_review._review_call(None, [], retry=True, output_schema=schema)
+        rows, responses = [], []
+        logger = SimpleNamespace(log=rows.append,
+            log_response=lambda stage, content, **options: responses.append((stage, content, options)))
+        plan_review._review_failure(failure.value, logger, 'requirements_source_review')
+        assert responses == [('rejected requirements_source_review content', json.dumps(second_rejected),
+                              {'truncate_at': 0})]
+        rejection = json.loads(next(row.split('[api_metric] ', 1)[1]
+                                    for row in rows if '[api_metric] ' in row))
+        assert rejection['event'] == 'submission_rejected'
+        assert rejection['reasonClass'] == 'schema'
+        assert rejection['responseFingerprint'] == response_fingerprint(json.dumps(second_rejected))
     assert len(calls) == 2
     assert json.loads(calls[1][-1]['content'])['rejectedResponse'] == rejected
 

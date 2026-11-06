@@ -876,22 +876,32 @@ def test_reviewed_execution_support_preserves_sources_and_muscle_volume():
         {'id': '3c366a30-29b9-5b1d-86d6-3bc55935584a',
          'muscleGroups': ['BACK_UPPER_BACK'], 'secondaryMuscleGroups': ['FRONT_BICEPS', 'BACK_DELTOIDS']},
     ]
+    definitions += [
+        {'id': '7dd91414-c838-5750-b2f2-909665497ad5',
+         'muscleGroups': ['FRONT_QUADRICEPS', 'BACK_GLUTEAL'], 'secondaryMuscleGroups': []},
+        {'id': 'a782884c-2643-50fb-a29a-700854c9befd',
+         'muscleGroups': ['BACK_UPPER_BACK'], 'secondaryMuscleGroups': ['FRONT_BICEPS']},
+        {'id': 'f81fe880-37cb-59bd-ad8e-42130833e0a4',
+         'muscleGroups': ['BACK_HAMSTRING', 'BACK_GLUTEAL'], 'secondaryMuscleGroups': []},
+    ]
+    expected = [['lowerBack', 'abs'], ['lowerBack', 'abs'], ['lowerBack', 'abs'],
+        ['lowerBack', 'glutes', 'hamstrings'], ['lowerBack']]
     original = copy.deepcopy(definitions)
     annotated = recipe_contracts.apply_reviewed_exercise_annotations({'exerciseDefinitions': definitions})
     assert definitions == original
-    for before, after in zip(definitions, annotated['exerciseDefinitions']):
-        assert execution_supporting_muscles(after) == {'lowerBack', 'abs'}
+    for before, after, muscles in zip(definitions, annotated['exerciseDefinitions'], expected, strict=True):
+        assert execution_supporting_muscles(after) == set(muscles)
         execution = after['reviewedExecution']
         candidate = _selection_entry(after, {}, 'LIBRARY_0')
         context = recipe_contracts._recipe_context({'candidates': {'LIBRARY_0': candidate}}, {}, 'LIBRARY_0')
         assert context['candidate']['reviewedExecution'] == execution
         evidence = recipe_contracts.reviewed_execution_properties({'exerciseDefinitions': [before]})
-        assert evidence['propertiesByReference'] == {'LIBRARY_0': {'supportingMuscles': ['lowerBack', 'abs']}}
+        assert evidence['propertiesByReference']['LIBRARY_0']['supportingMuscles'] == muscles
         assert evidence['sourcesByReference'] == {'LIBRARY_0': {
             'source': execution['source'], 'basis': execution['basis']}}
         evidence['propertiesByReference']['LIBRARY_0']['supportingMuscles'].clear()
         assert recipe_contracts.reviewed_execution_properties({'exerciseDefinitions': [before]})[
-            'propertiesByReference']['LIBRARY_0']['supportingMuscles'] == ['lowerBack', 'abs']
+            'propertiesByReference']['LIBRARY_0']['supportingMuscles'] == muscles
         assert after['muscleGroups'] == before['muscleGroups']
         assert after['secondaryMuscleGroups'] == before['secondaryMuscleGroups']
         assert muscle_credits_per_set(after) == muscle_credits_per_set(before)
@@ -1009,3 +1019,63 @@ def test_recipe_context_legacy_source_fallback_and_pinned_snapshot_are_independe
     assert pinned['sourceMessages'] == source_message_context(stored['sourceMessages'])
     pinned['sourceMessages']['SOURCE_0']['content'] = 'Only the copied projection changes.'
     assert stored['sourceMessages'][0]['content'] != pinned['sourceMessages']['SOURCE_0']['content']
+
+
+def test_qualification_reuses_structured_schedule_changes_but_retains_semantic_sources(monkeypatch):
+    from workout_generator_pkg.requirement_accounting import STRUCTURED_REQUIREMENTS_MARKER
+
+    equipment, _, _, stored, prepared = recipe_case(
+        [{'key': 'push', 'description': 'A pushing movement', 'scope': 'eachSession'}])
+    policy = {'sessionsPerWeek': 3, 'trainingDays': [0, 2, 4], 'preferredSessionSeconds': 3000,
+        'durationBalanceToleranceSeconds': 300, 'auditTargets': {'maximumSessionSeconds': 3600},
+        'requiredCoverage': stored['requirements']['requiredCoverage'], 'notes': 'Keep pushes horizontal.'}
+
+    def source(values):
+        return {'role': 'user', 'content': 'Preserve the movement instructions.\n'
+            + STRUCTURED_REQUIREMENTS_MARKER + '\n' + json.dumps(values) + '\nKeep the supplied image binding.',
+            'imageAttachments': [{'name': 'movement.png', 'sha256': 'original-image'}]}
+
+    stored['sourceMessages'] = [source(policy)]
+    calls = []
+
+    def qualify(_, request, **kwargs):
+        context = json.loads(request[-1]['content'])
+        calls.append(context)
+        return json.dumps({'contracts': [{'definition_id': recipe['definition_id'], 'satisfiesCoverage': ['push']}
+            for recipe in context['recipes']]}), None, None
+
+    monkeypatch.setattr(recipe_contracts, 'chat_call', qualify)
+    initial = recipe_contracts.qualify_recipe_contracts(None, prepared, stored, equipment, [], {})
+    changed = copy.deepcopy(stored)
+    schedule = copy.deepcopy(policy)
+    schedule.update(sessionsPerWeek=2, trainingDays=[1, 5], preferredSessionSeconds=2400,
+        durationBalanceToleranceSeconds=180, auditTargets={'maximumSessionSeconds': 3000})
+    changed['sourceMessages'] = [source(schedule)]
+    before = copy.deepcopy(changed)
+    assert recipe_contracts.qualify_recipe_contracts(None, prepared, changed, equipment, [], {}, initial) == initial
+    assert len(calls) == 1 and changed == before
+    assert 'Keep pushes horizontal.' in calls[0]['sourceMessages']['SOURCE_0']['content']
+    assert calls[0]['sourceMessages']['SOURCE_0']['images'][0]['sha256'] == 'original-image'
+
+    semantic = copy.deepcopy(policy)
+    semantic['requiredCoverage'][0]['description'] = 'Only horizontal pushing movements'
+    notes = copy.deepcopy(policy)
+    notes['notes'] = 'Count only horizontal pushes.'
+    unknown = {**policy, 'futureCoverageQualifier': 'Only horizontal pushes'}
+    variants = [[source(semantic)], [source(notes)], [source(unknown)],
+        [{**source(policy), 'content': source(policy)['content'] + '\nCount only horizontal pushes.'}],
+        [{**source(policy), 'imageAttachments': [{'name': 'movement.png', 'sha256': 'changed-image'}]}]]
+    for sources in variants:
+        changed['sourceMessages'] = sources
+        refreshed = recipe_contracts.qualify_recipe_contracts(None, prepared, changed, equipment, [], {}, initial)
+        assert refreshed['inputHashes'] != initial['inputHashes']
+    assert len(calls) == 1 + len(variants)
+
+
+def test_coverage_source_projection_retains_unrecognized_or_invalid_structured_text():
+    from workout_generator_pkg.requirement_accounting import STRUCTURED_REQUIREMENTS_MARKER
+
+    for text in ('Use a two-day schedule.', STRUCTURED_REQUIREMENTS_MARKER + '\n{broken json',
+            STRUCTURED_REQUIREMENTS_MARKER + '\n{"sessionsPerWeek": "two"}'):
+        sources = {'SOURCE_0': {'role': 'user', 'content': text}}
+        assert recipe_contracts._coverage_source_context(sources) == sources

@@ -22,6 +22,7 @@ from .image_attachments import image_message
 from .programming_guidelines import GUIDELINE_POLICY, EXECUTION_RULES_SCHEMA, MINIMUM_WORK_SETS_RULE
 from .json_patching import apply_json_patch, build_allowed_patch_scope, collect_changed_json_paths, validate_changed_paths_scope, validate_patch_operations_scope
 from .parallel_work import parallel_proposals
+from .review_projection import compact_review_request
 from .domain_ops import calculate_equipment_weight_combinations
 from .recipe_contracts import progression_capability, reviewed_exercise_family_evidence, reviewed_execution_properties
 from .exercise_library_tools import search_catalog
@@ -589,6 +590,7 @@ _PROMPT = (
     'In review data, repeatedWorkSetTarget losslessly represents identical targets repeated numWorkSets times with consecutive workSetIndex values. Varying targets remain targetSetPrescriptions. Apply the same evidence standards; repeatedWorkSetTarget is a review encoding, not an editable source field. '
     'HEAVY_COMPOUND describes a library movement category, not its designation as a primary lift in this program. '
     'Rest between a member\'s own superset sets includes the partner\'s work and both prescribed rests; the A-to-B rest alone is not its recovery interval. '
+    'A superset carrying roundDurationSeconds is a timed cadence block. cadenceMode MEMBER means ONE member per slot, so each member\'s numWorkSets equals the number of slots it occupies and the block lasts totalSlots x roundDurationSeconds (e.g. 4 members x 4 sets at 120 s = 16 slots = 32 minutes). Do not treat those per-member sets as volume added on top of the block duration, and do not require fewer sets to match it. '
     'Historical executionContext preserves the member order and prescribed superset rests. For these records prescribedRestSeconds is empty; do not mistake a member transition for full recovery or treat the prescription as a measured interval. '
     'When a record has executionContextRef or equipmentContextRef, resolve it through historyExecutionContexts; this is lossless deduplication, not missing execution information. '
     'Honor explicitly permitted non-competing pairings; do not impose an antagonist-only rule when the user allows non-competing groups. '
@@ -677,8 +679,14 @@ def _week_structure_context(days, messages, equipment, history=None):
         for item in exercises:
             item.setdefault('satisfiesCoverage', [])
         references.extend(item['definition_id'] for item in exercises)
+        block_timers = [
+            {key: copy.deepcopy(group[key]) for key in
+             ('exerciseIds', 'cadenceMode', 'roundDurationSeconds', 'timeCapSeconds', 'amrap') if group.get(key) is not None}
+            for group in (day.get('supersetGroups') or [])
+            if any(group.get(key) is not None for key in ('cadenceMode', 'roundDurationSeconds', 'timeCapSeconds', 'amrap'))
+        ]
         workouts.append({key: copy.deepcopy(day[key]) for key in
-                         ('name', 'description', 'timesCompletedInAWeek', 'trainingDays') if key in day} | {'exercises': exercises})
+                         ('name', 'description', 'timesCompletedInAWeek', 'trainingDays') if key in day} | {'exercises': exercises, 'supersetTimers': block_timers})
         coverage = dict.fromkeys(weekly_coverage, 0)
         for item in exercises:
             for key in set(item['satisfiesCoverage']) & coverage.keys():
@@ -1321,6 +1329,8 @@ def _context(result, messages, equipment, history, boundary):
         context['requirements']['auditTargets']['weeklyEffectiveSets'], context['finalArtifact'],
         requirements=context['requirements'], priority_execution=joint_receipt.get('priorityExecution'),
         priority_tradeoffs=joint_receipt.get('priorityTradeoffs'),
+        equipment_by_id={item['id']: item for key in ('equipments', 'accessoryEquipments')
+            for item in equipment.get(key, [])},
         demand_distribution=joint_receipt.get('demandDistribution'),
         definition_demand_facts_by_ref=context['programmingDemandFacts'])
     access_facts = superset_access_facts(context)
@@ -1846,6 +1856,11 @@ def _select_missing_source_references(client, request_context, facts, findings, 
 
 def _review_failure(error, logger, stage):
     diagnostics = getattr(error, 'diagnostics', None)
+    content = getattr(error, 'content', None)
+    if isinstance(content, str):
+        record_submission_rejection(error, logger=logger, stage=stage, content=content)
+        if logger:
+            logger.log_response(f'rejected {stage} content', content, truncate_at=0)
     if logger and diagnostics is not None:
         logger.log_response(f'rejected {stage} response', json.dumps(diagnostics, ensure_ascii=False), truncate_at=0)
     if logger:
@@ -1980,7 +1995,18 @@ def _finding_severity(finding):
 
 def record_planning_decisions(client, arguments, messages, logger=None, progress=None, equipment=None):
     proposal = propose_decisions(arguments, messages, equipment=equipment)
+    _, requirements = _latest_result(messages, 'set_workout_requirements')
+    return _review_planning_decisions(client, proposal, requirements.get('requirements', {}), messages,
+        logger=logger, progress=progress, equipment=equipment)
+
+
+def _review_planning_decisions(client, proposal, requirements, messages, logger=None, progress=None, equipment=None):
+    """Check one proposal without saving it; the owning tool commits its receipt."""
     policy = audit_policy(available_muscle_targets(equipment))
+    if not proposal['newDecisionIds'] and not proposal['decisions']:
+        return {'passed': True, 'decisions': {}, 'decisionReview': {'passed': True, 'findings': [],
+            'auditPolicy': policy, 'version': DECISION_REVIEW_VERSION,
+            'codeAnsweredChecks': [{'check': 'no_new_planning_decisions', 'status': 'verified'}]}}
     if not proposal['newDecisionIds']:
         from .planning_decisions import latest_decision_receipt
         _, previous = latest_decision_receipt(messages)
@@ -1989,8 +2015,7 @@ def record_planning_decisions(client, arguments, messages, logger=None, progress
                 and previous.get('decisions') == proposal['decisions']):
             return {**copy.deepcopy(previous), 'cached': True}
         proposal['newDecisionIds'] = [key for key, value in proposal['decisions'].items() if not value.get('supersededBy')]
-    _, requirements = _latest_result(messages, 'set_workout_requirements')
-    context = {**proposal, 'requirements': requirements.get('requirements', {}), 'auditPolicy': policy, 'reviewVersion': DECISION_REVIEW_VERSION}
+    context = {**proposal, 'requirements': requirements, 'auditPolicy': policy, 'reviewVersion': DECISION_REVIEW_VERSION}
     identity = _hash(context)
     boundary = next((i for i in range(len(messages)-1, -1, -1) if messages[i].get('role') == 'user'), -1)
     calls = {call['id'] for m in messages for call in m.get('tool_calls', []) if call['function']['name'] == 'record_planning_decisions'}
@@ -2121,16 +2146,26 @@ def review_requirements(client, candidate, messages, logger=None, progress=None,
                 and (not saved.get('failure') or saved.get('instructionBoundary') == boundary)):
             review = copy.deepcopy(saved)
             break
-    if (not proposal and not planning_decisions
-            and complete_structured_requirements(authority, _REQUIREMENTS, candidate['requirements'])
+    if (complete_structured_requirements(authority, _REQUIREMENTS, candidate['requirements'])
             and authority['sourceMessageIndex'] == max(
                 source['messageIndex'] for source in candidate['sourceMessages'] if source.get('role') == 'user')
             and not structured_requirement_mismatches(candidate['requirements'], authority)):
         # The user supplied the whole approved policy; code validates it, not another model interpretation.
-        review = {'version': REQUIREMENTS_REVIEW_VERSION, 'inputHash': identity, 'findings': [], 'passed': True,
+        code_review = {'version': REQUIREMENTS_REVIEW_VERSION, 'inputHash': identity, 'findings': [], 'passed': True,
             'codeAnsweredChecks': [{'check': 'complete_structured_requirements', 'status': 'verified',
                 'answer': 'The complete marked user snapshot matches the validated requirements. '
                     'Normal requirement confirmation and final plan review remain required.'}]}
+        if not proposal:
+            review = code_review
+        elif not any(check.get('check') == 'complete_structured_requirements'
+                for check in (review or {}).get('codeAnsweredChecks', [])):
+            # Physical claims still need source review; they do not reopen the exact user policy.
+            decision_review = _review_planning_decisions(client, proposal, candidate['requirements'], messages,
+                logger=logger, progress=progress, equipment=equipment)['decisionReview']
+            review = {**code_review, 'passed': decision_review['passed'],
+                'findings': copy.deepcopy(decision_review['findings'])}
+            if decision_review.get('failure'):
+                review['failure'] = decision_review['failure']
     if review is None:
         if progress:
             progress('Checking requirements and planning choices against original instructions' if proposal
@@ -2193,15 +2228,6 @@ def review_requirements(client, candidate, messages, logger=None, progress=None,
     result = copy.deepcopy(candidate)
     if context.get('structuredAuthority'):
         result['structuredAuthority'] = copy.deepcopy(context['structuredAuthority'])
-    if proposal:
-        result['jointDecisionReview'] = {**candidate['jointDecisionReview'], 'passed': review['passed']}
-        if review['passed']:
-            result['resolvedDecisions'] = copy.deepcopy(active_decisions)
-            result['decisions'] = copy.deepcopy(proposal['decisions'])
-        else:
-            result['resolvedDecisions'] = previous_decisions
-            result['decisions'] = saved_decisions(messages)
-            result['proposedDecisions'] = {key: proposal['decisions'][key] for key in proposal['newDecisionIds']}
     review['instructionBoundary'] = boundary
     review['auditPolicy'] = copy.deepcopy(ASSUMPTIONS)
     result['sourceReview'] = review
@@ -2273,6 +2299,15 @@ def review_requirements(client, candidate, messages, logger=None, progress=None,
             'repair': 'Ask the user for their weekly availability or permission to propose a schedule.'}]
         result['requirementsReviewQuestion'] = clarification_question({'question':
             'How many sessions per week should the program use? You can also ask me to propose a schedule based on your availability.'})
+    if proposal:
+        result['jointDecisionReview'] = {**candidate['jointDecisionReview'], 'passed': result['passed']}
+        if result['passed']:
+            result['resolvedDecisions'] = copy.deepcopy(active_decisions)
+            result['decisions'] = copy.deepcopy(proposal['decisions'])
+        else:
+            result['resolvedDecisions'] = previous_decisions
+            result['decisions'] = saved_decisions(messages)
+            result['proposedDecisions'] = {key: proposal['decisions'][key] for key in proposal['newDecisionIds']}
     return result
 
 
@@ -2778,7 +2813,7 @@ def _review_views(request_context, context, result):
 def _review_sources(context, messages, boundary):
     """User/clarification authority without embedding prior candidates or reviewer answers."""
     previews = {f'SOURCE_{index}' for index, source in enumerate(requirement_sources(messages[:boundary + 1]))
-        if messages[source['messageIndex']].get('canonicalAlternativePreview')}
+        if source['messageIndex'] >= 0 and messages[source['messageIndex']].get('canonicalAlternativePreview')}
     return {key: value for key, value in context['sourceMessages'].items() if key not in previews}
 
 
@@ -2849,7 +2884,11 @@ def _soft_tradeoff_terminal_evidence(context, finding, paths):
     return user_authorized and cites_decision and _current_plan_evidence(paths)
 
 
-def _review_correction_schema(original, output_schema, context, facts, objective_choices):
+_REVIEW_CORRECTABLE_CHOICES = ('message', 'reason', 'decisionId', 'evidenceRefs', 'subjectRefs',
+    'repairDimensions', 'repairObjectiveChoiceIds')
+
+
+def _review_correction_schema(original, output_schema, context, facts, objective_choices, *, choice_only=False):
     """Repair support and let a carried review-error claim resolve by a verified change."""
     properties = {}
     required = []
@@ -2865,7 +2904,12 @@ def _review_correction_schema(original, output_schema, context, facts, objective
             available = next(variant['properties'] for variant in variants
                 if variant['properties']['disposition']['enum'] == [disposition])
             subject_schema = available.get('subjectRefs')
-            if subject_schema and any(reference not in subject_schema['items']['enum']
+            if choice_only:
+                item_properties = {field: copy.deepcopy(available[field])
+                    for field in _REVIEW_CORRECTABLE_CHOICES if field in available
+                    and not Draft7Validator(available[field]).is_valid(finding.get(field))}
+                fields = list(item_properties)
+            elif subject_schema and any(reference not in subject_schema['items']['enum']
                     for reference in finding.get('subjectRefs', [])):
                 item_properties = {'subjectRefs': copy.deepcopy(subject_schema)}
                 fields = ['subjectRefs']
@@ -2925,7 +2969,7 @@ def _review_correction_schema(original, output_schema, context, facts, objective
                     for reference in finding.get('evidenceRefs', [])):
                 fields = ['evidenceRefs']
                 item_properties = {'evidenceRefs': copy.deepcopy(available['evidenceRefs'])}
-            if 'qualitativeRationale' in available and not str(finding.get('qualitativeRationale', '')).strip():
+            if not choice_only and 'qualitativeRationale' in available and not str(finding.get('qualitativeRationale', '')).strip():
                 item_properties['qualitativeRationale'] = copy.deepcopy(available['qualitativeRationale'])
                 fields.append('qualitativeRationale')
             reason_schema = available.get('reason', {})
@@ -2947,13 +2991,20 @@ def _review_correction_schema(original, output_schema, context, facts, objective
         correction_entries = {}
         for alias in resolutions:
             fields = ['reason', 'evidenceRefs']
+            if choice_only:
+                fields = [field for field in fields
+                    if not Draft7Validator(resolution_schema[alias]['properties'][field]).is_valid(
+                        resolutions[alias].get(field))]
+                if not fields:
+                    continue
             item_properties = {field: copy.deepcopy(resolution_schema[alias]['properties'][field])
                 for field in fields}
             correction_entries[alias] = {'type': 'object', 'properties': item_properties,
                 'required': fields, 'additionalProperties': False}
-        properties['blockerResolutions'] = {'type': 'object', 'properties': correction_entries,
-            'required': list(correction_entries), 'additionalProperties': False}
-        required.append('blockerResolutions')
+        if correction_entries:
+            properties['blockerResolutions'] = {'type': 'object', 'properties': correction_entries,
+                'required': list(correction_entries), 'additionalProperties': False}
+            required.append('blockerResolutions')
     if not properties:
         raise ValueError('The original semantic response has no correctable support fields; stop locally without another review call.')
     return {'type': 'object', 'properties': properties, 'required': required,
@@ -3150,7 +3201,7 @@ def _merge_review_correction(original, correction, schema, facts=None):
                 'evidenceRefs': copy.deepcopy(fields['evidenceRefs'])}
             resolved_findings.append(index)
             continue
-        for key in ('reason', 'evidenceRefs', 'subjectRefs', 'repairDimensions', 'repairObjectiveChoiceIds',
+        for key in ('message', 'reason', 'decisionId', 'evidenceRefs', 'subjectRefs', 'repairDimensions', 'repairObjectiveChoiceIds',
                 'qualitativeRationale'):
             if key in fields:
                 value = fields[key]
@@ -3162,6 +3213,10 @@ def _merge_review_correction(original, correction, schema, facts=None):
                         raise ValueError('Subject correction must select a known subject; it cannot discard an unknown identity.')
                     allowed = entries[f'FINDING_{index}']['properties']['subjectRefs']['items']['enum']
                     value = list(dict.fromkeys([*(ref for ref in finding[key] if ref in allowed), *value]))
+                if key in ('repairDimensions', 'repairObjectiveChoiceIds'):
+                    allowed = entries[f'FINDING_{index}']['properties'][key].get('items', {}).get('enum')
+                    if allowed is not None:
+                        value = list(dict.fromkeys([*(ref for ref in finding[key] if ref in allowed), *value]))
                 finding[key] = copy.deepcopy(value)
         for key in ('authorityRef', 'currentPlanRef'):
             if key in fields:
@@ -3182,8 +3237,7 @@ def _merge_review_correction(original, correction, schema, facts=None):
     for alias, fields in correction.get('blockerResolutions', {}).items():
         if any(merged['findings'][index]['concernGroup'] == alias for index in resolved_findings):
             continue
-        for key in ('reason', 'evidenceRefs'):
-            value = fields[key]
+        for key, value in fields.items():
             if key == 'evidenceRefs':
                 existing = original.get('blockerResolutions', {}).get(alias, {}).get(key, [])
                 value = list(dict.fromkeys([*(reference for reference in existing
@@ -3200,12 +3254,12 @@ def _review_schema_for_choice_salvage(schema):
 
     def visit(node):
         properties = node.get('properties', {}) if isinstance(node, dict) else {}
-        if isinstance(properties.get('reason'), dict):
-            properties['reason'].pop('enum', None)
-        for field in ('evidenceRefs', 'subjectRefs'):
-            evidence = properties.get(field)
-            if isinstance(evidence, dict) and isinstance(evidence.get('items'), dict):
-                evidence['items'].pop('enum', None)
+        for field in _REVIEW_CORRECTABLE_CHOICES:
+            choice = properties.get(field)
+            if isinstance(choice, dict):
+                choice.pop('enum', None)
+                if isinstance(choice.get('items'), dict):
+                    choice['items'].pop('enum', None)
         for value in properties.values():
             visit(value)
         if isinstance(node.get('items'), dict):
@@ -3227,6 +3281,38 @@ def _review_wire_choice_schema(schema):
         variant['properties'].pop(field)
         variant['required'].remove(field)
     return wire
+
+
+def _review_choice_correction_request(original, schema, diagnostics, context, objective_choices):
+    """Select malformed fields without replaying the completed semantic review."""
+    entries = schema['properties'].get('findingCorrections', {}).get('properties', {})
+    resolutions = schema['properties'].get('blockerResolutions', {}).get('properties', {})
+    fields = {field for entry in [*entries.values(), *resolutions.values()]
+        for field in entry['properties']}
+    if 'evidenceRefs' in fields:
+        # Replacing proof requires the original evidence, not just an ID menu.
+        return None
+    payload = {'validationError': diagnostics,
+        'rejectedFindings': {alias: original['findings'][int(alias.removeprefix('FINDING_'))]
+            for alias in entries},
+        'rejectedResolutions': {alias: original['blockerResolutions'][alias] for alias in resolutions}}
+    if 'reason' in fields:
+        payload['judgmentChoices'] = LIVE_JUDGMENTS
+    if 'message' in fields:
+        payload['concernChoices'] = CONCERNS
+    if 'subjectRefs' in fields:
+        payload['subjectChoices'] = {reference: {**subject, 'value': _pointer(context, subject['path'])}
+            for reference, subject in review_subject_catalog(context).items()}
+    if 'decisionId' in fields:
+        payload['decisionChoices'] = {key: {field: decision.get(field) for field in ('topic', 'choice')}
+            for key, decision in context.get('resolvedDecisions', {}).items()}
+    if 'repairObjectiveChoiceIds' in fields:
+        payload['repairObjectiveChoices'] = repair_objective_choice_catalog(objective_choices)
+    return [{'role': 'system', 'content': (
+        'Select code-provided replacements for the malformed fields of this completed review. '
+        'The response schema permits only those fields. Preserve the supplied qualitative judgments, '
+        'subjects, concern identities and dispositions; do not perform another review.')},
+        {'role': 'user', 'content': json.dumps(payload, separators=(',', ':'))}]
 
 
 def _review_complete_draft(client, context, result, messages, boundary, logger):
@@ -3385,7 +3471,7 @@ def _review_complete_draft(client, context, result, messages, boundary, logger):
         'For every carried issue, select a resolution reason and current evidence references. Keep unresolved issues in findings under the same ISSUE key. Python derives whether the prior issue remains open, was resolved by a relevant change, or was withdrawn from the finding disposition and verified evidence; do not return a separate status. A withdrawal must also appear as a withdrawn finding with proof. '
         'Do not produce exact arithmetic or claim feasibility. The preview is not approved.')},
         *image_message(requirement_sources(messages[:boundary + 1])),
-        {'role': 'user', 'content': json.dumps(request_context, separators=(',', ':'))}]
+        {'role': 'user', 'content': json.dumps(compact_review_request(request_context), separators=(',', ':'))}]
     def parse(content, resolved_by_change=()):
         proposal = _bind_code_owned_review_references(json.loads(content), facts, context)
         try:
@@ -3736,6 +3822,7 @@ def _review_complete_draft(client, context, result, messages, boundary, logger):
         logger.log_response(stage, content, truncate_at=0)
     provider_content = content
     initial_wire_proposal = None
+    choice_correction_schema = None
     try:
         candidate_wire_proposal = _bind_code_owned_review_references(json.loads(content), facts, context)
         try:
@@ -3753,6 +3840,8 @@ def _review_complete_draft(client, context, result, messages, boundary, logger):
                 # Only malformed choices are salvageable; basis, disposition and all other fields stay validated.
                 validate(candidate_wire_proposal, _review_schema_for_choice_salvage(validation_schema))
                 initial_wire_proposal = candidate_wire_proposal
+                choice_correction_schema = _review_correction_schema(initial_wire_proposal,
+                    validation_schema, context, facts, objective_choices, choice_only=True)
                 content = json.dumps(initial_wire_proposal, separators=(',', ':'))
         else:
             initial_wire_proposal = candidate_wire_proposal
@@ -3765,17 +3854,21 @@ def _review_complete_draft(client, context, result, messages, boundary, logger):
         record_submission_rejection(error, logger=logger, stage=stage, content=provider_content)
         diagnostics = {'error': str(error), 'path': list(getattr(error, 'absolute_path', [])),
             'schemaPath': list(getattr(error, 'absolute_schema_path', []))}
-        correction_schema = (_review_correction_schema(initial_wire_proposal, validation_schema, context, facts, objective_choices)
+        correction_schema = choice_correction_schema or (
+            _review_correction_schema(initial_wire_proposal, validation_schema, context, facts, objective_choices)
             if initial_wire_proposal is not None else validation_schema)
         deterministic_correction = _deterministic_review_reference_correction(
             correction_schema, initial_wire_proposal, facts, context)
         if deterministic_correction is not None:
             corrected = json.dumps(deterministic_correction, separators=(',', ':'))
         else:
-            correction = request + [{'role': 'user', 'content': json.dumps({
-                'task': ('Correct only the response schema error. Preserve the exact reviewed artifact and all valid judgments. '
-                    'Do not perform a new review, omit a concern, change a disposition, or weaken proof requirements.'),
-                'validationError': diagnostics, 'rejectedResponse': content}, separators=(',', ':'))}]
+            correction = (_review_choice_correction_request(initial_wire_proposal, correction_schema,
+                diagnostics, context, objective_choices) if choice_correction_schema else None)
+            if correction is None:
+                correction = request + [{'role': 'user', 'content': json.dumps({
+                    'task': ('Correct only the response schema error. Preserve the exact reviewed artifact and all valid judgments. '
+                        'Do not perform a new review, omit a concern, change a disposition, or weaken proof requirements.'),
+                    'validationError': diagnostics, 'rejectedResponse': content}, separators=(',', ':'))}]
             if logger:
                 logger.log_request(stage + '_correction', correction[-1]['content'])
             with api_metrics_scope(logger, stage + '_correction'):

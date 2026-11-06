@@ -317,3 +317,39 @@ def test_known_goal_prefix_decides_before_unknown_lower_priority_evidence():
     assert assess(after, {**after, 'workload_economy': 4})['status'] == 'unknown'
     requirements['objectiveOrder'] = ['time_budget', 'workload_economy', 'exercise_distribution']
     assert assess(after, {**after, 'workload_economy': 4})['status'] == 'candidate_preferred'
+
+
+def test_explicit_ordering_goal_reaches_joint_solver_and_native_comparison():
+    from test_workout_generator_joint_prescriptions import two_recipe_order_case
+    from workout_generator_pkg.programming_guidelines import execution_interference_profile, execution_interference_score
+
+    equipment, requirements, sessions = two_recipe_order_case()
+    requirements.update(objectiveOrder=['duration_economy', 'execution_order'],
+        orderingPreferences={'phaseOrder': [['HEAVY_COMPOUND', 'MODERATE_COMPOUND'], ['ISOLATION'], ['CORE']],
+            'protectionOrder': ['heavy_direct']},
+        objectiveTiers=[[{'metric': 'ordering_heavy_direct', 'target': 0, 'scale': 5}]])
+    validate(requirements, _REQUIREMENTS)
+    assert not programming_policy_errors(requirements)
+    for field in ('objectiveOrder', 'orderingPreferences'):
+        missing = copy.deepcopy(requirements)
+        missing.pop(field)
+        assert programming_policy_errors(missing)
+    result = joint.solve_prescribed_week(sessions, requirements, equipment)
+    assert result['feasible'] and not result['audit']['errors'], result
+    assert 'splitArchitecture' not in result  # Selection must remain coupled to an explicit execution goal.
+    definitions = {f'LIBRARY_{index}': definition for index, definition in enumerate(
+        sorted(equipment['exerciseDefinitions'], key=lambda definition: definition['id']))}
+    selected = result['sessions'][0]['exercises']
+    profiles = [execution_interference_profile([definitions[item['definition_id']]],
+        [item['numWorkSets']], item['satisfiesCoverage'], requirements) for item in selected]
+    raw = execution_interference_score(list(range(len(profiles))), profiles, requirements)[0]
+    costs = goal_programming_costs(requirements, {'ordering_heavy_direct': raw}, {})
+    assert result['priorityExecution']['goalPolicy']['stages'][0]['value'] == costs['goal_tier_0_worst']
+    plan = {'audit': {'errors': [], 'weeklyCoverageSets': {}}}
+    assessment = assess_audited_programming_tradeoff(plan, plan, requirements=requirements,
+        baseline_costs={**costs, 'ordering_heavy_direct': raw, 'duration_economy': 100},
+        candidate_costs={**goal_programming_costs(requirements, {'ordering_heavy_direct': raw + 1}, {}),
+            'ordering_heavy_direct': raw + 1, 'duration_economy': 90},
+        objective_names=['duration_economy', 'ordering_heavy_direct'], same_selected_work=False)
+    assert any(row['objective'] == 'ordering_heavy_direct' for row in assessment['worsened'])
+    assert assessment['status'] == 'baseline_preferred'

@@ -9,6 +9,7 @@ import sys
 import time
 import traceback
 import copy
+from collections import Counter
 from contextlib import nullcontext
 from datetime import datetime
 from urllib.parse import urlparse
@@ -128,6 +129,39 @@ def _strict_application_tools(tools, provider):
     for tool in strict_tools:
         tool['function']['strict'] = True
     return strict_tools
+
+
+def _compact_tool_descriptions(tools):
+    """Share exact repeated guidance on the wire; keep canonical schemas untouched."""
+    descriptions = []
+
+    def visit(schema):
+        if not isinstance(schema, dict):
+            return
+        if isinstance(schema.get('description'), str):
+            descriptions.append(schema)
+        for child in schema.get('properties', {}).values():
+            visit(child)
+        visit(schema.get('items'))
+        for keyword in ('anyOf', 'oneOf', 'allOf'):
+            for child in schema.get(keyword, []):
+                visit(child)
+
+    projected = json.loads(json.dumps(tools))
+    for tool in projected:
+        visit(tool.get('function', {}).get('parameters'))
+    counts = Counter(schema['description'] for schema in descriptions)
+    shared = {}
+    for schema in descriptions:
+        description = schema['description']
+        if counts[description] < 2 or len(description) < 80:
+            continue
+        if description not in shared:
+            shared[description] = f'G{len(shared) + 1}'
+            schema['description'] = f'[{shared[description]}] {description}'
+        else:
+            schema['description'] = f'See shared guidance {shared[description]}.'
+    return projected
 
 
 def _strict_wire_schema(schema):
@@ -390,7 +424,8 @@ def _recover_strict_tool_argument_syntax(arguments, original_schema):
 
 
 def _request_messages(messages, response_format=None):
-    prepared = prepare_image_messages(messages)
+    prepared = prepare_image_messages([{key: value for key, value in message.items() if key != 'userMemory'}
+                                       for message in messages])
     if response_format and response_format.get('type') == 'json_object':
         text = []
         for message in prepared:
@@ -529,6 +564,8 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
             kwargs['messages'] = [*kwargs['messages'], {'role': 'system', 'content':
                 'Return one JSON object matching this schema: ' + json.dumps(output_schema, separators=(',', ':'))}]
             structured_output_mode = 'validated_json'
+    if kwargs.get('tools'):
+        kwargs['tools'] = _compact_tool_descriptions(kwargs['tools'])
     validate_image_request(kwargs)
     
     started = time.monotonic()

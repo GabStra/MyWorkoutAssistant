@@ -1,25 +1,26 @@
 import copy
 import itertools
+import json
 import math
 
 import pytest
 
 from workout_generator_pkg import cp_solver, joint_planning
 from workout_generator_pkg.generation_audit import setup_resource_profile
-from workout_generator_pkg.programming_guidelines import execution_interference_score
+from workout_generator_pkg.programming_guidelines import execution_interference_score, execution_interference_metric_names
 
 
 def test_joint_sequence_opener_changes_winning_selection_against_exhaustive_menu():
     requirements = {'objectiveOrder': ['execution_order'],
         'orderingPreferences': {'phaseOrder': [], 'protectionOrder': ['heavy_direct']}}
     profiles = [
-        {'primary': {'chest': 1}, 'supporting': {}, 'known': True, 'priority': False,
+        {'primary': {'chest': 1}, 'supporting': {}, 'primaryKnown': True, 'priority': False,
          'heavy_primary': [], 'heavy_supporting': [], 'main_compound': True,
          'main_primary': ['chest'], 'main_supporting': []},
-        {'primary': {'chest': 1}, 'supporting': {}, 'known': True, 'priority': False,
+        {'primary': {'chest': 1}, 'supporting': {}, 'primaryKnown': True, 'priority': False,
          'heavy_primary': ['chest'], 'heavy_supporting': [], 'main_compound': True,
          'main_primary': ['chest'], 'main_supporting': []},
-        {'primary': {'quads': 1}, 'supporting': {}, 'known': True, 'priority': False,
+        {'primary': {'quads': 1}, 'supporting': {}, 'primaryKnown': True, 'priority': False,
          'heavy_primary': ['quads'], 'heavy_supporting': [], 'main_compound': True,
          'main_primary': ['quads'], 'main_supporting': []}]
 
@@ -92,7 +93,7 @@ def test_cap_pruned_sequence_preserves_every_admissible_selected_order(cap):
             'optionValues': {option: {'count': 2, 'items': [item],
                 'setupProfiles': [setup_resource_profile(definition, item)]}},
             'recipe': {'definitions': {reference}, 'roles': [{'source'}, set(), {'receiver'}][index],
-                'orderPriority': priority, 'interferencePerRound': {'known': True,
+                'orderPriority': priority, 'interferencePerRound': {'primaryKnown': True,
                     'primary': {'chest': 1}, 'supporting': {}, 'priority': False,
                     'heavy_primary': ['chest'], 'heavy_supporting': [],
                     'main_primary': [], 'main_supporting': [], 'main_compound': False}}})
@@ -103,8 +104,8 @@ def test_cap_pruned_sequence_preserves_every_admissible_selected_order(cap):
         for index, item in enumerate(variables)]
     arcs = blocks[0]['sequenceArcs']
     assert ((1, 2) not in arcs) is (cap == 3)
-    assert evidence == {'anatomyComplete': True, 'setupTransitionsComplete': True,
-        'resourceReferencesComplete': True}
+    assert all(evidence[key] is True for key in (
+        'anatomyComplete', 'setupTransitionsComplete', 'resourceReferencesComplete'))
     for size in range(1, 4):
         for order in itertools.permutations(range(3), size):
             selected = set(order)
@@ -126,7 +127,7 @@ def test_cap_pruned_sequence_preserves_every_admissible_selected_order(cap):
             if chosen is not None:
                 profiles = [{**block['recipe']['interferencePerRound'], 'primary': {'chest': 2}}
                     for block in local_blocks]
-                for name, expected_score in zip(('heavy_direct', 'adjacent_direct'),
+                for name, expected_score in zip(execution_interference_metric_names(requirements),
                         execution_interference_score(local_order, profiles, requirements)):
                     assert sum(chosen[index] * cost for index, cost in costs['ordering_' + name].items()) == expected_score
 
@@ -189,6 +190,34 @@ def test_native_prescription_warm_start_does_not_freeze_its_count():
     assert result['prescriptionWarmStart']['status'] == 'native_audited_recipe_decision_hint'
     assert result['prescriptionWarmStart']['selectionFixed'] is False
     assert result['sessions'][0]['exercises'][0]['numWorkSets'] == 6
+
+
+def test_changed_menu_retains_partial_hints_without_fixing_missing_or_unmatched_options(monkeypatch):
+    from test_workout_generator_joint_prescriptions import two_recipe_order_case
+    equipment, requirements, sessions = two_recipe_order_case()
+    requirements['objectiveOrder'] = ['volume_target']
+    retained = copy.deepcopy(sessions)
+    retained[0]['exercises'][1]['definition_id'] = 'LIBRARY_999'
+    for item in sessions[0]['exercises']:
+        item['numWorkSets'] = 8
+    messages = [{'role': 'assistant', 'tool_calls': [{'id': 'retained',
+        'function': {'name': 'audit_workout_plan'}}]},
+        {'role': 'tool', 'tool_call_id': 'retained',
+            'content': json.dumps({'submittedDraft': {'workouts': retained}})}]
+    hints, solve = [], joint_planning._cp_solve
+
+    def capture(*args, **kwargs):
+        hints.append(kwargs.get('incumbent'))
+        return solve(*args, **kwargs)
+
+    monkeypatch.setattr(joint_planning, '_cp_solve', capture)
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment, messages=messages)
+    assert result['feasible'] and not result['audit']['errors'], result
+    assert result['prescriptionWarmStart']['status'] == 'partial_recipe_decision_hint'
+    assert result['prescriptionWarmStart']['selectionFixed'] is False
+    assert isinstance(hints[0], dict) and hints[0] and set(hints[0].values()) == {1}
+    assert all(d['goal'] != 'prepared_source_menu_seed' for d in result['solverDiagnostics'])
+    assert {item['definition_id'] for item in result['sessions'][0]['exercises']} == {'LIBRARY_0', 'LIBRARY_1'}
 
 
 def test_preferred_time_budget_includes_fixed_workouts_in_its_audited_score():

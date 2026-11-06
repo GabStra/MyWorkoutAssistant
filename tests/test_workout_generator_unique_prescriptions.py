@@ -75,11 +75,11 @@ def test_three_sessions_use_one_unique_prescription_call_and_replay_without_call
     def choose(client, request, **options):
         payload = json.loads(request[-1]['content'])
         calls.append(payload)
-        assert options['output_schema'] == payload['responseSchema']
+        assert 'responseSchema' not in payload
         assert len(payload['recipes']) == 1
         assert not {'session', 'sharedWeek', 'existingSessions'} & payload.keys()
         values = {}
-        for key, schema in payload['responseSchema']['properties'].items():
+        for key, schema in options['output_schema']['properties'].items():
             values[key] = {field: copy.deepcopy(value) for field, value in exercises[0].items()
                            if field in schema['properties']}
         return json.dumps(values), None, None
@@ -92,5 +92,15 @@ def test_three_sessions_use_one_unique_prescription_call_and_replay_without_call
     assert set(result['workerResults']) == {'0', '1', '2'}
     store_tool(messages, 'draft_workout_sessions', arguments, result)
     monkeypatch.setattr(session_drafting, 'chat_call', lambda *a, **k: pytest.fail('Saved recipes must be reused'))
+    def interrupt_qualification(value):
+        assert value['workerResults'] == result['workerResults']
+        assert value['workerInputHashes'] == result['workerInputHashes']
+        assert value['prescriptionResults'] == result['prescriptionResults']
+        assert 'passed' not in value and 'proposedSubmission' not in value
+        raise RuntimeError('Interrupted during qualification checkpoint')
+    interrupted = session_drafting.draft_workout_sessions(None, arguments, messages, equipment, state,
+        checkpoint=interrupt_qualification)
+    assert interrupted['workerResults'] == result['workerResults']
+    store_tool(messages, 'draft_workout_sessions', arguments, interrupted)
     replay = session_drafting.draft_workout_sessions(None, arguments, messages, equipment, state)
     assert 'proposedSubmission' in replay, replay.get('errors')

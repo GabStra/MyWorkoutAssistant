@@ -107,7 +107,8 @@ def _validate_package(package: dict) -> None:
             sets = component.get("sets", [])
             assert sets, f"{label}: no sets"
             if component["exerciseType"] == "RUNNING":
-                assert all(s.get("type") == "RunningSet" for s in sets), (
+                work_types = {s.get("type") for s in sets if s.get("type") != "RestSet"}
+                assert work_types == {"RunningSet"}, (
                     f"{label}: RUNNING exercises must use RunningSet work sets"
                 )
                 continue
@@ -131,6 +132,21 @@ def _validate_package(package: dict) -> None:
                     assert set_data.get("weight", -1) >= 0, f"{label}: negative weight"
                 elif set_type == "BodyWeightSet":
                     assert set_data.get("reps", 0) > 0, f"{label}: bodyweight set with no reps"
+                elif set_type == "WeightedEffortSet":
+                    # Loaded distance/time effort: a goal must be present and the
+                    # set never auto-stops on its own (the athlete finishes it).
+                    assert not set_data.get("autoStop"), f"{label}: weighted effort must not auto-stop"
+                    distance = set_data.get("targetDistanceMeters")
+                    duration = set_data.get("timeInMillis")
+                    assert (isinstance(distance, (int, float)) and distance > 0) or (
+                        isinstance(duration, int) and duration > 0), (
+                        f"{label}: weighted effort with no distance or time goal"
+                    )
+                    load = set_data.get("targetWeight")
+                    if load is not None:
+                        assert isinstance(load, (int, float)) and load > 0, (
+                            f"{label}: targetWeight must be positive, got {load!r}"
+                        )
                 elif set_type == "RestSet":
                     # zero-duration rest is the structural "no rest" marker inside
                     # supersets (restSecondsByExercise = 0)
@@ -167,6 +183,11 @@ def test_crossfit_mode_fields_pass_generator_schema():
         "timeCapSeconds": 240, "roundDurationSeconds": None,
     }
     validate_against_def(superset, "Superset")
+
+    rotating = {**superset, "timeCapSeconds": None, "roundDurationSeconds": 60, "cadenceMode": "MEMBER"}
+    validate_against_def(rotating, "Superset")
+    with pytest.raises(ValidationError):
+        validate_against_def({**rotating, "cadenceMode": "SLOT"}, "Superset")
 
     timed = {
         "id": str(uuid.uuid4()), "type": "TimedDurationSet",

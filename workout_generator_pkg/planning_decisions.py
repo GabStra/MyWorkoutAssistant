@@ -221,14 +221,16 @@ def confirmed_setup_access(messages, equipment, requirements):
     """Compile reviewed physical facts without changing the approved requirement snapshot."""
     from .planning_tools import library_fingerprint
     from .programming_guidelines import bind_confirmed_superset_access
+    from .user_memory_context import memory_setup_confirmations, validate_setup_conflicts
     fingerprint = library_fingerprint(equipment)
-    confirmations = [{**decision.get('confirmedSetupAccess', {}),
+    confirmations = memory_setup_confirmations(messages, equipment) + [{**decision.get('confirmedSetupAccess', {}),
         **({'confirmedSharedStation': decision['confirmedSharedStation']}
            if decision.get('confirmedSharedStation') else {}),
         'sourceReferences': decision['sourceReferences']}
         for decision in resolved_decisions(messages).values()
         if decision.get('factualContextLibraryFingerprint') == fingerprint
         and (decision.get('confirmedSetupAccess') or decision.get('confirmedSharedStation'))]
+    validate_setup_conflicts(requirements, equipment, confirmations)
     return bind_confirmed_superset_access(requirements, equipment, confirmations,
         source_message_context(requirement_sources(messages)))
 
@@ -417,8 +419,14 @@ def seed_approved_policy_context(messages, initial_messages, equipment):
             same_library = False
 
     seeded = copy.deepcopy(initial_messages)
+    from .user_memory_context import memory_context, memory_sources
+    if memory_context(messages) and not memory_context(seeded):
+        seeded.extend(copy.deepcopy(message) for message in messages
+            if message.get('role') == 'system' and 'userMemory' in message)
+    same_library = same_library and memory_sources(seeded) == [
+        source for source in filtered_sources if source.get('origin') == 'user_memory']
     seeded.extend({key: copy.deepcopy(source[key]) for key in ('role', 'content', 'imageAttachments') if key in source}
-        for source in filtered_sources)
+        for source in filtered_sources if source.get('origin') != 'user_memory')
 
     result = copy.deepcopy(approved)
     result['requirements'] = requirements
@@ -493,8 +501,45 @@ def candidate_acceptance_scope(audit):
     }
 
 
+def _setup_value_key(value):
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return tuple(sorted(value))
+    if isinstance(value, dict) and all(isinstance(items, list) and all(isinstance(item, str) for item in items)
+                                       for items in value.values()):
+        return tuple(sorted((key, tuple(sorted(items))) for key, items in value.items()))
+    return None
+
+
 def propose_decisions(arguments, messages, equipment=None):
     arguments = copy.deepcopy(arguments)
+    sources = source_message_context(requirement_sources(messages))
+    memory_setup_sources = {key for key, source in sources.items()
+        if source.get('origin') == 'user_memory' and source.get('confirmedFact', {}).get('available')
+        and source['confirmedFact'].get('kind') in ('shared_station', 'setup_access')}
+    known_setup = {'confirmedSharedStation': [], 'confirmedSetupAccess': []}
+    for reference in memory_setup_sources:
+        fact = sources[reference]['confirmedFact']
+        field = 'confirmedSharedStation' if fact['kind'] == 'shared_station' else 'confirmedSetupAccess'
+        known_setup[field].append(_setup_value_key(fact['value']))
+    reused_setup = 0
+    if isinstance(arguments, dict) and isinstance(arguments.get('decisions'), list):
+        proposed = []
+        for item in arguments['decisions']:
+            references = item.get('sourceReferences') if isinstance(item, dict) else None
+            fields = [field for field in known_setup if isinstance(item, dict) and item.get(field) is not None]
+            matches_memory = fields and all(_setup_value_key(item[field]) is not None
+                and _setup_value_key(item[field]) in known_setup[field] for field in fields)
+            if (isinstance(references, list) and references
+                    and all(isinstance(reference, str) and reference in sources for reference in references)
+                    and any(sources[reference]['role'] == 'user' for reference in references)
+                    and (matches_memory or fields and all(reference in memory_setup_sources for reference in references))
+                    and set(item) <= {'topic', 'choice', 'sourceReferences', 'supersedes', 'reason',
+                                     'confirmedSharedStation', 'confirmedSetupAccess'}):
+                # Stored typed facts apply natively; model restatements cannot replace their identities or prose.
+                reused_setup += 1
+                continue
+            proposed.append(item)
+        arguments['decisions'] = proposed
     active_decisions = resolved_decisions(messages)
     active_ids = set(active_decisions)
     pending_decisions = _pending_proposed_decisions(messages)
@@ -525,6 +570,8 @@ def propose_decisions(arguments, messages, equipment=None):
     _, programming_choices = _current_programming_decision_choices(messages)
     concern_ids = sorted(set(concern_ids) | programming_choices.keys())
     tool = record_planning_decisions_tool(messages, equipment)
+    if reused_setup:
+        tool['function']['parameters']['properties']['decisions']['minItems'] = 0
     validate(arguments, tool['function']['parameters'])
     definition_ids = _selection_ids_by_name((equipment or {}).get('exerciseDefinitions', []))
     resource_ids = _selection_ids_by_name([item for key in ('equipments', 'accessoryEquipments')
@@ -541,7 +588,6 @@ def propose_decisions(arguments, messages, equipment=None):
             selection = item['executionPrescription']
             item['executionPrescription'] = {'definitionId': definition_ids[selection['exercise']],
                 'setMode': selection['setMode']}
-    sources = source_message_context(requirement_sources(messages))
     source_hash = _decision_source_hash(sources)
     from .planning_tools import latest_requirement_candidate
     _, requirements_record = latest_requirement_candidate(messages)
@@ -603,7 +649,6 @@ def propose_decisions(arguments, messages, equipment=None):
         normalize = lambda text: ' '.join(text.split()).casefold()
         identical = next((key for key, value in active.items()
                           if normalize(value['choice']) == normalize(item['choice'])
-                          and set(value['sourceReferences']) == set(refs)
                           and value.get('acceptedConcernGroupId') == concern_id
                           and value.get('confirmedCapabilityReference') == capability_reference
                           and value.get('confirmedSetupAccess') == item.get('confirmedSetupAccess')
@@ -618,9 +663,12 @@ def propose_decisions(arguments, messages, equipment=None):
                     'The existing acceptance belongs to a different candidate or evidence scope.',
                     '/decisions/acceptedConcernGroupId',
                     'Record a new source-backed acceptance for the current candidate; do not reuse the prior scope.')
-            if (active[same].get('authorizationSourceHash') != source_hash or structured_context
+            if (active[same].get('sourceReferences') != refs
+                    or active[same].get('authorizationSourceHash') != source_hash or structured_context
                     and active[same].get('factualContextLibraryFingerprint') != context_library):
+                decisions[same]['sourceReferences'] = copy.deepcopy(refs)
                 decisions[same]['authorizationSourceHash'] = source_hash
+                decisions[same]['sourceCountAtResolution'] = len(sources)
                 if structured_context:
                     decisions[same]['factualContextLibraryFingerprint'] = context_library
                 proposed.append(same)
@@ -656,6 +704,8 @@ def propose_decisions(arguments, messages, equipment=None):
             decisions[previous]['supersededBy'] = identifier
         proposed.append(identifier)
     proposal = {'decisions': decisions, 'newDecisionIds': proposed, 'sourceMessages': sources}
+    if reused_setup:
+        proposal['reusedMemorySetupCount'] = reused_setup
     selected_definitions, selected_resources = set(), set()
     for decision in decisions.values():
         if decision.get('supersededBy'):

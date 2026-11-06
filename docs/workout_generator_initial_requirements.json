@@ -102,6 +102,30 @@
       "context": "straightSets",
       "minimumSeconds": 60,
       "maximumSeconds": 120
+    },
+    {
+      "kind": "rest",
+      "coverageKey": null,
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "context": "exerciseTransition",
+      "minimumSeconds": 120,
+      "maximumSeconds": 180
+    },
+    {
+      "kind": "rest",
+      "coverageKey": null,
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "context": "exerciseTransition",
+      "minimumSeconds": 90,
+      "maximumSeconds": 150
+    },
+    {
+      "kind": "rest",
+      "coverageKey": null,
+      "exerciseCategory": "ISOLATION",
+      "context": "exerciseTransition",
+      "minimumSeconds": 60,
+      "maximumSeconds": 120
     }
   ],
   "requiredCoverage": [
@@ -227,7 +251,8 @@
       "pulley",
       "lat pulldown",
       "pushdown machine",
-      "Dumbbell Squat"
+      "Dumbbell Squat",
+      "Weighted Dumbbell Crunch"
     ],
     "exceptNameTerms": [
       "cable crunch",

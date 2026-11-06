@@ -358,6 +358,31 @@ def progression_margin(item, capability):
             'maximumSelectableLoadKg': capability['maximumSelectableLoadKg']}
 
 
+def _coverage_source_context(sources):
+    from .planning_tools import _REQUIREMENTS
+    from .requirement_accounting import structured_requirement_source
+
+    result = copy.deepcopy(sources)
+    for source in result.values():
+        try:
+            authority = structured_requirement_source([{**source, 'messageIndex': 0}], _REQUIREMENTS)
+        except (ValueError, ValidationError):
+            continue
+        if authority is None:
+            continue
+        # Movement-role suitability does not depend on session scheduling or time budgets.
+        policy = authority['requirements']
+        for field in ('sessionsPerWeek', 'trainingDays', 'preferredSessionSeconds',
+                      'durationBalanceToleranceSeconds'):
+            policy.pop(field, None)
+        if isinstance(policy.get('auditTargets'), dict):
+            policy['auditTargets'].pop('maximumSessionSeconds', None)
+        text = source['content']
+        source['content'] = (text[:authority['start']] + json.dumps(policy, sort_keys=True)
+                             + text[authority['end']:])
+    return result
+
+
 def _recipe_context(prepared, requirements, ref, *, source_messages=None):
     required_roles = requirements.get('requiredCoverage', [])
     semantic = [item for item in requirements.get('requirementAccounting', [])
@@ -368,7 +393,7 @@ def _recipe_context(prepared, requirements, ref, *, source_messages=None):
     available_sources = (source_message_context(source_messages) if source_messages is not None
         else prepared.get('sourceMessages') or {})
     # Qualitative source authority must not depend on an optional paraphrase ledger.
-    source_messages = copy.deepcopy(available_sources) if isinstance(available_sources, dict) else {}
+    source_messages = _coverage_source_context(available_sources) if isinstance(available_sources, dict) else {}
     candidate = prepared['candidates'][ref]
     if 'reviewFeedbackByDefinition' in prepared:
         feedback = (prepared.get('reviewFeedbackByDefinition') or {}).get(ref)

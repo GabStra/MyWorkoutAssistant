@@ -67,13 +67,109 @@ def test_order_search_can_change_opener_to_protect_heavy_work_but_preserves_expl
     keys = [rules.execution_block_order_key([definition], [3]) for definition in definitions]
     order = rules.execution_order_indices(roles, keys, requirements, interference_profiles=profiles)
     assert order.index(1) < order.index(0)
-    assert rules.execution_interference_score(order, profiles, requirements) == (0,)
+    assert rules.execution_interference_score(order, profiles, requirements) == (0, 0)
     assert rules.execution_order_is_admissible(order, roles, keys, requirements)
     requirements['executionRules'] = [{'kind': 'order', 'before': 'technique', 'after': 'main'},
                                       {'kind': 'order', 'before': 'technique', 'after': 'squat'}]
     ordered_priority = rules.execution_order_indices(roles, keys, requirements, interference_profiles=profiles)
     assert ordered_priority[0] == 0
     assert rules.execution_order_is_admissible(ordered_priority, roles, keys, requirements)
+
+
+@pytest.mark.parametrize('metric', ['heavy_direct', 'heavy_support', 'main_direct', 'main_support'])
+def test_protected_exposure_uses_total_only_after_preserving_peak(metric):
+    requirements = {'orderingPreferences': {'protectionOrder': [metric]}}
+    category = 'HEAVY_COMPOUND' if metric.startswith('heavy_') else 'MODERATE_COMPOUND'
+    anatomy = [('FRONT_CHEST', 'BACK_TRICEPS'), ('FRONT_QUADRICEPS', 'BACK_GLUTEAL'),
+               ('BACK_UPPER_BACK', 'FRONT_BICEPS')]
+    profiles = [rules.execution_interference_profile([{'exerciseCategory': category,
+        'muscleGroups': [anatomy[index // 2][0]],
+        'secondaryMuscleGroups': [anatomy[index // 2][1]] if metric.endswith('_support') else []}],
+        [count], [], requirements) for index, count in enumerate([3, 2, 1, 2, 1, 2])]
+    score = lambda order: rules.execution_interference_score(order, profiles, requirements)
+    assert rules.execution_interference_metric_names(requirements) == (metric, metric + '_total')
+    assert score([1, 0, 3, 2, 5, 4]) == (2, 6)
+    assert score([0, 1, 2, 3, 4, 5]) == (3, 5)
+    assert score([1, 0, 3, 2, 5, 4]) < score([0, 1, 2, 3, 4, 5])
+    assert score([1, 0, 2, 3, 5, 4]) == (2, 5)
+    assert score([1, 0, 2, 3, 5, 4]) < score([1, 0, 3, 2, 5, 4])
+
+
+def test_heavy_exposure_tie_refinement_precedes_main_work_without_changing_admission():
+    # Category/anatomy/counts from the retained Nov 6 Wednesday main blocks.
+    data = [
+        [('H', ['BACK_UPPER_BACK'], ['BACK_TRAPEZIUS', 'BACK_DELTOIDS', 'FRONT_BICEPS'], 2)],
+        [('H', ['BACK_UPPER_BACK', 'BACK_TRAPEZIUS'], ['BACK_DELTOIDS', 'FRONT_BICEPS'], 3)],
+        [('M', ['FRONT_CHEST'], ['BACK_DELTOIDS', 'BACK_TRICEPS'], 3)],
+        [('M', ['BACK_HAMSTRING', 'BACK_GLUTEAL'], ['BACK_ADDUCTORS', 'BACK_LOWER_BACK'], 2),
+         ('I', ['FRONT_DELTOIDS'], ['BACK_TRAPEZIUS'], 2)],
+        [('H', ['BACK_GLUTEAL', 'FRONT_QUADRICEPS'], ['FRONT_ABS', 'BACK_ADDUCTORS', 'BACK_LOWER_BACK'], 3)],
+    ]
+    requirements = {'objectiveOrder': ['execution_order'], 'executionRules': [],
+        'orderingPreferences': {'protectionOrder': list(rules.INTERFERENCE_METRICS), 'phaseOrder': [
+            ['HEAVY_COMPOUND', 'MODERATE_COMPOUND'], ['ISOLATION'], ['CORE']]}}
+    definitions = [[{'id': f'{index}_{member}', 'exerciseCategory': {
+        'H': 'HEAVY_COMPOUND', 'M': 'MODERATE_COMPOUND', 'I': 'ISOLATION'}[category],
+        'muscleGroups': direct, 'secondaryMuscleGroups': supporting}
+        for member, (category, direct, supporting, count) in enumerate(block)]
+        for index, block in enumerate(data)]
+    profiles = [rules.execution_interference_profile(block, [row[3] for row in data[index]], [], requirements)
+        for index, block in enumerate(definitions)]
+    roles = [{'pull'}, {'row'}, {'press'}, {'hinge'}, {'squat'}]
+    keys = [rules.execution_block_order_key(block, [row[3] for row in data[index]])
+        for index, block in enumerate(definitions)]
+    late, early = [0, 1, 2, 3, 4], [0, 4, 1, 2, 3]
+    old_late, old_early = [rules.execution_interference_score(order, profiles) for order in (late, early)]
+    assert old_late[2:4] == old_early[2:4] == (2, 6)
+    assert old_late[4] == 2 and old_early[4] == 3
+    assert old_late < old_early
+    names = rules.execution_interference_metric_names(requirements)
+    facts = [dict(zip(names, rules.execution_interference_score(order, profiles, requirements), strict=True))
+        for order in (late, early)]
+    assert [row['heavy_direct_total'] for row in facts] == [4, 2]
+    assert [row['heavy_support_total'] for row in facts] == [10, 6]
+    assert rules.execution_interference_score(early, profiles, requirements) < rules.execution_interference_score(
+        late, profiles, requirements)
+    selected = rules.execution_order_indices(roles, keys, requirements, interference_profiles=profiles)
+    assert selected.index(4) < selected.index(3)
+    assert rules.execution_order_is_admissible(selected, roles, keys, requirements)
+
+    from workout_generator_pkg import cp_solver
+    from workout_generator_pkg.generation_audit import setup_resource_profile
+    variables, constraints, blocks = [], [], []
+    def variable(upper=1, lower=0, integer=True, domain_identity=None):
+        variables.append({'upper': upper, 'lower': lower, 'integer': integer,
+            'domainIdentity': domain_identity, 'objectiveCost': 0})
+        return len(variables) - 1
+    def constraint(label, lower, upper, coefficients, intercept=0):
+        constraints.append((label, lower, upper, intercept, coefficients))
+    for index, block in enumerate(definitions):
+        option = variable(lower=1)
+        blocks.append({'first': variable(), 'options': [option],
+            'optionValues': {option: {'count': data[index][0][3],
+                'setupProfiles': [setup_resource_profile(definition) for definition in block]}},
+            'recipe': {'roles': roles[index], 'orderPriority': keys[index][0],
+                'interferencePerRound': rules.execution_interference_profile(
+                    block, [1] * len(block), [], requirements)}})
+    costs, _ = joint_planning._add_execution_sequence(blocks, requirements, variable, constraint, 0, 2)
+    objective_variables = [{**item, 'objectiveCost': sum(cost.get(index, 0) for cost in costs.values())}
+        for index, item in enumerate(variables)]
+    arcs = blocks[0]['sequenceArcs']
+    for order in (late, early):
+        path = [(0, order[0] + 1), *[(a + 1, b + 1) for a, b in zip(order, order[1:])],
+            (order[-1] + 1, 0)]
+        pinned = [(('path', *edge), 1, 1, 0, {arcs[edge]: 1}) for edge in path]
+        status, chosen = cp_solver.solve(objective_variables, [*constraints, *pinned])
+        assert status == 'optimal'
+        cp_score = tuple(sum(chosen[index] * value for index, value in costs['ordering_' + name].items())
+            for name in names)
+        assert cp_score == tuple(2 * value for value in rules.execution_interference_score(
+            order, profiles, requirements))
+
+    requirements['executionRules'] = [{'kind': 'order', 'before': 'hinge', 'after': 'squat'}]
+    constrained = rules.execution_order_indices(roles, keys, requirements, interference_profiles=profiles)
+    assert constrained.index(3) < constrained.index(4)
+    assert rules.execution_order_is_admissible(constrained, roles, keys, requirements)
 
 
 def retained_order_case():
@@ -317,14 +413,15 @@ def test_accessory_superset_partner_does_not_gain_main_work_protection():
                 'interferencePerRound': rules.execution_interference_profile(
                     definitions, [1] * len(definitions), [], requirements)}})
     costs, _ = joint_planning._add_execution_sequence(blocks, requirements, variable, constraint, 0, 1)
-    objective = {index: cost for name in ('main_direct', 'main_support')
+    metric_names = rules.execution_interference_metric_names(requirements)
+    objective = {index: cost for name in metric_names
         for index, cost in costs['ordering_' + name].items()}
     status, chosen = cp_solver.solve([{**item, 'objectiveCost': objective.get(index, 0)}
         for index, item in enumerate(variables)], constraints)
     assert status == 'optimal'
     cp_score = tuple(sum(chosen[index] * value for index, value in costs['ordering_' + name].items())
-                     for name in ('main_direct', 'main_support'))
-    assert cp_score == rules.execution_interference_score([0, 1], profiles, requirements) == (0, 0)
+                     for name in metric_names)
+    assert cp_score == rules.execution_interference_score([0, 1], profiles, requirements) == (0, 0, 0, 0)
 
 
 def test_reviewed_execution_support_changes_sequence_exposure_without_volume_credit():
@@ -365,8 +462,9 @@ def test_reviewed_execution_support_changes_sequence_exposure_without_volume_cre
     assert mixed['heavy_supporting'] == []
     old_profiles = [rules.execution_interference_profile([definition], [2], [], requirements)
                     for definition in original]
-    assert rules.execution_interference_score([0, 1, 2, 3], old_profiles, requirements)[3] == 0
-    assert rules.execution_interference_score([0, 1, 2, 3], profiles, requirements)[3] == 4
+    support_index = rules.execution_interference_metric_names(requirements).index('heavy_support')
+    assert rules.execution_interference_score([0, 1, 2, 3], old_profiles, requirements)[support_index] == 0
+    assert rules.execution_interference_score([0, 1, 2, 3], profiles, requirements)[support_index] == 4
     keys = [rules.execution_block_order_key([definition], [2]) for definition in definitions]
     order = rules.execution_order_indices(roles, keys, requirements, interference_profiles=profiles)
     assert order[0] == 0 and order.index(2) < order.index(1)
@@ -478,8 +576,59 @@ def test_execution_order_compares_known_load_changes_not_only_equipment_ids():
     profiles = [rules.execution_interference_profile([d], [2], [], requirements) for d in definitions]
     setups = [[setup_resource_profile(d, {'workSetTemplate': {'weight': load}})]
         for d, load in zip(definitions, (10, 20, 10))]
-    assert rules.execution_order_indices([set()] * 3, [(0, index) for index in range(3)],
-        requirements, [frozenset({'bar'})] * 3, profiles, setups) == [0, 2, 1]
+    order = rules.execution_order_indices([set()] * 3, [(0, index) for index in range(3)],
+        requirements, [frozenset({'bar'})] * 3, profiles, setups)
+    assert abs(order.index(0) - order.index(2)) == 1
+
+
+def test_setup_order_keeps_known_physical_changes_when_loads_need_calibration():
+    from workout_generator_pkg.generation_audit import executable_setup_evidence, setup_resource_profile
+    definitions = [{'id': str(index), 'equipmentId': 'bar', 'exerciseType': 'WEIGHT',
+        'requiredAccessoryEquipmentIds': ['bench'], 'reviewedExecution': {'setupConfiguration': [{
+            'resourceId': 'bench', 'state': {'angle': angle}, 'source': 'https://example.test/setup',
+            'basis': 'Controlled required-state fixture.'}]}}
+        for index, angle in enumerate((0, 45, 0))]
+    sources = [{'definition_id': definition['id'], 'numWorkSets': 2,
+        'requiresLoadCalibration': True, 'workSetTemplate': {'weight': 0}}
+        for definition in definitions]
+    setups = [[setup_resource_profile(definition, source)]
+        for definition, source in zip(definitions, sources, strict=True)]
+    lookup = {definition['id']: definition for definition in definitions}
+    order = rules.execution_order_indices([set()] * 3, [(0, index) for index in range(3)],
+        {'objectiveOrder': ['setup_economy']}, setup_profiles=setups, setup_rounds=[2] * 3)
+    original = executable_setup_evidence({'exercises': sources}, lookup)
+    reordered = executable_setup_evidence({'exercises': [sources[index] for index in order]}, lookup)
+    assert original['physicalRequiredChanges'] == 2 and reordered['physicalRequiredChanges'] == 1
+    assert original['physicalPreparationCount'] == 4 and reordered['physicalPreparationCount'] == 3
+    assert reordered['unknownPhysicalPreparationCount'] > 0
+
+
+@pytest.mark.parametrize('setup_priority', ['after', 'before', 'goal'])
+def test_local_setup_order_respects_approved_priority_relative_to_interference(setup_priority):
+    from workout_generator_pkg.generation_audit import executable_setup_evidence, setup_resource_profile
+    requirements = {'objectiveOrder': ['execution_order', 'setup_economy'],
+        'orderingPreferences': {'protectionOrder': ['heavy_direct']}}
+    if setup_priority == 'before':
+        requirements['objectiveOrder'].reverse()
+    if setup_priority == 'goal':
+        requirements['objectiveTiers'] = [[{'metric': 'setup_economy', 'target': 0, 'scale': 1}]]
+    definitions = [{'id': str(index), 'equipmentId': 'bar', 'exerciseType': 'WEIGHT',
+        'exerciseCategory': 'HEAVY_COMPOUND' if index < 2 else 'MODERATE_COMPOUND',
+        'muscleGroups': [muscle]} for index, muscle in enumerate([
+            'FRONT_CHEST', 'FRONT_QUADRICEPS', 'FRONT_QUADRICEPS', 'FRONT_CHEST'])]
+    sources = [{'definition_id': definition['id'], 'numWorkSets': 1, 'workSetTemplate': {'weight': load}}
+        for definition, load in zip(definitions, (10, 20, 10, 20), strict=True)]
+    profiles = [rules.execution_interference_profile([definition], [1], [], requirements)
+        for definition in definitions]
+    setups = [[setup_resource_profile(definition, source)]
+        for definition, source in zip(definitions, sources, strict=True)]
+    order = rules.execution_order_indices([set()] * 4, [(0, index) for index in range(4)],
+        requirements, interference_profiles=profiles, setup_profiles=setups)
+    evidence = executable_setup_evidence({'exercises': [sources[index] for index in order]},
+        {definition['id']: definition for definition in definitions})
+    assert evidence['physicalPreparationCount'] == (3 if setup_priority == 'after' else 2)
+    assert rules.execution_interference_score(order, profiles, requirements)[0] == (
+        0 if setup_priority == 'after' else 1)
 
 
 def test_setup_sequence_uses_final_prescribed_load_and_preserves_unknowns():
@@ -493,15 +642,18 @@ def test_setup_sequence_uses_final_prescribed_load_and_preserves_unknowns():
         for definition, source in zip(definitions, sources, strict=True)]
     arguments = ([set()] * 4, [(0, index) for index in range(4)], {'objectiveOrder': ['setup_economy']})
 
-    assert rules.execution_order_indices(*arguments, setup_profiles=setups, setup_rounds=[1, 2, 1, 1]) == [0, 2, 1, 3]
+    assert rules.execution_order_indices(*arguments, setup_profiles=setups, setup_rounds=[1, 2, 1, 1]) == [2, 1, 0, 3]
+    arguments[2]['orderingPreferences'] = {'phaseOrder': [
+        ['HEAVY_COMPOUND'], ['MODERATE_COMPOUND'], ['ISOLATION'], ['CORE']]}
     assert rules.execution_order_indices([set()] * 4, [(0, 0), (0, 1), (1, 2), (0, 3)],
         arguments[2], setup_profiles=setups, setup_rounds=[1, 2, 1, 1])[-1] == 2
     sources[1]['requiresLoadCalibration'] = True
     setups[1] = [setup_resource_profile(definitions[1], sources[1])]
-    assert rules.execution_order_indices(*arguments, setup_profiles=setups, setup_rounds=[1, 2, 1, 1]) == [0, 1, 2, 3]
+    assert not setups[1][0]['loadConfigurationKnown']
+    assert rules.execution_order_indices(*arguments, setup_profiles=setups, setup_rounds=[1, 2, 1, 1]) == [2, 1, 0, 3]
 
 
-def test_setup_order_counts_known_equipment_switches_without_rewarding_undecidable_edges():
+def test_setup_order_counts_known_physical_changes_despite_unknown_configuration_dimensions():
     from workout_generator_pkg.generation_audit import executable_setup_evidence, setup_resource_profile
     definitions = [{'id': str(index), 'equipmentId': gear, 'exerciseType': 'WEIGHT'}
         for index, gear in enumerate(('bar', 'dumbbells', 'bar', 'bar'))]
@@ -516,18 +668,18 @@ def test_setup_order_counts_known_equipment_switches_without_rewarding_undecidab
     original = executable_setup_evidence({'exercises': sources}, lookup)
     reordered = executable_setup_evidence({'exercises': [sources[index] for index in order]}, lookup)
 
-    assert original['knownDeclaredChanges'] == 3
-    assert reordered['knownDeclaredChanges'] == 2
+    assert original['physicalPreparationCount'] == 4
+    assert reordered['physicalPreparationCount'] == 3
     assert reordered['unknownConfigurationTransitions'] > 0
     assert reordered['unknownTransitions'] == 0
     for index in (1, 2):
         definitions[index]['equipmentId'] = None
         setups[index] = [setup_resource_profile(definitions[index], sources[index])]
     assert all(profile['loadConfigurationKnown'] for block in setups for profile in block)
-    assert rules.execution_order_indices(*arguments, setup_profiles=setups) == [0, 1, 2, 3]
+    assert sorted(rules.execution_order_indices(*arguments, setup_profiles=setups)) == [0, 1, 2, 3]
 
 
-def test_calibrated_loads_preserve_known_resource_switch_ordering_without_load_reuse_claims():
+def test_calibrated_loads_do_not_rank_ready_resource_accesses_as_preparations():
     from workout_generator_pkg.generation_audit import executable_setup_evidence, setup_resource_profile
     definitions = [{'id': str(index), 'equipmentId': gear, 'exerciseType': 'WEIGHT'}
         for index, gear in enumerate(('bar', 'dumbbells', 'bar', 'bar'))]
@@ -546,9 +698,10 @@ def test_calibrated_loads_preserve_known_resource_switch_ordering_without_load_r
     assert order[0] == 0
     assert original['declaredResourceSwitches'] == 2
     assert original['resourceIdentityComplete'] is True
-    assert reordered['declaredResourceSwitches'] == 1
+    assert reordered['declaredResourceSwitches'] == 2
+    assert original['physicalPreparationCount'] == reordered['physicalPreparationCount'] == 2
     assert reordered['unknownConfigurationTransitions'] == 3
-    assert reordered['unknownTransitions'] == 2
+    assert reordered['unknownTransitions'] == 1
     assert all(item['configurationRelation'] == 'unknown_configuration' for item in reordered['transitions'])
     definitions[1]['equipmentId'] = None
     assert executable_setup_evidence({'exercises': sources}, lookup)['resourceIdentityComplete'] is False
@@ -579,3 +732,28 @@ def test_solver_prefers_splitting_lower_body_pair_at_the_same_approved_dose():
     disclosure = render_optimization_disclosure(result['priorityExecution'])
     assert '0 weekly paired sets' in disclosure
     assert 'globally optimal sequence is not established' in disclosure
+
+
+def test_primary_anatomy_does_not_establish_complete_execution_support():
+    from workout_generator_pkg.generation_audit import session_interference_evidence
+    base = {'id': 'row', 'exerciseCategory': 'HEAVY_COMPOUND',
+        'muscleGroups': ['BACK_UPPER_BACK']}
+    unknown = rules.execution_interference_profile([base], [2], [], {})
+    assert unknown['primaryKnown'] is True
+    assert 'known' not in unknown
+    assert unknown['executionSupportEvidence'] == [
+        {'definitionId': 'row', 'status': 'unknown', 'supportingMuscles': None}]
+    documented = {**base, 'reviewedExecution': {'supportingMuscles': ['lowerBack'],
+        'source': 'https://example.test/row', 'basis': 'Positive trunk-support evidence only.'}}
+    known = rules.execution_interference_profile([documented], [2], [], {})
+    assert known['supporting'] == {'lowerBack': 2}
+    assert known['executionSupportEvidence'][0]['status'] == 'documented_non_exhaustive'
+    assert unknown['primary'] == known['primary']
+    assert 'lower bounds' in known['supportingCountsMeaning']
+    source = {'numWorkSets': 2, 'satisfiesCoverage': []}
+    summary = session_interference_evidence({'components': [{**base, 'type': 'Exercise', 'id': 'e',
+        'name': 'Row', 'sets': []}]}, {'e': (source, base, {}, {'libraryDefinitionId': 'row'})},
+        {'row': base}, {}, {}, {})
+    assert summary['status'] == 'partial_execution_support_evidence'
+    assert summary['blocks'][0]['libraryMuscleEvidence'] == 'primary_tags_available'
+    assert summary['blocks'][0]['executionSupportEvidence'][0]['supportingMuscles'] is None

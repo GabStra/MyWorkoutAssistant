@@ -11,6 +11,9 @@ def test_missing_resource_references_remain_unknown_for_optimization():
     assert profile['resourceIds'] == []
     assert profile['resourceEvidence'] == 'no_declared_resources'
     assert profile['physicalConfigurationKnown'] is False
+    evidence = executable_setup_evidence({'exercises': [{'definition_id': 'unknown', 'numWorkSets': 1}]}, {})
+    assert evidence['unknownSetupEvidenceKey'] != '[]'
+    assert evidence['resourceIdentityComplete'] is False
 
 
 def test_exact_same_and_changed_loads_are_distinguished_but_calibration_stays_unknown():
@@ -93,7 +96,7 @@ def test_known_load_transition_is_reported_across_distinct_exercises_sharing_equ
 
     assert transition['configurationRelation'] == relation
     assert transition['resourceSelection'] == 'same_references'
-    assert transition['preparationTaskRelation'] == 'different_task'
+    assert transition['preparationTaskRelation'] == ('same_task' if second_load == 40 else 'different_task')
     assert transition['physicalConfigurationKnown'] is False
 
 
@@ -188,7 +191,8 @@ def test_superset_evidence_counts_interleaved_work_from_earlier_rounds():
     assert group['memberExposure'][1]['finalRoundPriorExposure']['primaryWorkingSets']['hamstrings'] == 3
     assert group['memberExposure'][0]['supportingMuscles'] == ['lowerBack']
     assert group['memberExposure'][0]['executionSupportEvidence']['source'] == 'https://example.test/reviewed-support'
-    assert group['memberExposure'][1]['executionSupportEvidence'] == {'status': 'unknown'}
+    assert group['memberExposure'][1]['executionSupportEvidence']['status'] == 'unknown'
+    assert group['memberExposure'][1]['executionSupportEvidence']['supportingMuscles'] is None
     assert group['memberExposure'][0]['finalRoundPriorExposure'][
         'priorSupportingWorkingSetsOnSupportingMuscles'] == {'lowerBack': 1}
     assert evidence['wholeSessionExposure']['totalMemberWorkingSets'] == 4
@@ -233,7 +237,7 @@ def test_executable_and_emitted_setup_evaluate_the_same_round_specific_load_edge
     evidence = executable_setup_evidence({'exercises': exercises}, definitions)
 
     assert evidence == session_setup_evidence(artifact, sources, definitions)
-    assert evidence['preparationTaskCount'] == 3
+    assert evidence['preparationTaskCount'] == 2
     assert evidence['scheduledTransitionOccurrenceCount'] == 6
     assert [item['configurationRelation'] for item in evidence['transitions']] == [
         'known_same', 'known_changed', 'known_same', 'known_same', 'known_changed', 'known_same']
@@ -294,3 +298,234 @@ def test_joint_objective_and_candidate_comparator_count_same_bar_different_exerc
         {'workouts': result['sessions'], 'audit': result['audit']}, requirements,
         {'setupDefinitions': definitions})
     assert costs['setup_economy'] == stages['setup_economy']['value'] == 2
+
+
+@pytest.mark.parametrize('calibration', [False, True])
+def test_required_physical_change_counts_even_when_load_is_equal_or_unknown(calibration):
+    def definition(name, state):
+        return {'id': name, 'equipmentId': 'bar', 'exerciseType': 'WEIGHT',
+            'requiredAccessoryEquipmentIds': ['bench'], 'reviewedExecution': {'setupConfiguration': [{
+                'resourceId': 'bench', 'state': {'backrest': state},
+                'source': 'https://example.test/bench', 'basis': 'Controlled required bench state.'}]}}
+    source = {'numWorkSets': 1, 'requiresLoadCalibration': calibration, 'workSetTemplate': {'weight': 40}}
+    flat = setup_resource_profile(definition('flat', 'flat'), source)
+    incline = setup_resource_profile(definition('incline', 'inclined'), source)
+    transition = _setup_resource_transition(flat, incline)
+    assert transition['physicalConfigurationRelation'] == 'required_change'
+    assert transition['declaredResourceChange'] is True
+    assert transition['configurationRelation'] == ('unknown_configuration' if calibration else 'known_same')
+    assert transition['physicalConfigurationKnown'] is False
+    assert source['workSetTemplate'] == {'weight': 40}
+
+
+def test_solver_groups_equal_required_bench_states_and_matches_native_transition_cost():
+    from workout_generator_pkg import cp_solver
+    from workout_generator_pkg.programming_guidelines import execution_interference_profile
+
+    requirements = {'objectiveOrder': ['setup_economy'], 'executionRules': []}
+    definitions, sources, blocks, variables, constraints = {}, [], [], [], []
+
+    def variable(upper=1, lower=0, integer=True, domain_identity=None):
+        index = len(variables)
+        variables.append({'upper': upper, 'lower': lower, 'integer': integer,
+            'domainIdentity': domain_identity, 'objectiveCost': 0})
+        return index
+
+    def constraint(label, lower, upper, coefficients, intercept=0):
+        constraints.append((label, lower, upper, intercept, coefficients))
+
+    for index, state in enumerate(('flat', 'inclined', 'flat')):
+        reference = f'exercise_{index}'
+        definition = {'id': reference, 'equipmentId': 'bar', 'exerciseType': 'WEIGHT',
+            'requiredAccessoryEquipmentIds': ['bench'], 'muscleGroups': ['FRONT_CHEST'],
+            'reviewedExecution': {'setupConfiguration': [{'resourceId': 'bench',
+                'state': {'backrest': state}, 'source': 'https://example.test/bench',
+                'basis': 'Controlled partial requirement, not an actual retained configuration.'}]}}
+        definitions[reference] = definition
+        source = {'definition_id': reference, 'numWorkSets': 1, 'superset': None,
+            'requiresLoadCalibration': False, 'workSetTemplate': {'weight': 40}}
+        sources.append(source)
+        first, option = variable(), variable(lower=1)
+        blocks.append({'first': first, 'options': [option],
+            'optionValues': {option: {'count': 1, 'setupProfiles': [setup_resource_profile(definition, source)]}},
+            'recipe': {'roles': set(), 'orderPriority': 0,
+                'interferencePerRound': execution_interference_profile([definition], [1], [], requirements)}})
+    constraint(('first',), 1, 1, {blocks[0]['first']: 1})
+    costs, _ = joint_planning._add_execution_sequence(blocks, requirements, variable, constraint, 0, 1)
+    objective = costs['setup_economy_transitions']
+    status, chosen = cp_solver.solve([{**item, 'objectiveCost': objective.get(i, 0)}
+        for i, item in enumerate(variables)], constraints, timeout_seconds=5)
+    assert status == 'optimal'
+    order = joint_planning._execution_order(blocks, chosen, requirements)
+    assert order == [0, 2, 1]
+    assert executable_setup_evidence({'exercises': sources}, definitions)['knownPhysicalConfigurationChanges'] == 2
+    evidence = executable_setup_evidence({'exercises': [sources[i] for i in order]}, definitions)
+    assert sum(chosen[i] * cost for i, cost in objective.items()) == evidence['knownDeclaredChanges'] == 1
+    assert evidence['knownPhysicalConfigurationChanges'] == 1
+    assert evidence['preparationTaskCount'] == 2
+    assert evidence['distinctDeclaredResourceConfigurationCount'] == 2
+    assert evidence['unclassifiedConfigurationResourceIds'] == ['bar']
+    reused = next(row for row in evidence['declaredResourceConfigurations'] if row['state']['backrest'] == 'flat')
+    assert reused['definitionIds'] == ['exercise_0', 'exercise_2']
+    assert reused['evidence'][0]['source'] == 'https://example.test/bench'
+    assert evidence['physicalConfigurationEvidencePartial'] is True
+    assert evidence['physicalResourceIndependenceVerified'] is False
+
+
+
+def test_physical_preparation_is_invariant_to_definition_identity_and_missing_evidence_stays_explicit():
+    definition = {'id': 'row', 'equipmentId': 'bar', 'exerciseType': 'WEIGHT'}
+    definitions = {'row': definition, 'clone': {**definition, 'id': 'identity-only-clone'}}
+    rows = [{'definition_id': name, 'numWorkSets': 2, 'requiresLoadCalibration': True,
+        'workSetTemplate': {'weight': 0}} for name in ('row', 'clone')]
+    repeated = executable_setup_evidence({'exercises': [rows[0], rows[0]]}, definitions)
+    cloned = executable_setup_evidence({'exercises': rows}, definitions)
+    for key in ('preparationTaskCount', 'physicalPreparationTaskCount', 'physicalPreparationCount',
+                'knownPhysicalRequiredChanges', 'unknownSetupEvidenceKey'):
+        assert repeated[key] == cloned[key]
+    assert cloned['physicalPreparationCount'] == 1
+    assert cloned['unknownPhysicalPreparationCount'] == 4
+    assert cloned['unknownSetupEvidenceKey'] != '[]'
+
+
+def test_shared_inventory_domains_preserve_single_pair_quantity_and_exact_resource_roles():
+    from workout_generator_pkg.generation_audit import physical_setup_requirements
+
+    equipment = {'single': {'type': 'DUMBBELL'}, 'pair': {'type': 'DUMBBELLS'}}
+    groups = [['single', 'pair', 'bench']]
+    source = {'numWorkSets': 1, 'workSetTemplate': {'weight': 20}}
+    profiles = [setup_resource_profile({'id': gear, 'equipmentId': gear, 'exerciseType': 'WEIGHT',
+        'requiredAccessoryEquipmentIds': ['bench']}, source, groups, equipment) for gear in ('single', 'pair')]
+    requirements = [physical_setup_requirements(profile) for profile in profiles]
+    for resources in requirements:
+        assert [row['role'] for row in resources] == ['accessory', 'equipment']
+        assert all(row['conflictDomain'] == ['bench', 'pair', 'single'] for row in resources)
+    assert [next(row['implementQuantity'] for row in rows if row['role'] == 'equipment')
+        for rows in requirements] == [1, 2]
+    assert profiles[0]['physicalPreparationTaskKeys'] != profiles[1]['physicalPreparationTaskKeys']
+    assert profiles[0]['resourceIds'] == ['bench', 'single']
+    assert profiles[1]['resourceIds'] == ['bench', 'pair']
+
+
+def test_known_categorical_changes_survive_unknown_loads_and_shared_aliases_only_lose_proof():
+    definitions = {name: {'id': name, 'equipmentId': 'bar', 'exerciseType': 'WEIGHT',
+        'requiredAccessoryEquipmentIds': ['bench'], 'reviewedExecution': {'setupConfiguration': [{
+            'resourceId': 'bench', 'state': {'angle': angle}, 'source': 'https://example.test/setup',
+            'basis': 'Controlled required-state fixture.'}]}}
+        for name, angle in [('flat', 0), ('incline', 45)]}
+    rows = [{'definition_id': name, 'numWorkSets': 2, 'requiresLoadCalibration': True,
+        'workSetTemplate': {'weight': 0}} for name in ('flat', 'incline')]
+    evidence = executable_setup_evidence({'exercises': rows}, definitions)
+    assert evidence['knownPhysicalConfigurationChanges'] == evidence['knownPhysicalRequiredChanges'] == 1
+    assert evidence['physicalPreparationCount'] == 3
+    assert evidence['unknownPhysicalPreparationCount'] > 0
+    definitions['other'] = {'id': 'other', 'equipmentId': 'other', 'exerciseType': 'WEIGHT'}
+    alias_rows = [rows[0], {'definition_id': 'other', 'numWorkSets': 1}, rows[1]]
+    aliased = executable_setup_evidence({'exercises': alias_rows}, definitions, [['bench', 'other']])
+    assert aliased['knownPhysicalRequiredChanges'] == 0
+    assert any(row['retainedStateProofLost'] and row['unknownConfiguration']
+        for row in aliased['physicalConfigurationTransitions'])
+    assert aliased['physicalPreparationCount'] == aliased['initialResourceActivationCount'] == 3
+
+
+def test_independent_ready_floor_requirement_is_retained_through_repeated_other_resource_accesses():
+    definitions = {name: {'id': name, 'equipmentId': name, 'exerciseType': 'BODY_WEIGHT',
+        'reviewedExecution': {'setupConfiguration': [{'resourceId': name, 'state': {'support': name},
+            'source': 'https://example.test/setup', 'basis': 'Controlled independent requirement.'}]}}
+        for name in ('floor', 'bar')}
+    rows = [{'definition_id': name, 'numWorkSets': 3, 'superset': 'pair',
+        'workSetTemplate': {'additionalWeight': 0}} for name in definitions]
+    evidence = executable_setup_evidence({'exercises': rows}, definitions)
+    assert evidence['physicalPreparationCount'] == evidence['initialResourceActivationCount'] == 2
+    assert evidence['knownPhysicalRequiredChanges'] == 0
+    assert evidence['readyResourceAccesses'] == 4
+    assert evidence['unknownPhysicalPreparationCount'] == 2  # Initial retained states have not been observed.
+    assert evidence['declaredResourceSwitches'] == 5
+
+
+
+def test_confirmed_dumbbell_inventory_activates_once_without_losing_quantity_or_assuming_rebuilds():
+    definitions = {gear: {'id': gear, 'equipmentId': gear, 'exerciseType': 'WEIGHT'}
+        for gear in ('single', 'pair')}
+    equipment = {'single': {'type': 'DUMBBELL'}, 'pair': {'type': 'DUMBBELLS'}}
+    rows = [{'definition_id': gear, 'numWorkSets': 1, 'workSetTemplate': {'weight': 20}}
+        for gear in ('pair', 'single', 'pair')]
+    shared = executable_setup_evidence({'exercises': rows}, definitions, [['single', 'pair']], equipment)
+    separate = executable_setup_evidence({'exercises': rows}, definitions, [], equipment)
+    assert shared['physicalPreparationCount'] == shared['initialResourceActivationCount'] == 1
+    assert separate['initialResourceActivationCount'] == 2
+    assert shared['knownPhysicalRequiredChanges'] == 0
+    assert shared['unknownPhysicalPreparationCount'] > 0
+    assert {row['physicalRequirement']['implementQuantity']
+        for row in shared['physicalConfigurationTransitions']} == {1, 2}
+    untyped = executable_setup_evidence({'exercises': rows}, definitions, [['single', 'pair']])
+    assert untyped['initialResourceActivationCount'] == 2
+
+
+@pytest.mark.parametrize('calibration', [False, True])
+def test_physical_inventory_switches_ignore_loads_and_share_confirmed_dumbbells(calibration):
+    definitions = {'bar': {'id': 'bar', 'equipmentId': 'bar', 'exerciseType': 'WEIGHT'},
+        'single': {'id': 'single', 'equipmentId': 'single', 'exerciseType': 'WEIGHT'},
+        'pair': {'id': 'pair', 'equipmentId': 'pair', 'exerciseType': 'WEIGHT'}}
+    gear = {'single': {'type': 'DUMBBELL'}, 'pair': {'type': 'DUMBBELLS'}}
+    sources = [{'definition_id': ref, 'numWorkSets': 3,
+        'superset': 'ab' if index < 2 else None,
+        'requiresLoadCalibration': calibration, 'workSetTemplate': {'weight': 20 + index * 30}}
+        for index, ref in enumerate(('bar', 'single', 'pair'))]
+    evidence = executable_setup_evidence({'exercises': sources}, definitions,
+        [['single', 'pair']], gear)
+    assert evidence['physicalPrimaryInventorySwitchCount'] == 5
+    assert evidence['unknownPrimaryInventoryCount'] == 0
+    assert evidence['declaredResourceSwitches'] > 5
+    unknown = executable_setup_evidence({'exercises': [*sources,
+        {'definition_id': 'unknown', 'numWorkSets': 2}]}, definitions)
+    assert unknown['physicalPrimaryInventorySwitchCount'] is None
+    assert unknown['unknownPrimaryInventoryCount'] == 1
+    bodyweight = executable_setup_evidence({'exercises': [
+        {'definition_id': 'bodyweight', 'numWorkSets': 2}]},
+        {'bodyweight': {'id': 'bodyweight', 'exerciseType': 'BODY_WEIGHT'}})
+    assert bodyweight['physicalPrimaryInventorySwitchCount'] == 0
+    assert bodyweight['unknownPrimaryInventoryCount'] == 0
+
+
+def test_native_inventory_switch_cost_matches_scheduled_audit_and_local_order():
+    from workout_generator_pkg import cp_solver
+    from workout_generator_pkg.programming_guidelines import execution_interference_profile, execution_order_indices
+    requirements = {'objectiveOrder': ['setup_economy'], 'executionRules': []}
+    definitions = {name: {'id': name, 'equipmentId': resource, 'exerciseType': 'WEIGHT',
+        'muscleGroups': ['FRONT_CHEST']} for name, resource in
+        (('a', 'bar'), ('b', 'db'), ('c', 'db'))}
+    sources = [{'definition_id': ref, 'numWorkSets': 3,
+        'requiresLoadCalibration': True, 'superset': 'ab' if ref in ('a', 'b') else None}
+        for ref in definitions]
+    variables, constraints, blocks = [], [], []
+    def variable(upper=1, lower=0, integer=True, domain_identity=None):
+        index = len(variables)
+        variables.append({'upper': upper, 'lower': lower, 'integer': integer,
+            'domainIdentity': domain_identity, 'objectiveCost': 0})
+        return index
+    def constraint(label, lower, upper, coefficients, intercept=0):
+        constraints.append((label, lower, upper, intercept, coefficients))
+    for members in (sources[:2], sources[2:]):
+        first, option = variable(), variable(lower=1)
+        profiles = [setup_resource_profile(definitions[item['definition_id']], item) for item in members]
+        blocks.append({'first': first, 'options': [option],
+            'optionValues': {option: {'count': 3, 'setupProfiles': profiles}},
+            'recipe': {'roles': set(), 'orderPriority': 0, 'interferencePerRound':
+                execution_interference_profile([definitions[item['definition_id']] for item in members],
+                    [3] * len(members), [], requirements)}})
+    costs, evidence = joint_planning._add_execution_sequence(
+        blocks, requirements, variable, constraint, 0, 2)
+    objective = costs['setup_economy_resource_switches']
+    status, chosen = cp_solver.solve([{**item, 'objectiveCost': objective.get(i, 0)}
+        for i, item in enumerate(variables)], constraints, timeout_seconds=5)
+    assert status == 'optimal' and evidence['primaryInventoryComplete']
+    order = joint_planning._execution_order(blocks, chosen, requirements)
+    assert order == [0, 1]
+    audit = executable_setup_evidence({'exercises': sources}, definitions)
+    assert sum(chosen[i] * cost for i, cost in objective.items()) == 2 * audit['physicalPrimaryInventorySwitchCount'] == 10
+    # Starting at the DB straight block adds a DB-to-bar switch before the superset.
+    profiles = [next(iter(block['optionValues'].values()))['setupProfiles'] for block in blocks]
+    local = execution_order_indices([set(), set()], [(0, 1), (0, 0)], requirements,
+        setup_profiles=profiles, setup_rounds=[3, 3])
+    assert local == [0, 1]

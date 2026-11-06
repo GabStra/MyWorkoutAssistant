@@ -3,6 +3,50 @@ import copy
 from workout_generator_pkg import joint_planning as joint
 
 
+def test_execution_reuses_native_recipe_preparation_without_changing_full_domain(monkeypatch):
+    from test_workout_generator_joint_prescriptions import two_recipe_order_case
+
+    equipment, requirements, sessions = two_recipe_order_case()
+    requirements['objectiveOrder'] = ['workload_economy', 'exercise_count', 'execution_order']
+    requirements['exerciseSelection'] = {'preferredMinimum': 2, 'preferredMaximum': 3, 'muscles': ['chest']}
+    unused_definition = copy.deepcopy(equipment['exerciseDefinitions'][0])
+    unused_definition.update(id='zz-unused', name='Unused Press')
+    equipment['exerciseDefinitions'].append(unused_definition)
+    unused = copy.deepcopy(sessions[0]['exercises'][0])
+    unused['definition_id'] = 'LIBRARY_2'
+    sessions[0]['exercises'].append(unused)
+    original = copy.deepcopy(sessions)
+    preparation = {}
+    selection = joint._solve_prescribed_week(sessions, requirements, equipment,
+        _selection_only=True, _recipe_preparation=preparation)
+    assert selection['feasible'], selection
+    definitions = {f'LIBRARY_{index}': value for index, value in enumerate(
+        sorted(equipment['exerciseDefinitions'], key=lambda item: item['id']))}
+    fixed = joint._selected_session_work(selection['sessions'], definitions)
+    assert len(fixed[0]) < len(equipment['exerciseDefinitions'])
+    audit = joint._audit_raw
+    calls = []
+
+    def record(draft, *args, **kwargs):
+        calls.append(draft['name'])
+        return audit(draft, *args, **kwargs)
+
+    monkeypatch.setattr(joint, '_audit_raw', record)
+    arguments = dict(_fixed_session_work=fixed, _prescription_seed=selection['sessions'])
+    cold = joint._solve_prescribed_week(sessions, requirements, equipment, **arguments)
+    assert 'Recipe' in calls
+    calls.clear()
+    warm = joint._solve_prescribed_week(sessions, requirements, equipment,
+        **arguments, _recipe_preparation=preparation)
+    assert 'Recipe' not in calls
+    assert calls  # Complete-week warm-start and final production audits still run.
+    assert cold['feasible'] and warm['feasible'], (cold, warm)
+    for key in ('sessions', 'audit', 'feasibilityDomainFingerprint', 'recipeCount', 'optionCount',
+            'exerciseCountEvidence', 'demandDistribution', 'exerciseDistribution'):
+        assert warm[key] == cold[key], key
+    assert sessions == original
+
+
 def test_split_rebuilds_execution_only_after_exact_audited_selection(monkeypatch):
     from test_workout_generator_joint_prescriptions import two_recipe_order_case
 
@@ -16,10 +60,12 @@ def test_split_rebuilds_execution_only_after_exact_audited_selection(monkeypatch
     prefix_rows = []
     selection_receipts = []
     deadlines = []
+    preparations = []
     core = joint._solve_prescribed_week
 
     def capture_selection(*args, **kwargs):
         deadlines.append(kwargs['search_deadline'])
+        preparations.append(kwargs['_recipe_preparation'])
         result = core(*args, **kwargs)
         if kwargs.get('_selection_only'):
             selection_receipts.append(result)
@@ -54,6 +100,7 @@ def test_split_rebuilds_execution_only_after_exact_audited_selection(monkeypatch
     assert set(result['splitArchitecture']['selection']) == {'status', 'elapsedSeconds', 'scope'}
     assert '_selectionPrefixBounds' not in result
     assert 0 < deadlines[1] - deadlines[0] <= 30
+    assert preparations[0] is preparations[1] and preparations[0]['recipes']
     assert prefix_rows and all(type(row[2]) is int and all(type(value) is int
         for value in row[4].values()) for row in prefix_rows)
 

@@ -109,6 +109,8 @@ def test_weekly_count_uses_substantial_credit_and_deduplicates_exact_definitions
 
 def test_order_categories_and_protection_are_explicit_and_independently_ranked():
     requirements = initial_requirements()
+    requirements['orderingPreferences']['phaseOrder'] = [
+        ['HEAVY_COMPOUND'], ['MODERATE_COMPOUND'], ['ISOLATION'], ['CORE']]
     roles, keys = [set()] * 3, [(0, 'heavy'), (1, 'moderate'), (2, 'isolation')]
     assert execution_order_is_admissible([0, 1, 2], roles, keys, requirements)
     assert not execution_order_is_admissible([1, 0, 2], roles, keys, requirements)
@@ -118,7 +120,7 @@ def test_order_categories_and_protection_are_explicit_and_independently_ranked()
         'heavy_primary': ['chest'], 'heavy_supporting': [], 'main_compound': True,
         'main_primary': ['chest'], 'main_supporting': []}
     requirements['orderingPreferences']['protectionOrder'] = ['heavy_direct', 'main_direct']
-    assert execution_interference_score([0, 1], [profile, profile], requirements) == (2, 2)
+    assert execution_interference_score([0, 1], [profile, profile], requirements) == (2, 2, 2, 2)
     assert execution_interference_score([0, 1], [profile, profile], {}) == ()
 
 
@@ -152,6 +154,8 @@ def test_public_menu_repair_only_selects_code_candidate_or_none():
 def assess_tradeoff(before, after, *, requirements=None, baseline=None, candidate=None,
                     same_selected_work=True):
     requirements = requirements or {'objectiveOrder': ['duration_economy', 'setup_economy']}
+    before = {'setup_economy_transitions': 0, **before}
+    after = {'setup_economy_transitions': 0, **after}
     return assess_audited_programming_tradeoff(
         baseline if baseline is not None else {'audit': {'errors': []}},
         candidate if candidate is not None else {'audit': {'errors': []}},
@@ -159,7 +163,7 @@ def assess_tradeoff(before, after, *, requirements=None, baseline=None, candidat
         objective_names=requirements['objectiveOrder'], same_selected_work=same_selected_work)
 
 
-def test_faster_execution_with_more_resource_switches_requires_a_programming_decision():
+def test_faster_execution_with_more_physical_inventory_switches_requires_tradeoff():
     before = {'duration_economy': 9294, 'setup_economy': 27, 'setup_economy_resource_switches': 19}
     after = {**before, 'duration_economy': 9264, 'setup_economy_resource_switches': 21}
     result = assess_tradeoff(before, after)
@@ -186,10 +190,10 @@ def test_preference_resolution_is_preserved_only_when_explicitly_supplied():
 @pytest.mark.parametrize('unknown', [None, float('nan'), float('inf'), True])
 def test_missing_or_invalid_setup_evidence_is_unknown_not_zero(unknown):
     before = {'duration_economy': 100, 'setup_economy': 2, 'setup_economy_resource_switches': 1}
-    after = {**before, 'duration_economy': 90, 'setup_economy_resource_switches': unknown}
+    after = {**before, 'duration_economy': 90, 'setup_economy': unknown}
     result = assess_tradeoff(before, after)
     assert result['status'] == 'unknown'
-    assert result['unknownObjectives'] == ['setup_economy_resource_switches']
+    assert result['unknownObjectives'] == ['setup_economy']
     assert not result['worsened']
 
 
@@ -234,3 +238,10 @@ def test_native_hard_violation_and_missing_audit_cannot_be_promoted_by_soft_scor
     missing = assess_tradeoff({'duration_economy': 100}, {'duration_economy': 50},
         requirements=requirements, candidate={})
     assert missing['status'] == 'unknown' and 'native_audit:candidate' in missing['unknownObjectives']
+
+
+def test_missing_primary_inventory_prevents_switch_comparison():
+    before = {'duration_economy': 100, 'setup_economy': 2, 'setup_economy_resource_switches': 1}
+    result = assess_tradeoff(before, {**before, 'setup_economy_resource_switches': None})
+    assert result['status'] == 'unknown'
+    assert result['unknownObjectives'] == ['setup_economy_resource_switches']

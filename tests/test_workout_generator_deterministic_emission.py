@@ -33,6 +33,81 @@ def test_structure_keeps_round_recovery_and_outer_transition_without_model_calls
     validate_workout_structures_contract(plan, {"WORKOUT_0": structure}, definitions)
 
 
+def test_member_cadence_reaches_the_emitted_superset():
+    """Rotating EMOM (one member per slot) must survive structure emission and
+    pass the structure contract, which now compares cadenceMode."""
+    workout = {
+        "id": "WORKOUT_0", "name": "EMOM 9", "description": "Rotating EMOM. Schedule: Monday.",
+        "exerciseIds": ["EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
+        "restToNextSeconds": [0, 0, 60],
+        "supersetGroups": [{
+            "exerciseIds": ["EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
+            "restSecondsByExercise": {"EXERCISE_0": 0, "EXERCISE_1": 0, "EXERCISE_2": 0},
+            "roundDurationSeconds": 60,
+            "cadenceMode": "MEMBER",
+        }],
+    }
+    plan = {"workouts": [workout]}
+    definitions = {reference: {"id": reference} for reference in workout["exerciseIds"]}
+
+    structure, _ = cli.emit_workout_structure("WORKOUT_0", None, "", plan, definitions)
+
+    superset = structure["workoutComponents"][0]
+    assert superset["componentType"] == "Superset"
+    assert superset["cadenceMode"] == "MEMBER"
+    assert superset["roundDurationSeconds"] == 60
+    validate_workout_structures_contract(plan, {"WORKOUT_0": structure}, definitions)
+
+
+def test_member_cadence_requires_a_slot_length():
+    from workout_generator_pkg.plan_contract import _normalize_superset_groups
+
+    group = {"exerciseIds": ["EXERCISE_0", "EXERCISE_1"],
+             "restSecondsByExercise": {"EXERCISE_0": 0, "EXERCISE_1": 0},
+             "cadenceMode": "MEMBER"}
+    _, issues = _normalize_superset_groups([group], "Day", {"EXERCISE_0", "EXERCISE_1"})
+    assert [issue.code for issue in issues] == ["superset_mode_requires_cadence"]
+
+
+def test_superset_modes_merge_keys_and_reject_conflicts():
+    from workout_generator_pkg.planning_tools import _merge_superset_modes
+
+    def group_dict():
+        return {"exerciseIds": ["EXERCISE_0", "EXERCISE_1"], "restSecondsByExercise": {}}
+
+    groups = {"A": group_dict()}
+    errors = []
+    _merge_superset_modes(
+        {"supersetModes": [{"superset": "A", "cadenceMode": "MEMBER", "roundDurationSeconds": 120}]},
+        groups, 0, errors,
+    )
+    assert errors == []
+    assert groups["A"]["cadenceMode"] == "MEMBER"
+    assert groups["A"]["roundDurationSeconds"] == 120
+
+    groups = {"A": group_dict()}
+    errors = []
+    _merge_superset_modes(
+        {"supersetModes": [
+            {"superset": "missing", "cadenceMode": "MEMBER", "roundDurationSeconds": 60},
+            {"superset": "A", "cadenceMode": "MEMBER"},
+        ]},
+        groups, 0, errors,
+    )
+    assert [error["code"] for error in errors] == [
+        "unknown_superset_mode_group",
+        "superset_mode_requires_cadence",
+    ]
+
+    groups = {"A": group_dict()}
+    errors = []
+    _merge_superset_modes(
+        {"supersetModes": [{"superset": "A", "roundDurationSeconds": 60, "timeCapSeconds": 600}]},
+        groups, 0, errors,
+    )
+    assert [error["code"] for error in errors] == ["superset_mode_conflict"]
+
+
 def test_legacy_round_rest_does_not_create_an_extra_outer_rest():
     structure = build_workout_structure({
         "id": "WORKOUT_0", "name": "Day", "exerciseIds": ["EXERCISE_0", "EXERCISE_1"],

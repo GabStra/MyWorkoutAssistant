@@ -32,7 +32,7 @@ from .session_drafting import PREPARATION_PATCH_TOOL, preparation_patch_tool, pr
 from .conversation_store import normalize_conversation_messages
 from .logging_ui import LoadingIndicator, print_markdown, print_question, format_question
 from .usage_reporting import report_usage
-from .user_interaction import ASK_USER_TOOL, clarification_question, pending_question, answer_question, answered_execution_decision, execution_preparation_arguments, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL, repair_workout_alternative_tool
+from .user_interaction import ASK_USER_TOOL, clarification_question, pending_question, answer_question, answered_execution_decision, answered_programming_decision, execution_preparation_arguments, PROPOSE_WORKOUT_ALTERNATIVES_TOOL, ACCEPT_WORKOUT_ALTERNATIVE_TOOL, repair_workout_alternative_tool
 from .image_attachments import save_image, image_message
 from .training_history import TrainingHistory, GET_TRAINING_EVIDENCE_TOOL, HISTORY_PLANNING_INSTRUCTION, PRESCRIPTION_EVIDENCE_INSTRUCTION
 from .plan_review import review_draft, review_followup_instructions, review_requirements, record_planning_decisions, pending_review_checkpoint
@@ -153,17 +153,20 @@ def _structured_requirements_amendment(messages):
     return None
 
 
-def _requirements_review_retry_arguments(messages, user_input):
+def _requirements_review_retry_arguments(messages, user_input, equipment=None):
     """Retry the last real source-review candidate, skipping later rejected tool forms."""
     if user_input.strip().lower() != '/continue':
         return None
     from .planning_tools import latest_requirement_candidate
     index, candidate = latest_requirement_candidate(messages)
     source_review = candidate.get('sourceReview', {})
-    if not (source_review.get('passed') is False and source_review.get('failure')
-            and any(error.get('code') == 'requirements_review_failed' for error in candidate.get('errors', []))):
+    execution_failure = (source_review.get('failure') and any(
+        error.get('code') == 'requirements_review_failed' for error in candidate.get('errors', [])))
+    memory_restatement_failure = (candidate.get('proposedDecisions') and candidate.get('errors')
+        and all(error.get('code') == 'decision_source_finding' for error in candidate['errors']))
+    if not (source_review.get('passed') is False and (execution_failure or memory_restatement_failure)):
         return None
-    calls = {call.get('id'): call.get('function', {}).get('name')
+    calls = {call.get('id'): call.get('function', {})
         for message in messages for call in message.get('tool_calls', [])}
     later_user = False
     for message in messages[index + 1:]:
@@ -178,15 +181,35 @@ def _requirements_review_retry_arguments(messages, user_input):
             return None
         if not isinstance(result, dict):
             return None
-        name = calls.get(message.get('tool_call_id'))
+        name = calls.get(message.get('tool_call_id'), {}).get('name')
         if name == 'record_planning_decisions' and result.get('passed'):
             return None
         if name == 'set_workout_requirements' and not (
-                result.get('passed') is False and result.get('errors') and all(
-                    error.get('code') in ('invalid_arguments', 'structured_requirement_source_changed',
-                                         'requirements_review_base_missing') for error in result['errors'])):
+                result.get('passed') is False and result.get('errors') and not result.get('requirements')):
             return None
-    return {'updates': {}} if later_user else None
+    if not later_user:
+        return None
+    retry = {'updates': {}}
+    if candidate.get('proposedDecisions'):
+        try:
+            original = json.loads(calls.get(messages[index].get('tool_call_id'), {}).get('arguments') or '{}')
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(original, dict) or not original.get('planningDecisions'):
+            return None
+        if not execution_failure:
+            from .planning_decisions import propose_decisions
+            try:
+                proposal = propose_decisions(original['planningDecisions'], messages, equipment)
+            except (PlanningInputError, ValidationError, ValueError, KeyError, TypeError):
+                return None
+            if (proposal['newDecisionIds'] or proposal.get('reusedMemorySetupCount', 0)
+                    != len(original['planningDecisions']['decisions'])):
+                return None
+        retry['planningDecisions'] = original['planningDecisions']
+    elif not execution_failure:
+        return None
+    return retry
 
 
 def _recompile_requirements_review_candidate(messages, equipment, client=None, progress=None):
@@ -256,6 +279,33 @@ def _bind_current_draft_id(tool: Dict[str, Any], current_draft_id: Optional[str]
         label = current_draft_id if current_draft_id is not None else 'null (no current draft)'
         function['description'] = (function.get('description', '') + f' For this request, baseDraftId must be exactly {label}.').strip()
     return bound
+
+
+def _authorized_action_tools(request_tools, messages):
+    """Advertise approval actions only when the existing exact-text gates can pass."""
+    latest = next((message for message in reversed(messages) if message.get('role') == 'user'), {})
+    generation_allowed = (not latest.get('imageAttachments')
+        and (latest.get('content') or '').strip() == EXACT_GENERATION_CONFIRMATION)
+    substantive = next((message for message in reversed(messages)
+        if message.get('role') == 'user' and not (
+            (message.get('content') or '').strip() == '/continue'
+            and not any(message.get(field) for field in ('imageAttachments', 'images', 'attachments')))), {})
+    approval = (substantive.get('content') or '').strip()
+    alternative_id = (approval.removeprefix('APPROVE ALTERNATIVE ')
+        if approval.startswith('APPROVE ALTERNATIVE ')
+        and not any(substantive.get(field) for field in ('imageAttachments', 'images', 'attachments')) else '')
+    result = []
+    for tool in request_tools:
+        name = tool.get('function', {}).get('name')
+        if name == 'generate_workout' and not generation_allowed:
+            continue
+        if name == 'accept_workout_alternative':
+            if not alternative_id:
+                continue
+            tool = copy.deepcopy(tool)
+            tool['function']['parameters']['properties']['proposalId']['enum'] = [alternative_id]
+        result.append(tool)
+    return result
 
 
 def _candidate_menu_expansion_attempt(task):
@@ -1088,7 +1138,7 @@ def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, tr
     if images:
         result = [{key: value for key, value in message.items() if key != 'imageAttachments'} for message in result]
         result.extend(images)
-    return result
+    return [{key: value for key, value in message.items() if key != 'userMemory'} for message in result]
 
 
 def _show_commands(logger) -> None:
@@ -1098,6 +1148,7 @@ def _show_commands(logger) -> None:
     logger.log_print("  • Type /generate or /generate <prompt> to generate workout JSON")
     logger.log_print("  • Type /resume to reopen a saved conversation and show all stored turns")
     logger.log_print("  • Type /resume-progress to resume an interrupted generation directly")
+    logger.log_print("  • Type /memory to inspect user facts, /memory reload, or /memory forget <fact-id>")
     logger.log_print("  • Type /list-progress to list all saved generation progress")
     logger.log_print("  • Type /list-conversations to list saved conversations")
     logger.log_print("  • Type /resume-conversation <conversation_id> to reopen a conversation and show all stored turns")
@@ -1275,6 +1326,9 @@ def handle_function_call(
 
     if function_name == 'record_planning_decisions':
         result = record_planning_decisions(client, function_args, messages, logger, progress, equipment=provided_equipment)
+        if result.get('passed'):
+            from .user_memory_context import persist_reviewed_setup_facts
+            persist_reviewed_setup_facts(messages, result, provided_equipment or {})
         return {'result': json.dumps(result, ensure_ascii=False), 'should_exit': False, 'generation_result': None,
                 'decision_preview': ('Recorded planning choices:\n' + render_decisions(result['decisions'])) if result['passed'] and not result.get('cached') else None}
 
@@ -1286,6 +1340,9 @@ def handle_function_call(
         if decisions is not None:
             review_options['planning_decisions'] = decisions
         result = review_requirements(client, result, messages, logger, progress, **review_options)
+        if result.get('passed'):
+            from .user_memory_context import persist_reviewed_setup_facts
+            persist_reviewed_setup_facts(messages, result, provided_equipment or {})
         if not result['passed']:
             if result.get('requirementsReviewQuestion'):
                 result['userQuestion'] = result['requirementsReviewQuestion']
@@ -2431,6 +2488,7 @@ def main(deps=None):
         help="Path to a schema-v2 WorkoutStore or JSON object containing exerciseDefinitions",
     )
     parser.add_argument('--history-backup-file', help='AppBackup containing actual workout history; also supplies the exercise library when no --exercise-library-file is given')
+    parser.add_argument('--user-profile', help='Persistent user profile UUID; otherwise use MYWORKOUT_PROFILE_ID or an explicitly bound history path')
     parser.add_argument('--incumbent-conversation',
         help='Explicitly edit/replace the reviewed plan in this saved messages.json; applies to conversations started in this invocation')
     parser.add_argument('--max-repair-rounds', type=int, default=3,
@@ -2535,6 +2593,13 @@ def main(deps=None):
         provided_equipment["exerciseDefinitions"] = exercise_definitions
         provided_equipment["exerciseMovements"] = library_payload["exerciseMovements"]
 
+    from workout_user_memory import resolve_profile
+    from .user_memory_context import bind_user_memory, memory_context
+    try:
+        selected_profile_id = resolve_profile(args.user_profile, args.history_backup_file)
+    except (OSError, ValueError) as error:
+        parser.error(f'Cannot select user profile: {error}')
+
     endpoint = resolve_llm_endpoint()
     timeout = httpx.Timeout(None, connect=60.0)
     http_client = httpx.Client(timeout=timeout)
@@ -2551,6 +2616,12 @@ def main(deps=None):
         exercise_definitions,
     )
     _bind_planning_intent(messages, selected_incumbent)
+    if selected_profile_id:
+        try:
+            bind_user_memory(messages, selected_profile_id, provided_equipment or {})
+        except (OSError, ValueError) as error:
+            parser.error(f'Cannot load user memory: {error}')
+        print(f'User profile: {selected_profile_id}')
     metadata = {}
 
     logger, log_path = _create_logger(ConversationLogger, script_dir, conversation_id)
@@ -2586,6 +2657,9 @@ def main(deps=None):
             merged_metadata.update(metadata_update)
         merged_metadata["planningIntent"] = next((m.get("planningIntent", "fresh") for m in state["messages"] if m.get("role") == "system"), "fresh")
         merged_metadata["log_filename"] = os.path.basename(state["log_path"])
+        profile = memory_context(state['messages'])
+        if profile:
+            merged_metadata['userProfileId'] = profile['profileId']
         save_conversation(
             saved_messages,
             conversation_id=state["conversation_id"],
@@ -2616,6 +2690,16 @@ def main(deps=None):
         announce: str,
     ) -> None:
         persist_current()
+        next_record = load_conversation_record(next_conversation_id, script_dir) or {}
+        next_profile_id = (next_record.get('metadata', {}).get('userProfileId')
+                           or (memory_context(next_messages) or {}).get('profileId'))
+        current_profile_id = (memory_context(state['messages']) or {}).get('profileId') or selected_profile_id
+        if next_profile_id and current_profile_id and next_profile_id != current_profile_id:
+            raise ValueError('This conversation belongs to another user profile. Start the shell with that profile to resume it.')
+        profile_id = next_profile_id or current_profile_id
+        if profile_id:
+            profile_id = resolve_profile(profile_id, args.history_backup_file)
+            bind_user_memory(next_messages, profile_id, provided_equipment or {})
         next_logger, next_log_path = _create_logger(ConversationLogger, script_dir, next_conversation_id)
         close_logger()
         next_messages, _ = _ensure_tool_responses(next_messages)
@@ -2720,12 +2804,16 @@ def main(deps=None):
         if not record:
             logger.log_print(f"Conversation not found: {identifier}")
             return False
+        try:
+            switch_conversation(
+                resolved_id,
+                list(record["messages"]),
+                announce=f"Resumed conversation {resolved_id[:8]}.",
+            )
+        except (OSError, ValueError) as error:
+            logger.log_print(f'Cannot resume conversation: {error}')
+            return False
         set_active_conversation(resolved_id, script_dir)
-        switch_conversation(
-            resolved_id,
-            list(record["messages"]),
-            announce=f"Resumed conversation {resolved_id[:8]}.",
-        )
         _render_turns(state["messages"], state["logger"])
         return True
 
@@ -2786,6 +2874,31 @@ def main(deps=None):
             report_usage(state['logger'])
             continue
 
+        if command == '/memory' or command.startswith('/memory '):
+            profile = memory_context(state['messages'])
+            if not profile:
+                logger.log_print('No user profile selected. Create one with python -m workout_user_memory create NAME, then launch with --user-profile UUID.')
+                continue
+            from workout_user_memory import facts_for, forget_fact
+            try:
+                parts = user_input.split()
+                if command == '/memory':
+                    logger.log_print(_format_json(facts_for(profile['profileId'], provided_equipment or {})))
+                elif command == '/memory reload':
+                    bind_user_memory(state['messages'], profile['profileId'], provided_equipment or {})
+                    logger.log_print('Reloaded user memory. Existing previews must still pass current source and setup checks.')
+                    persist_current()
+                elif len(parts) == 3 and parts[1].lower() == 'forget':
+                    forget_fact(profile['profileId'], parts[2])
+                    bind_user_memory(state['messages'], profile['profileId'], provided_equipment or {})
+                    logger.log_print('Removed the fact from active user memory. Historical conversation logs were preserved.')
+                    persist_current()
+                else:
+                    logger.log_print('Usage: /memory, /memory reload, or /memory forget <fact-id>. Use python -m workout_user_memory confirm to correct or add a standing fact.')
+            except (OSError, ValueError) as error:
+                logger.log_print(f'Cannot update user memory: {error}')
+            continue
+
         if command == "/view":
             previews = [message for message in state["messages"] if message.get("canonicalDraftPreview") and message.get("content")]
             replies = previews or [message for message in state["messages"] if message.get("role") == "assistant" and message.get("content")]
@@ -2809,6 +2922,9 @@ def main(deps=None):
             announce = "Started a fresh conversation. Archived conversations remain available via /list-conversations."
             if command == "/clear keep-requirements":
                 from .planning_decisions import seed_approved_policy_context
+                profile = memory_context(state['messages'])
+                if profile:
+                    bind_user_memory(next_messages, profile['profileId'], provided_equipment or {})
                 carried = seed_approved_policy_context(state['messages'], next_messages, provided_equipment or {})
                 if carried is None:
                     logger.log_print('No currently approved requirements are available to carry. Use /clear for a blank conversation.')
@@ -2976,13 +3092,7 @@ def main(deps=None):
                 logger.log_print("Invalid selection.")
                 continue
             selected = conversations[idx]
-            set_active_conversation(selected["conversation_id"], script_dir)
-            switch_conversation(
-                selected["conversation_id"],
-                list(selected["messages"]),
-                announce=f"Resumed conversation {selected['conversation_id'][:8]}.",
-            )
-            _render_turns(state["messages"], state["logger"])
+            resume_conversation_by_id(selected['conversation_id'])
             continue
 
         if command == "/list-conversations":
@@ -3368,6 +3478,7 @@ def main(deps=None):
                                          f"({repair_task['findingCode']}); targeted patch, effort=low")
                 request_tools = [_bind_current_draft_id(tool, planning_state.get('currentDraftId'))
                                  for tool in request_tools]
+                request_tools = _authorized_action_tools(request_tools, state['messages'])
                 if (not planning_state.get('requirementsApproved') and any(
                         tool.get('function', {}).get('name') == 'set_workout_requirements'
                         for tool in request_tools)):
@@ -3379,16 +3490,27 @@ def main(deps=None):
                                            activity='Extracting workout requirements')
                 requirements_amendment = (_structured_requirements_amendment(state['messages'])
                     if tool_round == 0 else None)
-                requirements_retry = requirements_amendment or (_requirements_review_retry_arguments(state['messages'], user_input)
+                requirements_retry = requirements_amendment or (_requirements_review_retry_arguments(state['messages'], user_input, provided_equipment)
                     if tool_round == 0 else None)
                 execution_decision = (answered_execution_decision(state['messages'], provided_equipment,
                     getattr(training_history, 'fingerprint', None)) if tool_round == 0 and exercise_definitions else None)
+                programming_decision = (answered_programming_decision(state['messages'], provided_equipment,
+                    getattr(training_history, 'fingerprint', None)) if tool_round == 0 and exercise_definitions else None)
+                alternative_approval = (next((tool for tool in request_tools
+                    if tool.get('function', {}).get('name') == 'accept_workout_alternative'), None)
+                    if tool_round == 0 and user_input.startswith('APPROVE ALTERNATIVE ') else None)
                 if execution_decision is not None:
                     logger.log_print('Recording your selected execution counting convention for independent review...')
                     content, reasoning_content = None, None
                     tool_calls = [SimpleNamespace(id='execution_choice_' + uuid.uuid4().hex[:12], type='function',
                         function=SimpleNamespace(name='record_planning_decisions',
                             arguments=json.dumps(execution_decision, ensure_ascii=False)))]
+                elif programming_decision is not None:
+                    logger.log_print('Recording your selected artifact and displayed tradeoffs for independent review...')
+                    content, reasoning_content = None, None
+                    tool_calls = [SimpleNamespace(id='programming_choice_' + uuid.uuid4().hex[:12], type='function',
+                        function=SimpleNamespace(name='record_planning_decisions',
+                            arguments=json.dumps(programming_decision, ensure_ascii=False)))]
                 elif requirements_retry is not None:
                     logger.log_print('Applying explicit structured requirements or retrying the saved source review before draft work.')
                     content, reasoning_content = None, None
@@ -3396,6 +3518,13 @@ def main(deps=None):
                     tool_calls = [SimpleNamespace(id=prefix + uuid.uuid4().hex[:12], type='function',
                         function=SimpleNamespace(name='set_workout_requirements',
                             arguments=json.dumps(requirements_retry, ensure_ascii=False)))]
+                elif alternative_approval is not None:
+                    logger.log_print('Checking your explicitly approved alternative against the saved proposal...')
+                    content, reasoning_content = None, None
+                    proposal_id = alternative_approval['function']['parameters']['properties']['proposalId']['enum'][0]
+                    tool_calls = [SimpleNamespace(id='alternative_approval_' + uuid.uuid4().hex[:12], type='function',
+                        function=SimpleNamespace(name='accept_workout_alternative',
+                            arguments=json.dumps({'proposalId': proposal_id})))]
                 elif execution_preparation_retry is not None:
                     logger.log_print('Resuming the saved movement menu with your reviewed counting convention...')
                     content, reasoning_content = None, None

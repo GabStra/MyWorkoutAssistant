@@ -15,7 +15,7 @@ EXECUTION_CATEGORIES = ('HEAVY_COMPOUND', 'MODERATE_COMPOUND', 'ISOLATION', 'COR
 GOAL_METRICS = ('time_budget', 'volume_target', 'source_balance', 'workload_economy',
     'duration_balance', 'duration_economy', 'role_concentration', 'distribution',
     'movement_overlap', 'execution_complementarity', 'balance_control', 'exercise_count',
-    'exercise_distribution', 'setup_economy')
+    'exercise_distribution', 'setup_economy', *('ordering_' + name for name in INTERFERENCE_METRICS))
 OBJECTIVE_TIERS_SCHEMA = {'type': 'array', 'minItems': 1, 'maxItems': 8, 'items': {
     'type': 'array', 'minItems': 1, 'maxItems': 30, 'items': {'type': 'object', 'properties': {
         'metric': {'type': 'string', 'pattern': '^(?:' + '|'.join(GOAL_METRICS) + '|(?:coverage|weekly_volume|weekly_effective_sets):[a-z][a-z0-9_]{0,59})$'},
@@ -88,7 +88,10 @@ def execution_order_phase(priority, requirements):
 
 
 def execution_interference_metric_names(requirements):
-    return tuple(requirements.get('orderingPreferences', {}).get('protectionOrder', []))
+    """Resolve ties within each protected exposure before moving to the next metric."""
+    return tuple(component
+        for name in requirements.get('orderingPreferences', {}).get('protectionOrder', [])
+        for component in ((name, name + '_total') if name.startswith(('heavy_', 'main_')) else (name,)))
 
 
 def source_balance_dose_components(requirements):
@@ -152,6 +155,7 @@ def assess_audited_programming_tradeoff(baseline, candidate, *, requirements,
         return type(value) in (int, float) and math.isfinite(value)
 
     requested = set(requirements.get('objectiveOrder') or [])
+    grouped = {goal['metric'] for tier in requirements.get('objectiveTiers', []) for goal in tier}
     baseline_costs = baseline_costs if isinstance(baseline_costs, dict) else {}
     candidate_costs = candidate_costs if isinstance(candidate_costs, dict) else {}
     owners = {'distribution_worst': 'distribution',
@@ -160,15 +164,16 @@ def assess_audited_programming_tradeoff(baseline, candidate, *, requirements,
         'superset_lower_body_overlap': 'movement_overlap',
         'setup_economy_transitions': 'setup_economy',
         'setup_economy_resource_switches': 'setup_economy'}
+    setup_refinements = ('setup_economy_transitions', 'setup_economy_resource_switches')
     names = list(objective_names)
     if 'setup_economy' in requested:
-        names.append('setup_economy_resource_switches')
+        names.extend(setup_refinements)
     if 'execution_order' in names:
         names.remove('execution_order')
         names.extend('ordering_' + name for name in execution_interference_metric_names(requirements))
     for name in dict.fromkeys(names):
         owner = 'execution_order' if name.startswith('ordering_') else owners.get(name, name)
-        if owner not in requested or owner == 'execution_order' and not same_selected_work:
+        if owner not in requested or (owner == 'execution_order' and not same_selected_work and name not in grouped):
             continue
         before, after = baseline_costs.get(name), candidate_costs.get(name)
         if not known_number(before) or not known_number(after):
@@ -339,6 +344,10 @@ def programming_policy_errors(requirements):
             if metric.startswith(('weekly_volume:', 'weekly_effective_sets:')):
                 bounds = requirements.get('auditTargets', {}).get('weeklyEffectiveSets', {}).get(metric.split(':', 1)[1], {})
                 approved = ('preferredMinimum' in bounds and 'volume_target' in requirements.get('objectiveOrder', []))
+            elif metric.startswith('ordering_'):
+                approved = ('execution_order' in requirements.get('objectiveOrder', [])
+                    and metric.removeprefix('ordering_') in requirements.get(
+                        'orderingPreferences', {}).get('protectionOrder', []))
             else:
                 approved = (metric.split(':', 1)[1] in coverage if metric.startswith('coverage:')
                     else metric in requirements.get('objectiveOrder', []))

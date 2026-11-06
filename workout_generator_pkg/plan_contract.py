@@ -864,6 +864,10 @@ def validate_plan_index_contract(
 def _count_work_sets(exercise: Dict[str, Any]) -> Tuple[int, List[int]]:
     exercise_type = exercise.get("exerciseType")
     target_set_type = _work_set_type_for_exercise_type(exercise_type)
+    work_set_types = {target_set_type}
+    if exercise_type in ("WEIGHT", "BODY_WEIGHT", "COUNTDOWN"):
+        # Weighted distance-goal sets materialize as WeightedEffortSet under these types.
+        work_set_types.add("WeightedEffortSet")
     sets = exercise.get("sets", []) or []
 
     if target_set_type is None:
@@ -876,7 +880,7 @@ def _count_work_sets(exercise: Dict[str, Any]) -> Tuple[int, List[int]]:
         if not isinstance(set_item, dict):
             continue
         set_type = set_item.get("type")
-        if set_type == target_set_type:
+        if set_type in work_set_types:
             work_count += 1
         elif set_type == "RestSet":
             time_s = set_item.get("timeInSeconds")
@@ -936,6 +940,35 @@ def _normalize_superset_groups(
                     "invalid_superset_round_rest_map",
                     f"Workout '{wo_name}' supersetGroups[{idx}] must provide one non-negative integer round rest per exercise ID.",
                 ))
+
+        for key in ("roundDurationSeconds", "timeCapSeconds"):
+            value = group.get(key)
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+                issues.append(ContractIssue(
+                    f"invalid_superset_{key}",
+                    f"Workout '{wo_name}' supersetGroups[{idx}].{key} must be a positive integer when present.",
+                ))
+        cadence_mode = group.get("cadenceMode")
+        if cadence_mode is not None and cadence_mode not in ("ROUND", "MEMBER"):
+            issues.append(ContractIssue(
+                "invalid_superset_cadence_mode",
+                f"Workout '{wo_name}' supersetGroups[{idx}].cadenceMode must be ROUND or MEMBER.",
+            ))
+        if cadence_mode == "MEMBER" and group.get("roundDurationSeconds") is None:
+            issues.append(ContractIssue(
+                "superset_mode_requires_cadence",
+                f"Workout '{wo_name}' supersetGroups[{idx}] uses MEMBER cadence without roundDurationSeconds.",
+            ))
+        if group.get("roundDurationSeconds") is not None and group.get("timeCapSeconds") is not None:
+            issues.append(ContractIssue(
+                "superset_mode_conflict",
+                f"Workout '{wo_name}' supersetGroups[{idx}] carries both roundDurationSeconds and timeCapSeconds.",
+            ))
+        if group.get("amrap") and group.get("timeCapSeconds") is None:
+            issues.append(ContractIssue(
+                "superset_mode_amrap_requires_cap",
+                f"Workout '{wo_name}' supersetGroups[{idx}] is AMRAP without timeCapSeconds.",
+            ))
 
         normalized_group: List[str] = []
         for member in exercise_ids:
@@ -1351,6 +1384,19 @@ def _extract_superset_rest_maps_from_structure(
     return rest_maps
 
 
+def _extract_superset_modes_from_structure(
+    workout_structure: Dict[str, Any],
+) -> Dict[Tuple[str, ...], Any]:
+    modes: Dict[Tuple[str, ...], Any] = {}
+    for component in (workout_structure.get("workoutComponents", []) or []):
+        if not isinstance(component, dict) or component.get("componentType") != "Superset":
+            continue
+        exercise_ids = component.get("exerciseIds", []) or []
+        if all(isinstance(ex_id, str) and ex_id for ex_id in exercise_ids):
+            modes[tuple(exercise_ids)] = component.get("cadenceMode")
+    return modes
+
+
 def validate_workout_structures_contract(
     plan_index: Dict[str, Any],
     workout_structures: Dict[str, Dict[str, Any]],
@@ -1438,6 +1484,21 @@ def validate_workout_structures_contract(
                     f"Workout '{wo_name}' ({wo_id}) superset groups mismatch: expected {expected_superset_groups}, got {actual_superset_groups}.",
                 )
             )
+
+        actual_modes = _extract_superset_modes_from_structure(structure)
+        for group_spec in wo.get("supersetGroups", []) or []:
+            if not isinstance(group_spec, dict) or group_spec.get("cadenceMode") is None:
+                continue
+            group = group_spec.get("exerciseIds", []) or []
+            actual_mode = actual_modes.get(tuple(group))
+            if actual_mode != group_spec["cadenceMode"]:
+                issues.append(
+                    ContractIssue(
+                        "workout_superset_cadence_mode_mismatch",
+                        f"Workout '{wo_name}' ({wo_id}) superset {group} cadence mode mismatch: "
+                        f"expected {group_spec['cadenceMode']}, got {actual_mode}.",
+                    )
+                )
 
         rest_to_next = wo.get("restToNextSeconds")
         if (
@@ -1532,6 +1593,7 @@ def validate_assembled_workout_contract(plan_index, workout_store):
                 components.append({
                     "componentType": kind, "exerciseIds": [exercise["id"] for exercise in members],
                     "restSecondsByExercise": component.get("restSecondsByExercise"),
+                    "cadenceMode": component.get("cadenceMode"),
                 })
             else:
                 components.append({"componentType": kind, "timeInSeconds": component.get("timeInSeconds")})

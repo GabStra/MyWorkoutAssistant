@@ -208,11 +208,38 @@ def _preparation_selection_context(state, messages, equipment, training_history)
     options = preparation_selection_options(messages, equipment, training_history)
     state['preparationSelectionOptions'] = options
     admitted = set(options['admissibleDefinitionIds'])
+    task = state.get('constructionTask') or {}
+    initial_selection = task.get('stage') in ('discover_movements', 'choose_movements')
+    if initial_selection:
+        from .exercise_library_tools import search_catalog
+        from .planning_tools import active_requirement_result
+        from .restriction_policy import effective_restrictions
+
+        _, receipt = active_requirement_result(messages)
+        catalog, _ = search_catalog(equipment, effective_restrictions(receipt, equipment))
+        entries = [entry for entry in catalog if entry['id'] in admitted]
+        if training_history is not None:
+            training_history.annotate_search({'results': [{'exercises': entries}]}, equipment)
+        for entry in entries:
+            existing = state['exerciseCandidates'].get(entry['id'], {})
+            state['exerciseCandidates'][entry['id']] = {**existing, **entry}
+        task['stage'] = 'choose_movements' if entries else 'discover_movements'
+        state['candidateRetrieval'] = {
+            'scope': 'Complete current preparation selection domain; no semantic ranking or truncation.',
+            'equipmentAndRestrictions': 'passed',
+            'semanticCoverage': 'unqualified',
+            'instruction': 'Choose a shortlist from exerciseCandidates against approved requiredCoverage and priorities. '
+                'Library facts and history summaries are evidence, not proof of coverage or current capability. '
+                'preparationSelectionOptions retains unresolved capability/setup concerns; do not treat them as eligible. '
+                'Use search_exercise_library only for a concrete missing movement or semantic distinction. '
+                'Search cannot waive the preparation domain, equipment, exclusions or capability gates. '
+                'If no suitable option remains, clarify the unresolved requirement or capability; do not infer impossibility.',
+        }
     for collection in ('exerciseCandidates', 'cachedCandidateIndex', 'candidateAlternatives'):
         if collection in state:
             state[collection] = {reference: entry for reference, entry in state[collection].items()
                 if reference in admitted}
-    if 'exerciseDemandEvidence' in state:
+    if 'exerciseDemandEvidence' in state or initial_selection:
         selected = (state.get('parallelPreparation') or {}).get('definition_ids')
         _movement_selection_context(state, selected_menu_definition_ids=selected)
 

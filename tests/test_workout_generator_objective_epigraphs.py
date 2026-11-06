@@ -236,3 +236,34 @@ def test_prior_stage_slack_is_tightened_before_the_next_objective_receives_its_i
         * workout['timesCompletedInAWeek'] for muscle in muscles
         for workout in result['audit']['workouts'])
     assert score == expected
+
+
+def test_grouped_metric_slack_does_not_inflate_the_recorded_compromise_score(monkeypatch):
+    equipment, requirements, sessions, _ = _distribution_solver_case([7, 1])
+    requirements['objectiveOrder'] = ['distribution']
+    requirements['objectiveTiers'] = [[{'metric': 'distribution', 'target': 0, 'scale': 1}]]
+    original = joint_planning._cp_solve
+    calls = []
+
+    def slack_hint(variables, features, **options):
+        status, candidate = original(variables, features, **options)
+        if not calls:
+            assert candidate is not None, status
+            for index, variable in enumerate(variables):
+                if (variable.get('domainIdentity') or {}).get('kind') in (
+                        'distribution_deviation', 'goal_target_miss', 'goal_tier_peak'):
+                    candidate[index] = variable['upper']
+        calls.append(options['diagnostics']['goal'])
+        return 'feasible', candidate
+
+    monkeypatch.setattr(joint_planning, '_cp_solve', slack_hint)
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
+        preserve_source_selection=True)
+    assert result['feasible'] and not result['audit']['errors'], result
+    report = result['audit']
+    muscles = set(report['targets']['weeklyEffectiveSets']) | set(report['targets']['perSessionEffectiveSets'])
+    expected = sum(abs(2 * requirements['sessionsPerWeek']
+        * day['volume'].get(muscle, {}).get('effective', 0)
+        - 2 * report['weeklyVolume'].get(muscle, {}).get('effective', 0))
+        * day['timesCompletedInAWeek'] for muscle in muscles for day in report['workouts'])
+    assert result['objectiveProgress'][0]['value'] == expected

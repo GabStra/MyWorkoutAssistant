@@ -102,7 +102,7 @@ def test_complete_feedback_skips_model_construction_when_shared_budget_is_nearly
     assert result['completeCandidateRefinement']['attemptedCandidateCount'] == 0
 
 
-def test_bounded_neighborhood_reduces_actual_model_and_preserves_original_occurrence_indexes():
+def test_neighborhood_keeps_related_alternatives_and_original_occurrence_indexes():
     equipment, requirements, sessions, context, _ = _case()
     original_items = sessions[0]['exercises']
     for index, identifier in enumerate(('unused_a', 'unused_b'), 2):
@@ -129,18 +129,17 @@ def test_bounded_neighborhood_reduces_actual_model_and_preserves_original_occurr
 
     evidence = result['completeCandidateRefinement']
     assert evidence['status'] == 'promoted_complete_candidate', evidence
-    assert evidence['neighborhood']['addedDefinitionIds'] == ['row']
-    assert evidence['neighborhood']['eligibleDefinitionCount'] == 2
+    assert evidence['neighborhood']['attempts'][0]['addedDefinitionIds'] == ['row', 'unused_a', 'unused_b']
+    assert evidence['neighborhood']['attempts'][0]['eligibleDefinitionCount'] == 4
     assert evidence['neighborhood']['fullMenuDefinitionCount'] == 4
-    assert evidence['neighborhood']['omittedDefinitionCount'] == 2
-    assert evidence['candidateModel']['physicalBlockCount'] == 2 < full['physicalBlockCount'] == 4
-    assert evidence['candidateModel']['optionCount'] < full['optionCount']
+    assert evidence['neighborhood']['attempts'][0]['omittedDefinitionCount'] == 0
+    assert evidence['candidateModel']['physicalBlockCount'] == full['physicalBlockCount'] == 4
     assert result['occurrenceLineage'] == [[[0, 3]]]
     assert result['sessions'][0]['exercises'][0]['definition_id'] == sessions[0]['exercises'][3]['definition_id']
     assert not result['audit']['errors'] and sessions == before
 
 
-def test_neighborhood_admits_late_sorted_audited_goal_improvement_instead_of_first_unused_ids():
+def test_neighborhood_does_not_truncate_related_alternatives_by_id_or_individual_witness():
     equipment, requirements, sessions, context, seed = _case()
     sessions[0]['exercises'][1]['setupSeconds'] = 250
     for index, (identifier, setup, roles) in enumerate((
@@ -160,24 +159,22 @@ def test_neighborhood_admits_late_sorted_audited_goal_improvement_instead_of_fir
         source_working_set_budget={'source': 'user_fixed', 'variableWeeklyWorkingSets': 5})
 
     evidence = result['completeCandidateRefinement']
-    assert evidence['neighborhood']['addedDefinitionIds'] == ['zzz_best', 'unused_a']
-    assert evidence['exchangeScreening']['evaluatedDefinitionIds'] == [
+    assert evidence['neighborhood']['attempts'][0]['addedDefinitionIds'] == [
         'row', 'unused_a', 'zzz_best', 'zzzz_unqualified']
-    assert not evidence['exchangeScreening']['budgetExhausted']
-    assert all(entry['firstDifferingObjective'] == 'goal_tier_0_total'
-        for entry in evidence['exchangeScreening']['admittedWitnesses'])
-    assert result['sessions'][0]['exercises'][0]['definition_id'] == 'LIBRARY_3'
-    assert result['occurrenceLineage'] == [[[0, 3]]]
+    assert evidence['attemptedCandidateCount'] == 1
+    assert any(item['definition_id'] == 'LIBRARY_3' for item in result['sessions'][0]['exercises'])
+    assert all(item['satisfiesCoverage'] == context['qualifiedRoleEvidence'][item['definition_id']]
+        for item in result['sessions'][0]['exercises'])
     assert not result['audit']['errors']
     assert result['audit']['weeklyWorkingSets'] == seed['audit']['weeklyWorkingSets'] == 5
     assert result['audit']['weeklyVolume'] == seed['audit']['weeklyVolume']
-    assert result['audit']['weeklyCoverageSets'] == seed['audit']['weeklyCoverageSets']
-    assert evidence['candidateModel']['physicalBlockCount'] == 3
+    assert result['audit']['weeklyCoverageSets']['first'] >= 1  # Inclusion is required; five role sets are not.
+    assert evidence['candidateModel']['physicalBlockCount'] == 5
     assert (requirements, sessions, seed) == before
 
 
 @pytest.mark.parametrize('exact_prescriptions', [False, True])
-def test_neighborhood_falls_back_to_selected_definitions_without_a_beneficial_exchange(exact_prescriptions):
+def test_neighborhood_retains_seed_when_related_alternatives_cannot_improve_it(exact_prescriptions):
     equipment, requirements, sessions, context, seed = _case()
     alternative = sessions[0]['exercises'][1]
     if exact_prescriptions:
@@ -190,12 +187,15 @@ def test_neighborhood_falls_back_to_selected_definitions_without_a_beneficial_ex
         search_deadline=time.monotonic() + 10, context=context)
 
     evidence = result['completeCandidateRefinement']
-    assert evidence['neighborhood']['addedDefinitionIds'] == []
-    assert evidence['exchangeScreening']['fallback'] == 'selected_definitions_only'
-    assert evidence['exchangeScreening']['beneficialExchangeCount'] == 0
+    assert evidence['neighborhood']['attempts'][0]['addedDefinitionIds'] == ['row']
     if exact_prescriptions:
-        assert evidence['exchangeScreening']['evaluatedExchangeCount'] == 0
-    assert result['sessions'] == seed['sessions']
+        assert evidence['promotedCandidateCount'] == 1
+        selected = next(item for item in result['sessions'][0]['exercises'] if item['definition_id'] == 'LIBRARY_1')
+        assert selected['targetSetPrescriptions'] == alternative['targetSetPrescriptions']
+        assert selected['numWorkSets'] == 3
+    else:
+        assert evidence['promotedCandidateCount'] == 0
+        assert result['sessions'] == seed['sessions']
     assert (sessions, seed) == before
 
 
@@ -244,3 +244,32 @@ def test_public_solver_can_reconsider_seed_selection_within_the_same_deadline(mo
     assert result['sessions'][0]['exercises'][0]['definition_id'] == 'LIBRARY_1'
     assert result['audit']['weeklyWorkingSets'] == seed['audit']['weeklyWorkingSets'] == 5
     assert not result['audit']['errors']
+
+
+def test_related_alternatives_can_jointly_replace_a_count_neither_can_supply_alone():
+    equipment, requirements, sessions, context, seed = _case()
+    alternative = sessions[0]['exercises'][1]
+    alternative.update(numWorkSets=3, targetSetPrescriptions=[
+        {'workSetIndex': index, 'reps': 8} for index in range(3)])
+    definition = {**copy.deepcopy(equipment['exerciseDefinitions'][1]), 'id': 'zzz_other'}
+    equipment['exerciseDefinitions'].append(definition)
+    sessions[0]['exercises'].append({**copy.deepcopy(alternative), 'definition_id': 'LIBRARY_2',
+        'numWorkSets': 2, 'targetSetPrescriptions': [
+            {'workSetIndex': index, 'reps': 8} for index in range(2)]})
+    context['setupDefinitions']['LIBRARY_2'] = definition
+    context['qualifiedRoleEvidence']['LIBRARY_2'] = ['first']
+    context['libraryFingerprint'] = library_fingerprint(equipment)
+    before = copy.deepcopy((requirements, sessions, seed))
+
+    result = candidate_refinement.refine_complete_candidate(seed, sessions, requirements, equipment,
+        search_deadline=time.monotonic() + 10, context=context)
+
+    assert result['completeCandidateRefinement']['status'] == 'promoted_complete_candidate', result
+    selected = result['sessions'][0]['exercises']
+    assert {item['definition_id'] for item in selected} == {'LIBRARY_1', 'LIBRARY_2'}
+    assert sorted(item['numWorkSets'] for item in selected) == [2, 3]
+    assert result['audit']['weeklyWorkingSets'] == seed['audit']['weeklyWorkingSets'] == 5
+    assert result['audit']['weeklyVolume'] == seed['audit']['weeklyVolume']
+    assert result['audit']['workouts'][0]['estimatedSeconds'] < seed['audit']['workouts'][0]['estimatedSeconds']
+    assert not result['audit']['errors']
+    assert (requirements, sessions, seed) == before

@@ -165,3 +165,35 @@ def test_legacy_cached_policy_is_resolved_again_and_requires_new_approval():
     renewed = set_workout_requirements(requirements, requirement_messages(stored), equipment)
     assert not renewed.get('cached')
     assert renewed['restrictionPolicy']['resolutionVersion'] == policy.RESTRICTION_POLICY_VERSION
+
+
+@pytest.mark.parametrize('changed_library,changed_alias', [(False, False), (True, False), (False, True)])
+def test_scoped_new_exclusion_reuses_only_unchanged_approved_alias(monkeypatch, changed_library, changed_alias):
+    from workout_generator_pkg.requirement_accounting import STRUCTURED_REQUIREMENTS_MARKER
+
+    equipment, requirements, _ = restriction_case()
+    equipment['exerciseDefinitions'].append({**equipment['exerciseDefinitions'][0],
+        'id': 'g', 'name': 'Weighted Dumbbell Crunch'})
+    requirements['exerciseRestrictions']['excludeNameTerms'].append('pushdown machine')
+    monkeypatch.setattr(policy, 'chat_call', lambda *a, **k:
+        (json.dumps({'WORDING_0': ['LIBRARY_0']}), None, None))
+    stored = set_workout_requirements(requirements, [], equipment, client=object())
+    messages = requirement_messages(stored)
+    updated = copy.deepcopy(requirements)
+    updated['exerciseRestrictions']['excludeNameTerms'].append('Weighted Dumbbell Crunch')
+    if changed_alias:
+        updated['exerciseRestrictions']['excludeNameTerms'][-2] = 'new pushdown alias'
+    if changed_library:
+        equipment['exerciseDefinitions'][0]['name'] = 'Renamed Cable Tricep Pushdown'
+    messages.append({'role': 'user', 'content': STRUCTURED_REQUIREMENTS_MARKER + '\n' + json.dumps(updated)})
+    monkeypatch.setattr(policy, 'chat_call', lambda *a, **k: pytest.fail('No alias call for unchanged approved meaning'))
+    arguments = {'baseRequirementsId': stored['requirementsId'], 'updates': {}}
+    if changed_library or changed_alias:
+        with pytest.raises(PlanningInputError, match='Cannot resolve restriction'):
+            set_workout_requirements(arguments, messages, equipment)
+    else:
+        result = set_workout_requirements(arguments, messages, equipment, client=object())
+        assert result['restrictionPolicy']['exceptDefinitionIds'] == ['a', 'b']
+        assert result['restrictionPolicy']['excludedDefinitionIds'] == ['c', 'd', 'e', 'g']
+        assert result['requirements']['auditTargets'] == requirements['auditTargets']
+        assert result['requirements']['exerciseRestrictions'] == updated['exerciseRestrictions']

@@ -502,7 +502,6 @@ def session_interference_evidence(artifact_day, sources, definitions, emitted, r
     from collections import Counter
     from .programming_guidelines import (execution_interference_profile, execution_interference_score,
         superset_lower_body_pair_sets)
-    from .exercise_contracts import execution_supporting_muscles
     primary, supporting = Counter(), Counter()
     last_exposure = {}
     elapsed = ASSUMPTIONS['generalWarmupSeconds']
@@ -536,13 +535,10 @@ def session_interference_evidence(artifact_day, sources, definitions, emitted, r
             member_facts = []
             for member, definition in zip(members, member_definitions, strict=True):
                 member_profile = execution_interference_profile([definition], [1], roles, requirements)
-                support_known = execution_supporting_muscles(definition) is not None
-                execution = definition.get('reviewedExecution') or {}
                 member_facts.append({'exerciseRef': member['id'],
                     'primaryMuscles': sorted(member_profile['primary']),
                     'supportingMuscles': sorted(member_profile['supporting']),
-                    'executionSupportEvidence': ({'status': 'sourced', 'source': execution['source'],
-                        'basis': execution['basis']} if support_known else {'status': 'unknown'}),
+                    'executionSupportEvidence': member_profile['executionSupportEvidence'][0],
                     'firstRoundPriorExposure': None, 'finalRoundPriorExposure': None})
             for round_index in range(rounds):
                 for member_index, (member, definition) in enumerate(zip(members, member_definitions, strict=True)):
@@ -592,7 +588,10 @@ def session_interference_evidence(artifact_day, sources, definitions, emitted, r
             'primaryWorkingSets': profile['primary'], 'supportingWorkingSets': profile['supporting'],
             'prescribedWorkingSetRIR': requirements.get('workingSetRIR'),
             'effortStatus': 'prescription_only_not_measured_performance',
-            'precedingOverlap': overlap, 'libraryMuscleEvidence': 'available' if profile['known'] else 'unknown',
+            'precedingOverlap': overlap,
+            'libraryMuscleEvidence': 'primary_tags_available' if profile['primaryKnown'] else 'unknown',
+            'executionSupportEvidence': profile['executionSupportEvidence'],
+            'supportingCountsMeaning': profile['supportingCountsMeaning'],
             'scope': 'before_block; superset members interleave rather than execute as complete consecutive exercises'})
         block_report = audit_workout_package({'workouts': [{'name': 'Block', 'workoutComponents': [component]}]},
             {'weeklyEffectiveSets': {}, 'perSessionEffectiveSets': {}, 'maximumSessionSeconds': None},
@@ -607,8 +606,10 @@ def session_interference_evidence(artifact_day, sources, definitions, emitted, r
         for muscle in wanted:
             last_exposure[muscle] = (len(blocks) - 1, elapsed, recovery)
     scores = execution_interference_score(list(range(len(profiles))), profiles)
-    return {'status': 'library_overlap_proxies' if all(profile['known'] for profile in profiles)
-            else 'partial_library_evidence',
+    return {'status': ('partial_library_evidence' if any(not profile['primaryKnown'] for profile in profiles)
+            else 'partial_execution_support_evidence' if any(fact['status'] == 'unknown'
+                for profile in profiles for fact in profile['executionSupportEvidence'])
+            else 'documented_overlap_lower_bounds'),
         'countsAreOverlappingExposuresNotDistinctPhysicalSets': True,
         'approvedOrderingMetricOrder': list(requirements.get('orderingPreferences', {}).get('protectionOrder', [])),
         'orderingExposure': dict(zip(('priorPrimarySetsBeforePriorityWork',
@@ -633,8 +634,8 @@ def session_interference_evidence(artifact_day, sources, definitions, emitted, r
             'tolerance thresholds or physiological predictions are inferred. Unrecorded grip/trunk demands remain unknown. Working-set overlap excludes unmeasured warm-up and calibration effort.'}
 
 
-def setup_resource_profile(definition, source=None):
-    """Return declared resources and an exact-load task identity when the source establishes one."""
+def setup_resource_profile(definition, source=None, shared_resource_groups=None, equipment_by_id=None):
+    """Keep physical requirements independent of the exercise's library identity."""
     equipment_id = definition.get('equipmentId')
     accessories = sorted(set(definition.get('requiredAccessoryEquipmentIds') or []))
     resources = sorted(set(([equipment_id] if equipment_id else []) + accessories))
@@ -654,7 +655,10 @@ def setup_resource_profile(definition, source=None):
         if known_load_configuration else None)
     definition_id = (definition.get('id') or source.get('definition_id')
         or source.get('libraryDefinitionId'))
-    task_key = {'definitionId': definition_id, 'resourceIds': resources,
+    equipment_type = ((equipment_by_id or {}).get(equipment_id) or {}).get('type')
+    quantity = {'DUMBBELL': 1, 'DUMBBELLS': 2}.get(equipment_type)
+    task_key = {'equipmentId': equipment_id, 'accessoryIds': accessories, 'resourceIds': resources,
+        'implementQuantity': quantity,
         'configuration': configuration_key if known_load_configuration else 'unknown'}
     physical_facts = (definition.get('reviewedExecution') or {}).get('setupConfiguration')
     if physical_facts is not None:
@@ -663,13 +667,109 @@ def setup_resource_profile(definition, source=None):
         task_key['declaredPhysicalConfiguration'] = sorted(
             [{'resourceId': fact['resourceId'], 'state': fact['state']} for fact in physical_facts],
             key=lambda fact: fact['resourceId'])
-    return {'equipmentId': equipment_id, 'accessoryIds': accessories, 'resourceIds': resources,
+    profile = {'definitionId': definition_id, 'equipmentId': equipment_id,
+        'exerciseType': definition.get('exerciseType'),
+        'implementQuantity': quantity, 'loadField': load_field,
+        'accessoryIds': accessories, 'resourceIds': resources,
         'configurationStatus': 'known' if known_load_configuration else 'unknown',
         'configurationKey': configuration_key, 'preparationTaskKey': task_key,
         'repeatsPrescribedLoad': repeats_prescribed_load,
         'resourceEvidence': 'declared_references' if equipment_id or accessories else 'no_declared_resources',
         'loadConfigurationKnown': known_load_configuration, 'physicalConfigurationKnown': False,
         'physicalConfigurationFacts': physical_facts or []}
+    profile['resourceConflictDomains'] = {resource: _setup_conflict_domain(resource, shared_resource_groups)
+        for resource in resources}
+    profile['knownDumbbellResourceIds'] = sorted(identifier for identifier, gear in (equipment_by_id or {}).items()
+        if gear.get('type') in ('DUMBBELL', 'DUMBBELLS'))
+    profile['resourceActivationKeys'] = {requirement['resourceId']: requirement['activationKey']
+        for requirement in physical_setup_requirements(profile)}
+    profile['physicalPreparationTaskKeys'] = physical_preparation_task_keys(profile)
+    return profile
+
+
+def _setup_conflict_domain(resource, shared_resource_groups):
+    domain = {resource}
+    while True:
+        expanded = domain | set().union(*(set(group) for group in shared_resource_groups or []
+            if domain.intersection(group)))
+        if expanded == domain:
+            return sorted(domain)
+        domain = expanded
+
+
+def physical_setup_requirements(profile, shared_resource_groups=None):
+    """Solver/audit primitives: exact resource roles plus independent known dimensions."""
+    facts = {fact['resourceId']: fact for fact in profile.get('physicalConfigurationFacts', [])}
+    domains = {resource: (_setup_conflict_domain(resource, shared_resource_groups)
+        if shared_resource_groups is not None else
+        profile.get('resourceConflictDomains', {}).get(resource, [resource])) for resource in profile['resourceIds']}
+    inventories = {resource: sorted(set(domain).intersection(profile.get('knownDumbbellResourceIds', [])))
+        for resource, domain in domains.items()}
+    return [{'resourceId': resource,
+        'activationKey': json.dumps({'sharedDumbbellInventory': inventories[resource]}
+            if resource in inventories[resource] and len(inventories[resource]) > 1 else {'resourceId': resource},
+            sort_keys=True, separators=(',', ':')),
+        'role': 'equipment' if resource == profile['equipmentId'] else 'accessory',
+        'conflictDomain': domains[resource],
+        'state': copy.deepcopy(facts.get(resource, {}).get('state', {})),
+        'load': copy.deepcopy(profile['configurationKey']) if resource == profile['equipmentId'] else None,
+        'implementQuantity': profile.get('implementQuantity') if resource == profile['equipmentId'] else None,
+        'loadRequired': resource == profile['equipmentId'] and profile.get('loadField') is not None,
+        'evidence': [{key: facts[resource][key] for key in ('source', 'basis')}] if resource in facts else []}
+        for resource in profile['resourceIds']]
+
+
+def physical_setup_requirement_relation(before, after):
+    """Compare retained requirements without treating an unknown dimension as equal."""
+    state_relation = _declared_physical_configuration_relation(
+        {'state': before['state']} if before and before['state'] else None,
+        {'state': after['state']} if after['state'] else None)
+    same_resource = bool(before and before['resourceId'] == after['resourceId'])
+    lost_proof = bool(before and not same_resource
+        and set(before['conflictDomain']).intersection(after['conflictDomain']))
+    shared_inventory = bool(lost_proof and before.get('implementQuantity') is not None
+        and after.get('implementQuantity') is not None)
+    load_known = bool(before and (same_resource or shared_inventory) and before.get('load') is not None
+        and after.get('load') is not None
+        and before['load']['loadField'] == after['load']['loadField'])
+    load_change = bool(load_known and before['load'] != after['load'])
+    state_change = state_relation == 'required_change' and same_resource
+    unknown = (not same_resource or state_relation == 'unknown_configuration'
+        or bool(after.get('loadRequired') and not load_known))
+    return {'knownStateChange': state_change, 'knownLoadChange': load_change,
+        'resourceRoleRestore': False, 'retainedStateProofLost': lost_proof,
+        'requiredChange': bool(state_change or load_change),
+        'unknownConfiguration': unknown,
+        'sameDeclaredState': state_relation == 'same_declared_state' and same_resource,
+        'knownPreparation': bool(after['state'] or after.get('load') is not None),
+        'relation': 'required_change' if state_change or load_change else
+            'same_declared_state' if not unknown else 'unknown_configuration'}
+
+
+def physical_preparation_task_keys(profile, shared_resource_groups=None):
+    """Distinct required physical states, including explicit unknown dimensions."""
+    keys = []
+    for requirement in physical_setup_requirements(profile, shared_resource_groups):
+        load = requirement['load']
+        loads = list(dict.fromkeys(load['loads'])) if load is not None else [None]
+        for value in loads:
+            key = {name: requirement[name] for name in ('resourceId', 'role', 'state', 'implementQuantity')}
+            key['load'] = ({'loadField': load['loadField'], 'value': value} if load is not None
+                else 'unknown' if requirement['loadRequired'] else 'not_required')
+            key['configurationEvidence'] = 'partial' if requirement['state'] else 'unknown'
+            keys.append(key)
+    return keys
+
+
+def physical_setup_bundle_transition(before, after):
+    """Compare consecutive uses of one conflict domain, preserving co-used roles."""
+    previous = {requirement['resourceId']: requirement for requirement in before}
+    comparisons = [{**physical_setup_requirement_relation(
+        previous.get(requirement['resourceId']) or (before[-1] if before else None), requirement),
+        'resourceId': requirement['resourceId']} for requirement in after]
+    return {'comparisons': comparisons,
+        'requiredChangeCount': sum(row['requiredChange'] for row in comparisons),
+        'unknownConfigurationCount': sum(row['unknownConfiguration'] for row in comparisons)}
 
 
 def _declared_physical_configuration_relation(before, after):
@@ -684,11 +784,10 @@ def _declared_physical_configuration_relation(before, after):
 
 def _setup_resource_transition(before, after):
     same_resources = before['resourceIds'] == after['resourceIds']
-    same_definition = (before['preparationTaskKey']['definitionId'] is not None
-        and before['preparationTaskKey']['definitionId'] == after['preparationTaskKey']['definitionId'])
     both_known = before['configurationStatus'] == after['configurationStatus'] == 'known'
     same_load_context = (before['equipmentId'] is not None
-        and before['equipmentId'] == after['equipmentId']) or same_definition
+        and before['equipmentId'] == after['equipmentId']
+        and before.get('implementQuantity') == after.get('implementQuantity'))
     same_load_field = (before['configurationKey'] and after['configurationKey']
         and before['configurationKey']['loadField'] == after['configurationKey']['loadField'])
     if both_known and same_load_context and same_load_field:
@@ -707,6 +806,8 @@ def _setup_resource_transition(before, after):
     physical_relation = ('required_change' if 'required_change' in physical_relations else
         'same_declared_state' if physical_relations and all(relation == 'same_declared_state'
             for relation in physical_relations) else 'unknown_configuration')
+    if physical_relation == 'required_change':
+        declared_change = True
     return {'resourceSelection': resource_selection,
         'addedResourceIds': sorted(set(after['resourceIds']) - set(before['resourceIds'])),
         'removedResourceIds': sorted(set(before['resourceIds']) - set(after['resourceIds'])),
@@ -749,7 +850,7 @@ def scheduled_setup_transitions(profiles, rounds=1):
     return transitions
 
 
-def executable_setup_evidence(workout, definitions, shared_resource_groups=None):
+def executable_setup_evidence(workout, definitions, shared_resource_groups=None, equipment_by_id=None):
     """Evaluate ordered executable prescriptions using the same facts as the rendered audit."""
     blocks = []
     for source in workout.get('exercises', []):
@@ -762,12 +863,13 @@ def executable_setup_evidence(workout, definitions, shared_resource_groups=None)
         'componentIndex': index, 'kind': 'superset' if len(block['members']) > 1 else 'exercise',
         'exerciseRefs': [source.get('id', source.get('definition_id')) for source in block['members']],
         'rounds': min((source.get('numWorkSets', 0) for source in block['members']), default=0),
-        'profiles': [setup_resource_profile(definitions.get(source.get('definition_id'), {}), source)
+        'profiles': [setup_resource_profile(definitions.get(source.get('definition_id'), {}), source,
+            shared_resource_groups, equipment_by_id)
             for source in block['members']]}
         for index, block in enumerate(blocks)], shared_resource_groups)
 
 
-def session_setup_evidence(artifact_day, sources, definitions, shared_resource_groups=None):
+def session_setup_evidence(artifact_day, sources, definitions, shared_resource_groups=None, equipment_by_id=None):
     """Adapt emitted occurrence identities to the shared executable setup evaluation."""
     blocks = []
     for component_index, component in enumerate(artifact_day.get('components', [])):
@@ -780,12 +882,14 @@ def session_setup_evidence(artifact_day, sources, definitions, shared_resource_g
         for member in members:
             source = sources.get(member.get('id'))
             if source is None:
-                profiles.append(setup_resource_profile({}, {'definition_id': member.get('id')}))
+                profiles.append(setup_resource_profile({}, {'definition_id': member.get('id')},
+                    shared_resource_groups, equipment_by_id))
                 counts.append(0)
                 continue
             definition_id = source[3].get('libraryDefinitionId')
             profiles.append(setup_resource_profile(definitions.get(definition_id) or source[1],
-                source[0] | source[1] | {'definition_id': definition_id}))
+                source[0] | source[1] | {'definition_id': definition_id},
+                shared_resource_groups, equipment_by_id))
             counts.append(source[0].get('numWorkSets', 0))
         blocks.append({'componentIndex': component_index,
             'kind': 'superset' if component.get('type') == 'Superset' else 'exercise',
@@ -795,50 +899,141 @@ def session_setup_evidence(artifact_day, sources, definitions, shared_resource_g
 
 
 def _declared_physical_setup_evidence(source_blocks, shared_resource_groups):
-    """Compare required states; no claim that the user's actual equipment retained them."""
-    states, transitions = {}, []
-    groups = [set(group) for group in shared_resource_groups or []]
-    has_facts = any(profile.get('physicalConfigurationFacts')
-        for block in source_blocks for profile in block['profiles'])
-    for block_index, block in enumerate(source_blocks if has_facts else []):
+    """Track retained declared requirements separately from unknown physical dimensions."""
+    states, domain_last, transitions = {}, {}, []
+    configurations, unclassified_resources = [], set()
+    physical_tasks, first_resources, coverage = {}, set(), {}
+    accesses, required_changes, load_changes, role_restores, preparations, unknown = 0, 0, 0, 0, 0, 0
+    for block in source_blocks:
+        for profile in block['profiles']:
+            if not profile['resourceIds']:
+                entry = {'resourceId': None, 'role': 'unknown', 'implementQuantity': None,
+                    'loadRequired': profile.get('loadField') is not None,
+                    'knownStateDimensions': [], 'loadKnown': False}
+                coverage[json.dumps(entry, sort_keys=True, separators=(',', ':'))] = entry
+            for requirement in physical_setup_requirements(profile, shared_resource_groups):
+                entry = {key: requirement[key] for key in ('resourceId', 'role', 'implementQuantity', 'loadRequired')}
+                entry['knownStateDimensions'] = sorted(requirement['state'])
+                entry['loadKnown'] = requirement['load'] is not None
+                coverage[json.dumps(entry, sort_keys=True, separators=(',', ':'))] = entry
+            for key in physical_preparation_task_keys(profile, shared_resource_groups):
+                physical_tasks.setdefault(json.dumps(key, sort_keys=True, separators=(',', ':')), key)
+            facts = profile.get('physicalConfigurationFacts', [])
+            unclassified_resources.update(set(profile['resourceIds']) - {fact['resourceId'] for fact in facts})
+            for fact in facts:
+                entry = next((entry for entry in configurations if entry['resourceId'] == fact['resourceId']
+                    and _declared_physical_configuration_relation(entry, fact) == 'same_declared_state'), None)
+                if entry is None:
+                    entry = {'resourceId': fact['resourceId'], 'state': copy.deepcopy(fact['state']),
+                        'definitionIds': [], 'evidence': []}
+                    configurations.append(entry)
+                identifier = profile.get('definitionId')
+                if identifier not in entry['definitionIds']:
+                    entry['definitionIds'].append(identifier)
+                evidence = {'source': fact['source'], 'basis': fact['basis']}
+                if evidence not in entry['evidence']:
+                    entry['evidence'].append(evidence)
+    for block_index, block in enumerate(source_blocks):
         rounds = block['rounds'] if type(block['rounds']) is int else 0
         for round_index in range(max(0, rounds)):
             for member_index, profile in enumerate(block['profiles']):
-                resources = set(profile['resourceIds'])
-                aliases = set(resources)
-                while True:
-                    expanded = aliases | set().union(*(group for group in groups if aliases & group))
-                    if expanded == aliases:
-                        break
-                    aliases = expanded
-                for resource in aliases - resources:
-                    states.pop(resource, None)
-                facts = {fact['resourceId']: fact for fact in profile.get('physicalConfigurationFacts', [])}
-                for resource in sorted(resources):
-                    previous, required = states.get(resource), facts.get(resource)
-                    transitions.append({'blockIndex': block_index, 'roundIndex': round_index,
+                requirements = physical_setup_requirements(_setup_profile_at_set(profile, round_index),
+                    shared_resource_groups)
+                if not requirements:
+                    unknown += 1
+                # Requirements used together retain their distinct roles within a shared station.
+                resources = {requirement['resourceId'] for requirement in requirements}
+                for required in requirements:
+                    resource = required['resourceId']
+                    previous = states.get(resource)
+                    domain = tuple(required['conflictDomain'])
+                    comparison = physical_setup_requirement_relation(previous or domain_last.get(domain), required)
+                    initial = required['activationKey'] not in first_resources
+                    first_resources.add(required['activationKey'])
+                    change = comparison['requiredChange']
+                    preparations += int(initial) + int(change)
+                    required_changes += int(change)
+                    load_changes += int(comparison['knownLoadChange'])
+                    role_restores += int(comparison['resourceRoleRestore'] and not initial)
+                    accesses += int(not initial and not change and comparison['sameDeclaredState'])
+                    unknown += int(comparison['unknownConfiguration'])
+                    previous_fact = ({'resourceId': resource, 'state': previous['state'],
+                        **(previous['evidence'][0] if previous['evidence'] else {})}
+                        if previous and previous['state'] else None)
+                    required_fact = ({'resourceId': resource, 'state': required['state'],
+                        **(required['evidence'][0] if required['evidence'] else {})}
+                        if required['state'] else None)
+                    transitions.append({**comparison, 'requirementRelation': comparison['relation'],
+                        'blockIndex': block_index, 'roundIndex': round_index,
                         'memberIndex': member_index, 'resourceId': resource,
-                        'relation': _declared_physical_configuration_relation(previous, required),
-                        'previousRequirement': copy.deepcopy(previous),
-                        'requiredConfiguration': copy.deepcopy(required)})
-                    if required is None:
+                        'relation': _declared_physical_configuration_relation(previous_fact, required_fact),
+                        'previousRequirement': copy.deepcopy(previous_fact),
+                        'requiredConfiguration': copy.deepcopy(required_fact),
+                        'physicalRequirement': copy.deepcopy(required),
+                        'firstResourceActivation': initial})
+                for required in requirements:
+                    domain = tuple(required['conflictDomain'])
+                    for resource in set(domain) - resources:
                         states.pop(resource, None)
-                    else:
-                        # Omitted dimensions cannot preserve a prior configuration proof.
-                        states[resource] = required
-    return {'physicalConfigurationTransitions': transitions,
-        'knownPhysicalConfigurationChanges': sum(row['relation'] == 'required_change' for row in transitions),
-        'sameDeclaredPhysicalConfigurationStates': sum(row['relation'] == 'same_declared_state'
-            for row in transitions),
-        'unknownPhysicalConfigurationTransitions': (sum(row['relation'] == 'unknown_configuration'
-            for row in transitions) if has_facts else sum(len(profile['resourceIds']) * max(0, block['rounds'])
-                for block in source_blocks if type(block['rounds']) is int for profile in block['profiles'])),
+                    states[required['resourceId']] = required
+                    domain_last[domain] = required
+    return {'declaredResourceConfigurations': configurations,
+        'distinctDeclaredResourceConfigurationCount': len(configurations),
+        'physicalPreparationTaskKeys': list(physical_tasks.values()),
+        'physicalPreparationTaskCount': len(physical_tasks),
+        'initialResourceActivationCount': len(first_resources),
+        'physicalPreparationCount': preparations, 'physicalRequiredChanges': required_changes,
+        'knownPhysicalRequiredChanges': required_changes,
+        'setupEvidenceCoverage': [coverage[key] for key in sorted(coverage)],
+        'unknownSetupEvidenceKey': json.dumps([coverage[key] for key in sorted(coverage)
+            if not coverage[key]['knownStateDimensions'] or
+                coverage[key]['loadRequired'] and not coverage[key]['loadKnown']],
+            sort_keys=True, separators=(',', ':')),
+        'knownLoadChanges': load_changes, 'sharedResourceRoleRestores': role_restores,
+        'readyResourceAccesses': accesses, 'unknownPhysicalPreparationCount': unknown,
+        'unclassifiedConfigurationResourceIds': sorted(unclassified_resources),
+        'physicalConfigurationTransitions': transitions,
+        'knownPhysicalConfigurationChanges': sum(row['knownStateChange'] for row in transitions),
+        'sameDeclaredPhysicalConfigurationStates': sum(row['sameDeclaredState'] for row in transitions),
+        'unknownPhysicalConfigurationTransitions': sum(not row['physicalRequirement']['state']
+            or row['relation'] == 'unknown_configuration' for row in transitions),
         'physicalConfigurationEvidencePartial': True, 'physicalResourceIndependenceVerified': False,
-        'physicalConfigurationInterpretation': 'Sourced required states are compared per declared resource and dimension, '
-            'including returns across other resource references. Missing requirements invalidate retained state; '
-            'approved shared-station groups invalidate other member states when touched. Other resource aliases, '
-            'actual retained configurations, independent inventory and physical changeover time remain unverified. '
-            'Equal declared states are not proof of no physical setup action.'}
+        'physicalConfigurationInterpretation': 'Resource activations and required changes use exact declared roles, '
+            'sourced categorical requirements, known loads and confirmed conflict domains. Access to another '
+            'independently retained resource does not rebuild the first. Shared domains invalidate other roles, '
+            'without making their identities or implement quantities interchangeable. Unknown dimensions remain '
+            'explicit and cannot establish complete configurations or zero preparation burden. Counts are required '
+            'planning operations, not measured actions or durations; setupSeconds allowances remain separate.'}
+
+
+def primary_inventory_key(profile, shared_resource_groups=None):
+    """Physical implement identity, independent of load, quantity and accessories."""
+    if profile.get('equipmentId') is None and profile.get('exerciseType') == 'BODY_WEIGHT':
+        return 'no_primary_implement'
+    return next((item['activationKey'] for item in physical_setup_requirements(
+        profile, shared_resource_groups) if item['role'] == 'equipment'), None)
+
+
+def primary_inventory_switch_evidence(source_blocks, shared_resource_groups=None):
+    switches = unknown = 0
+    previous = None
+    first = True
+    for block in source_blocks:
+        keys = [primary_inventory_key(profile, shared_resource_groups) for profile in block['profiles']]
+        unknown += sum(key is None for key in keys)
+        if not first and previous is not None and keys[0] is not None:
+            switches += previous != keys[0]
+        rounds = block['rounds'] or 0
+        switches += rounds * sum(a != b for a, b in zip(keys, keys[1:])
+            if a is not None and b is not None)
+        if rounds > 1 and keys[-1] is not None and keys[0] is not None:
+            switches += (rounds - 1) * (keys[-1] != keys[0])
+        previous, first = keys[-1], False
+    return {'physicalPrimaryInventorySwitchCount': switches if not unknown else None,
+        'unknownPrimaryInventoryCount': unknown,
+        'primaryInventorySwitchBasis': 'Adjacent physical primary-implement inventory changes, including '
+            'superset member and round returns; excludes session opening/closing, working loads, '
+            'accessory reconfiguration and changeover time. Unknown primary identity is not zero.'}
 
 
 def _setup_evidence_for_blocks(source_blocks, shared_resource_groups=None):
@@ -867,8 +1062,8 @@ def _setup_evidence_for_blocks(source_blocks, shared_resource_groups=None):
                     'firstUseBlockIndex': first_use[resource_id], 'kind': 'resource_reference_return'})
         if previous_resources is not None and previous_profile is not None:
             transitions.append({'scope': 'between_blocks', 'fromBlockIndex': block_index - 1,
-                'toBlockIndex': block_index, 'fromDefinitionId': previous_profile['preparationTaskKey']['definitionId'],
-                'toDefinitionId': profiles[0]['preparationTaskKey']['definitionId'], 'scheduledTransitionCount': 1,
+                'toBlockIndex': block_index, 'fromDefinitionId': previous_profile.get('definitionId'),
+                'toDefinitionId': profiles[0].get('definitionId'), 'scheduledTransitionCount': 1,
                 **_setup_resource_transition(previous_profile, _setup_profile_at_set(profiles[0], 0))})
         member_transitions = []
         if source_block['kind'] == 'superset':
@@ -902,7 +1097,8 @@ def _setup_evidence_for_blocks(source_blocks, shared_resource_groups=None):
         relation = transition['configurationRelation']
         transition_occurrences[relation] = transition_occurrences.get(relation, 0) + transition.get('scheduledTransitionCount', 1)
     return {**_declared_physical_setup_evidence(source_blocks, shared_resource_groups),
-        'status': 'preparation_task_identity_with_unknown_physical_setup',
+        **primary_inventory_switch_evidence(source_blocks, shared_resource_groups),
+        'status': 'partial_declared_physical_setup',
         'blockCount': len(blocks), 'supersetGroupCount': sum(block['kind'] == 'superset' for block in blocks),
         'distinctEquipmentIds': equipment_ids, 'distinctAccessoryIds': accessory_ids,
         'firstUseBlockByResourceId': first_use, 'resourceReferenceReturnCount': len(returns),
@@ -921,7 +1117,7 @@ def _setup_evidence_for_blocks(source_blocks, shared_resource_groups=None):
         'unknownTransitions': sum(item['declaredResourceChange'] is None for item in transition_list),
         'unknownConfigurationTransitions': sum(item['configurationRelation'] == 'unknown_configuration'
             for item in transition_list),
-        'preparationTaskCountBasis': 'Distinct exact exercise-definition + declared-resource + known prescribed-load-sequence identities; different definitions are not collapsed because they share an equipment ID. Missing or app-calibrated loads remain an unknown configuration task, never zero setup cost.',
+        'preparationTaskCountBasis': 'Distinct declared physical resource roles, implement quantities, sourced setup requirements and known prescribed-load sequences; exercise-definition identity is diagnostic only. Missing or app-calibrated dimensions remain unknown and this signature count is not physical preparation burden.',
         'physicalSetup': 'Rack, attachment position, load handling details after app calibration, layout, station independence and changeover time remain unknown.',
         'interpretation': 'PreparationTaskCount is a conservative planning identity count, not a count of measured physical setup actions. Resource returns count exact IDs, not proven station returns. Repeated resource references may need reconfiguration; different IDs may refer to shared or related physical resources. Transitions include successive straight working sets and each scheduled superset round, including returns from the last member to the first between rounds; physical changeovers and their time remain unmeasured. Declared setup allowances are timing estimates, not measured physical setup time.'}
 
@@ -929,7 +1125,7 @@ def _setup_evidence_for_blocks(source_blocks, shared_resource_groups=None):
 def build_programming_summary(report, emitted_report, source_draft, plan_index, review_draft,
                               progression_capabilities, weekly_targets, final_artifact=None,
                               requirements=None, priority_execution=None, priority_tradeoffs=None,
-                              demand_distribution=None, definition_demand_facts_by_ref=None):
+                              demand_distribution=None, definition_demand_facts_by_ref=None, equipment_by_id=None):
     """Build reviewer facts from audited prescriptions while retaining occurrence identity."""
     if final_artifact is None:
         from .domain_ops import reviewable_workout_artifact
@@ -1159,7 +1355,7 @@ def build_programming_summary(report, emitted_report, source_draft, plan_index, 
             'setupEvidence': session_setup_evidence(artifact_day, sources_by_exercise, library_definitions,
                 [group for rule in (requirements or {}).get('executionRules', [])
                     if rule.get('kind') == 'supersetNoReconfiguration'
-                    for group in rule.get('sharedResourceGroups', [])]),
+                    for group in rule.get('sharedResourceGroups', [])], equipment_by_id),
             'interferenceEvidence': session_interference_evidence(artifact_day, sources_by_exercise,
                 library_definitions, emitted, requirements or {}, report.get('repDurationSecondsByExercise', {})),
             'timingComponents': {
@@ -2149,6 +2345,8 @@ def _native_calibration_work_seconds(exercise, sets, rep_seconds, sides, first_w
     if first_work_set is None:
         return 0
     reps = first_work_set.get('reps', 0) if first_work_reps is None else first_work_reps
+    if not isinstance(reps, (int, float)) or isinstance(reps, bool):
+        return 0
     return reps * rep_seconds * sides
 
 
@@ -2224,7 +2422,7 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
         exercises_seen = 0
         setup_estimates = []
 
-        def add_exercise(exercise, selected_sets=None, standalone=True):
+        def add_exercise(exercise, selected_sets=None, standalone=True, cadence_bounded=False):
             nonlocal logical_sets, exercises_seen
             sets = exercise.get("sets", []) if selected_sets is None else selected_sets
             rep_seconds = (rep_duration_seconds_by_exercise or {}).get(exercise['id'], exercise.get('repDurationSeconds', ASSUMPTIONS['secondsPerRep']))
@@ -2294,11 +2492,17 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                     duration = Fraction(str(item.get("timeInMillis", 0))) / 1000
                     field = "calibrationSeconds" if item.get("subCategory") == "CalibrationSet" else "workSeconds"
                     timing[field] += duration * sides
-                    if duration <= 0 and targets.get("maximumSessionSeconds"):
+                    if duration <= 0 and targets.get("maximumSessionSeconds") and not cadence_bounded:
                         add_audit_issue(report, "unknown_duration", f"{workout['name']}: {exercise['name']} has no fixed duration; session duration cannot be validated.",
                                         "Supply a fixed duration if compatible with the requested exercise; otherwise ask the user how to resolve the time constraint.",
                                         path=f"/workouts/{workout_index}", exerciseId=exercise["id"])
-                elif kind == "RunningSet" and targets.get("maximumSessionSeconds"):
+                elif kind == "WeightedEffortSet":
+                    # The goal is distance/time; a cadence-bounded slot owns the clock.
+                    if targets.get("maximumSessionSeconds") and not cadence_bounded:
+                        add_audit_issue(report, "unknown_weighted_duration", f"{workout['name']}: {exercise['name']} has no fixed duration; session duration cannot be validated.",
+                                        "Supply a fixed duration alongside the distance goal, or ask the user how to resolve the time constraint.",
+                                        path=f"/workouts/{workout_index}", exerciseId=exercise["id"])
+                elif kind == "RunningSet" and targets.get("maximumSessionSeconds") and not cadence_bounded:
                     add_audit_issue(report, "unknown_running_duration", f"{workout['name']}: running duration cannot be inferred from distance alone.",
                                     "Distance alone cannot satisfy a hard duration check. Ask the user for an appropriate fixed-duration prescription or an agreed constraint change.",
                                     path=f"/workouts/{workout_index}", exerciseId=exercise["id"])
@@ -2331,10 +2535,11 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                     continue
                 before_work, before_rest = timing["workSeconds"], timing["restSeconds"]
                 before = before_work + before_rest
+                cadence_bounded = component.get("roundDurationSeconds") is not None
                 for exercise, sets in zip(members, member_sets):
                     warmups = [s for s in sets if s.get("subCategory") in EXCLUDED_VOLUME_CATEGORIES]
                     work = [s for s in sets if s.get("subCategory") not in EXCLUDED_VOLUME_CATEGORIES][:rounds]
-                    add_exercise(exercise, warmups + work, standalone=False)
+                    add_exercise(exercise, warmups + work, standalone=False, cadence_bounded=cadence_bounded)
                 rests = component.get("restSecondsByExercise", {})
                 timing["restSeconds"] += rounds * sum(Fraction(str(rests.get(e["id"], 0))) for e in members) - Fraction(str(rests.get(members[-1]["id"], 0)))
                 if component.get("timeCapSeconds") or component.get("amrap"):
@@ -2345,8 +2550,11 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                         timing["workSeconds"] = before_work + Fraction(str(component["timeCapSeconds"]))
                         timing["restSeconds"] = before_rest
                 if component.get("roundDurationSeconds"):
+                    # MEMBER cadence slots one set of one member per slot; ROUND
+                    # cadence slots one set of every member.
+                    slot_count = rounds * len(members) if component.get("cadenceMode") == "MEMBER" else rounds
                     elapsed = timing["workSeconds"] + timing["restSeconds"] - before
-                    timing["restSeconds"] += max(0, rounds * Fraction(str(component["roundDurationSeconds"])) - elapsed)
+                    timing["restSeconds"] += max(0, slot_count * Fraction(str(component["roundDurationSeconds"])) - elapsed)
         timing["transitionSeconds"] = sum(item['seconds'] for item in setup_estimates)
         # Preserve decimal input arithmetic until the public JSON boundary.
         seconds = sum(Fraction(str(value)) for value in timing.values())
@@ -2648,14 +2856,22 @@ def plan_audit_package(plan, allow_educated_load_guesses=True):
     for entry in plan["exercises"]:
         exercise = copy.deepcopy(entry)
         exercise["type"] = "Exercise"
-        loaded = entry["exerciseType"] == "WEIGHT" or (entry["exerciseType"] == "BODY_WEIGHT" and entry.get("equipmentId") is not None)
+        loaded = entry.get("targetDistanceMeters") is None and (
+            entry["exerciseType"] == "WEIGHT" or (entry["exerciseType"] == "BODY_WEIGHT" and entry.get("equipmentId") is not None))
         exercise["requiresLoadCalibration"] = entry.get("requiresLoadCalibration",
             loaded and (not allow_educated_load_guesses or not entry.get("targetSetPrescriptions")))
         sets = []
         for index in range(entry.get("numWorkSets", 1)):
             if index:
                 sets.append({"type": "RestSet", "timeInSeconds": entry.get("restBetweenSetsSeconds", 0)})
-            if entry["exerciseType"] in ("WEIGHT", "BODY_WEIGHT"):
+            if entry.get("targetDistanceMeters") is not None and entry["exerciseType"] in ("WEIGHT", "BODY_WEIGHT", "COUNTDOWN"):
+                distance = entry["targetDistanceMeters"]
+                weight = entry.get("targetWeight")
+                sets.append({"type": "WeightedEffortSet", "autoStart": True, "autoStop": False,
+                             "targetDistanceMeters": distance,
+                             "targetWeight": weight,
+                             "note": f"{int(distance)} m" + (f" @ {int(weight)} kg" if weight is not None else "")})
+            elif entry["exerciseType"] in ("WEIGHT", "BODY_WEIGHT"):
                 targets = entry.get("targetSetPrescriptions") or []
                 reps = targets[index]["reps"] if targets else entry["maxReps"]
                 sets.append({"type": "WeightSet" if entry["exerciseType"] == "WEIGHT" else "BodyWeightSet", "reps": reps})

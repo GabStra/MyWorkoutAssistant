@@ -180,11 +180,13 @@ def structured_requirement_mismatches(requirements, authority):
             continue
         if key == 'executionRules':
             from .programming_guidelines import (MINIMUM_WORK_SETS_RULE, SESSION_STRUCTURE_RULE,
-                DEFAULT_ISOLATION_REST_RULE)
+                DEFAULT_ISOLATION_REST_RULE, default_block_recovery_rules)
             current = [comparable_requirement(rule) for rule in requirements.get(key, [])]
             explicit = [comparable_requirement(rule) for rule in value]
             defaults = [comparable_requirement(rule) for rule in (
                 MINIMUM_WORK_SETS_RULE, SESSION_STRUCTURE_RULE, DEFAULT_ISOLATION_REST_RULE)]
+            defaults.extend(comparable_requirement(rule) for rule in default_block_recovery_rules(
+                value + [DEFAULT_ISOLATION_REST_RULE]))
             if (any(rule not in current for rule in explicit)
                     or any(rule not in explicit + defaults for rule in current)):
                 paths.append('/requirements/executionRules')

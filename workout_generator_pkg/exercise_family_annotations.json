@@ -1,5 +1,24 @@
 {
   "byDefinitionId": {
+    "fe87940d-089b-522a-a1a7-f79adea03b9c": {
+      "exerciseFamilyId": "38f2bea2-b63d-531a-8ece-9c3c239bb433",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/331/standing-crunch/",
+      "basis": "ACE describes rolling the rib cage down against cable resistance in its standing cable crunch. This supports a trunk-flexion crunch family for the cable-crunch definition only. The library does not establish stance, attachment or execution height; those and resistance profile, ROM, loading and suitability are not equated with a dumbbell floor crunch."
+    },
+    "c3e3e44c-16f0-5006-ac49-a9b844ddca8b": {
+      "exerciseFamilyId": "38f2bea2-b63d-531a-8ece-9c3c239bb433",
+      "source": "https://www.muscleandfitness.com/exercise/workouts/abs-and-core-exercises/weighted-crunch/",
+      "basis": "The trainer instructions describe a dumbbell held on the chest while lifting the shoulders and upper back from the floor. Classified with trunk-flexion crunch variations at movement-family level only; support, resistance profile, ROM, loading and personal suitability remain distinct from cable crunches."
+    },
+    "f81fe880-37cb-59bd-ad8e-42130833e0a4": {
+      "execution": {
+        "supportingMuscles": [
+          "lowerBack"
+        ],
+        "source": "https://pmc.ncbi.nlm.nih.gov/articles/PMC4304869/",
+        "basis": "This barbell good-morning study measures thoracic and lumbar erector-spinae activity during the hip hinge. Recorded here as positive spinal-support involvement only; other support muscles remain unclassified. No numerical fatigue, hypertrophy credit, transferable load or personal tolerance is inferred."
+      }
+    },
     "f0861ff6-c6c8-589a-beaf-4f5336f4befb": {
       "exerciseFamilyId": "30303e2d-bf30-5cab-b4c7-605726e50931",
       "source": "https://pubmed.ncbi.nlm.nih.gov/19002072/",
@@ -150,6 +169,18 @@
       }
     },
     "81b9bf9f-ba5c-5a56-b5cf-ace2c5b61664": {
+      "execution": {
+        "setupConfiguration": [
+          {
+            "resourceId": "e3f0e0ee-3433-4435-bed9-c926e23a8468",
+            "state": {
+              "backrestMode": "flat"
+            },
+            "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bench-press",
+            "basis": "NASM describes the barbell bench press on a flat bench. Only the required flat backrest mode is recorded; rack height, bench location, load, actual retained setup and changeover time remain unknown."
+          }
+        ]
+      },
       "exerciseFamilyId": "6984c8fd-d5b1-5dad-9761-b89620f36209",
       "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/",
       "basis": "Bench-press variants include barbell flat and dumbbell incline presses; the source tests acute muscle activation, not equal training effects.",
@@ -211,6 +242,11 @@
       "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
       "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
       "basis": "The study directly compares inverted and standing bent-over rows. The library-named dumbbell row variants share the horizontal-row action but remain mechanically distinct variants. Family grouping supports exercise-variation counting only; it does not assert equal trunk demand.",
+      "execution": {
+        "supportingMuscles": ["lowerBack", "glutes", "hamstrings"],
+        "source": "https://www.puregym.com/exercises/back/rows/dumbbell-bent-over-row/",
+        "basis": "The trainer's two-dumbbell bent-over-row guide identifies lower-back, gluteal and hamstring engagement while holding the hinged posture, and distinguishes chest-supported rows. These are positive execution-support facts only, not an exhaustive muscle list, quantified fatigue, volume credits or evidence of personal capacity."
+      },
       "anatomy": {
         "primarySubregions": [
           "latissimus_dorsi",
@@ -296,6 +332,18 @@
       }
     },
     "fc597804-3e3b-52b2-ae05-e57561f2dace": {
+      "execution": {
+        "setupConfiguration": [
+          {
+            "resourceId": "e3f0e0ee-3433-4435-bed9-c926e23a8468",
+            "state": {
+              "backrestMode": "inclined"
+            },
+            "source": "https://www.nasm.org/resource-center/exercise-library/incline-barbell-bench-press",
+            "basis": "NASM describes an inclined backrest for the barbell incline press. This records the incline mode only, not a binding angle or proof of the same angle as another inclined exercise. Rack height, bench location, load and changeover time remain unknown."
+          }
+        ]
+      },
       "exerciseFamilyId": "6984c8fd-d5b1-5dad-9761-b89620f36209",
       "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/",
       "basis": "A controlled EMG comparison tested horizontal and inclined free-weight bench presses with barbell and dumbbell implementations; grouped as bench-press variations. Family identity only; findings do not establish equal stimulus or suitability.",
@@ -334,8 +382,9 @@
       "basis": "The study directly examines barbell front squat mechanics alongside back squat; grouped with the barbell hack squat as squat-pattern variants, without asserting equal mechanics.",
       "execution": {
         "limbMode": "bilateral",
-        "source": "https://doi.org/10.1519/JSC.0b013e31818546bb",
-        "basis": "The study's front-squat methods describe a shoulder-width stance with the right foot on a force plate and the left foot on an adjacent platform at the same height. This supports two-leg execution for this exact barbell definition only; it says nothing about load suitability or comparative effectiveness."
+        "supportingMuscles": ["lowerBack", "abs"],
+        "source": "https://www.sussex.ac.uk/sport/documents/front-squat-barbell.pdf",
+        "basis": "The university's barbell front-squat guide describes both feet on the floor and lists erector spinae, rectus abdominis and transverse abdominis as secondary muscles while keeping the spine straight. This establishes bilateral execution and documented trunk support only, not quantified fatigue, additional hypertrophy credit, load suitability or personal capacity."
       },
       "programmingDemands": {
         "unsupported_trunk": {
@@ -417,6 +466,14 @@
           "present": true,
           "source": "https://www.acefitness.org/resources/everyone/exercise-library/12/bent-over-row/"
         }
+      },
+      "execution": {
+        "supportingMuscles": [
+          "lowerBack",
+          "abs"
+        ],
+        "source": "https://stronglifts.com/barbell-row/",
+        "basis": "The coach's guide explicitly identifies its floor-reset barbell row as the Pendlay technique and identifies spinal erectors and abdominal muscles as supporting a neutral spine. Positive documented support only; no exhaustive muscle list, quantitative fatigue, hypertrophy credit, transferable load or personal capacity is established."
       }
     },
     "9cadcbaf-2d08-580c-9565-9921d6a06755": {
@@ -534,6 +591,18 @@
       }
     },
     "2fe1ff29-a880-5095-9fa9-c8fa8785f482": {
+      "execution": {
+        "setupConfiguration": [
+          {
+            "resourceId": "e3f0e0ee-3433-4435-bed9-c926e23a8468",
+            "state": {
+              "backrestMode": "inclined"
+            },
+            "source": "https://www.puregym.com/exercises/back/rows/incline-row/",
+            "basis": "The trainer instructions place the chest on an inclined bench for the two-dumbbell row. This records an inclined backrest requirement only. It does not establish equal incline angles, bench location, dumbbell inventory, load configuration or changeover time."
+          }
+        ]
+      },
       "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
       "source": "https://www.menshealth.com/fitness/a27736363/incline-bench-row/",
       "basis": "Grouped with horizontal rows by the elbow-driven pull. The incline bench changes trunk support, which is independently tagged.",

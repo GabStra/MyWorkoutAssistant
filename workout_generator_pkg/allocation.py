@@ -128,9 +128,9 @@ def _feature_values(report):
 
 
 def _audit_raw(draft, equipment, requirements, restriction_policy, allow_educated_load_guesses, *,
-               apply_family_bounds=True, execution_definitions=None):
+               apply_family_bounds=True, execution_definitions=None, complete_session=True):
     plan = build_draft_plan(draft, equipment, requirements, restriction_policy,
-                            execution_definitions=execution_definitions)
+                            execution_definitions=execution_definitions, complete_session=complete_session)
     family_options = family_set_audit_options(requirements, equipment)
     if not apply_family_bounds:
         family_options.pop('family_set_requirements', None)
@@ -2318,6 +2318,8 @@ def _joint_candidate_comparison_context(baseline_workouts, candidate_workouts, r
         'demandEvidence': demand_evidence,
         'setupDefinitions': {alias: reference_to_raw_definition[reference]
             for reference in references for alias in aliases_by_reference.get(reference, {reference})},
+        'setupEquipmentById': {item['id']: item for key in ('equipments', 'accessoryEquipments')
+            for item in equipment.get(key, [])},
         'demandUnion': demand_union,
     }
 

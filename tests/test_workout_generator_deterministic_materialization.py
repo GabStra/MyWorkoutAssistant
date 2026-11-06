@@ -172,3 +172,46 @@ def test_production_structure_emitter_keeps_superset_membership_without_model_ca
         "EXERCISE_0": 40, "EXERCISE_1": 75,
     }
     validate_workout_structures_contract(plan_index, {"WORKOUT_0": structure}, definitions)
+
+
+def test_distance_goal_and_repeated_runs_materialize_deterministically():
+    """Sled-push-style distance goals emit count-up goal sets instead of invented
+    reps; a RUNNING member repeats its prescription once per rotation cycle."""
+    from workout_generator_pkg.domain_ops import _materialize_exercise_definition
+    from workout_generator_pkg.plan_contract import _count_work_sets
+
+    goal_base = {
+        "id": "EXERCISE_1", "name": "Sled Push", "equipmentId": None,
+        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [],
+        "muscleGroups": ["BACK_GLUTEAL"], "secondaryMuscleGroups": [],
+        "generateWarmUpSets": False, "intraSetRestInSeconds": None,
+        "exerciseCategory": "HEAVY_COMPOUND", "exerciseType": "WEIGHT",
+        "numWorkSets": 4, "restBetweenSetsSeconds": 0,
+        "targetDistanceMeters": 15.0, "targetWeight": 150.0,
+    }
+    goal = _materialize_exercise_definition(goal_base)
+    goal_work = [s for s in goal["sets"] if s["type"] == "WeightedEffortSet"]
+    assert len(goal_work) == 4
+    assert all(
+        s["autoStart"] is True and s["autoStop"] is False
+        and s["targetDistanceMeters"] == 15.0 and s["targetWeight"] == 150.0
+        and s["note"] == "15 m @ 150 kg"
+        for s in goal_work
+    )
+    assert "minReps" not in goal and "maxReps" not in goal
+    assert goal["requiresLoadCalibration"] is False
+    work, rests = _count_work_sets(goal)
+    assert work == 4 and len(rests) == 3
+
+    run_base = {
+        "id": "EXERCISE_2", "name": "Run", "equipmentId": None,
+        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [],
+        "muscleGroups": ["BACK_CALVES"], "secondaryMuscleGroups": [],
+        "generateWarmUpSets": False, "intraSetRestInSeconds": None,
+        "exerciseCategory": None, "exerciseType": "RUNNING",
+        "numWorkSets": 4, "restBetweenSetsSeconds": 0, "targetDistanceMeters": 400.0,
+    }
+    run = _materialize_exercise_definition(run_base)
+    assert len([s for s in run["sets"] if s["type"] == "RunningSet"]) == 4
+    assert run["runningPrescription"]["targetType"] == "DISTANCE"
+    assert run["runningPrescription"]["targetValue"] == 400.0

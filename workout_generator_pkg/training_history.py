@@ -461,7 +461,7 @@ class TrainingHistory:
                                 'members': [{'name': member.get('name'), 'enabled': member.get('enabled', True),
                                     'restAfterSeconds': component.get('restSecondsByExercise', {}).get(member['id']),
                                     'exerciseRestSetsSeconds': self._rest_seconds(member)} for member in members],
-                                **{field: component[field] for field in ('roundDurationSeconds', 'timeCapSeconds', 'amrap') if field in component}}
+                                **{field: component[field] for field in ('roundDurationSeconds', 'timeCapSeconds', 'amrap', 'cadenceMode') if field in component}}
                         else:
                             execution_contexts[key] = {'type': 'straightSets'}
         sessions = {s['id']: s for s in store.completed_sessions()}

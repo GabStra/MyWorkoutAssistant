@@ -66,7 +66,7 @@ def test_mid_turn_requirements_intake_drops_stale_draft_tools(monkeypatch, tmp_p
         names = {tool['function']['name'] for tool in tools}
         observed.append(names)
         if len(observed) == 1:
-            assert 'generate_workout' in names
+            assert 'generate_workout' not in names
             approved[0] = False
             return None, [FakeToolCall('invalid-update', 'function',
                 FakeFunction('set_workout_requirements', '{"invalid":true}'))], None

@@ -524,7 +524,7 @@ EXERCISE_EMISSION_PROFILES = {
         instruction_text=(
             "RUNNING contract:\n"
             "- Output one Exercise object shaped exactly like the RUNNING schema.\n"
-            "- Work sets must be exactly one RunningSet (no other fields on it).\n"
+            "- Work sets are one or more RunningSet entries with no other fields on them; N identical sets repeat the exercise-level runningPrescription (one per rotating-EMOM cycle).\n"
             "- runningPrescription is REQUIRED: {environment: 'OUTDOOR', targetType: 'DISTANCE', targetValue: <meters>} "
             "using the plan's targetDistanceMeters.\n"
             "- Do not emit reps, weight, additionalWeight, subCategory, timeInMillis, autoStart, or autoStop on the work set.\n"

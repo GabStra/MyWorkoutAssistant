@@ -5,7 +5,7 @@ from itertools import combinations, permutations
 from collections import Counter
 
 from .programming_policy import (INTERFERENCE_METRICS, execution_order_phase,
-    execution_interference_metric_names)
+    execution_interference_metric_names, selection_precedes_execution)
 from .exercise_contracts import execution_supporting_muscles
 
 from .generation_audit import (_is_work_set, add_audit_issue, MUSCLES,
@@ -18,6 +18,53 @@ MINIMUM_WORK_SETS_RULE = {'kind': 'workSets', 'coverageKey': None, 'minimumSets'
 SESSION_STRUCTURE_RULE = {'kind': 'sessionStructure', 'maximumExercises': 15, 'maximumSupersetSize': 3}
 DEFAULT_ISOLATION_REST_RULE = {'kind': 'rest', 'coverageKey': None, 'exerciseCategory': 'ISOLATION',
     'context': 'straightSets', 'minimumSeconds': 60, 'maximumSeconds': 120}
+
+
+def default_block_recovery_rules(rules):
+    """Reuse approved straight-set ranges for the distinct inter-block boundary."""
+    return [{**rule, 'context': 'exerciseTransition'} for rule in rules
+        if rule.get('kind') == 'rest' and rule.get('context') == 'straightSets'
+        and not any(other.get('kind') == 'rest' and other.get('context') == 'exerciseTransition'
+            and other.get('coverageKey') in (None, rule.get('coverageKey'))
+            and other.get('exerciseCategory') in (None, rule.get('exerciseCategory')) for other in rules)]
+
+
+def block_recovery_bounds(block, requirements, definitions):
+    categories = ['HEAVY_COMPOUND', 'MODERATE_COMPOUND', 'ISOLATION']
+    category = next((category for category in categories if any(
+        definitions.get(item['definition_id'], {}).get('exerciseCategory') == category for item in block)), None)
+    roles = {role for item in block for role in item.get('satisfiesCoverage', [])}
+    rules = [rule for rule in requirements.get('executionRules', []) if rule.get('kind') == 'rest'
+        and rule.get('context') == 'exerciseTransition'
+        and rule.get('exerciseCategory') in (None, category)
+        and (rule.get('coverageKey') is None or rule['coverageKey'] in roles)]
+    if not rules:
+        return None
+    lower, upper = max(rule['minimumSeconds'] for rule in rules), min(rule['maximumSeconds'] for rule in rules)
+    if lower > upper:
+        raise ValueError('The approved block-recovery ranges conflict.')
+    return lower, upper
+
+
+def prescribe_block_recovery(day, requirements, definitions, *, complete_session=True):
+    """Place recovery on each completed block, never inside it or after the session."""
+    if not any(rule.get('context') == 'exerciseTransition' for rule in requirements.get('executionRules', [])):
+        return
+    blocks = []
+    for item in day.get('exercises', []):
+        if blocks and item.get('superset') is not None and item['superset'] == blocks[-1][-1].get('superset'):
+            blocks[-1].append(item)
+        else:
+            blocks.append([item])
+    for index, block in enumerate(blocks):
+        bounds = block_recovery_bounds(block, requirements, definitions)
+        for item in block[:-1]:
+            item['restAfterExerciseSeconds'] = 0
+        if complete_session and index == len(blocks) - 1:
+            block[-1]['restAfterExerciseSeconds'] = 0
+        elif bounds:
+            block[-1]['restAfterExerciseSeconds'] = min(bounds[1], max(bounds[0],
+                block[-1].get('restAfterExerciseSeconds', 0)))
 EXECUTION_ORDER_POLICY = 'approved_ordering_preferences_and_execution_rules'
 EXECUTION_ORDER_DESCRIPTION = ('Only approved executionRules and orderingPreferences establish execution precedence. '
     'phaseOrder groups categories that may interleave; explicit order rules take precedence. '
@@ -248,15 +295,23 @@ def execution_interference_profile(definitions, counts, roles, requirements):
     primary, supporting = Counter(), Counter()
     heavy_primary, heavy_supporting = set(), set()
     main_primary, main_supporting = set(), set()
-    known = True
+    primary_known = True
+    support_evidence = []
     for definition, count in zip(definitions, counts, strict=True):
         direct = {muscle for muscle, tags in MUSCLES.items()
                   if tags & set(definition.get('muscleGroups', []))}
         secondary = {muscle for muscle, tags in MUSCLES.items()
                      if tags & set(definition.get('secondaryMuscleGroups', []))} - direct
         # Execution support is a sequencing fact, separate from muscle-volume credits.
-        secondary.update((execution_supporting_muscles(definition) or set()) - direct)
-        known = known and bool(direct)
+        execution_support = execution_supporting_muscles(definition)
+        execution = definition.get('reviewedExecution') or {}
+        support_evidence.append({'definitionId': definition.get('id'),
+            'status': 'documented_non_exhaustive' if execution_support is not None else 'unknown',
+            'supportingMuscles': sorted(execution_support) if execution_support is not None else None,
+            **({key: execution[key] for key in ('source', 'basis')} if execution_support is not None else {})})
+        if execution_support is not None:
+            secondary.update(execution_support - direct)
+        primary_known = primary_known and bool(direct)
         primary.update(dict.fromkeys(direct, count))
         supporting.update(dict.fromkeys(secondary, count))
         if definition.get('exerciseCategory') in {'HEAVY_COMPOUND', 'MODERATE_COMPOUND'}:
@@ -265,7 +320,11 @@ def execution_interference_profile(definitions, counts, roles, requirements):
         if definition.get('exerciseCategory') == 'HEAVY_COMPOUND':
             heavy_primary.update(direct)
             heavy_supporting.update(secondary)
-    return {'primary': dict(primary), 'supporting': dict(supporting), 'known': known,
+    return {'primary': dict(primary), 'supporting': dict(supporting), 'primaryKnown': primary_known,
+            'executionSupportEvidence': support_evidence,
+            'supportingCountsMeaning': 'Library secondary tags plus documented execution support only; '
+                'counts are lower bounds on recorded overlap. Unlisted support is unknown, not absent. '
+                'Positive annotations are not exhaustive or physiological fatigue estimates.',
             'priority': execution_priority_rank(roles, requirements) == 0,
             'heavy_primary': sorted(heavy_primary), 'heavy_supporting': sorted(heavy_supporting),
             'main_primary': sorted(main_primary), 'main_supporting': sorted(main_supporting),
@@ -311,7 +370,15 @@ def execution_interference_score(order, profiles, requirements=None):
     if requirements is None:
         return values
     facts = dict(zip(INTERFERENCE_METRICS, values, strict=True))
+    facts.update(heavy_direct_total=sum(heavy_direct), heavy_support_total=sum(heavy_support),
+        main_direct_total=sum(main_direct), main_support_total=sum(main_support))
     return tuple(facts[name] for name in execution_interference_metric_names(requirements))
+
+
+def _setup_resource_groups(requirements):
+    return [group for rule in requirements.get('executionRules', [])
+        if rule.get('kind') == 'supersetNoReconfiguration'
+        for group in rule.get('sharedResourceGroups', [])]
 
 
 def execution_order_indices(block_roles, order_keys, requirements, setup_resources=None, interference_profiles=None, setup_profiles=None, setup_rounds=None):
@@ -320,22 +387,18 @@ def execution_order_indices(block_roles, order_keys, requirements, setup_resourc
     preferences = requirements.get('objectiveOrder') or []
     overlap = 'movement_overlap' in preferences
     score_interference = ('execution_order' in preferences and interference_profiles
-                          and all(profile['known'] for profile in interference_profiles))
-    score_load_setup = ('setup_economy' in preferences and setup_profiles is not None
-        and all(profile['loadConfigurationKnown'] for block in setup_profiles for profile in block))
-    score_resource_setup = ('setup_economy' in preferences and setup_profiles is not None
-        and all(profile['resourceEvidence'] == 'declared_references'
-            for block in setup_profiles for profile in block))
+                          and all(profile['primaryKnown'] for profile in interference_profiles))
+    score_setup = 'setup_economy' in preferences and setup_profiles is not None
+    setup_first = (any(goal['metric'] == 'setup_economy'
+        for tier in requirements.get('objectiveTiers', []) for goal in tier)
+        or 'setup_economy' in preferences and 'execution_order' in preferences
+        and preferences.index('setup_economy') < preferences.index('execution_order'))
+    shared_groups = _setup_resource_groups(requirements)
     setup_blocks = ([{'profiles': profiles,
         'rounds': setup_rounds[index] if setup_rounds is not None else 1,
         'componentIndex': index, 'exerciseRefs': [],
         'kind': 'superset' if len(profiles) > 1 else 'exercise'}
-        for index, profiles in enumerate(setup_profiles)] if score_load_setup or score_resource_setup else [])
-    if score_load_setup:
-        # Disable this ranking for the entire search when a possible edge is undecidable.
-        score_load_setup = not any(_setup_evidence_for_blocks([before, after])['unknownTransitions']
-            for first, before in enumerate(setup_blocks)
-            for second, after in enumerate(setup_blocks) if first != second)
+        for index, profiles in enumerate(setup_profiles)] if score_setup else [])
     resource_only_setup = ('setup_economy' in preferences and setup_resources is not None
         and setup_profiles is None)
     priority = [execution_priority_rank(roles, requirements) for roles in block_roles]
@@ -361,29 +424,28 @@ def execution_order_indices(block_roles, order_keys, requirements, setup_resourc
         del dependencies[index]
         for predecessors in dependencies.values():
             predecessors.discard(index)
-    if not score_interference and not score_load_setup and not score_resource_setup:
+    if not score_interference and not score_setup:
         return ordered
 
-    setup_edges = {}
-
-    def setup_edge(first, second):
-        key = (first, second)
-        if key not in setup_edges:
-            evidence = _setup_evidence_for_blocks([setup_blocks[first], setup_blocks[second]])
-            edge = next(row for row in evidence['transitions'] if row['scope'] == 'between_blocks')
-            setup_edges[key] = (int(edge['declaredResourceChange'] is True),
-                int(edge['resourceSelection'] == 'changed_references'))
-        return setup_edges[key]
+    scores = {}
 
     def score(order):
-        setup = resources = 0
-        if score_load_setup or score_resource_setup:
-            # Internal block transitions are constant across these permutations.
-            edges = [setup_edge(first, second) for first, second in zip(order, order[1:])]
-            setup = sum(edge[0] for edge in edges) if score_load_setup else 0
-            resources = sum(edge[1] for edge in edges) if score_resource_setup else 0
+        key = tuple(order)
+        if key in scores:
+            return scores[key]
+        setup = switches = ()
+        if score_setup:
+            evidence = _setup_evidence_for_blocks([setup_blocks[index] for index in order], shared_groups)
+            setup = (evidence['physicalPreparationCount'], evidence['physicalRequiredChanges'])
+            if evidence['physicalPrimaryInventorySwitchCount'] is not None:
+                switches = (evidence['physicalPrimaryInventorySwitchCount'],)
         interference = execution_interference_score(order, interference_profiles, requirements) if score_interference else ()
-        return (*interference, setup, resources)
+        if setup_first and selection_precedes_execution(requirements) and setup:
+            scores[key] = (setup[0], *interference, setup[1], *switches)
+        else:
+            scores[key] = ((*setup, *interference, *switches) if setup_first
+                else (*interference, *setup, *switches))
+        return scores[key]
 
     # Precedence and phases constrain the opener; its stable identity does not.
     while True:
@@ -424,6 +486,8 @@ def canonical_execution_order_draft(draft, requirements, equipment):
     ordered_draft = copy.deepcopy(draft)
     definitions = {f'LIBRARY_{index}': definition for index, definition in enumerate(
         sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id']))}
+    shared_groups = _setup_resource_groups(requirements)
+    equipment_by_id = {gear['id']: gear for gear in equipment.get('equipments', [])}
     for day in ordered_draft.get('workouts', []):
         source_exercises = day.get('exercises', [])
         blocks = []
@@ -464,12 +528,14 @@ def canonical_execution_order_draft(draft, requirements, equipment):
             block_order = execution_order_indices(block_roles, order_keys, requirements,
                 [equipment_setup_resources([definitions.get(item.get('definition_id'), {})
                     for item in members]) for members in reordered_blocks], profiles,
-                [[setup_resource_profile(definitions.get(item.get("definition_id"), {}), item)
+                [[setup_resource_profile(definitions.get(item.get("definition_id"), {}), item,
+                    shared_groups, equipment_by_id)
                     for item in members] for members in reordered_blocks],
                 [min(item['numWorkSets'] for item in members) for members in reordered_blocks])
         except ValueError:
             return None
         day['exercises'] = [item for block_index in block_order for item in reordered_blocks[block_index]]
+        prescribe_block_recovery(day, requirements, definitions)
     return ordered_draft
 
 
@@ -521,7 +587,7 @@ EXECUTION_RULES_SCHEMA = {'type': 'array', 'maxItems': 30,
             'coverageKey': _SELECTOR}, ['kind', 'coverageKey']),
         _rule({'kind': {'const': 'rest'}, 'coverageKey': _SELECTOR,
                'exerciseCategory': {'enum': ['HEAVY_COMPOUND', 'MODERATE_COMPOUND', 'ISOLATION']},
-               'context': {'enum': ['straightSets', 'supersetTransition', 'supersetRound']},
+               'context': {'enum': ['straightSets', 'supersetTransition', 'supersetRound', 'exerciseTransition']},
                'minimumSeconds': {'type': 'integer', 'minimum': 0, 'maximum': 1800},
                'maximumSeconds': {'type': 'integer', 'minimum': 0, 'maximum': 1800}},
               ['kind', 'coverageKey', 'context', 'minimumSeconds', 'maximumSeconds']),
@@ -674,12 +740,13 @@ def render_execution_rule(rule):
         return text + ' Native per-exercise calibration does not establish a shared load.'
     if kind == 'rest':
         label = {'straightSets': 'between straight sets', 'supersetTransition': 'between superset partners',
-                 'supersetRound': 'after each superset round'}[rule['context']]
+                 'supersetRound': 'after each superset round',
+                 'exerciseTransition': 'between completed exercise blocks (most demanding member category; no recovery after the session)'}[rule['context']]
         category = f" ({rule['exerciseCategory']})" if rule.get('exerciseCategory') else ''
         applicability = (' (only when at least two working sets are prescribed)' if rule['context'] in ('straightSets', 'supersetRound')
                          else ' (for each executed transition)')
         text = f"{selector}{category}: {rule['minimumSeconds']}–{rule['maximumSeconds']}s prescribed recovery {label}{applicability}."
-        if rule['context'] == 'supersetTransition':
+        if rule['context'] in ('supersetTransition', 'exerciseTransition'):
             text += ' Physical changeover and setup time are separate from prescribed recovery.'
         return text
     return f"{selector}: " + ('straight sets.' if kind == 'straightSets' else 'generated ramp-up sets before working sets.')
@@ -836,6 +903,24 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                 add_audit_issue(report, 'execution_' + kind, f"{day['name']}: {message}", repair,
                     path=f'/workouts/{day_index}/exercises/{index}' + (f'/{field}' if field else ''),
                     rulePath=f'/executionRules/{rule_index}', **details)
+
+            if kind == 'rest' and rule['context'] == 'exerciseTransition':
+                block_groups = [[i for i, start in enumerate(blocks) if start == block_start]
+                    for block_start in dict.fromkeys(blocks)]
+                aliases = {item['definition_id']: definitions.get(
+                    plan['workouts'][day_index]['exerciseIds'][i], {}) if plan else {}
+                    for i, item in enumerate(exercises)}
+                for indices in block_groups[:-1]:
+                    bounds = block_recovery_bounds([exercises[i] for i in indices],
+                        {'executionRules': [rule]}, aliases)
+                    if bounds:
+                        actual = exercises[indices[-1]]['restAfterExerciseSeconds']
+                        if not bounds[0] <= actual <= bounds[1]:
+                            issue(indices[-1], 'restAfterExerciseSeconds',
+                                f'{actual}s violates {render_execution_rule(rule)}',
+                                'Prescribe recovery after the complete block, separately from setup, and re-audit duration.',
+                                actual=actual, minimum=bounds[0], maximum=bounds[1])
+                continue
 
             if kind == 'supersetNoReconfiguration' and plan:
                 equipment_by_id = {gear.get('id'): gear for gear in plan.get('equipments', [])}

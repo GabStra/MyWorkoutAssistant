@@ -14,6 +14,7 @@ from jsonschema import Draft7Validator, ValidationError
 from .allocation import _audit_raw, _MILP_SOLUTION_TOLERANCE
 from .cp_solver import solve as _cp_solve, SolverSession, _rational
 from .generation_audit import (ASSUMPTIONS, MUSCLES, effective_concentration_status,
+                               physical_setup_requirements, primary_inventory_key, primary_inventory_switch_evidence,
                                setup_resource_profile, executable_setup_evidence,
                                validate_family_set_bounds, weekly_family_set_counts,
                                volume_target_bounds, preferred_volume_target_bounds,
@@ -207,22 +208,75 @@ def _goal_programming_objectives(variable, constraint, variables, requirements, 
     return goals
 
 
-def _candidate_setup_transition_evidence(workout, definitions, requirements=None):
-    """Use the same executed transition evidence as the final artifact audit."""
-    groups = [group for rule in (requirements or {}).get('executionRules', [])
+def _setup_resource_groups(requirements):
+    return [group for rule in (requirements or {}).get('executionRules', [])
         if rule.get('kind') == 'supersetNoReconfiguration' for group in rule.get('sharedResourceGroups', [])]
-    evidence = executable_setup_evidence(workout, definitions, groups)
+
+
+def _candidate_setup_transition_evidence(workout, definitions, requirements=None, equipment_by_id=None):
+    """Use the same executed transition evidence as the final artifact audit."""
+    evidence = executable_setup_evidence(workout, definitions, _setup_resource_groups(requirements), equipment_by_id)
     return {key: evidence[key] for key in ('preparationTaskCount',
+        'declaredResourceConfigurations', 'distinctDeclaredResourceConfigurationCount',
+        'unclassifiedConfigurationResourceIds',
         'resourceReferenceReturnCount', 'scheduledTransitionOccurrenceCount',
         'knownDeclaredChanges', 'unknownTransitions', 'unknownConfigurationTransitions',
         'declaredResourceSwitches', 'resourceIdentityComplete',
+        'physicalPrimaryInventorySwitchCount', 'unknownPrimaryInventoryCount', 'primaryInventorySwitchBasis',
         'physicalConfigurationTransitions', 'knownPhysicalConfigurationChanges',
         'sameDeclaredPhysicalConfigurationStates', 'unknownPhysicalConfigurationTransitions',
         'physicalConfigurationEvidencePartial', 'physicalResourceIndependenceVerified',
-        'physicalConfigurationInterpretation')}
+        'physicalConfigurationInterpretation', 'physicalPreparationCount', 'physicalRequiredChanges',
+        'initialResourceActivationCount', 'physicalPreparationTaskCount', 'readyResourceAccesses',
+        'unknownPhysicalPreparationCount', 'setupEvidenceCoverage', 'unknownSetupEvidenceKey')}
 
 
-def evaluate_audited_execution(candidate, definitions, requirements):
+def _setup_evidence_losses(baseline, candidate):
+    """An undescribed replacement cannot win by hiding previously known setup work."""
+    losses = []
+    for index, (before, after) in enumerate(zip(baseline, candidate)):
+        previous = before.get('setupEvidenceCoverage', [])
+        if previous == after.get('setupEvidenceCoverage', []):
+            continue
+        described = any(row['knownStateDimensions'] or row['loadKnown'] for row in previous)
+        for row in after.get('setupEvidenceCoverage', []):
+            key = (row['resourceId'], row['role'], row['implementQuantity'])
+            matched = [old for old in previous
+                if (old['resourceId'], old['role'], old['implementQuantity']) == key]
+            lost = row['resourceId'] is None
+            if matched:
+                lost |= any(not set(old['knownStateDimensions']).issubset(row['knownStateDimensions'])
+                    or old['loadKnown'] and not row['loadKnown'] for old in matched)
+            elif described:
+                lost |= not row['knownStateDimensions'] or row['loadRequired'] and not row['loadKnown']
+            if lost:
+                losses.append({'workoutIndex': index, 'resourceId': row['resourceId'], 'role': row['role']})
+    return losses
+
+
+def _selected_setup_evidence_gaps(menu_coverage, selected_sessions):
+    """Report annotation gaps relative to the menu, without asserting infeasibility."""
+    available = {}
+    for row in menu_coverage:
+        key = (row['resourceId'], row['role'], row['implementQuantity'])
+        dimensions, load_known = available.get(key, (set(), False))
+        available[key] = (dimensions | set(row['knownStateDimensions']), load_known or row['loadKnown'])
+    gaps = []
+    for session in selected_sessions:
+        for row in session['setup'].get('setupEvidenceCoverage', []):
+            key = (row['resourceId'], row['role'], row['implementQuantity'])
+            dimensions, load_known = available.get(key, (set(), False))
+            missing = sorted(dimensions - set(row['knownStateDimensions']))
+            if row['resourceId'] is None or missing or load_known and not row['loadKnown']:
+                gap = {'workoutIndex': session['workoutIndex'], 'resourceId': row['resourceId'],
+                    'role': row['role'], 'implementQuantity': row['implementQuantity'],
+                    'missingStateDimensions': missing, 'missingLoad': load_known and not row['loadKnown']}
+                if gap not in gaps:
+                    gaps.append(gap)
+    return gaps
+
+
+def evaluate_audited_execution(candidate, definitions, requirements, equipment_by_id=None):
     """Describe the audited execution, independently of objective order or search claims."""
     workouts, audit = candidate['workouts'], candidate['audit']
     sessions = []
@@ -232,11 +286,16 @@ def evaluate_audited_execution(candidate, definitions, requirements):
         if missing:
             setup = {'status': 'unavailable_definition_evidence', 'missingDefinitionReferences': missing}
         else:
-            setup = _candidate_setup_transition_evidence(workout, definitions, requirements)
+            setup = _candidate_setup_transition_evidence(workout, definitions, requirements, equipment_by_id)
         groups = [list(members) for _, members in itertools.groupby(enumerate(exercises),
             lambda entry: ('group', entry[1]['superset']) if entry[1].get('superset') is not None
                 else ('single', entry[0]))]
+        ordering_profile = execution_interference_profile(
+            [definitions.get(item['definition_id'], {}) for item in exercises],
+            [item['numWorkSets'] for item in exercises], [], requirements)
         sessions.append({'workoutIndex': index, 'name': workout.get('name'),
+            'orderingEvidence': {key: ordering_profile[key] for key in (
+                'primaryKnown', 'executionSupportEvidence', 'supportingCountsMeaning')},
             'timesCompletedInAWeek': workout.get('timesCompletedInAWeek', 1),
             'exerciseCount': len(exercises),
             'uniqueDefinitionCount': len({item['definition_id'] for item in exercises}),
@@ -254,10 +313,14 @@ def evaluate_audited_execution(candidate, definitions, requirements):
         'weeklyEstimatedSeconds': sum(day['estimatedSeconds'] * day['timesCompletedInAWeek'] for day in sessions),
         'durationSpreadSeconds': max(durations, default=0) - min(durations, default=0),
         'durationBalanceToleranceSeconds': requirements.get('durationBalanceToleranceSeconds', 0),
-        'weeklyKnownSetupChanges': (sum(day['setup']['knownDeclaredChanges'] * day['timesCompletedInAWeek']
+        'weeklyKnownSetupChanges': (sum(day['setup']['physicalRequiredChanges'] * day['timesCompletedInAWeek']
             for day in sessions) if complete_setup else None),
-        'weeklyUnknownSetupTransitions': (sum(day['setup']['unknownTransitions'] * day['timesCompletedInAWeek']
+        'weeklyUnknownSetupTransitions': (sum(day['setup']['unknownPhysicalPreparationCount'] * day['timesCompletedInAWeek']
             for day in sessions) if complete_setup else None),
+        'weeklyPhysicalPrimaryInventorySwitches': (sum(
+            day['setup']['physicalPrimaryInventorySwitchCount'] * day['timesCompletedInAWeek']
+            for day in sessions) if all(day['setup'].get('physicalPrimaryInventorySwitchCount') is not None
+                for day in sessions) else None),
         'weeklyDeclaredResourceSwitches': (sum(day['setup']['declaredResourceSwitches']
             * day['timesCompletedInAWeek'] for day in sessions)
             if all(day['setup'].get('resourceIdentityComplete') for day in sessions) else None),
@@ -675,7 +738,7 @@ def _joint_candidate_objective_costs(candidate, requirements, context):
                     [item['numWorkSets'] for item in block],
                     set().union(*(set(item.get('satisfiesCoverage', [])) for item in block)), requirements)
                     for block in blocks]
-                known &= all(profile['known'] for profile in profiles)
+                known &= all(profile['primaryKnown'] for profile in profiles)
                 values = execution_interference_score(list(range(len(blocks))), profiles, requirements)
                 for name, value in zip(names, values):
                     sequence_costs[name] += value * workout.get('timesCompletedInAWeek', 1)
@@ -699,25 +762,28 @@ def _joint_candidate_objective_costs(candidate, requirements, context):
     if 'setup_economy' in (requirements.get('objectiveOrder') or []):
         definitions = context.get('setupDefinitions')
         costs['setup_economy'] = None
+        costs['setup_economy_resource_switches'] = None
         if definitions is not None and all(item['definition_id'] in definitions
                 for workout in workouts for item in workout.get('exercises', [])):
             variable_workouts = workouts[len(context.get('fixedWorkouts', [])):]
-            costs['setup_economy'] = sum(len({json.dumps(setup_resource_profile(
-                definitions[item['definition_id']], item)['preparationTaskKey'],
-                sort_keys=True, separators=(',', ':')) for item in workout.get('exercises', [])})
-                * workout.get('timesCompletedInAWeek', 1) for workout in variable_workouts)
-            transition_evidence = [_candidate_setup_transition_evidence(workout, definitions, requirements)
+            transition_evidence = [_candidate_setup_transition_evidence(workout, definitions, requirements,
+                context.get('setupEquipmentById'))
                 for workout in variable_workouts]
+            costs['setup_economy'] = sum(row['physicalPreparationCount']
+                * workout.get('timesCompletedInAWeek', 1)
+                for row, workout in zip(transition_evidence, variable_workouts))
             costs['setup_economy_transitions'] = sum(
-                row['knownDeclaredChanges'] * workout.get('timesCompletedInAWeek', 1)
+                row['physicalRequiredChanges'] * workout.get('timesCompletedInAWeek', 1)
                 for row, workout in zip(transition_evidence, variable_workouts))
+            if all(row['physicalPrimaryInventorySwitchCount'] is not None for row in transition_evidence):
+                costs['setup_economy_resource_switches'] = sum(
+                    row['physicalPrimaryInventorySwitchCount'] * workout.get('timesCompletedInAWeek', 1)
+                    for row, workout in zip(transition_evidence, variable_workouts))
             costs['setup_economy_transition_unknowns'] = sum(
-                row['unknownTransitions'] * workout.get('timesCompletedInAWeek', 1)
+                row['unknownPhysicalPreparationCount'] * workout.get('timesCompletedInAWeek', 1)
                 for row, workout in zip(transition_evidence, variable_workouts))
-            costs['setup_economy_resource_switches'] = (sum(
-                row['declaredResourceSwitches'] * workout.get('timesCompletedInAWeek', 1)
-                for row, workout in zip(transition_evidence, variable_workouts))
-                if all(row['resourceIdentityComplete'] for row in transition_evidence) else None)
+            if not all(row['resourceIdentityComplete'] for row in transition_evidence):
+                costs['setup_economy'] = costs['setup_economy_transitions'] = None
 
     if 'movement_overlap' in (requirements.get('objectiveOrder') or []):
         costs['movement_overlap'] = sum(workout.get('timesCompletedInAWeek', 1) * len(
@@ -1046,8 +1112,8 @@ def compare_audited_joint_candidates(baseline, candidate, *, requirements, conte
 
     definitions = context.get('setupDefinitions') or {}
     result['executionEvaluation'] = {
-        'baseline': evaluate_audited_execution(baseline, definitions, requirements),
-        'candidate': evaluate_audited_execution(candidate, definitions, requirements),
+        'baseline': evaluate_audited_execution(baseline, definitions, requirements, context.get('setupEquipmentById')),
+        'candidate': evaluate_audited_execution(candidate, definitions, requirements, context.get('setupEquipmentById')),
         'scope': 'Pairwise comparison of these audited artifacts, not proof of the best possible plan.'}
 
     if baseline_has_only_native_audit_errors:
@@ -1055,6 +1121,15 @@ def compare_audited_joint_candidates(baseline, candidate, *, requirements, conte
         result['firstDifferingObjective'] = 'native_audit_feasibility'
         result['reason'] = 'hard_feasibility_restored'
         return result
+
+    if 'setup_economy' in (requirements.get('objectiveOrder') or []):
+        setups = [[row['setup'] for row in result['executionEvaluation'][key]['sessions']]
+            for key in ('baseline', 'candidate')]
+        losses = _setup_evidence_losses(*setups)
+        if losses:
+            result['reason'] = 'candidate_setup_evidence_loss'
+            result['setupEvidenceLoss'] = losses
+            return result
 
     baseline_costs = _joint_candidate_objective_costs(baseline, requirements, context)
     candidate_costs = _joint_candidate_objective_costs(candidate, requirements, context)
@@ -1068,15 +1143,11 @@ def compare_audited_joint_candidates(baseline, candidate, *, requirements, conte
     if 'execution_order' in (requirements.get('objectiveOrder') or []):
         available['execution_order'] = True
     if 'setup_economy_transitions' in available:
-        complete_setup_evidence = (baseline_costs.get('setup_economy_transition_unknowns') == 0
-            and candidate_costs.get('setup_economy_transition_unknowns') == 0)
-        available['setup_economy_transitions'] = complete_setup_evidence
-        if not complete_setup_evidence:
-            result['setupTransitionEvidence'] = {
-                'baselineUnknownEdges': baseline_costs.get('setup_economy_transition_unknowns'),
-                'candidateUnknownEdges': candidate_costs.get('setup_economy_transition_unknowns'),
-                'status': 'not_compared_unknown_configuration',
-                'scoring': 'known_declared_changes_only; unknown_edges_not_scored'}
+        result['setupTransitionEvidence'] = {
+            'baselineUnknownEdges': baseline_costs.get('setup_economy_transition_unknowns'),
+            'candidateUnknownEdges': candidate_costs.get('setup_economy_transition_unknowns'),
+            'status': 'compared_known_physical_requirements_with_unknown_dimensions_disclosed',
+            'scoring': 'resource_activations_and_known_required_changes; unknown_not_measured'}
     if 'demand_distribution' in (requirements.get('objectiveOrder') or []):
         available['demand_distribution'] = True
     if 'preservation' in (requirements.get('objectiveOrder') or []):
@@ -1088,6 +1159,7 @@ def compare_audited_joint_candidates(baseline, candidate, *, requirements, conte
     if 'setup_economy' in (requirements.get('objectiveOrder') or []):
         # An unmeasurable approved priority must not silently disappear before duration.
         available['setup_economy'] = True
+        available['setup_economy_resource_switches'] = True
     if ('volume_target' in (requirements.get('objectiveOrder') or [])
             and any(preferred_volume_target_bounds(bounds) is not None
                 for key in ('weeklyEffectiveSets', 'perSessionEffectiveSets')
@@ -1120,12 +1192,6 @@ def compare_audited_joint_candidates(baseline, candidate, *, requirements, conte
             if status in ('requires_programming_decision', 'unknown') else
             'audited_preference_' + status)
         return result
-    if 'setup_economy_transitions' in ordered:
-        result['setupTransitionEvidence'] = {
-            'baselineUnknownEdges': baseline_costs['setup_economy_transition_unknowns'],
-            'candidateUnknownEdges': candidate_costs['setup_economy_transition_unknowns'],
-            'status': 'compared_complete_declared_configuration_evidence',
-            'scoring': 'known_declared_changes_only; unknown_edges_not_scored'}
     for objective in ordered:
         if objective.startswith('ordering_'):
             baseline_work = _selected_session_work(baseline['workouts'], definitions)
@@ -1220,7 +1286,7 @@ def compare_audited_joint_candidates(baseline, candidate, *, requirements, conte
         elif objective == 'setup_economy_transitions':
             comparison['unit'] = 'known_declared_resource_or_load_changes_per_week'
         elif objective == 'setup_economy_resource_switches':
-            comparison['unit'] = 'declared_resource_reference_switches_per_week; not physical changeover time'
+            comparison['unit'] = 'physical_primary_inventory_switches_per_week; independent of loads; not physical changeover time'
         result['comparisons'].append(comparison)
         if comparison['status'] != 'tie':
             result['firstDifferingObjective'] = objective
@@ -1612,7 +1678,8 @@ def _saved_prescription_seeds(messages):
             yield draft['workouts']
 
 
-def _prescription_decision_hint(candidate, sessions, day_blocks, variables, requirements, audit):
+def _prescription_decision_hint(candidate, sessions, day_blocks, variables, requirements, audit,
+                                *, allow_partial=False):
     """Map an audited source to exact finite recipe choices without fixing them."""
     if len(candidate) != len(sessions):
         return None
@@ -1639,11 +1706,15 @@ def _prescription_decision_hint(candidate, sessions, day_blocks, variables, requ
                 if match is not None:
                     break
             if match is None:
+                if allow_partial:
+                    continue
                 return None
             block_index, option_index, positions = match
             used_positions.update(positions)
             block_order.append(block_index)
             selected[option_index] = 1
+        if allow_partial:
+            continue
         try:
             local_order = execution_order_indices([blocks[index]['recipe']['roles'] for index in block_order],
                 [_block_order_key(blocks, index) for index in block_order], requirements)
@@ -1658,6 +1729,9 @@ def _prescription_decision_hint(candidate, sessions, day_blocks, variables, requ
                 items.append(item)
         reconstructed[day_index]['exercises'] = items
         selected_blocks.append(block_order)
+    if allow_partial:
+        # Unmatched choices stay free; only CP-SAT can establish feasibility.
+        return selected or None
     if not audit(reconstructed):
         return None
     hint = {index: int(index in selected) for index, variable in enumerate(variables)
@@ -2400,6 +2474,14 @@ def _lineage_prescription_patch(before, after, occurrence_lineage):
 
 def _rest_options(block, requirements, definitions, work_set_count):
     """Only explicit approved ranges authorize automatic rest changes."""
+    from .programming_guidelines import block_recovery_bounds
+    block = copy.deepcopy(block)
+    recovery = block_recovery_bounds(block, requirements, definitions)
+    if recovery:
+        for item in block[:-1]:
+            item['restAfterExerciseSeconds'] = 0
+        block[-1]['restAfterExerciseSeconds'] = min(recovery[1], max(recovery[0],
+            block[-1]['restAfterExerciseSeconds']))
     yield block
     minimum = copy.deepcopy(block)
     for index, item in enumerate(minimum):
@@ -2655,9 +2737,24 @@ def solve_prescribed_week(sessions, requirements, equipment, restriction_policy=
         redistribution_constraints=redistribution_constraints,
         source_working_set_budget=source_working_set_budget,
         reviewed_baseline_workouts=reviewed_baseline_workouts, progress=progress,
-        search_deadline=search_deadline)
+        search_deadline=search_deadline, _recipe_preparation={})
     order = requirements.get('objectiveOrder') or []
+    # Sequence-dependent setup cannot be frozen behind a cheaper selection-only bound.
+    setup_needs_sequence = False
+    if 'setup_economy' in order:
+        from .planning_decisions import execution_decision_definitions
+        overrides = execution_decision_definitions(messages or [], equipment)
+        definitions = {f'LIBRARY_{index}': definition for index, definition in enumerate(
+            sorted((overrides.get(item['id'], item) for item in equipment.get('exerciseDefinitions', [])),
+                key=lambda item: item['id']))}
+        for day in sessions:
+            for item in day.get('exercises', []):
+                profile = setup_resource_profile(definitions.get(item.get('definition_id'), {}), item)
+                setup_needs_sequence |= bool(profile['physicalConfigurationFacts'] or profile['loadConfigurationKnown'])
     supported = (selection_precedes_execution(requirements) and order[-1] == 'execution_order'
+        and not setup_needs_sequence
+        and not any(rule.get('context') == 'exerciseTransition'
+            for rule in requirements.get('executionRules', []))
         and not any(_split_execution_goal(goal['metric'])
             for tier in requirements.get('objectiveTiers', []) for goal in tier))
     if not supported:
@@ -2733,9 +2830,10 @@ def _add_execution_sequence(blocks, requirements, variable, constraint, day_inde
     ranks, present, counts, arcs = [], [], [], {}
     costs = {name: {} for name in ('setup_economy_transitions', 'setup_economy_resource_switches')}
     metric_names = execution_interference_metric_names(requirements)
-    known_anatomy = all(block['recipe']['interferencePerRound']['known'] for block in blocks)
+    known_anatomy = all(block['recipe']['interferencePerRound']['primaryKnown'] for block in blocks)
     phases = [execution_order_phase(block['recipe']['orderPriority'], requirements) for block in blocks]
-    needs_rank = (any(predecessors.values()) or len(set(phases)) > 1
+    needs_rank = ('setup_economy' in (requirements.get('objectiveOrder') or [])
+        or any(predecessors.values()) or len(set(phases)) > 1
         or 'execution_order' in (requirements.get('objectiveOrder') or [])
         and known_anatomy and any(not name.startswith('adjacent_') for name in metric_names))
     if 'execution_order' in (requirements.get('objectiveOrder') or []) and known_anatomy:
@@ -2793,6 +2891,18 @@ def _add_execution_sequence(blocks, requirements, variable, constraint, day_inde
                     {ranks[head - 1]: 1, ranks[tail - 1]: -1, arc: -size - 1})
     if blocks:
         blocks[0]['sequenceArcs'] = arcs
+    if any(rule.get('context') == 'exerciseTransition' for rule in requirements.get('executionRules', [])):
+        for block_index, block in enumerate(blocks):
+            recoveries = {option['items'][-1]['restAfterExerciseSeconds']
+                for option in block['optionValues'].values()}
+            discounts = block.setdefault('terminalRecoveryDiscounts', {})
+            for option_index, option in block['optionValues'].items():
+                recovery = option['items'][-1]['restAfterExerciseSeconds']
+                if recovery:
+                    terminal = arcs[block_index + 1, 0]
+                    flag = terminal if len(recoveries) == 1 else conjunction([terminal, option_index],
+                        {'workoutIndex': day_index, 'blockIndex': block_index, 'terminalRecovery': recovery})
+                    discounts[flag] = -recovery
     for after, before_set in predecessors.items():
         for before in before_set:
             constraint(('execution_precedence', day_index, before, after), 1 - 2 * (size + 1), math.inf,
@@ -2823,62 +2933,64 @@ def _add_execution_sequence(blocks, requirements, variable, constraint, day_inde
                 coefficients[pair] = coefficients.get(pair, 0) - 1
         constraint(('execution_phase_ready', day_index, lower, higher), -1, math.inf, coefficients)
 
-    profile_groups = []
-    setup_known = resource_known = True
-    for block_index, block in enumerate(blocks):
-        groups = {}
-        for index, option in block['optionValues'].items():
-            profiles, rounds = option['setupProfiles'], option['count']
-            internal = _setup_evidence_for_blocks([{'profiles': profiles, 'rounds': rounds,
-                'componentIndex': 0, 'exerciseRefs': [], 'kind': 'superset' if len(profiles) > 1 else 'exercise'}])
-            costs['setup_economy_transitions'][index] = frequency * internal['knownDeclaredChanges']
-            costs['setup_economy_resource_switches'][index] = frequency * internal['declaredResourceSwitches']
-            setup_known &= internal['unknownTransitions'] == 0
-            resource_known &= internal['resourceIdentityComplete']
-            first = _setup_profile_at_set(profiles[0], 0)
-            last = _setup_profile_at_set(profiles[-1], rounds - 1)
-            key = json.dumps([first, last], sort_keys=True)
-            groups.setdefault(key, {'first': first, 'last': last, 'options': []})['options'].append(index)
-        for group in groups.values():
-            if len(groups) == 1:
-                group['active'] = present[block_index]
-            else:
-                group['active'] = variable(domain_identity={'kind': 'execution_setup_variant',
-                    'workoutIndex': day_index, 'blockIndex': block_index})
-                constraint(('execution_setup_variant', group['active']), 0, 0,
-                    {group['active']: 1, **dict.fromkeys(group['options'], -1)})
-        profile_groups.append(list(groups.values()))
-    for before, after in itertools.permutations(range(size), 2):
-        arc = arcs.get((before + 1, after + 1))
-        for first, second in itertools.product(profile_groups[before], profile_groups[after]):
-            evidence = _setup_resource_transition(first['last'], second['first'])
-            # Preserve the menu's evidence status even when its edge is impossible.
-            setup_known &= evidence['declaredResourceChange'] is not None
-            resource_known &= first['last']['resourceEvidence'] == second['first']['resourceEvidence'] == 'declared_references'
-            changed = evidence['declaredResourceChange'] is True
-            switched = evidence['resourceSelection'] == 'changed_references'
-            if arc is not None and (changed or switched):
-                edge = (arc if len(profile_groups[before]) == len(profile_groups[after]) == 1 else
-                    conjunction([arc, first['active'], second['active']], {'workoutIndex': day_index}))
-                if changed:
-                    costs['setup_economy_transitions'][edge] = frequency
-                if switched:
-                    costs['setup_economy_resource_switches'][edge] = frequency
-    if not setup_known:
-        costs['setup_economy_transitions'] = {}
-    if not resource_known:
-        costs['setup_economy_resource_switches'] = {}
+    inventory_known = all(primary_inventory_key(profile) is not None
+        for block in blocks for option in block['optionValues'].values() for profile in option['setupProfiles'])
+    if 'setup_economy' in (requirements.get('objectiveOrder') or []) and inventory_known:
+        switch_costs = costs['setup_economy_resource_switches']
+        endpoints = []
+        for block_index, block in enumerate(blocks):
+            variants = {}
+            for option_index, option in block['optionValues'].items():
+                profiles = option['setupProfiles']
+                internal = primary_inventory_switch_evidence([{'profiles': profiles, 'rounds': option['count']}])
+                switch_costs[option_index] = frequency * internal['physicalPrimaryInventorySwitchCount']
+                keys = (primary_inventory_key(profiles[0]), primary_inventory_key(profiles[-1]))
+                variants.setdefault(keys, []).append(option_index)
+            flags = {}
+            for keys, options in variants.items():
+                if len(variants) == 1:
+                    flag = present[block_index]
+                else:
+                    flag = variable(domain_identity={'kind': 'execution_inventory',
+                        'workoutIndex': day_index, 'blockIndex': block_index, 'keys': keys})
+                    constraint(('execution_inventory', flag), 0, 0,
+                        {flag: 1, **dict.fromkeys(options, -1)})
+                flags[keys] = flag
+            endpoints.append(flags)
+        for (tail, head), arc in arcs.items():
+            if not tail or not head or tail == head:
+                continue
+            for before, before_flag in endpoints[tail - 1].items():
+                for after, after_flag in endpoints[head - 1].items():
+                    if before[-1] == after[0]:
+                        continue
+                    flag = arc if len(endpoints[tail - 1]) == len(endpoints[head - 1]) == 1 else conjunction(
+                        list(dict.fromkeys((arc, before_flag, after_flag))),
+                        {'workoutIndex': day_index, 'tail': tail, 'head': head,
+                         'beforeInventory': before, 'afterInventory': after})
+                    switch_costs[flag] = frequency
+
+    physical_evidence = {}
+    resource_known = all(profile['resourceEvidence'] == 'declared_references'
+        for block in blocks for option in block['optionValues'].values() for profile in option['setupProfiles'])
+    if 'setup_economy' in (requirements.get('objectiveOrder') or []):
+        physical_costs, physical_evidence = _add_physical_setup_sequence(
+            blocks, requirements, variable, constraint, day_index, frequency,
+            present, ranks, counts, before_variables, conjunction)
+        costs.update({name: physical_costs[name] for name in ('setup_economy', 'setup_economy_transitions')})
+        resource_known = physical_evidence['physicalSetupResourcesComplete']
 
     if 'execution_order' in (requirements.get('objectiveOrder') or []) and known_anatomy:
         profiles = [block['recipe']['interferencePerRound'] for block in blocks]
-        cumulative = {name: [{} for _ in blocks] for name in metric_names if not name.startswith('adjacent_')}
+        base_metrics = [name for name in metric_names if not name.endswith('_total')]
+        cumulative = {name: [{} for _ in blocks] for name in base_metrics if not name.startswith('adjacent_')}
         for before, after in itertools.permutations(range(size), 2):
             if (before, after) in incompatible:
                 continue
             pair = before_variables.get((before, after))
             source, receiver = profiles[before], profiles[after]
             gated = adjacent = None
-            for name in metric_names:
+            for name in base_metrics:
                 if name.startswith('priority_') and not receiver['priority']:
                     continue
                 if name.startswith('heavy_') and not receiver['heavy_primary']:
@@ -2904,11 +3016,11 @@ def _add_execution_sequence(blocks, requirements, variable, constraint, day_inde
                         gated = gated_count(pair, *counts[before])
                     cumulative[name][after][gated] = coefficient
         for name, expressions in cumulative.items():
-            if name.startswith('priority_'):
-                for expression in expressions:
-                    for index, coefficient in expression.items():
-                        costs['ordering_' + name][index] = coefficient * frequency
-            else:
+            total_name = 'ordering_' + name + ('_total' if name.startswith(('heavy_', 'main_')) else '')
+            for expression in expressions:
+                for index, coefficient in expression.items():
+                    costs[total_name][index] = costs[total_name].get(index, 0) + coefficient * frequency
+            if not name.startswith('priority_'):
                 upper = sum(count[1] for count in counts) * max(1, max(
                     (sum(expression.values()) for expression in expressions), default=0))
                 peak = variable(upper=upper, domain_identity={'kind': 'execution_exposure_peak',
@@ -2917,8 +3029,13 @@ def _add_execution_sequence(blocks, requirements, variable, constraint, day_inde
                 for after, expression in enumerate(expressions):
                     constraint(('execution_exposure_peak', day_index, name, after), -math.inf, 0,
                         {**expression, peak: -1})
-    return costs, {'anatomyComplete': known_anatomy, 'setupTransitionsComplete': bool(setup_known),
-        'resourceReferencesComplete': bool(resource_known)}
+    return costs, {'anatomyComplete': known_anatomy, 'setupTransitionsComplete': bool(resource_known),
+        'resourceReferencesComplete': bool(resource_known),
+        'primaryInventoryComplete': inventory_known,
+        'executionSupportEvidence': [fact for block in blocks
+            for fact in block['recipe']['interferencePerRound'].get('executionSupportEvidence', [])],
+        'orderingSupportScope': 'Documented overlap lower bounds only; primary anatomy availability does not establish complete support or personal fatigue evidence.',
+        **physical_evidence}
 
 
 def refine_group_arrangements(sessions, requirements, equipment, restriction_policy=None,
@@ -3093,7 +3210,7 @@ def refine_group_arrangements(sessions, requirements, equipment, restriction_pol
         evaluation = evaluate_audited_execution(candidate, definitions, requirements)
         candidates.append({'candidate': candidate, 'combination': combination, 'mask': mask,
             'evaluation': {key: evaluation[key] for key in ('weeklyEstimatedSeconds',
-                'weeklyDeclaredResourceSwitches', 'durationSpreadSeconds')}})
+                'weeklyDeclaredResourceSwitches', 'weeklyPhysicalPrimaryInventorySwitches', 'durationSpreadSeconds')}})
 
     remaining = list(candidates)
     selected = None
@@ -3122,10 +3239,10 @@ def refine_group_arrangements(sessions, requirements, equipment, restriction_pol
         best['nativeErrors'] = [error['code'] for error in final_report['errors']]
 
     known = [entry for entry in candidates if not entry.get('nativeErrors')
-        and entry['evaluation']['weeklyDeclaredResourceSwitches'] is not None]
+        and entry['evaluation']['weeklyPhysicalPrimaryInventorySwitches'] is not None]
     def frontier_cost(entry):
         return (entry['evaluation']['weeklyEstimatedSeconds'],
-            entry['evaluation']['weeklyDeclaredResourceSwitches'],
+            entry['evaluation']['weeklyPhysicalPrimaryInventorySwitches'],
             entry['evaluation']['durationSpreadSeconds'])
     frontier = [entry for entry in known if not any(
         all(a <= b for a, b in zip(frontier_cost(other), frontier_cost(entry)))
@@ -3162,7 +3279,7 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
                           search_deadline=None,
                           _selection_only=False, _fixed_session_work=None,
                           _selection_prefix_bounds=None, _selection_prefix_stages=None, _prescription_seed=None,
-                          _eligible_definition_ids=None):
+                          _eligible_definition_ids=None, _recipe_preparation=None):
     """Solve selection, placement, counts, grouping, allowed rests and ordering together.
 
     Options keep supported loads/reps, tempo, calibration and warm-ups intact. All
@@ -3206,6 +3323,9 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
     setup_access = confirmed_setup_access(messages or [], equipment, requirements)
     requirements = setup_access['requirements']
     execution_definitions = execution_decision_definitions(messages or [], equipment)
+    setup_groups = _setup_resource_groups(requirements)
+    setup_equipment = {item['id']: item for key in ('equipments', 'accessoryEquipments')
+        for item in equipment.get(key, [])}
     if setup_access['bindings']:
         proof['confirmedSetupAccess'] = setup_access['bindings']
     if execution_definitions:
@@ -3355,8 +3475,10 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
     # grouping-only error out of the recipe-local set of tolerated numeric
     # audit findings so an unusable source pair cannot enter the qualified domain.
     numeric_errors = JOINT_REPAIRABLE_AUDIT_ERRORS - {'execution_supersetNoReconfiguration'}
-    unknown_volume_preferences = set()
-    compiled_recipe_cache = {}
+    # Only this public solve's phases share preparation; every audit dependency stays unchanged.
+    preparation = {} if _recipe_preparation is None else _recipe_preparation
+    unknown_volume_preferences = preparation.setdefault('unknownVolumePreferences', set())
+    compiled_recipe_cache = preparation.setdefault('recipes', {})
     unresolved_execution = {}
     from .exercise_contracts import execution_semantics_problem
     # Audit one recipe once per count; those contributions are reusable in every session.
@@ -3440,7 +3562,7 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
                         _DRAFT_VALIDATOR.validate(draft)
                         plan, report = _audit_raw(draft, equipment, requirements, restriction_policy,
                             allow_educated_load_guesses, apply_family_bounds=False,
-                            execution_definitions=execution_definitions)
+                            execution_definitions=execution_definitions, complete_session=False)
                         apply_native_load_calibration_policy(plan, messages or [], equipment,
                             getattr(training_history, 'fingerprint', None),
                             allow_educated_load_guesses=allow_educated_load_guesses)
@@ -3482,10 +3604,12 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
                     'definitions': {item['definition_id'] for item in block},
                     'definitionRecords': [copy.deepcopy(definitions[item['definition_id']]) for item in block]})
                 for option in recipes[-1]['options']:
-                    option['setupProfiles'] = [setup_resource_profile(definitions[item['definition_id']], item)
+                    option['setupProfiles'] = [setup_resource_profile(definitions[item['definition_id']], item,
+                        setup_groups, setup_equipment)
                         for item in option['items']]
-                    option['setupTaskKeys'] = frozenset(json.dumps(profile['preparationTaskKey'],
-                        sort_keys=True, separators=(',', ':')) for profile in option['setupProfiles'])
+                    option['setupTaskKeys'] = frozenset(requirement['activationKey']
+                        for profile in option['setupProfiles']
+                        for requirement in physical_setup_requirements(profile))
                 recipe_roles = recipes[-1]['roles']
                 recipes[-1]['interferencePerRound'] = execution_interference_profile(
                     [definitions[item['definition_id']] for item in block], [1] * len(block), recipe_roles, requirements)
@@ -3500,6 +3624,18 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
                     'definitionIds': [item['definition_id'] for item in block],
                     'reason': 'no_executable_prescription_option'})
     proof['supersetCandidates'] = copy.deepcopy(superset_candidates)
+    setup_resources_complete = True
+    menu_coverage = []
+    if 'setup_economy' in (requirements.get('objectiveOrder') or []):
+        coverage_by_option = []
+        for recipe in recipes:
+            for option in recipe['options']:
+                evidence = _setup_evidence_for_blocks([{'profiles': option['setupProfiles'], 'rounds': 0,
+                    'componentIndex': 0, 'exerciseRefs': [], 'kind': 'exercise'}], setup_groups)
+                coverage_by_option.append(evidence['setupEvidenceCoverage'])
+                setup_resources_complete &= evidence['resourceIdentityComplete']
+        menu_coverage = list({json.dumps(row, sort_keys=True): row
+            for coverage in coverage_by_option for row in coverage}.values())
     available_roles = {role for recipe in recipes for option in recipe['options']
         for role, exposure in option['coverage'].items() if exposure}
     available_roles.update(role for day in fixed_source_workouts for item in day.get('exercises', [])
@@ -3768,6 +3904,8 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
             name in (requirements.get('objectiveOrder') or []) for name in ('duration_balance', 'duration_economy', 'time_budget')):
         for day_index, blocks in enumerate(day_blocks):
             coefficients = {i: option['seconds'] for i, d, _, option in option_variables if d == day_index}
+            for block in blocks:
+                coefficients.update(block.get('terminalRecoveryDiscounts', {}))
             duration_expressions.append((coefficients, ASSUMPTIONS['generalWarmupSeconds']))
             if targets.get('maximumSessionSeconds') is not None:
                 constraint(('duration', day_index), -math.inf, targets['maximumSessionSeconds'], coefficients,
@@ -4287,8 +4425,8 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
                 for reference in (first, second):
                     constraint(('movement_overlap_pair_selected', day_index, first, second, reference),
                         -math.inf, 0, {pair: 1, active_by_reference[reference]: -1})
-    setup_costs = {}
-    if 'setup_economy' in (requirements.get('objectiveOrder') or []):
+    setup_costs = dict(execution_costs.get('setup_economy', {}))
+    if _selection_only and 'setup_economy' in (requirements.get('objectiveOrder') or []):
         for day_index, blocks in enumerate(day_blocks):
             frequency = sessions[day_index]['timesCompletedInAWeek']
             tasks = sorted(set().union(*(option['setupTaskKeys']
@@ -4332,10 +4470,6 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
     workload_costs = {index: option['count'] * len(option['items'])
         * sessions[day_index]['timesCompletedInAWeek']
         for index, day_index, _, option in option_variables}
-    if any(not row['setupTransitionsComplete'] for row in execution_evidence):
-        execution_costs['setup_economy_transitions'] = {}
-    if any(not row['resourceReferencesComplete'] for row in execution_evidence):
-        execution_costs['setup_economy_resource_switches'] = {}
     if any(not row['anatomyComplete'] for row in execution_evidence):
         execution_costs = {name: coefficients for name, coefficients in execution_costs.items()
             if not name.startswith('ordering_')}
@@ -4364,6 +4498,12 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
         ['preservation'] if reviewed_dose_reference is not None else [])
     objective_available = {name: bool(values) for name, values in objective_costs.items()}
     objective_available.update({
+        'setup_economy': (setup_resources_complete and 'setup_economy' in (requirements.get('objectiveOrder') or [])),
+        'setup_economy_transitions': (setup_resources_complete and not _selection_only
+            and 'setup_economy' in (requirements.get('objectiveOrder') or [])),
+        'setup_economy_resource_switches': (not _selection_only
+            and 'setup_economy' in (requirements.get('objectiveOrder') or [])
+            and all(row['primaryInventoryComplete'] for row in execution_evidence)),
         'execution_order': ('execution_order' in (requirements.get('objectiveOrder') or [])
             and all(row['anatomyComplete'] for row in execution_evidence)),
         'movement_overlap': bool(overlap_costs) or any(objective_costs['superset_lower_body_overlap'].values()),
@@ -4442,6 +4582,9 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
     if _selection_only:
         goals = list(itertools.takewhile(lambda goal: not _split_execution_goal(goal[0]),
             (goal for goal in goals if goal[0] != 'neutral_preservation')))
+    # Grouped metrics still need tight derived values, without adding solve stages.
+    canonical_goals = goals + [(goal['metric'], goal_coefficients[goal['metric']])
+        for tier in requirements.get('objectiveTiers', []) for goal in tier]
     for name, costs in goals:
         if _selection_prefix_bounds is not None and name in _selection_prefix_bounds:
             bound = _selection_prefix_bounds[name]
@@ -4488,7 +4631,7 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
         except (ValueError, ValidationError):
             return False
 
-    prescription_hint = None
+    prescription_hint = partial_hint = None
     candidates = ([_prescription_seed] if _prescription_seed is not None else []) + (
         [reviewed_baseline_workouts] if reviewed_baseline_workouts is not None else [])
     for candidate in itertools.chain(candidates, _saved_prescription_seeds(messages), [sessions]):
@@ -4496,8 +4639,19 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
             candidate, sessions, day_blocks, variables, requirements, audit_hint)
         if prescription_hint is not None:
             break
+        if partial_hint is None and candidate is not sessions:
+            partial_hint = _prescription_decision_hint(candidate, sessions, day_blocks, variables,
+                requirements, audit_hint, allow_partial=True)
+    hint_audited = prescription_hint is not None
+    if prescription_hint is None:
+        if partial_hint is None:
+            prepared_seed = _prepared_selection_seed(messages, equipment, training_history, sessions, definitions)
+            if prepared_seed is not None:
+                partial_hint = _prescription_decision_hint(prepared_seed, sessions, day_blocks, variables,
+                    requirements, audit_hint, allow_partial=True)
+        prescription_hint = partial_hint
     proof['prescriptionWarmStart'] = {'status': 'native_audited_recipe_decision_hint'
-        if prescription_hint is not None else 'no_matching_native_audited_source',
+        if hint_audited else ('partial_recipe_decision_hint' if prescription_hint else 'no_matching_native_audited_source'),
         'decisionCount': len(prescription_hint or {}), 'selectionFixed': _fixed_session_work is not None,
         'solverFeasibilityEstablished': False}
 
@@ -4557,87 +4711,6 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
                     'uncappedHardFeasibilityStatus': uncapped_status, 'diagnosticOnly': True},
                 'instruction': instruction}
         chosen = capped_candidate
-    source_menu_seed = None
-    if (chosen is None and prescription_hint is None and not preserve_source_selection and not redistribution_constraints
-            and reviewed_baseline_workouts is None):
-        prepared_seed_sessions = _prepared_selection_seed(
-            messages, equipment, training_history, sessions, definitions)
-        if prepared_seed_sessions is not None:
-            seed_references_by_day = [{
-                definitions.get(item.get('definition_id'), {}).get('id', item.get('definition_id'))
-                for item in day.get('exercises', [])}
-                for day in prepared_seed_sessions]
-            allowed_by_day = [set() for _ in sessions]
-            option_by_index = {index: option for index, _, _, option in option_variables}
-            source_options_by_day = [set() for _ in sessions]
-            for index, day_index, recipe_index, option in option_variables:
-                canonical_ids = {definitions.get(item['definition_id'], {}).get('id', item['definition_id'])
-                    for item in option['items']}
-                if canonical_ids and canonical_ids.issubset(seed_references_by_day[day_index]):
-                    allowed_by_day[day_index].add(index)
-                    source_options_by_day[day_index].add(index)
-
-            # The seed may use only the prepared selection plus executable options
-            # needed to supply a hard coverage or direct-muscle target absent from it.
-            target_muscles = set(targets.get('weeklyEffectiveSets', {})) | set(
-                targets.get('perSessionEffectiveSets', {}))
-            required_roles_for_seed = {rule['key'] for rule in requirements.get('requiredCoverage', [])}
-            supplemented_roles = [set() for _ in sessions]
-            for day_index in range(len(sessions)):
-                supplied_roles = {role for index in source_options_by_day[day_index]
-                    for role, amount in option_by_index[index]['coverage'].items() if amount > 0}
-                supplied_muscles = {muscle for index in source_options_by_day[day_index]
-                    for muscle, values in option_by_index[index]['volume'].items()
-                    if values.get('effective', 0) > 0}
-                missing_roles = required_roles_for_seed - supplied_roles
-                missing_muscles = target_muscles - supplied_muscles
-                for index, option_day, _, option in option_variables:
-                    if option_day != day_index:
-                        continue
-                    added_roles = {role for role, amount in option['coverage'].items()
-                        if amount > 0 and role in missing_roles}
-                    added_muscles = {muscle for muscle, values in option['volume'].items()
-                        if values.get('effective', 0) > 0 and muscle in missing_muscles}
-                    if added_roles or added_muscles:
-                        allowed_by_day[day_index].add(index)
-                        supplemented_roles[day_index].update(added_roles)
-
-            allowed_options = set().union(*allowed_by_day) if allowed_by_day else set()
-            source_option_count = sum(map(len, source_options_by_day))
-            if allowed_options and all(allowed_by_day):
-                seed_goal, seed_costs = goals[0] if goals else ('feasibility', {})
-                seed_variables = []
-                for index, item in enumerate(variables):
-                    seeded = {**item, 'objectiveCost': seed_costs.get(index, 0)}
-                    if index in option_by_index and index not in allowed_options:
-                        seeded['upper'] = 0
-                    seed_variables.append(seeded)
-                seed_diagnostic = {'goal': 'prepared_source_menu_seed', 'seedObjective': seed_goal}
-                publish_progress('stage_started', seed_diagnostic['goal'])
-                seed_status, seed_candidate = run_search(seed_variables, features,
-                    diagnostics=seed_diagnostic, stage_limit=5)
-                solver_diagnostics.append(seed_diagnostic)
-                if seed_candidate is not None:
-                    chosen = _canonicalize_objective_epigraphs(variables, features,
-                        seed_candidate, goals, auxiliary_lattice=cp_session.auxiliary_lattice)
-                publish_progress('stage_completed', seed_diagnostic['goal'])
-                source_menu_seed = {
-                    'status': seed_status,
-                    'candidateAvailable': seed_candidate is not None,
-                    'sourceRecipeOptionCount': source_option_count,
-                    'allowedRecipeOptionCount': len(allowed_options),
-                    'supplementedRolesBySession': [sorted(roles) for roles in supplemented_roles],
-                    'objective': seed_goal,
-                    'objectiveValue': (sum(cost * chosen[index] for index, cost in seed_costs.items())
-                        if chosen is not None else None),
-                }
-            else:
-                source_menu_seed = {'status': 'not_applicable',
-                    'reason': 'prepared_selection_has_no_complete_executable_seed',
-                    'sourceRecipeOptionCount': source_option_count,
-                    'allowedRecipeOptionCount': len(allowed_options)}
-    if source_menu_seed is not None:
-        proof['preparedSourceMenuSeed'] = source_menu_seed
     order_policy = {'policy': JOINT_POLICY_DESCRIPTOR['candidateOrdering'],
                     'mode': ('cp_sat_selection_with_canonical_audited_execution' if _selection_only else
                         'cp_sat_optional_block_circuit_joint_selection_and_sequence'), 'reviewRequired': False}
@@ -4764,7 +4837,7 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
                 status = stage_status
             publish_progress('stage_completed', name)
             break
-        candidate = _canonicalize_objective_epigraphs(variables, features, candidate, goals,
+        candidate = _canonicalize_objective_epigraphs(variables, features, candidate, canonical_goals,
             auxiliary_lattice=cp_session.auxiliary_lattice)
         chosen = candidate
         score = float(_exact_objective_value(chosen, costs))
@@ -4985,6 +5058,9 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
                 lineage_claims.append((source_key, day_index, lineage_start,
                     copy.deepcopy(local_positions), copy.deepcopy(selected_recipe['sourcePositions'])))
         result[day_index]['exercises'] = items
+        if items and any(rule.get('context') == 'exerciseTransition'
+                for rule in requirements.get('executionRules', [])):
+            items[-1]['restAfterExerciseSeconds'] = 0
     assigned_source_positions = set()
     pending_claims = []
     for claim in lineage_claims:
@@ -5195,7 +5271,22 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
             for name, costs in goals if any(stage['goal'] == name and 'value' in stage for stage in stages)}
     receipt['executionEvaluation'] = evaluate_audited_execution(
         {'workouts': draft['workouts'], 'audit': report},
-        {**definitions_by_id, **definitions}, requirements)
+        {**definitions_by_id, **definitions}, requirements, setup_equipment)
+    receipt['setupEvidenceGaps'] = _selected_setup_evidence_gaps(menu_coverage,
+        receipt['executionEvaluation']['sessions'][len(fixed_source_workouts):]) if menu_coverage else []
+    setup_gaps = []
+    if 'setup_economy' in (requirements.get('objectiveOrder') or []):
+        setup_gaps.extend({'workoutIndex': row['workoutIndex'], 'missingPrimaryInventory': True}
+            for row in receipt['executionEvaluation']['sessions'][len(fixed_source_workouts):]
+            if row['setup'].get('physicalPrimaryInventorySwitchCount') is None)
+    if setup_gaps:
+        return {**receipt, 'feasible': False, 'status': 'goal_evidence_unavailable',
+            'failedCandidateDraft': copy.deepcopy(draft), 'nativeAuditReport': copy.deepcopy(report),
+            'setupEvidenceLoss': setup_gaps, 'elapsedSeconds': time.monotonic() - started,
+            'instruction': 'The selected candidate lacks primary physical inventory identity. '
+                'Clarify the selected resources before ranking inventory switches; unknown is not zero setup.',
+            'userQuestion': {'question': 'Which physical inventory do the listed selected exercises use?',
+                'options': []}}
     return {**receipt, 'objectiveInputFingerprint': joint_objective_input_fingerprint(result, approved_requirements, equipment,
                 training_history, messages, restriction_policy=restriction_policy,
                 allow_educated_load_guesses=allow_educated_load_guesses,
@@ -5215,3 +5306,127 @@ def _solve_prescribed_week(sessions, requirements, equipment, restriction_policy
             'coverageBalance': [{'first': rule['first'], 'second': rule['second'], 'scope': rule['scope'],
                 'authority': 'Source-approved qualitative goal; no hard numerical tolerance was invented.'}
                 for rule in balance_rules]}
+
+
+def _add_physical_setup_sequence(blocks, requirements, variable, constraint, day_index, frequency,
+                                present, ranks, counts, before_variables, conjunction):
+    """Follow each conflict domain's selected visits in the existing execution order."""
+    from .generation_audit import physical_setup_requirements, physical_setup_bundle_transition
+
+    groups = [group for rule in requirements.get('executionRules', [])
+        if rule.get('kind') == 'supersetNoReconfiguration'
+        for group in rule.get('sharedResourceGroups', [])]
+    changes, activations, unknowns = {}, {}, {}
+    domain_blocks, resource_options = {}, {}
+    resources_complete = True
+
+    def add(costs, index, value):
+        if value:
+            costs[index] = costs.get(index, 0) + frequency * value
+
+    for block_index, block in enumerate(blocks):
+        summaries = {}
+        for option_index, option in block['optionValues'].items():
+            events = {}
+            for round_index in range(option['count']):
+                for profile in option['setupProfiles']:
+                    required = physical_setup_requirements(_setup_profile_at_set(profile, round_index), groups)
+                    resources_complete &= bool(required)
+                    if not required:
+                        add(unknowns, option_index, 1)
+                    bundles = {}
+                    for requirement in required:
+                        domain = tuple(requirement['conflictDomain'])
+                        bundles.setdefault(domain, []).append(requirement)
+                        resource_options.setdefault(requirement['activationKey'], set()).add(option_index)
+                    for domain, bundle in bundles.items():
+                        events.setdefault(domain, []).append(bundle)
+            for domain, bundles in events.items():
+                for before, after in zip(bundles, bundles[1:]):
+                    comparison = physical_setup_bundle_transition(before, after)
+                    add(changes, option_index, comparison['requiredChangeCount'])
+                    add(unknowns, option_index, comparison['unknownConfigurationCount'])
+                key = json.dumps([bundles[0], bundles[-1]], sort_keys=True)
+                summaries.setdefault(domain, {}).setdefault(key, {
+                    'first': bundles[0], 'last': bundles[-1], 'options': []})['options'].append(option_index)
+        for domain, variants in summaries.items():
+            touched = sorted(index for variant in variants.values() for index in variant['options'])
+            active = (present[block_index] if len(touched) == len(block['optionValues']) else
+                variable(domain_identity={'kind': 'physical_setup_domain_presence',
+                    'workoutIndex': day_index, 'blockIndex': block_index, 'domain': list(domain)}))
+            if active != present[block_index]:
+                constraint(('physical_setup_domain_presence', day_index, block_index, domain), 0, 0,
+                    {active: 1, **dict.fromkeys(touched, -1)})
+            for variant in variants.values():
+                variant['active'] = (active if len(variants) == 1 else variable(domain_identity={
+                    'kind': 'physical_setup_domain_variant', 'workoutIndex': day_index,
+                    'blockIndex': block_index, 'domain': list(domain)}))
+                if len(variants) > 1:
+                    constraint(('physical_setup_domain_variant', variant['active']), 0, 0,
+                        {variant['active']: 1, **dict.fromkeys(variant['options'], -1)})
+            domain_blocks.setdefault(domain, {})[block_index] = {
+                'active': active, 'variants': list(variants.values())}
+
+    for activation_key, options in sorted(resource_options.items()):
+        active = variable(domain_identity={'kind': 'physical_setup_resource_activation',
+            'workoutIndex': day_index, 'activationKey': activation_key})
+        for option_index in sorted(options):
+            constraint(('physical_setup_resource_activation', active, option_index), -math.inf, 0,
+                {option_index: 1, active: -1})
+        constraint(('physical_setup_resource_used', active), -math.inf, 0,
+            {active: 1, **dict.fromkeys(sorted(options), -1)})
+        add(activations, active, 1)
+
+    edge_count = 0
+    for domain, visits in sorted(domain_blocks.items()):
+        starts, ends, arcs = {}, {}, {}
+        for block_index in visits:
+            for kind, flags in (('first', starts), ('last', ends)):
+                flags[block_index] = variable(domain_identity={'kind': 'physical_setup_domain_' + kind,
+                    'workoutIndex': day_index, 'blockIndex': block_index, 'domain': list(domain)})
+        for before, after in itertools.permutations(visits, 2):
+            precedes = before_variables.get((before, after))
+            if precedes is None:
+                continue
+            arc = variable(domain_identity={'kind': 'physical_setup_domain_arc',
+                'workoutIndex': day_index, 'domain': list(domain), 'tail': before, 'head': after})
+            arcs[before, after] = arc
+            edge_count += 1
+            constraint(('physical_setup_domain_arc_order', arc), -math.inf, 0, {arc: 1, precedes: -1})
+            first_variants, second_variants = visits[before]['variants'], visits[after]['variants']
+            for first, second in itertools.product(first_variants, second_variants):
+                comparison = physical_setup_bundle_transition(first['last'], second['first'])
+                if not comparison['requiredChangeCount'] and not comparison['unknownConfigurationCount']:
+                    continue
+                edge = (arc if len(first_variants) == len(second_variants) == 1 else conjunction(
+                    [arc, first['active'], second['active']], {'workoutIndex': day_index,
+                        'physicalSetupDomain': list(domain), 'tail': before, 'head': after}))
+                add(changes, edge, comparison['requiredChangeCount'])
+                add(unknowns, edge, comparison['unknownConfigurationCount'])
+        for block_index, visit in visits.items():
+            constraint(('physical_setup_domain_incoming', day_index, domain, block_index), 0, 0,
+                {visit['active']: -1, starts[block_index]: 1,
+                    **{arc: 1 for (before, after), arc in arcs.items() if after == block_index}})
+            constraint(('physical_setup_domain_outgoing', day_index, domain, block_index), 0, 0,
+                {visit['active']: -1, ends[block_index]: 1,
+                    **{arc: 1 for (before, after), arc in arcs.items() if before == block_index}})
+            for variant in visit['variants']:
+                initial = physical_setup_bundle_transition([], variant['first'])
+                if initial['unknownConfigurationCount']:
+                    first = (starts[block_index] if len(visit['variants']) == 1 else conjunction(
+                        [starts[block_index], variant['active']], {'workoutIndex': day_index,
+                            'physicalSetupDomain': list(domain), 'firstBlock': block_index}))
+                    add(unknowns, first, initial['unknownConfigurationCount'])
+        # Global precedence makes these paths acyclic; one start selects the exact domain subsequence.
+        constraint(('physical_setup_domain_first', day_index, domain), 0, 1, dict.fromkeys(starts.values(), 1))
+        constraint(('physical_setup_domain_last', day_index, domain), 0, 1, dict.fromkeys(ends.values(), 1))
+
+    preparation = dict(activations)
+    for index, value in changes.items():
+        preparation[index] = preparation.get(index, 0) + value
+    return {'setup_economy': preparation, 'setup_economy_transitions': changes,
+        'physicalPreparationCount': preparation, 'initialResourceActivationCount': activations,
+        'unknownPhysicalPreparationCount': unknowns}, {
+        'physicalSetupResourcesComplete': bool(resources_complete),
+        'physicalSetupDomainCount': len(domain_blocks), 'physicalSetupDomainArcCount': edge_count,
+        'physicalSetupScoring': 'initial_exact_resource_activations_plus_known_required_changes; unknown_dimensions_explicit'}

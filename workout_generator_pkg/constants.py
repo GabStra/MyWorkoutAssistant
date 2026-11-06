@@ -116,8 +116,9 @@ JSON_SCHEMA = {
                 "type": {"const": "WeightSet"},                                                                                                                                                                                                  
                 "reps": {"type": "integer"},                                                                                                                                                                                                     
                 "weight": {"type": "number"},                                                                                                                                                                                                    
-                "subCategory": {"$ref": "#/$defs/SetSubCategory"}                                                                                                                                                                                
-            }                                                                                                                                                                                                                                    
+                "subCategory": {"$ref": "#/$defs/SetSubCategory"},
+                "note": {"type": ["string", "null"]},
+            }
         },                                                                                                                                                                                                                                       
         "BodyWeightSet": {                                                                                                                                                                                                                       
             "type": "object",                                                                                                                                                                                                                    
@@ -128,8 +129,9 @@ JSON_SCHEMA = {
                 "type": {"const": "BodyWeightSet"},                                                                                                                                                                                              
                 "reps": {"type": "integer"},                                                                                                                                                                                                     
                 "additionalWeight": {"type": "number"},                                                                                                                                                                                          
-                "subCategory": {"$ref": "#/$defs/SetSubCategory"}
-            }                                                                                                                                                                                                                                    
+                "subCategory": {"$ref": "#/$defs/SetSubCategory"},
+                "note": {"type": ["string", "null"]},
+            }
         },                                                                                                                                                                                                                                       
         "TimedDurationSet": {
             "type": "object",
@@ -143,7 +145,8 @@ JSON_SCHEMA = {
                 "autoStop": {"type": "boolean"},
                 "targetWeight": {"type": ["number", "null"], "minimum": 0},
                 "targetDistanceMeters": {"type": ["number", "null"], "minimum": 0},
-                "targetCalories": {"type": ["number", "null"], "minimum": 0}
+                "targetCalories": {"type": ["number", "null"], "minimum": 0},
+                "note": {"type": ["string", "null"]},
             }
         },
         "EnduranceSet": {            "type": "object",
@@ -157,9 +160,25 @@ JSON_SCHEMA = {
                 "autoStop": {"type": "boolean"},
                 "targetWeight": {"type": ["number", "null"], "minimum": 0},
                 "targetDistanceMeters": {"type": ["number", "null"], "minimum": 0},
-                "targetCalories": {"type": ["number", "null"], "minimum": 0}
+                "targetCalories": {"type": ["number", "null"], "minimum": 0},
+                "note": {"type": ["string", "null"]},
             }
         },                                                                                                                                                                                                                                       
+        "WeightedEffortSet": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "type", "autoStart", "autoStop"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "type": {"const": "WeightedEffortSet"},
+                "autoStart": {"type": "boolean"},
+                "autoStop": {"type": "boolean"},
+                "targetDistanceMeters": {"type": ["number", "null"], "minimum": 0},
+                "timeInMillis": {"type": ["integer", "null"], "minimum": 0},
+                "targetWeight": {"type": ["number", "null"], "minimum": 0},
+                "note": {"type": ["string", "null"]}
+            }
+        },
         "RunningSet": {
             "type": "object",
             "additionalProperties": False,
@@ -167,7 +186,8 @@ JSON_SCHEMA = {
             "properties": {
                 "id": {"$ref": "#/$defs/UUID"},
                 "type": {"const": "RunningSet"},
-                "shouldReapplyHistoryToSet": {"type": "boolean"}
+                "shouldReapplyHistoryToSet": {"type": "boolean"},
+                "note": {"type": ["string", "null"]},
             }
         },
         "RestSet": {                                                                                                                                                                                                                             
@@ -178,8 +198,9 @@ JSON_SCHEMA = {
                 "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
                 "type": {"const": "RestSet"},                                                                                                                                                                                                    
                 "timeInSeconds": {"type": "integer"},                                                                                                                                                                                            
-                "subCategory": {"$ref": "#/$defs/SetSubCategory"}                                                                                                                                                                                
-            }                                                                                                                                                                                                                                    
+                "subCategory": {"$ref": "#/$defs/SetSubCategory"},
+                "note": {"type": ["string", "null"]},
+            }
         },                                                                                                                                                                                                                                       
         "Set": {                                                                                                                                                                                                                                 
             "oneOf": [                                                                                                                                                                                                                           
@@ -187,7 +208,8 @@ JSON_SCHEMA = {
                 {"$ref": "#/$defs/BodyWeightSet"},                                                                                                                                                                                               
                 {"$ref": "#/$defs/TimedDurationSet"},                                                                                                                                                                                            
                 {"$ref": "#/$defs/EnduranceSet"},
-                {"$ref": "#/$defs/RunningSet"},                                                                                                                                                                                                
+                {"$ref": "#/$defs/RunningSet"},
+                {"$ref": "#/$defs/WeightedEffortSet"},
                 {"$ref": "#/$defs/RestSet"}                                                                                                                                                                                                      
             ]                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
@@ -302,7 +324,8 @@ JSON_SCHEMA = {
                 },
                 "timeCapSeconds": {"type": ["integer", "null"], "minimum": 1},
                 "roundDurationSeconds": {"type": ["integer", "null"], "minimum": 1},
-                "amrap": {"type": "boolean"}
+                "amrap": {"type": "boolean"},
+                "cadenceMode": {"type": ["string", "null"], "enum": ["ROUND", "MEMBER", None]}
             }
         },                                                                                                                                                                                                                                       
         "WorkoutComponent": {                                                                                                                                                                                                                    
@@ -663,6 +686,7 @@ BASE_SYSTEM_PROMPT = (
     "- Recommend only exercises supported by available equipment.\n"
     "- Offer feasible alternatives when required equipment is unavailable.\n"
     "- Mark unilateral intent when exercise or user request indicates single-side work.\n\n"
+    "- Rotating EMOM blocks ('E2MOM 32\\'' with four listed movements, 'Every 1\\' x 9\\'': A@min1, B@min2, C@min3) MUST be one superset whose supersetModes entry carries cadenceMode=MEMBER and roundDurationSeconds=the slot length in seconds, with equal work sets per member: total slots = duration/slot, so each member carries slots/members sets (E2MOM 32' over 4 movements -> roundDurationSeconds=120, 4 sets per member). Use cadenceMode=ROUND only when every member works inside the same slot; time-capped or AMRAP blocks use timeCapSeconds (+amrap) instead and never together with roundDurationSeconds.\n"
     "- Audit weekly volume from the actual prescribed working sets, excluding warm-ups. Show direct sets and indirect contributions separately, with the counting rule for each contribution. Never invent extra sets to mark a target met.\n"
     "- Check per-session coverage as well as weekly totals. Report unmet targets honestly.\n"
     "- Estimate session duration from work intervals, prescribed rests, unilateral sides, warm-ups and equipment transitions. If volume and time targets conflict, resolve the tradeoff before confirmation.\n\n"

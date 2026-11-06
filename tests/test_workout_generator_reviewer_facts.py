@@ -534,7 +534,7 @@ def test_joint_requirements_and_decision_review_approves_and_saves_once(monkeypa
         assert _without_refs(context['requirements']) == plan_review._extracted_context(candidate)
         assert context['newDecisionIds'] == ['DECISION_0']
         assert context['decisions']['DECISION_0']['choice'] == decision_proposal['decisions'][0]['choice']
-        assert context['sourceMessages']['SOURCE_1']['_reviewRef'].startswith('FACT_')
+        assert context['sourceMessages']['SOURCE_1']['_reviewRef'] == 'SOURCE_1'
         return '{"findings":[]}', None, None
 
     monkeypatch.setattr(plan_review, 'chat_call', approve)
