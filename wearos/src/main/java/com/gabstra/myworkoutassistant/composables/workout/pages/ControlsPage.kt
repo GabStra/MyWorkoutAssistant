@@ -84,6 +84,10 @@ fun ControlsPage(
 
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipExerciseDialog by remember { mutableStateOf(false) }
+    var showStartWithDialog by remember { mutableStateOf(false) }
+    // Order picker state: null = closed; non-null = positions chosen so far while
+    // building the full member order.
+    var orderBuilder by remember { mutableStateOf<List<Int>?>(null) }
     var showFinishEarlyDialog by remember { mutableStateOf(false) }
     var shouldResumeTimerAfterSkipDialog by remember { mutableStateOf(false) }
     var shouldResumeTimerAfterFinishEarlyDialog by remember { mutableStateOf(false) }
@@ -124,6 +128,8 @@ fun ControlsPage(
     LaunchedEffect(updatedState) {
         showGoBackDialog = false
         showSkipExerciseDialog = false
+        showStartWithDialog = false
+        orderBuilder = null
         showFinishEarlyDialog = false
         shouldResumeTimerAfterSkipDialog = false
         shouldResumeTimerAfterFinishEarlyDialog = false
@@ -691,6 +697,48 @@ fun ControlsPage(
                         )
                 )
             }
+            if (canChooseStartMember) {
+                item {
+                    ButtonWithText(
+                        modifier = Modifier
+                            .semantics { contentDescription = "Start with action" }
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        text = "Start with $cadenceStartName",
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            showStartWithDialog = true
+                        }
+                    )
+                }
+                if (memberCount > 2) {
+                    item {
+                        ButtonWithText(
+                            modifier = Modifier
+                                .semantics { contentDescription = "Set order action" }
+                                .fillMaxWidth()
+                                .then(
+                                    if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                        this,
+                                        spec
+                                    )
+                                ),
+                            transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                            text = "Set orderâ€¦",
+                            onClick = {
+                                hapticsViewModel.doGentleVibration()
+                                orderBuilder = emptyList()
+                            }
+                        )
+                    }
+                }
+            }
             if (isActiveSetPage) {
                 item {
                     ButtonWithText(
@@ -789,6 +837,56 @@ fun ControlsPage(
                 viewModel.reEvaluateDimmingForCurrentState()
             }
         }
+    )
+
+    val orderPickerVisible = showStartWithDialog || orderBuilder != null
+    val orderStep = orderBuilder?.size ?: 0
+    val memberNames = cadenceSuperset?.exercises?.map { it.name }.orEmpty()
+
+    fun closeOrderPicker() {
+        showStartWithDialog = false
+        orderBuilder = null
+    }
+
+    SupersetStartMemberPickerOverlay(
+        show = orderPickerVisible,
+        title = when {
+            orderBuilder == null -> "Start with"
+            orderStep >= memberCount -> "Order set"
+            else -> "Order ${orderStep + 1} of $memberCount"
+        },
+        options = memberNames.mapIndexed { index, name ->
+            SupersetStartMemberOption(
+                memberIndex = index,
+                name = name,
+                isCurrent = orderBuilder == null && index == (cadenceRotationOrder.firstOrNull() ?: 0)
+            )
+        }.filter { option -> orderBuilder?.contains(option.memberIndex) != true },
+        onSelect = { memberIndex ->
+            hapticsViewModel.doGentleVibration()
+            val superset = cadenceSuperset
+            val currentOrder = orderBuilder
+            if (superset == null) {
+                closeOrderPicker()
+                return@SupersetStartMemberPickerOverlay
+            }
+            if (currentOrder == null) {
+                // "Start with": rotate the stored order behind the chosen member.
+                viewModel.setSupersetStartMemberWear(superset.id, memberIndex)
+                closeOrderPicker()
+                viewModel.lightScreenUp()
+                return@SupersetStartMemberPickerOverlay
+            }
+            val next = currentOrder + memberIndex
+            if (next.size >= memberCount) {
+                viewModel.setSupersetRotationOrderWear(superset.id, next)
+                orderBuilder = null
+                viewModel.lightScreenUp()
+            } else {
+                orderBuilder = next
+            }
+        },
+        onDismiss = { closeOrderPicker() }
     )
 
     CustomDialogYesOnLongPress(

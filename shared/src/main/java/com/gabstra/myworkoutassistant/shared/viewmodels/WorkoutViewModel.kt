@@ -121,6 +121,7 @@ import com.gabstra.myworkoutassistant.shared.utils.estimateKcalPerMinute
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.SupersetCadenceMode
 import kotlin.coroutines.CoroutineContext
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -445,10 +446,16 @@ open class WorkoutViewModel(
     // the AMRAP round loop must not intercept those transitions.
     private var isAdvancingPastSuperset = false
 
+    // Session-only, position-inside-cycle member permutation for MEMBER-cadence
+    // supersets (empty = stored order), plus the slot the active block is on.
+    private val supersetRotationOrders = mutableMapOf<UUID, List<Int>>()
+    private var cadenceSlotCursor: Int = -1
+
     data class SupersetTimerInfo(
         val supersetId: UUID,
         val isCadence: Boolean,
-        val totalRounds: UInt?
+        val totalRounds: UInt?,
+        val cadenceMode: SupersetCadenceMode? = null
     )
 
     private val _activeSupersetTimer = MutableStateFlow<SupersetTimerInfo?>(null)
@@ -483,18 +490,18 @@ open class WorkoutViewModel(
         if (activeSupersetTimerId != null && activeSupersetTimerId != containerSupersetId) {
             workoutTimerService.unregisterTimer(activeSupersetTimerId!!)
             activeSupersetTimerId = null
+            cadenceSlotCursor = -1
             _activeSupersetTimer.value = null
         }
 
         if (containerSupersetId == null || containerSupersetId == activeSupersetTimerId) return
 
-        val superset = selectedWorkout.value.workoutComponents
-            .filterIsInstance<Superset>()
-            .firstOrNull { it.id == containerSupersetId } ?: return
+        val superset = getSupersetById(containerSupersetId) ?: return
 
         when {
             superset.timeCapSeconds != null && superset.timeCapSeconds > 0 -> {
                 activeSupersetTimerId = containerSupersetId
+                cadenceSlotCursor = -1
                 _activeSupersetTimer.value = SupersetTimerInfo(
                     supersetId = containerSupersetId,
                     isCadence = false,
@@ -513,8 +520,15 @@ open class WorkoutViewModel(
                     isCadence = true,
                     totalRounds = machine.getStatesForSuperset(containerSupersetId)
                         .mapNotNull { roundOfSupersetState(it) }
-                        .maxOrNull()
+                        .maxOrNull(),
+                    cadenceMode = superset.cadenceMode
                 )
+                // Resume-safe: the boundary after this one targets the next slot.
+                cadenceSlotCursor = machine.findSupersetSlotOfIndex(
+                    containerSupersetId,
+                    machine.currentIndex,
+                    rotationOrderOf(containerSupersetId)
+                ) ?: -1
                 workoutTimerService.registerSupersetCadenceTimer(
                     supersetId = containerSupersetId,
                     roundDurationSeconds = superset.roundDurationSeconds,
@@ -523,6 +537,71 @@ open class WorkoutViewModel(
             }
         }
     }
+
+    private fun getSupersetById(supersetId: UUID): Superset? =
+        selectedWorkout.value.workoutComponents
+            .filterIsInstance<Superset>()
+            .firstOrNull { it.id == supersetId }
+
+    private fun rotationOrderOf(supersetId: UUID): List<Int> =
+        supersetRotationOrders[supersetId] ?: emptyList()
+
+    /**
+     * Session-scoped start member for a rotating (MEMBER) cadence block: keeps the
+     * stored order of the remaining members behind [memberIndex]. Jumps the block to
+     * its first slot; ignored once the block has a logged set, so a mid-block switch
+     * cannot reorder work already done.
+     */
+    fun setSupersetStartMember(supersetId: UUID, memberIndex: Int) {
+        val superset = getSupersetById(supersetId) ?: return
+        if (superset.cadenceMode != SupersetCadenceMode.MEMBER) return
+        val memberCount = superset.exercises.size
+        if (memberCount == 0 || hasLoggedSetInSuperset(supersetId)) return
+        val start = ((memberIndex % memberCount) + memberCount) % memberCount
+        setSupersetRotationOrder(supersetId, listOf(start) + (0 until memberCount).filter { it != start })
+    }
+
+    /**
+     * Session-scoped member order for a rotating (MEMBER) cadence block.
+     * [order] must be a permutation of the member indexes; ignored once the block
+     * has a logged set.
+     */
+    fun setSupersetRotationOrder(supersetId: UUID, order: List<Int>) {
+        val machine = stateMachine ?: return
+        val superset = getSupersetById(supersetId) ?: return
+        if (superset.cadenceMode != SupersetCadenceMode.MEMBER) return
+        val memberCount = superset.exercises.size
+        val isPermutation = order.size == memberCount &&
+            order.all { it in 0 until memberCount } &&
+            order.toSet().size == memberCount
+        if (!isPermutation || hasLoggedSetInSuperset(supersetId)) return
+        val target = machine.findSupersetSetIndexForSlot(supersetId, 0, order) ?: return
+        supersetRotationOrders[supersetId] = order
+        cadenceSlotCursor = 0
+        workoutTimerService.unregisterAllExcept(setOf(supersetId))
+        stateMachine = machine.withCurrentIndex(target)
+        updateStateFlowsFromMachine()
+    }
+
+    fun getSupersetRotationOrder(supersetId: UUID): List<Int> = rotationOrderOf(supersetId)
+
+    /**
+     * Whether the athlete can still choose the rotation start: inside a MEMBER
+     * cadence block's first slot with nothing logged yet.
+     */
+    fun canChooseSupersetStartMember(): Boolean {
+        val machine = stateMachine ?: return false
+        val supersetId = machine.getCurrentSupersetContainer()?.supersetId ?: return false
+        val superset = getSupersetById(supersetId) ?: return false
+        if (superset.cadenceMode != SupersetCadenceMode.MEMBER) return false
+        if (hasLoggedSetInSuperset(supersetId)) return false
+        return machine.findSupersetSlotOfIndex(
+            supersetId, machine.currentIndex, rotationOrderOf(supersetId)
+        ) == 0
+    }
+
+    private fun hasLoggedSetInSuperset(supersetId: UUID): Boolean =
+        executedSetStore.executedSets.value.any { it.supersetId == supersetId }
 
     /**
      * The 1-based round of the current state inside its superset container, when one applies.
@@ -562,6 +641,10 @@ open class WorkoutViewModel(
      */
     open fun onSupersetRoundBoundary(supersetId: UUID) {
         val machine = stateMachine ?: return
+        if (getSupersetById(supersetId)?.cadenceMode == SupersetCadenceMode.MEMBER) {
+            onSupersetSlotBoundary(machine, supersetId)
+            return
+        }
         val currentRound = roundOfSupersetState(machine.currentState) ?: return
         val nextRoundIndex = machine.findSupersetRoundStartIndex(supersetId, currentRound + 1u)
         if (nextRoundIndex == null) {
@@ -572,6 +655,32 @@ open class WorkoutViewModel(
             // A forced round change invalidates any live per-set timers of skipped states.
             workoutTimerService.unregisterAllExcept(setOf(supersetId))
             stateMachine = machine.withCurrentIndex(nextRoundIndex)
+            updateStateFlowsFromMachine()
+        }
+    }
+
+    /**
+     * Rotating EMOM boundary: advance exactly one member slot (A@1', B@2', C@3').
+     * Never moves backwards, so an athlete who already advanced keeps their place.
+     */
+    private fun onSupersetSlotBoundary(machine: WorkoutStateMachine, supersetId: UUID) {
+        val order = rotationOrderOf(supersetId)
+        val cursor = cadenceSlotCursor.takeIf { it >= 0 }
+            ?: machine.findSupersetSlotOfIndex(supersetId, machine.currentIndex, order)
+            ?: return
+        val nextSlot = cursor + 1
+        val target = machine.findSupersetSetIndexForSlot(supersetId, nextSlot, order)
+        cadenceSlotCursor = if (target == null) -1 else nextSlot
+        if (target == null) {
+            advancePastSuperset(supersetId)
+            return
+        }
+        // Slot comparison, not flat index: a shuffled order makes the rotation wrap
+        // backwards. Already at/past the target slot means the athlete moved on.
+        val currentSlot = machine.findSupersetSlotOfIndex(supersetId, machine.currentIndex, order) ?: -1
+        if (currentSlot < nextSlot) {
+            workoutTimerService.unregisterAllExcept(setOf(supersetId))
+            stateMachine = machine.withCurrentIndex(target)
             updateStateFlowsFromMachine()
         }
     }
@@ -2274,16 +2383,22 @@ open class WorkoutViewModel(
         return machine.sequenceSnapshot() to machine.currentIndex
     }
 
+    protected fun cadenceRotationOrdersSnapshot(): Map<UUID, List<Int>> = supersetRotationOrders.toMap()
+
     protected fun restoreRecoveryStateMachine(
         sequence: List<WorkoutStateSequenceItem>,
         currentIndex: Int,
-        activateSession: Boolean = true
+        activateSession: Boolean = true,
+        rotationOrders: Map<UUID, List<Int>> = emptyMap()
     ): Boolean {
         if (sequence.isEmpty()) return false
         val machine = runCatching {
             WorkoutStateMachine.fromSequence(sequence, { LocalDateTime.now() }, currentIndex)
         }.getOrNull() ?: return false
 
+        supersetRotationOrders.clear()
+        supersetRotationOrders.putAll(rotationOrders)
+        cadenceSlotCursor = -1
         populateNextStateForRest(machine)
         stateMachine = machine
         populateNextStateSets()
@@ -2293,6 +2408,8 @@ open class WorkoutViewModel(
 
     private suspend fun resetWorkoutRuntimeState() {
         stateMachine = null
+        supersetRotationOrders.clear()
+        cadenceSlotCursor = -1
         setStates.clear()
         weightsByEquipment.clear()
         executedSetStore.clear()
@@ -2306,6 +2423,8 @@ open class WorkoutViewModel(
 
     private suspend fun prepareWorkoutForStart(foundWorkout: Workout) {
         _selectedWorkout.value = foundWorkout
+        supersetRotationOrders.clear()
+        cadenceSlotCursor = -1
         rebuildScreenState()
         hydrateSelectedWorkoutTemplateForSession()
 
@@ -3319,6 +3438,40 @@ open class WorkoutViewModel(
         return machine.currentIndex >= machine.allStates.lastIndex
     }
 
+    /**
+     * Rotating EMOM: after a member finishes early, park on a rest that fills the
+     * remaining slot time. The cadence boundary owns the advance to the next member.
+     */
+    private fun insertCadenceHoldRest(machine: WorkoutStateMachine): Boolean {
+        val current = machine.currentState as? WorkoutState.Set ?: return false
+        if (current.isWarmupSet || current.isCalibrationSet) return false
+        val supersetId = machine.getCurrentSupersetContainer()?.supersetId ?: return false
+        if (getSupersetById(supersetId)?.cadenceMode != SupersetCadenceMode.MEMBER) return false
+        val order = rotationOrderOf(supersetId)
+        val remainingMs = workoutTimerService.timerUiStates.value[supersetId]?.displayMillis ?: return false
+        val holdSeconds = machine.cadenceHoldSeconds(supersetId, machine.currentIndex, order, remainingMs.toLong())
+            ?: return false
+        val position = machine.getContainerAndChildIndex(machine.currentIndex) as? ContainerPosition.Superset
+            ?: return false
+
+        val restSet = RestSet(UUID.randomUUID(), holdSeconds)
+        val holdState = WorkoutState.Rest(
+            set = restSet,
+            order = current.supersetRound ?: 1u,
+            currentSetDataState = mutableStateOf(initializeSetData(restSet)),
+            exerciseId = current.exerciseId,
+            isCadenceHold = true
+        )
+        val updated = machine.updateSupersetChildStates(position) { children ->
+            children.add(position.childIndex + 1, holdState)
+            children
+        }
+        populateNextStateForRest(updated)
+        stateMachine = updated.withCurrentIndex(machine.currentIndex + 1)
+        updateStateFlowsFromMachine()
+        return true
+    }
+
     open fun goToNextState() {
         val machine = stateMachine ?: return
         if (_workoutState.value is WorkoutState.Preparing) {
@@ -3334,6 +3487,10 @@ open class WorkoutViewModel(
             restartAmrapRound(machine, amrapLoop.first, amrapLoop.second)
             return
         }
+
+        // Rotating EMOM: hold a rest sized to the remaining slot instead of showing
+        // the next member before its slot starts.
+        if (!isAdvancingPastSuperset && insertCadenceHoldRest(machine)) return
 
         if (machine.currentIndex >= machine.allStates.lastIndex) {
             val workoutStart = startWorkoutTime ?: LocalDateTime.now().also { startWorkoutTime = it }

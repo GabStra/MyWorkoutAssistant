@@ -755,6 +755,8 @@ fun WorkoutScreen(
                                     onBeforeGoHome = onBeforeGoHome,
                                     onTimerEnd = {
                                         try {
+                                            // Rotating EMOM hold rest: the cadence boundary advances.
+                                            if (workoutState.isCadenceHold) return@RestScreen
                                             if (!MyApplication.isAppInForeground()) {
                                                 showTimerCompletedNotification(
                                                     context = context,

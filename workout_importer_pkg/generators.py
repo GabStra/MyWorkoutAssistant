@@ -56,9 +56,12 @@ This is a coach-authored workout. Hard constraints:
   Its members carry EXACTLY ONE work set each — they define the round, which the
   watch repeats until the cap expires. Do not estimate rounds by duplicating sets.
 - MANDATORY EMOM cadence: "Every N minutes x T minutes" MUST become one superset
-  with roundDurationSeconds=N and T/N work sets per member (e.g. "Every 2' x 10'"
-  -> roundDurationSeconds=120 and 5 work sets per member). Never combine
-  roundDurationSeconds with timeCapSeconds on the same superset.
+  with cadenceMode=MEMBER and roundDurationSeconds=N (seconds): one member per
+  slot, rotating (A@min1, B@min2, C@min3). Across M members each member carries
+  T/(N*M) work sets (e.g. "Every 1' x 9'" over three movements ->
+  roundDurationSeconds=60 and 3 work sets per member). Use cadenceMode=ROUND only
+  when every member works inside the same slot. Never combine roundDurationSeconds
+  with timeCapSeconds on the same superset.
 - MANDATORY cardio quantities: when the text states a distance or calories for a
   row/bike/ski/run movement ("max mt row (target 1100/1000)", "24/20 cal", "800 mt
   run", "500m row"), that movement's sets MUST carry targetDistanceMeters (in
@@ -340,8 +343,10 @@ The plan was built under these mandatory encoding rules:
 1. Every AMRAP, rounds-for-time, or block bounded by a stated time window must be a
    superset whose timeCapSeconds equals that window in seconds.
 2. "Every N minutes x T minutes" (EMOM) blocks must be one superset with
-   roundDurationSeconds = N, and each member must carry T/N work sets (e.g.
-   "Every 2' x 10'" -> roundDurationSeconds 120 and 5 work sets per member).
+   cadenceMode=MEMBER and roundDurationSeconds = N, and each member must carry
+   T/(N*M) work sets across M members (e.g. "Every 1' x 9'" over A,B,C ->
+   cadenceMode MEMBER, roundDurationSeconds 60, 3 work sets per member). ROUND
+   cadence is only for slots where every member works.
 3. Distances (meters) or calories stated for a ROWING, BIKING, SKIING or RUNNING
    movement only, must appear as targetDistanceMeters or targetCalories on that
    movement's timed set. Rep counts on strength or gymnastics movements are NOT
@@ -393,6 +398,7 @@ def review_crossfit_mode_compliance(client, workout_text: str, package: dict, ca
                     "type": "Superset",
                     "timeCapSeconds": component.get("timeCapSeconds"),
                     "roundDurationSeconds": component.get("roundDurationSeconds"),
+                    "cadenceMode": component.get("cadenceMode"),
                     "amrap": component.get("amrap"),
                     "exercises": [
                         {

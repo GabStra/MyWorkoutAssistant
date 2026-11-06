@@ -518,6 +518,81 @@ data class WorkoutStateMachine(
     }
 
     /**
+     * Flattened indexes of a superset's work sets in assembly (rotation) order,
+     * plus the member count of one cycle. Cycles are derived from the exercise
+     * order rather than [WorkoutState.Set.supersetRound], which recovery may drop.
+     */
+    private fun supersetRotationLayout(supersetId: UUID): Pair<List<Int>, Int>? {
+        val range = getSupersetFlatRange(supersetId) ?: return null
+        val setIndexes = (range.first until range.second).filter { index ->
+            val state = allStates[index] as? WorkoutState.Set ?: return@filter false
+            !state.isWarmupSet && !state.isCalibrationSet
+        }
+        if (setIndexes.isEmpty()) return null
+        val firstExerciseId = (allStates[setIndexes.first()] as WorkoutState.Set).exerciseId
+        val cycleEnd = setIndexes.drop(1).indexOfFirst { index ->
+            (allStates[index] as WorkoutState.Set).exerciseId == firstExerciseId
+        }
+        val memberCount = if (cycleEnd < 0) setIndexes.size else cycleEnd + 1
+        return Pair(setIndexes, memberCount)
+    }
+
+    /**
+     * Flattened index of the set occupying [slot] in a rotating cadence (MEMBER
+     * mode). [rotationOrder] maps the position inside one cycle to the member
+     * index (a permutation of 0 until member count); empty means stored order.
+     * Null when the block has no such slot.
+     */
+    fun findSupersetSetIndexForSlot(
+        supersetId: UUID,
+        slot: Int,
+        rotationOrder: List<Int> = emptyList()
+    ): Int? {
+        if (slot < 0) return null
+        val (setIndexes, memberCount) = supersetRotationLayout(supersetId) ?: return null
+        val cycle = slot / memberCount
+        val memberPosition = rotationOrder.getOrElse(slot % memberCount) { slot % memberCount }
+        return setIndexes.getOrNull(cycle * memberCount + memberPosition % memberCount)
+    }
+
+    /**
+     * Slot a state occupies inside a rotating cadence, or the slot of the last set
+     * before it when [index] is a rest, or null when [index] precedes the block.
+     * [rotationOrder] is the per-cycle member permutation (empty = stored order).
+     */
+    fun findSupersetSlotOfIndex(
+        supersetId: UUID,
+        index: Int,
+        rotationOrder: List<Int> = emptyList()
+    ): Int? {
+        val (setIndexes, memberCount) = supersetRotationLayout(supersetId) ?: return null
+        val setPosition = setIndexes.indexOfLast { it <= index }
+        if (setPosition < 0) return null
+        val cycle = setPosition / memberCount
+        val memberPosition = setPosition % memberCount
+        val slotInCycle = rotationOrder.indexOf(memberPosition).takeIf { it >= 0 }
+            ?: memberPosition
+        return cycle * memberCount + slotInCycle
+    }
+
+    /**
+     * Rest length in seconds that keeps a rotating-EMOM member parked until the
+     * next slot starts, or null when no hold applies (last slot, or the slot is
+     * already over).
+     */
+    fun cadenceHoldSeconds(
+        supersetId: UUID,
+        index: Int,
+        rotationOrder: List<Int>,
+        remainingSlotMs: Long
+    ): Int? {
+        if (remainingSlotMs <= 1000) return null
+        val slot = findSupersetSlotOfIndex(supersetId, index, rotationOrder) ?: return null
+        if (findSupersetSetIndexForSlot(supersetId, slot + 1, rotationOrder) == null) return null
+        return ((remainingSlotMs + 999) / 1000).toInt()
+    }
+
+    /**
      * Get all states for a specific exercise from its container (flattened order).
      */
     fun getStatesForExercise(exerciseId: UUID): List<WorkoutState> {

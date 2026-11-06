@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.SupersetCadenceMode
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
 import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
@@ -137,6 +138,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.add("restSecondsByExercise", context.serialize(src.restSecondsByExercise))
                 src.timeCapSeconds?.let { jsonObject.addProperty("timeCapSeconds", it) }
                 src.roundDurationSeconds?.let { jsonObject.addProperty("roundDurationSeconds", it) }
+                src.cadenceMode?.let { jsonObject.addProperty("cadenceMode", it.name) }
                 if (src.amrap) {
                     jsonObject.addProperty("amrap", true)
                 }
@@ -453,8 +455,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 val timeCapSeconds = jsonObject.get("timeCapSeconds")?.takeUnless { it.isJsonNull }?.asInt
                 val roundDurationSeconds = jsonObject.get("roundDurationSeconds")?.takeUnless { it.isJsonNull }?.asInt
                 val amrap = jsonObject.get("amrap")?.takeUnless { it.isJsonNull }?.asBoolean ?: false
+                val cadenceMode = jsonObject.get("cadenceMode")
+                    ?.takeUnless { it.isJsonNull }
+                    ?.asString
+                    ?.let { raw -> SupersetCadenceMode.entries.firstOrNull { it.name == raw } }
 
-                Superset(id, enabled, exercises, restSecondsByExercise, timeCapSeconds, roundDurationSeconds, amrap)
+                Superset(id, enabled, exercises, restSecondsByExercise, timeCapSeconds, roundDurationSeconds, amrap, cadenceMode)
             }
 
             else -> throw RuntimeException("Unsupported workout component type")

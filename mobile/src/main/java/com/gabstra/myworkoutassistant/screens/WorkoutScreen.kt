@@ -582,17 +582,20 @@ fun WorkoutScreen(
                             state,
                             { },
                             onTimerEnd = {
-                                if (!isAppInForeground()) {
-                                    showTimerCompletedNotification(
-                                        context = context,
-                                        title = "Rest finished",
-                                        message = "Time for your next set",
-                                    )
-                                }
-                                workoutViewModel.storeSetData()
-                                workoutViewModel.pushAndStoreWorkoutData(false, context) {
-                                    workoutViewModel.goToNextState()
-                                    workoutViewModel.lightScreenUp()
+                                // Rotating EMOM hold rest: the cadence boundary advances.
+                                if (!state.isCadenceHold) {
+                                    if (!isAppInForeground()) {
+                                        showTimerCompletedNotification(
+                                            context = context,
+                                            title = "Rest finished",
+                                            message = "Time for your next set",
+                                        )
+                                    }
+                                    workoutViewModel.storeSetData()
+                                    workoutViewModel.pushAndStoreWorkoutData(false, context) {
+                                        workoutViewModel.goToNextState()
+                                        workoutViewModel.lightScreenUp()
+                                    }
                                 }
                             },
                             onLeaveWorkout = {

@@ -181,7 +181,10 @@ sealed class WorkoutState {
         val exerciseId: UUID? = null,
         var nextState: WorkoutState? = null,
         var startTime : LocalDateTime? = null,
-        val isIntraSetRest : Boolean = false
+        val isIntraSetRest : Boolean = false,
+        // Rotating EMOM: rest that fills the remaining slot after an early finish.
+        // The cadence boundary advances past it, so the rest screen must not.
+        val isCadenceHold : Boolean = false
     ) : WorkoutState() {
         var currentSetData by currentSetDataState   // <- Compose-observed
     }

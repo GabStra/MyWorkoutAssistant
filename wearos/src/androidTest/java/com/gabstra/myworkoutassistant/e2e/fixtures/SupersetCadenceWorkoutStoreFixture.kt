@@ -9,6 +9,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.SupersetCadenceMode
 import java.time.LocalDate
 import java.util.UUID
 
@@ -20,14 +21,57 @@ import java.util.UUID
  */
 object SupersetCadenceWorkoutStoreFixture {
     private const val WORKOUT_NAME = "Superset Cadence Workout"
+    private const val ROTATING_WORKOUT_NAME = "Rotating EMOM Workout"
 
     fun setupWorkoutStore(context: Context) {
         val equipment = TestBarbellFactory.createTestBarbell()
-        val exercises = listOf("Cadence Member One", "Cadence Member Two").map { name ->
+        val workouts = listOf(
+            buildWorkout(
+                name = WORKOUT_NAME,
+                description = "Superset round cadence e2e",
+                equipmentId = equipment.id,
+                roundDurationSeconds = 5,
+                cadenceMode = SupersetCadenceMode.ROUND,
+                order = 0
+            ),
+            buildWorkout(
+                name = ROTATING_WORKOUT_NAME,
+                description = "Rotating EMOM e2e: one member per slot",
+                equipmentId = equipment.id,
+                roundDurationSeconds = 5,
+                cadenceMode = SupersetCadenceMode.MEMBER,
+                order = 1
+            )
+        )
+
+        val workoutStore = WorkoutStore(
+            workouts = workouts,
+            equipments = listOf(equipment),
+            birthDateYear = 1990,
+            weightKg = 75.0,
+            progressionPercentageAmount = 0.0
+        )
+
+        TestWorkoutStoreSeeder.seedWorkoutStore(context, workoutStore)
+    }
+
+    fun getWorkoutName(): String = WORKOUT_NAME
+
+    fun getRotatingWorkoutName(): String = ROTATING_WORKOUT_NAME
+
+    private fun buildWorkout(
+        name: String,
+        description: String,
+        equipmentId: UUID,
+        roundDurationSeconds: Int,
+        cadenceMode: SupersetCadenceMode,
+        order: Int
+    ): Workout {
+        val exercises = listOf("Cadence Member One", "Cadence Member Two").map { exerciseName ->
             Exercise(
                 id = UUID.randomUUID(),
                 enabled = true,
-                name = name,
+                name = exerciseName,
                 notes = "",
                 sets = listOf(
                     WeightSet(UUID.randomUUID(), 8, 40.0),
@@ -39,7 +83,7 @@ object SupersetCadenceWorkoutStoreFixture {
                 maxReps = 12,
                 lowerBoundMaxHRPercent = null,
                 upperBoundMaxHRPercent = null,
-                equipmentId = equipment.id,
+                equipmentId = equipmentId,
                 bodyWeightPercentage = null,
                 generateWarmUpSets = false,
                 progressionMode = ProgressionMode.OFF,
@@ -57,15 +101,16 @@ object SupersetCadenceWorkoutStoreFixture {
             enabled = true,
             exercises = exercises,
             restSecondsByExercise = exercises.associate { it.id to 0 },
-            roundDurationSeconds = 5
+            roundDurationSeconds = roundDurationSeconds,
+            cadenceMode = cadenceMode
         )
 
-        val workout = Workout(
+        return Workout(
             id = UUID.randomUUID(),
-            name = WORKOUT_NAME,
-            description = "Superset round cadence e2e",
+            name = name,
+            description = description,
             workoutComponents = listOf(superset),
-            order = 0,
+            order = order,
             enabled = true,
             heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
             creationDate = LocalDate.now(),
@@ -76,17 +121,5 @@ object SupersetCadenceWorkoutStoreFixture {
             globalId = UUID.randomUUID(),
             type = 0
         )
-
-        val workoutStore = WorkoutStore(
-            workouts = listOf(workout),
-            equipments = listOf(equipment),
-            birthDateYear = 1990,
-            weightKg = 75.0,
-            progressionPercentageAmount = 0.0
-        )
-
-        TestWorkoutStoreSeeder.seedWorkoutStore(context, workoutStore)
     }
-
-    fun getWorkoutName(): String = WORKOUT_NAME
 }

@@ -1116,7 +1116,8 @@ open class AppViewModel : WorkoutViewModel() {
                 workoutId = selectedWorkoutId,
                 workoutHistoryId = currentWorkoutHistory?.id,
                 currentIndex = currentIndex,
-                sequenceItems = sequence
+                sequenceItems = sequence,
+                rotationOrders = cadenceRotationOrdersSnapshot()
             )
             currentIndex to runtimeSnapshotJson
         }
@@ -1449,6 +1450,20 @@ open class AppViewModel : WorkoutViewModel() {
         reEvaluateDimmingForCurrentState()
     }
 
+    /** Wear entrypoint: choose the rotation start of a MEMBER-cadence EMOM block. */
+    fun setSupersetStartMemberWear(supersetId: UUID, memberIndex: Int) {
+        stopActiveTimerForCurrentState()
+        setSupersetStartMember(supersetId, memberIndex)
+        reEvaluateDimmingForCurrentState()
+    }
+
+    /** Wear entrypoint: set the full member order of a MEMBER-cadence EMOM block. */
+    fun setSupersetRotationOrderWear(supersetId: UUID, order: List<Int>) {
+        stopActiveTimerForCurrentState()
+        setSupersetRotationOrder(supersetId, order)
+        reEvaluateDimmingForCurrentState()
+    }
+
     /**
      * Wear-specific navigation entrypoint that ensures active timer services are not left running
      * when navigating backward across non-rest states.
@@ -1567,6 +1582,7 @@ open class AppViewModel : WorkoutViewModel() {
                 sequence = runtimeSnapshot.sequenceItems,
                 currentIndex = runtimeSnapshot.currentIndex,
                 activateSession = false,
+                rotationOrders = runtimeSnapshot.rotationOrders,
             )
         }
 

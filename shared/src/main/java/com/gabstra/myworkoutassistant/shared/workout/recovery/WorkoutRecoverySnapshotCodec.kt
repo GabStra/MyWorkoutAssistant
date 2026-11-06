@@ -29,7 +29,8 @@ internal data class WorkoutRecoveryRuntimeSnapshot(
     val workoutHistoryId: UUID?,
     val currentIndex: Int,
     val sequenceItems: List<SequenceItemDto>,
-    val updatedAtEpochMs: Long
+    val updatedAtEpochMs: Long,
+    val rotationOrders: Map<String, List<Int>>? = null
 )
 
 /**
@@ -41,7 +42,8 @@ data class DecodedRecoveryRuntimeSnapshot(
     val workoutId: UUID,
     val workoutHistoryId: UUID?,
     val currentIndex: Int,
-    val sequenceItems: List<WorkoutStateSequenceItem>
+    val sequenceItems: List<WorkoutStateSequenceItem>,
+    val rotationOrders: Map<UUID, List<Int>> = emptyMap()
 )
 
 internal data class SequenceItemDto(
@@ -92,6 +94,7 @@ internal data class StateDto(
     val equipmentId: String? = null,
     val loadedPlateConfigurationOverride: List<Double>? = null,
     val isIntraSetRest: Boolean? = null,
+    val isCadenceHold: Boolean? = null,
     val isLoadConfirmed: Boolean? = null
 )
 
@@ -116,14 +119,16 @@ object WorkoutRecoverySnapshotCodec {
         workoutId: UUID,
         workoutHistoryId: UUID?,
         currentIndex: Int,
-        sequenceItems: List<WorkoutStateSequenceItem>
+        sequenceItems: List<WorkoutStateSequenceItem>,
+        rotationOrders: Map<UUID, List<Int>> = emptyMap()
     ): String {
         val snapshot = WorkoutRecoveryRuntimeSnapshot(
             workoutId = workoutId,
             workoutHistoryId = workoutHistoryId,
             currentIndex = currentIndex,
             sequenceItems = sequenceItems.map { it.toDto() },
-            updatedAtEpochMs = System.currentTimeMillis()
+            updatedAtEpochMs = System.currentTimeMillis(),
+            rotationOrders = rotationOrders.entries.associate { (id, order) -> id.toString() to order }
         )
         return gson.toJson(snapshot)
     }
@@ -158,7 +163,10 @@ object WorkoutRecoverySnapshotCodec {
             workoutId = snapshot.workoutId,
             workoutHistoryId = snapshot.workoutHistoryId,
             currentIndex = boundedIndex,
-            sequenceItems = decodedSequence
+            sequenceItems = decodedSequence,
+            rotationOrders = snapshot.rotationOrders.orEmpty()
+                .mapNotNull { (id, order) -> id.toUuidOrNull()?.let { it to order } }
+                .toMap()
         )
     }
 
@@ -266,7 +274,8 @@ object WorkoutRecoverySnapshotCodec {
             order = order.toInt(),
             currentSetDataJson = setDataConverter.fromSetData(copySetData(currentSetData)),
             startTimeEpochMs = startTime?.toEpochMillis(),
-            isIntraSetRest = isIntraSetRest
+            isIntraSetRest = isIntraSetRest,
+            isCadenceHold = isCadenceHold
         )
         is WorkoutState.Preparing -> error("Preparing should not be serialized in runtime snapshot")
         is WorkoutState.Completed -> error("Completed should not be serialized in runtime snapshot")
@@ -404,7 +413,8 @@ object WorkoutRecoverySnapshotCodec {
                     currentSetDataState = mutableStateOf(copySetData(currentData)),
                     exerciseId = exerciseId?.toUuidOrNull(),
                     startTime = startTimeEpochMs?.toLocalDateTime(),
-                    isIntraSetRest = isIntraSetRest ?: false
+                    isIntraSetRest = isIntraSetRest ?: false,
+                    isCadenceHold = isCadenceHold ?: false
                 )
             }
             else -> null

@@ -66,6 +66,7 @@ private fun isWorkSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Bool
     is WeightSet -> set.subCategory == SetSubCategory.WorkSet
     is BodyWeightSet -> set.subCategory == SetSubCategory.WorkSet
     is EnduranceSet, is TimedDurationSet, is com.gabstra.myworkoutassistant.shared.sets.RunningSet -> true
+    is com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet -> true
 }
 
 internal fun canCompareProgressionSetData(before: SetData?, after: SetData?): Boolean = when {

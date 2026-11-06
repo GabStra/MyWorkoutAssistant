@@ -449,7 +449,8 @@ fun SupersetForm(
                             enabled = superset?.enabled ?: true,
                             timeCapSeconds = superset?.timeCapSeconds,
                             roundDurationSeconds = superset?.roundDurationSeconds,
-                            amrap = superset?.amrap ?: false
+                            amrap = superset?.amrap ?: false,
+                            cadenceMode = superset?.cadenceMode
                         )
                         onSupersetUpsert(newOrUpdatedSuperset)
                     },

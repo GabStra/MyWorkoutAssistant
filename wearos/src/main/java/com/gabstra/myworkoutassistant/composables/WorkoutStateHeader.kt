@@ -30,6 +30,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.SupersetCadenceMode
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -197,8 +198,10 @@ fun WorkoutStateHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (activeSupersetTimer?.isCadence == true) {
+                    val cadenceLabel =
+                        if (activeSupersetTimer?.cadenceMode == SupersetCadenceMode.MEMBER) "EMOM" else "ROUND"
                     Text(
-                        text = "ROUND",
+                        text = cadenceLabel,
                         color = MaterialTheme.colorScheme.onBackground,
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
                     )
