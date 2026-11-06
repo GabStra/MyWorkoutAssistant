@@ -267,64 +267,36 @@ fun WeightSetScreen(
         viewModel.schedulePlateRecalculation(newSetData.actualWeight)
     }
 
-    fun onMinusClick() {
-        if (shouldLockCalibrationEdits) return
-        updateInteractionTime()
-        if (isRepsInEditMode && (currentSetData.actualReps > 1)) {
-            val newRep = currentSetData.actualReps - 1
-
-            val newSetData = currentSetData.copy(
-                actualReps = newRep
-            )
-
-            currentSetData = currentSetData.copy(
-                actualReps = newSetData.actualReps,
-                volume = newSetData.calculateVolume()
-            )
-
-            hapticsViewModel.doGentleVibration()
-        }
-        if (isWeightInEditMode) {
-            selectedWeightIndex?.let {
-                if (it > 0) {
-                    selectedWeightIndex = it - 1
-                    updateWeight(availableWeights.elementAt(selectedWeightIndex!!))
-                }
-            }
-
-            hapticsViewModel.doGentleVibration()
-        }
-
-    }
-
-    fun onPlusClick() {
+    fun changeBy(delta: Int) {
         if (shouldLockCalibrationEdits) return
         updateInteractionTime()
         if (isRepsInEditMode) {
-            val newRep = currentSetData.actualReps + 1
-
-            val newSetData = currentSetData.copy(
-                actualReps = newRep
-            )
-
-            currentSetData = currentSetData.copy(
-                actualReps = newSetData.actualReps,
-                volume = newSetData.calculateVolume()
-            )
-
-            hapticsViewModel.doGentleVibration()
-        }
-        if (isWeightInEditMode) {
-            selectedWeightIndex?.let {
-                if (it < availableWeights.size - 1) {
-                    selectedWeightIndex = it + 1
-                    updateWeight(availableWeights.elementAt(selectedWeightIndex!!))
-                }
+            val newRep = (currentSetData.actualReps + delta).coerceAtLeast(1)
+            if (newRep != currentSetData.actualReps) {
+                val newSetData = currentSetData.copy(actualReps = newRep)
+                currentSetData = currentSetData.copy(
+                    actualReps = newSetData.actualReps,
+                    volume = newSetData.calculateVolume()
+                )
+                hapticsViewModel.doGentleVibration()
             }
-
-            hapticsViewModel.doGentleVibration()
+        } else if (isWeightInEditMode) {
+            val index = selectedWeightIndex ?: return
+            val target = (index + delta).coerceIn(0, availableWeights.size - 1)
+            if (target != index) {
+                selectedWeightIndex = target
+                updateWeight(availableWeights.elementAt(target))
+                hapticsViewModel.doGentleVibration()
+            }
         }
     }
+
+    fun onMinusClick() = changeBy(-1)
+
+    fun onPlusClick() = changeBy(1)
+
+    // Sustained holds jump further: 5 reps, or 4 plate combinations (~10 kg on a barbell).
+    val coarseStep = if (isWeightInEditMode) 4 else 5
 
     @Composable
     fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
@@ -584,9 +556,17 @@ fun WeightSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    onMinusCoarse = { changeBy(-coarseStep) },
+                    onPlusCoarse = { changeBy(coarseStep) },
                     isMinusEnabled = canDecrease,
                     isPlusEnabled = canIncrease,
-                    isResetEnabled = currentSetData != initialSetData,
+                    // Only the field the active edit mode owns counts as "changed".
+                    isResetEnabled =
+                        if (isWeightInEditMode) {
+                            currentSetData.actualWeight != initialSetData.actualWeight
+                        } else {
+                            currentSetData.actualReps != initialSetData.actualReps
+                        },
                     onCloseClick = {
                         isRepsInEditMode = false
                         isWeightInEditMode = false

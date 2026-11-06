@@ -257,87 +257,44 @@ fun BodyWeightSetScreen(
         }
     }
 
-    fun onMinusClick(){
+    fun changeBy(delta: Int) {
         if (shouldLockCalibrationEdits) return
         updateInteractionTime()
-        if (isRepsInEditMode && currentSetData.actualReps>1){
-            val newRep = currentSetData.actualReps - 1
-
-            val newSetData = currentSetData.copy(
-                actualReps = newRep
-            )
-
-            currentSetData = currentSetData.copy(
-                actualReps = newSetData.actualReps,
-                volume = newSetData.calculateVolume()
-            )
-
-            hapticsViewModel.doGentleVibration()
-        }
-        if (isWeightInEditMode ){
-            selectedWeightIndex?.let {
-                if (it > 0) {
-                    selectedWeightIndex = it - 1
-
-                    val newSetData = currentSetData.copy(
-                        additionalWeight = availableWeights.elementAt(selectedWeightIndex!!)
-                    )
-
-                    currentSetData = currentSetData.copy(
-                        additionalWeight = newSetData.additionalWeight,
-                        volume = newSetData.calculateVolume()
-                    )
-                    
-                    // Schedule debounced plate recalculation
-                    // For BodyWeightSet, total weight = relativeBodyWeight + additionalWeight
-                    viewModel.schedulePlateRecalculation(newSetData.getWeight())
-                }
+        if (isRepsInEditMode) {
+            val newRep = (currentSetData.actualReps + delta).coerceAtLeast(1)
+            if (newRep != currentSetData.actualReps) {
+                val newSetData = currentSetData.copy(actualReps = newRep)
+                currentSetData = currentSetData.copy(
+                    actualReps = newSetData.actualReps,
+                    volume = newSetData.calculateVolume()
+                )
+                hapticsViewModel.doGentleVibration()
             }
-
-            hapticsViewModel.doGentleVibration()
+        } else if (isWeightInEditMode) {
+            val index = selectedWeightIndex ?: return
+            val target = (index + delta).coerceIn(0, availableWeights.size - 1)
+            if (target != index) {
+                selectedWeightIndex = target
+                val newSetData = currentSetData.copy(
+                    additionalWeight = availableWeights.elementAt(target)
+                )
+                currentSetData = currentSetData.copy(
+                    additionalWeight = newSetData.additionalWeight,
+                    volume = newSetData.calculateVolume()
+                )
+                // For BodyWeightSet, total weight = relativeBodyWeight + additionalWeight
+                viewModel.schedulePlateRecalculation(newSetData.getWeight())
+                hapticsViewModel.doGentleVibration()
+            }
         }
     }
 
-    fun onPlusClick(){
-        if (shouldLockCalibrationEdits) return
-        updateInteractionTime()
-        if (isRepsInEditMode){
-            val newRep = currentSetData.actualReps + 1
+    fun onMinusClick() = changeBy(-1)
 
-            val newSetData = currentSetData.copy(
-                actualReps = newRep
-            )
+    fun onPlusClick() = changeBy(1)
 
-            currentSetData = currentSetData.copy(
-                actualReps = newSetData.actualReps,
-                volume = newSetData.calculateVolume()
-            )
-
-            hapticsViewModel.doGentleVibration()
-        }
-        if (isWeightInEditMode){
-            selectedWeightIndex?.let {
-                if (it < availableWeights.size - 1) {
-                    selectedWeightIndex = it + 1
-
-                    val newSetData = currentSetData.copy(
-                        additionalWeight = availableWeights.elementAt(selectedWeightIndex!!)
-                    )
-
-                    currentSetData = currentSetData.copy(
-                        additionalWeight = newSetData.additionalWeight,
-                        volume = newSetData.calculateVolume()
-                    )
-                    
-                    // Schedule debounced plate recalculation
-                    // For BodyWeightSet, total weight = relativeBodyWeight + additionalWeight
-                    viewModel.schedulePlateRecalculation(newSetData.getWeight())
-                }
-            }
-
-            hapticsViewModel.doGentleVibration()
-        }
-    }
+    // Sustained holds jump further: 5 reps, or 4 weight combinations.
+    val coarseStep = if (isWeightInEditMode) 4 else 5
 
     @Composable
     fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
@@ -608,11 +565,19 @@ fun BodyWeightSetScreen(
                         },
                     onMinusTap = { onMinusClick() },
                     onMinusLongPress = { onMinusClick() },
+                    onMinusCoarse = { changeBy(-coarseStep) },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    onPlusCoarse = { changeBy(coarseStep) },
                     isMinusEnabled = canDecrease,
                     isPlusEnabled = canIncrease,
-                    isResetEnabled = currentSetData != initialSetData,
+                    // Only the field the active edit mode owns counts as "changed".
+                    isResetEnabled =
+                        if (isWeightInEditMode) {
+                            currentSetData.additionalWeight != initialSetData.additionalWeight
+                        } else {
+                            currentSetData.actualReps != initialSetData.actualReps
+                        },
                     onCloseClick = {
                         isRepsInEditMode = false
                         isWeightInEditMode = false

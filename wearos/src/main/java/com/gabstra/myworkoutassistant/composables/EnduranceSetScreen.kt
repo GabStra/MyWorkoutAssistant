@@ -307,19 +307,20 @@ fun EnduranceSetScreen (
         }
     }
 
-    fun onMinusClick(){
-        if (currentSet.startTimer > 5000){
-            currentSet = currentSet.copy(startTimer = currentSet.startTimer - 5000)
-            hapticsViewModel.doGentleVibration()
+    fun changeTimerBy(deltaMillis: Int) {
+        val newTimerValue = (currentSet.startTimer + deltaMillis).coerceAtLeast(5000)
+        if (newTimerValue == currentSet.startTimer) {
+            updateInteractionTime()
+            return
         }
-        updateInteractionTime()
-    }
-
-    fun onPlusClick(){
-        currentSet = currentSet.copy(startTimer = currentSet.startTimer + 5000)
+        currentSet = currentSet.copy(startTimer = newTimerValue)
         hapticsViewModel.doGentleVibration()
         updateInteractionTime()
     }
+
+    fun onMinusClick() = changeTimerBy(-5000)
+
+    fun onPlusClick() = changeTimerBy(5000)
 
     fun resolveEnduranceDisplayMillis(): Int {
         val targetMillis = currentSet.startTimer.coerceAtLeast(0)
@@ -634,8 +635,10 @@ fun EnduranceSetScreen (
                     modifier = Modifier.fillMaxSize(),
                     onMinusTap = { changeWeight(-1) },
                     onMinusLongPress = { changeWeight(-1) },
+                    onMinusCoarse = { changeWeight(-4) },
                     onPlusTap = { changeWeight(1) },
                     onPlusLongPress = { changeWeight(1) },
+                    onPlusCoarse = { changeWeight(4) },
                     isMinusEnabled = currentIndex?.let { it > 0 } == true,
                     isPlusEnabled = currentIndex?.let { it < availableWeights.lastIndex } == true,
                     isResetEnabled = currentSet.actualWeight != initialActualWeight,
@@ -665,8 +668,10 @@ fun EnduranceSetScreen (
                         },
                     onMinusTap = { onMinusClick() },
                     onMinusLongPress = { onMinusClick() },
+                    onMinusCoarse = { changeTimerBy(-15000) },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    onPlusCoarse = { changeTimerBy(15000) },
                     isResetEnabled = currentSet.startTimer != initialStartTimer,
                     onCloseClick = {
                         setTimerEditMode(false)

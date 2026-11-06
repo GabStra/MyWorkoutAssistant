@@ -2,10 +2,9 @@ package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.AudioManager
-import android.media.SoundPool
-import android.media.audiofx.HapticGenerator
-import android.os.SystemClock
+import android.media.AudioFormat
+import android.media.AudioTimestamp
+import android.media.AudioTrack
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -15,28 +14,105 @@ import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.MyApplication
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.sin
+
+private const val CHIME_SAMPLE_RATE_HZ = 16_000
+private const val CHIME_DURATION_MS = 180
+private const val CHIME_ATTACK_MS = 3
+private const val CHIME_DECAY_MS = 40.0
+private const val CHIME_RELEASE_MS = 5
+private const val CHIME_SECOND_HARMONIC_MIX = 0.25
+// Short of full scale so the tiny watch speaker does not distort; loudness comes from the
+// 2.6 kHz ping, where a watch speaker is most efficient and the ear most sensitive.
+private const val CHIME_PEAK_AMPLITUDE = 28_000
+private const val WAV_HEADER_SIZE = 44
+
+private class ChimeNote(val frequencyHz: Double, val startMs: Int, val gain: Double)
+
+// One bright ping (E7): loud, short and percussive so it can fire repeatedly without smear.
+// Synthesized at runtime to keep the watch app free of audio assets.
+private val CHIME_NOTES = listOf(
+    ChimeNote(frequencyHz = 2_637.0, startMs = 0, gain = 1.0),
+)
+
+internal fun buildAlertChimeWav(): ByteArray {
+    val sampleCount = CHIME_SAMPLE_RATE_HZ * CHIME_DURATION_MS / 1_000
+    val pcmSize = sampleCount * Short.SIZE_BYTES
+    val attackSeconds = CHIME_ATTACK_MS / 1_000.0
+    val decaySeconds = CHIME_DECAY_MS / 1_000.0
+    val releaseSamples = CHIME_SAMPLE_RATE_HZ * CHIME_RELEASE_MS / 1_000
+
+    val samples = DoubleArray(sampleCount)
+    repeat(sampleCount) { sampleIndex ->
+        val seconds = sampleIndex.toDouble() / CHIME_SAMPLE_RATE_HZ
+        var sample = 0.0
+        for (note in CHIME_NOTES) {
+            val localSeconds = seconds - note.startMs / 1_000.0
+            if (localSeconds < 0.0) continue
+            // Half-cosine attack starts at zero amplitude and slope: no click on onset.
+            val attackRamp = (localSeconds / attackSeconds).coerceIn(0.0, 1.0)
+            val attackEnvelope = 0.5 - 0.5 * cos(PI * attackRamp)
+            val decayEnvelope = exp(-localSeconds / decaySeconds)
+            val phase = 2.0 * PI * note.frequencyHz * localSeconds
+            val tone = sin(phase) + CHIME_SECOND_HARMONIC_MIX * sin(2.0 * phase)
+            sample += tone * attackEnvelope * decayEnvelope * note.gain
+        }
+        val release = ((sampleCount - 1 - sampleIndex) / (releaseSamples - 1).toDouble())
+            .coerceIn(0.0, 1.0)
+        samples[sampleIndex] = sample * release
+    }
+    // Normalize to the peak so every note contributes at full loudness without clipping.
+    val peak = samples.maxOf { abs(it) }.coerceAtLeast(1e-9)
+    val gain = CHIME_PEAK_AMPLITUDE / peak
+
+    return ByteBuffer.allocate(WAV_HEADER_SIZE + pcmSize)
+        .order(ByteOrder.LITTLE_ENDIAN)
+        .apply {
+            put("RIFF".toByteArray())
+            putInt(36 + pcmSize)
+            put("WAVEfmt ".toByteArray())
+            putInt(16)
+            putShort(1)
+            putShort(1)
+            putInt(CHIME_SAMPLE_RATE_HZ)
+            putInt(CHIME_SAMPLE_RATE_HZ * Short.SIZE_BYTES)
+            putShort(Short.SIZE_BYTES.toShort())
+            putShort(16)
+            put("data".toByteArray())
+            putInt(pcmSize)
+            repeat(sampleCount) { sampleIndex ->
+                putShort(
+                    (samples[sampleIndex] * gain)
+                        .toInt()
+                        .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                        .toShort()
+                )
+            }
+        }
+        .array()
+}
 
 class HapticsHelper(context: Context) {
     private companion object {
         const val HARD_VIBRATION_DURATION_MS = 200
         const val GENTLE_VIBRATION_DURATION_MS = 80
-        const val BEEP_DURATION_MS = 150
-        const val ALERT_PERIOD_MS = 200L
+        // Leaves a short silence between repeated pulses so they read as separate chimes.
+        const val ALERT_PERIOD_MS = 340L
 
-        // The speaker path normally starts later than the vibration motor. Sound is dispatched
-        // first so their physical onsets are perceptually aligned on the fallback path.
-        const val FALLBACK_VIBRATION_DELAY_MS = 35L
-
-        const val SAMPLE_RATE_HZ = 16_000
-        const val BEEP_FREQUENCY_HZ = 880.0
-        const val WAV_HEADER_SIZE = 44
-        const val PCM_MAX_AMPLITUDE = 20_000
+        // The speaker path on this watch takes up to ~250 ms to go from idle to audible
+        // (deep-buffer standby, route apply, PCM open), while the motor starts in ~24 ms.
+        // The chime therefore plays after a silent pre-roll: once the audio position advances,
+        // the pre-roll's remaining frames give an exact countdown to the first audible sample.
+        const val AUDIO_PREROLL_MS = 200
+        const val MOTOR_LEAD_MS = 20L
+        const val AUDIO_START_TIMEOUT_MS = 600L
     }
 
     private val appContext = context.applicationContext
@@ -48,86 +124,47 @@ class HapticsHelper(context: Context) {
     }
     private val hasAmplitudeControl = vibrator?.hasAmplitudeControl() == true
 
-    private val audioSessionId =
-        appContext.getSystemService(AudioManager::class.java)?.generateAudioSessionId()
-            ?: AudioManager.AUDIO_SESSION_ID_GENERATE
-    private val soundPool: SoundPool? = createSoundPool()
-    private var beepSoundId = 0
-    @Volatile
-    private var isBeepLoaded = false
-    private val hapticGenerator: HapticGenerator? = createHapticGenerator()
-
-    init {
-        soundPool?.setOnLoadCompleteListener { _, soundId, status ->
-            if (soundId == beepSoundId && status == 0) {
-                isBeepLoaded = true
-            }
-        }
-        beepSoundId = runCatching {
-            soundPool?.load(createBeepFile().absolutePath, 1) ?: 0
-        }.getOrDefault(0)
-    }
-
-    private fun createSoundPool(): SoundPool? = runCatching {
+    private fun createChimeTrack(pcm: ShortArray): AudioTrack? = runCatching {
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ALARM)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .setHapticChannelsMuted(false)
             .build()
-        SoundPool.Builder()
-            .setMaxStreams(1)
+        val format = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setSampleRate(CHIME_SAMPLE_RATE_HZ)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .build()
+        AudioTrack.Builder()
             .setAudioAttributes(attributes)
-            .setAudioSessionId(audioSessionId)
+            .setAudioFormat(format)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .setBufferSizeInBytes(pcm.size * Short.SIZE_BYTES)
             .build()
+            .apply { write(pcm, 0, pcm.size) }
     }.getOrNull()
 
-    private fun createHapticGenerator(): HapticGenerator? = runCatching {
-        if (HapticGenerator.isAvailable()) {
-            HapticGenerator.create(audioSessionId).apply { enabled = true }
-        } else {
-            null
-        }
-    }.getOrNull()
-
-    private fun createBeepFile(): File {
-        val beepFile = File(appContext.cacheDir, "wear_alert_beep.wav")
-        if (!beepFile.exists()) {
-            beepFile.writeBytes(createBeepWav())
-        }
-        return beepFile
+    private fun chimeSourcePcm(): ShortArray {
+        val wav = buildAlertChimeWav()
+        val chime = ShortArray((wav.size - WAV_HEADER_SIZE) / Short.SIZE_BYTES)
+        ByteBuffer.wrap(wav)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .apply { position(WAV_HEADER_SIZE) }
+            .asShortBuffer()
+            .get(chime)
+        return chime
     }
 
-    private fun createBeepWav(): ByteArray {
-        val sampleCount = SAMPLE_RATE_HZ * BEEP_DURATION_MS / 1_000
-        val pcmSize = sampleCount * Short.SIZE_BYTES
-        return ByteBuffer.allocate(WAV_HEADER_SIZE + pcmSize)
-            .order(ByteOrder.LITTLE_ENDIAN)
-            .apply {
-                put("RIFF".toByteArray())
-                putInt(36 + pcmSize)
-                put("WAVEfmt ".toByteArray())
-                putInt(16)
-                putShort(1)
-                putShort(1)
-                putInt(SAMPLE_RATE_HZ)
-                putInt(SAMPLE_RATE_HZ * Short.SIZE_BYTES)
-                putShort(Short.SIZE_BYTES.toShort())
-                putShort(16)
-                put("data".toByteArray())
-                putInt(pcmSize)
-                repeat(sampleCount) { sampleIndex ->
-                    val fadeSamples = SAMPLE_RATE_HZ / 100
-                    val envelope = when {
-                        sampleIndex < fadeSamples -> sampleIndex.toDouble() / fadeSamples
-                        sampleIndex >= sampleCount - fadeSamples ->
-                            (sampleCount - sampleIndex - 1).toDouble() / fadeSamples
-                        else -> 1.0
-                    }
-                    val phase = 2.0 * PI * BEEP_FREQUENCY_HZ * sampleIndex / SAMPLE_RATE_HZ
-                    putShort((sin(phase) * PCM_MAX_AMPLITUDE * envelope).toInt().toShort())
-                }
+    // One preroll followed by every pulse at its final spacing: the whole cue is a single track,
+    // so pulses cannot cut each other off and their offsets are sample-exact.
+    private fun chimePatternPcm(pulseCount: Int): ShortArray {
+        val chime = chimeSourcePcm()
+        val preRollSamples = CHIME_SAMPLE_RATE_HZ * AUDIO_PREROLL_MS / 1_000
+        val periodSamples = CHIME_SAMPLE_RATE_HZ * ALERT_PERIOD_MS.toInt() / 1_000
+        return ShortArray(preRollSamples + periodSamples * (pulseCount - 1) + chime.size).also {
+            repeat(pulseCount) { pulseIndex ->
+                chime.copyInto(it, preRollSamples + pulseIndex * periodSamples)
             }
-            .array()
+        }
     }
 
     private fun vibrate(durationMs: Int, amplitude: Int) {
@@ -146,41 +183,56 @@ class HapticsHelper(context: Context) {
         vibrate(GENTLE_VIBRATION_DURATION_MS, amplitude)
     }
 
-    suspend fun playHardAlert() {
-        val soundStarted = playBeep()
-        if (hapticGenerator == null) {
-            if (soundStarted) {
-                delay(FALLBACK_VIBRATION_DELAY_MS)
-            }
-            vibrateHard()
-        }
-    }
-
-    private fun playBeep(): Boolean {
-        if (!isBeepLoaded || beepSoundId == 0) return false
-        return runCatching {
-            soundPool?.play(beepSoundId, 1f, 1f, 1, 0, 1f) != 0
-        }.getOrDefault(false)
-    }
-
     suspend fun playHardAlertPattern(pulseCount: Int) {
-        val patternStartNanos = SystemClock.elapsedRealtimeNanos()
-        repeat(pulseCount) { pulseIndex ->
-            delayUntil(patternStartNanos + pulseIndex * ALERT_PERIOD_MS * 1_000_000L)
-            playHardAlert()
+        val track = createChimeTrack(chimePatternPcm(pulseCount))
+        if (track == null) {
+            repeat(pulseCount) { pulseIndex ->
+                if (pulseIndex > 0) delay(ALERT_PERIOD_MS)
+                vibrateHard()
+            }
+            return
         }
+        try {
+            track.play()
+            val onsetNanos = awaitChimeOnset(track)
+            repeat(pulseCount) { pulseIndex ->
+                val pulseNanos = pulseIndex * ALERT_PERIOD_MS * 1_000_000L
+                if (onsetNanos != null) {
+                    delayUntil(onsetNanos + pulseNanos - MOTOR_LEAD_MS * 1_000_000L)
+                } else if (pulseIndex > 0) {
+                    delay(ALERT_PERIOD_MS)
+                }
+                vibrateHard()
+            }
+            // Keep the track alive until the last chime has finished sounding.
+            delay(ALERT_PERIOD_MS * (pulseCount - 1) + CHIME_DURATION_MS + 100L)
+        } finally {
+            runCatching { track.release() }
+        }
+    }
+
+    // Waits for the HAL's presentation timestamp, then returns the wall-clock instant of the
+    // first audible sample. playbackHeadPosition is useless here: it advances while the HAL is
+    // still buffering, ~200 ms before the DAC starts. getTimestamp reports presentation time.
+    private suspend fun awaitChimeOnset(track: AudioTrack): Long? {
+        val timestamp = AudioTimestamp()
+        val deadline = System.nanoTime() + AUDIO_START_TIMEOUT_MS * 1_000_000L
+        while (System.nanoTime() < deadline) {
+            if (track.getTimestamp(timestamp)) {
+                val firstFrameNanos = timestamp.nanoTime -
+                    timestamp.framePosition * 1_000_000_000L / CHIME_SAMPLE_RATE_HZ
+                return firstFrameNanos + AUDIO_PREROLL_MS * 1_000_000L
+            }
+            delay(2)
+        }
+        return null
     }
 
     private suspend fun delayUntil(targetNanos: Long) {
-        val remainingNanos = targetNanos - SystemClock.elapsedRealtimeNanos()
+        val remainingNanos = targetNanos - System.nanoTime()
         if (remainingNanos > 0) {
             delay((remainingNanos + 999_999L) / 1_000_000L)
         }
-    }
-
-    fun release() {
-        runCatching { hapticGenerator?.release() }
-        runCatching { soundPool?.release() }
     }
 }
 
@@ -228,10 +280,6 @@ class HapticsViewModel(
                 delay(200)
             }
         }
-    }
-
-    override fun onCleared() {
-        haptics.release()
     }
 }
 

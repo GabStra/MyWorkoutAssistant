@@ -10,5 +10,11 @@ internal val WearStandardIconButtonHitBoxSize: Dp =
 internal val WearStandardIconButtonIconSize: Dp =
     wearIconSizeForButton(WearStandardIconButtonSize)
 
+// Secondary role (back/reset/confirm): smaller visual, standard minimum touch target.
+internal val WearSecondaryIconButtonSize: Dp = 40.dp
+internal val WearSecondaryIconButtonHitBoxSize: Dp = 48.dp
+internal val WearSecondaryIconButtonIconSize: Dp =
+    wearIconSizeForButton(WearSecondaryIconButtonSize)
+
 internal fun wearIconSizeForButton(buttonSize: Dp): Dp =
     IconButtonDefaults.iconSizeFor(buttonSize)

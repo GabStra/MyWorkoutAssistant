@@ -162,25 +162,22 @@ private fun RestTimerBlock(
 
     val updateInteractionTime = { lastInteractionTime = System.currentTimeMillis() }
 
-    fun onMinusClick() {
-        if (currentSeconds > 5) {
-            val newTimerValue = currentSeconds - 5
-            amountToWait -= 5
-            currentSeconds = newTimerValue
-            hapticsViewModel.doGentleVibration()
-            currentSetData = currentSetData.copy(endTimer = currentSeconds)
+    fun changeBy(deltaSeconds: Int) {
+        val newTimerValue = (currentSeconds + deltaSeconds).coerceAtLeast(5)
+        if (newTimerValue == currentSeconds) {
+            updateInteractionTime()
+            return
         }
-        updateInteractionTime()
-    }
-
-    fun onPlusClick() {
-        val newTimerValue = currentSeconds + 5
-        amountToWait += 5
+        amountToWait += newTimerValue - currentSeconds
         currentSeconds = newTimerValue
         hapticsViewModel.doGentleVibration()
         currentSetData = currentSetData.copy(endTimer = currentSeconds)
         updateInteractionTime()
     }
+
+    fun onMinusClick() = changeBy(-5)
+
+    fun onPlusClick() = changeBy(5)
 
     fun setTimerEditMode(enabled: Boolean) {
         if (isTimerInEditMode == enabled) return
@@ -290,8 +287,10 @@ private fun RestTimerBlock(
                     .clickable(interactionSource = null, indication = null) { updateInteractionTime() },
                 onMinusTap = { onMinusClick() },
                 onMinusLongPress = { onMinusClick() },
+                onMinusCoarse = { changeBy(-15) },
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
+                onPlusCoarse = { changeBy(15) },
                 isResetEnabled = currentSeconds != editInitialSeconds || amountToWait != editInitialAmountToWait,
                 onCloseClick = { setTimerEditMode(false) },
                 onResetClick = {

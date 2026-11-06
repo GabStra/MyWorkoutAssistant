@@ -35,7 +35,7 @@ fun EnhancedIconButton(
     buttonModifier: Modifier = Modifier,
     enabled: Boolean = true,
     colors: IconButtonColors = IconButtonDefaults.filledTonalIconButtonColors(),
-    buttonSize: Dp = 48.dp,
+    buttonSize: Dp = WearStandardIconButtonSize,
     hitBoxScale: Float = 1.5f,
     content: @Composable () -> Unit
 ) {

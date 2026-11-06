@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -47,6 +47,15 @@ import com.gabstra.myworkoutassistant.shared.Red
 
 internal const val WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS = 10_000L
 
+// Hold latency before steps repeat, and how long a repeat must run before it
+// switches to the coarse step (bigger jumps for the same finger time).
+private const val REPEAT_THRESHOLD_MILLIS = 400L
+internal const val COARSE_STEP_AFTER_MILLIS = 1_500L
+
+/** A sustained hold switches to the bigger step once it has repeated this long. */
+internal fun shouldUseCoarseStep(elapsedHoldMillis: Long, hasCoarseStep: Boolean): Boolean =
+    hasCoarseStep && elapsedHoldMillis >= COARSE_STEP_AFTER_MILLIS
+
 @Composable
 fun ControlButtonsVertical(
     modifier: Modifier,
@@ -54,6 +63,8 @@ fun ControlButtonsVertical(
     onMinusLongPress: () -> Unit,
     onPlusTap: () -> Unit,
     onPlusLongPress: () -> Unit,
+    onMinusCoarse: (() -> Unit)? = null,
+    onPlusCoarse: (() -> Unit)? = null,
     isMinusEnabled: Boolean = true,
     isPlusEnabled: Boolean = true,
     isResetEnabled: Boolean = true,
@@ -80,19 +91,34 @@ fun ControlButtonsVertical(
             content()
         }
 
+        // Spacing equalises the *visible* gaps between the painted circles and the
+        // screen edge (10dp each), since hit-box margins differ per row.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 10.dp),
+                .padding(bottom = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
             ) {
-                ControlButton(Icons.Filled.ArrowDownward, "Subtract", Red, isMinusEnabled, onMinusTap, onMinusLongPress)
-                ControlButton(Icons.Filled.ArrowUpward, "Add", Green, isPlusEnabled, onPlusTap, onPlusLongPress)
+                // Tighter hit-box than the standard 62.5dp so the edited value keeps its height.
+                ControlButton(
+                    Icons.Filled.ArrowDownward, "Subtract", Red, isMinusEnabled,
+                    onMinusTap, onMinusLongPress, onMinusCoarse,
+                    hitBoxSize = 56.dp,
+                    buttonSize = WearStandardIconButtonSize,
+                    iconSize = WearStandardIconButtonIconSize,
+                )
+                ControlButton(
+                    Icons.Filled.ArrowUpward, "Add", Green, isPlusEnabled,
+                    onPlusTap, onPlusLongPress, onPlusCoarse,
+                    hitBoxSize = 56.dp,
+                    buttonSize = WearStandardIconButtonSize,
+                    iconSize = WearStandardIconButtonIconSize,
+                )
             }
             if (onCloseClick != null || onResetClick != null) {
                 Row(
@@ -101,16 +127,16 @@ fun ControlButtonsVertical(
                 ) {
                     onCloseClick?.let { closeClick ->
                         ControlButton(
-                            Icons.AutoMirrored.Filled.ArrowBack, "Back",
+                            Icons.Filled.Close, "Back",
                             MaterialTheme.colorScheme.surfaceContainerHigh, true,
-                            closeClick, closeClick, 48.dp, 40.dp, 20.dp,
+                            closeClick, closeClick, null,
                         )
                     }
                     onResetClick?.let { resetClick ->
                         ControlButton(
                             Icons.Filled.RestartAlt, "Reset",
                             MaterialTheme.colorScheme.surfaceContainerHigh, isResetEnabled,
-                            resetClick, resetClick, 48.dp, 40.dp, 20.dp,
+                            resetClick, resetClick, null,
                         )
                     }
                 }
@@ -127,9 +153,10 @@ private fun ControlButton(
     enabled: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
-    hitBoxSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonHitBoxSize,
-    buttonSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonSize,
-    iconSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonIconSize,
+    onCoarse: (() -> Unit)? = null,
+    hitBoxSize: androidx.compose.ui.unit.Dp = WearSecondaryIconButtonHitBoxSize,
+    buttonSize: androidx.compose.ui.unit.Dp = WearSecondaryIconButtonSize,
+    iconSize: androidx.compose.ui.unit.Dp = WearSecondaryIconButtonIconSize,
 ) {
     var isPressed by remember { mutableStateOf(false) }
     val buttonBackground by animateColorAsState(
@@ -165,11 +192,13 @@ private fun ControlButton(
                 }
             }
             .repeatActionOnLongPressOrTap(
-                thresholdMillis = 1000,
+                thresholdMillis = REPEAT_THRESHOLD_MILLIS,
                 intervalMillis = 150,
                 enabled = enabled,
                 onPressedChange = { isPressed = it },
-                onAction = onLongPress,
+                onAction = { elapsedHoldMillis ->
+                    if (shouldUseCoarseStep(elapsedHoldMillis, onCoarse != null)) onCoarse?.invoke() else onLongPress()
+                },
                 onTap = onTap
             ),
         contentAlignment = Alignment.Center

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
@@ -57,8 +58,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val ConfirmationCancelButtonSize = 42.dp
-private val ConfirmationCancelIconSize = 22.dp
+private val ConfirmationCancelButtonSize = WearSecondaryIconButtonSize
+private val ConfirmationCancelIconSize = WearSecondaryIconButtonIconSize
 private val ConfirmationButtonSize = ConfirmationCancelButtonSize
 private val ConfirmationButtonIconSize = ConfirmationCancelIconSize
 private val ConfirmationIndicatorSize = 56.dp
@@ -234,6 +235,7 @@ fun CustomDialogYesOnLongPress(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = contentPadding.calculateTopPadding())
+                            .padding(bottom = contentPadding.calculateBottomPadding())
                             .padding(horizontal = 24.dp)
                             .padding(top = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -278,6 +280,11 @@ fun CustomDialogYesOnLongPress(
                                 EnhancedIconButton(
                                     buttonSize = ConfirmationCancelButtonSize,
                                     hitBoxScale = 1.2f,
+                                    // Same neutral colors as the edit-screen back button.
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = MaterialTheme.colorScheme.onBackground,
+                                    ),
                                     onClick = {
                                         runNoClick()
                                     },

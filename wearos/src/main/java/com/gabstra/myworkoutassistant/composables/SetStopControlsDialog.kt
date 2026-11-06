@@ -82,7 +82,7 @@ internal fun SetStopControlsDialog(onStop: () -> Unit, onDismiss: () -> Unit) {
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(WearStandardIconButtonSize + 8.dp)
+                            .size(WearStandardIconButtonSize)
                         .semantics {
                             role = Role.Button
                             contentDescription = "Hold to stop set"
@@ -119,7 +119,7 @@ internal fun SetStopControlsDialog(onStop: () -> Unit, onDismiss: () -> Unit) {
                     if (holdProgress.value > 0f) {
                         androidx.wear.compose.material.CircularProgressIndicator(
                             progress = holdProgress.value,
-                            modifier = Modifier.size(WearStandardIconButtonSize + 8.dp),
+                            modifier = Modifier.size(WearStandardIconButtonSize),
                             strokeWidth = 4.dp,
                             indicatorColor = Red,
                             trackColor = MediumDarkGray,
@@ -147,7 +147,7 @@ internal fun SetStopControlsDialog(onStop: () -> Unit, onDismiss: () -> Unit) {
                 ) {
                     EnhancedIconButton(
                         onClick = onDismiss,
-                        buttonSize = 48.dp,
+                        buttonSize = WearSecondaryIconButtonSize,
                         hitBoxScale = 1f,
                         buttonModifier = Modifier.clip(CircleShape),
                     ) {

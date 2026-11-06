@@ -1408,7 +1408,7 @@ fun Modifier.repeatActionOnLongPressOrTap(
     speedStages: List<LongPressRepeatSpeedStage> = DefaultLongPressRepeatSpeedStages,
     enabled: Boolean = true,
     onPressedChange: (Boolean) -> Unit = {},
-    onAction: () -> Unit,
+    onAction: (elapsedHoldMillis: Long) -> Unit,
     onTap: () -> Unit
 ): Modifier = this.then(
     pointerInput(enabled) {
@@ -1424,8 +1424,8 @@ fun Modifier.repeatActionOnLongPressOrTap(
                         do {
                             if (!enabled) break
                             repeatedActionHappening = true
-                            onAction()
                             val elapsedHoldMillis = System.currentTimeMillis() - repeatStartMillis
+                            onAction(elapsedHoldMillis)
                             delay(
                                 resolveLongPressRepeatInterval(
                                     elapsedHoldMillis = elapsedHoldMillis,

@@ -292,23 +292,21 @@ fun TimedDurationSetScreen(
         }
     }
 
-    fun onMinusClick() {
-        if (currentSet.startTimer > 5000) {
-            val newTimerValue = currentSet.startTimer - 5000
-            currentSet = currentSet.copy(startTimer = newTimerValue)
-            currentMillis = newTimerValue
-            hapticsViewModel.doGentleVibration()
+    fun changeTimerBy(deltaMillis: Int) {
+        val newTimerValue = (currentSet.startTimer + deltaMillis).coerceAtLeast(5000)
+        if (newTimerValue == currentSet.startTimer) {
+            updateInteractionTime()
+            return
         }
-        updateInteractionTime()
-    }
-
-    fun onPlusClick() {
-        val newTimerValue = currentSet.startTimer + 5000
         currentSet = currentSet.copy(startTimer = newTimerValue)
         currentMillis = newTimerValue
         hapticsViewModel.doGentleVibration()
         updateInteractionTime()
     }
+
+    fun onMinusClick() = changeTimerBy(-5000)
+
+    fun onPlusClick() = changeTimerBy(5000)
 
     fun startTimer() {
         viewModel.resetLiveCalorieAccumulator()
@@ -689,8 +687,10 @@ fun TimedDurationSetScreen(
                         },
                     onMinusTap = { onMinusClick() },
                     onMinusLongPress = { onMinusClick() },
+                    onMinusCoarse = { changeTimerBy(-15000) },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    onPlusCoarse = { changeTimerBy(15000) },
                     isResetEnabled = currentSet.startTimer != initialStartTimer,
                     onCloseClick = {
                         timerEditModeController.updateEditMode(false)
