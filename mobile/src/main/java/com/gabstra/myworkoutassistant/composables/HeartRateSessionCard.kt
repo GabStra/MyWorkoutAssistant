@@ -1,12 +1,15 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -14,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -25,6 +29,7 @@ import com.gabstra.myworkoutassistant.heart_rate.getHeartRateZoneGuideValues
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
+import kotlin.math.roundToInt
 
 @Composable
 fun HeartRateSessionCard(
@@ -35,6 +40,12 @@ fun HeartRateSessionCard(
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
     caloriesBurned: Int? = null,
+    sweatLossMl: Int? = null,
+    fluidsToReplaceMl: Int? = null,
+    hrvRmssdMs: Double? = null,
+    skinTempStartC: Float? = null,
+    skinTempMaxC: Float? = null,
+    primarySourceLabel: String? = null,
     onInteractionChange: (Boolean) -> Unit = {},
 ) {
     val zoneBounds = getHeartRateZoneBounds(
@@ -59,6 +70,14 @@ fun HeartRateSessionCard(
                 )
             },
             subContent = {
+                val extraSummaries = analysis.extraSummaries
+                val showSources = extraSummaries.isNotEmpty()
+                if (showSources) {
+                    HeartRateSourceLegend(
+                        labels = listOf(primarySourceLabel ?: "Primary") +
+                            extraSummaries.map { it.label },
+                    )
+                }
                 HeartRateChartContent(
                     modifier = Modifier.fillMaxWidth(),
                     cartesianChartModel = analysis.chartModel,
@@ -66,6 +85,11 @@ fun HeartRateSessionCard(
                     measuredMaxHeartRate = measuredMaxHeartRate,
                     restingHeartRate = restingHeartRate,
                     minYBpm = analysis.minChartY,
+                    seriesColors = if (showSources) {
+                        HeartRateSourceColors.take(1 + extraSummaries.size)
+                    } else {
+                        null
+                    },
                     zoneGuideValuesBpm = getHeartRateZoneGuideValues(
                         userAge = userAge,
                         measuredMaxHeartRate = measuredMaxHeartRate,
@@ -93,20 +117,73 @@ fun HeartRateSessionCard(
                             color = MaterialTheme.colorScheme.onBackground,
                             style = MaterialTheme.typography.bodyMedium,
                         )
-                        Text(
-                            text = "Average: ${analysis.averageHeartRate} bpm",
-                            color = MaterialTheme.colorScheme.onBackground,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        if (showSources) {
+                            Text(
+                                text = "${primarySourceLabel ?: "Primary"}: " +
+                                    "${analysis.averageHeartRate} avg · " +
+                                    "${analysis.minHeartRate}–${analysis.maxHeartRate} bpm",
+                                color = MaterialTheme.colorScheme.onBackground,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            extraSummaries.forEach { summary ->
+                                Text(
+                                    text = "${summary.label}: " +
+                                        "${summary.averageHeartRate} avg · " +
+                                        "${summary.minHeartRate}–" +
+                                        "${summary.maxHeartRate} bpm",
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "Average: ${analysis.averageHeartRate} bpm",
+                                color = MaterialTheme.colorScheme.onBackground,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        sweatLossMl?.let { lossMl ->
+                            Text(
+                                text = "Sweat loss: $lossMl ml",
+                                color = MaterialTheme.colorScheme.onBackground,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        if (skinTempStartC != null && skinTempMaxC != null) {
+                            Text(
+                                text = "Skin temp: ${"%.1f".format(skinTempStartC)} → " +
+                                    "${"%.1f".format(skinTempMaxC)} °C",
+                                color = MaterialTheme.colorScheme.onBackground,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        fluidsToReplaceMl?.let { targetMl ->
+                            Text(
+                                text = "Fluids to replace: $targetMl ml",
+                                color = MaterialTheme.colorScheme.onBackground,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                     }
                     Column(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        HeartRateMetricRow(label = "Min", value = "${analysis.minHeartRate} bpm")
-                        HeartRateMetricRow(label = "Max", value = "${analysis.maxHeartRate} bpm")
+                        if (!showSources) {
+                            HeartRateMetricRow(
+                                label = "Min",
+                                value = "${analysis.minHeartRate} bpm"
+                            )
+                            HeartRateMetricRow(
+                                label = "Max",
+                                value = "${analysis.maxHeartRate} bpm"
+                            )
+                        }
                         caloriesBurned?.let { kcal ->
                             HeartRateMetricRow(label = "Calories", value = kcal.toString())
+                        }
+                        hrvRmssdMs?.let { hrv ->
+                            HeartRateMetricRow(label = "HRV", value = "${hrv.roundToInt()} ms")
                         }
                     }
                 }
@@ -120,8 +197,8 @@ fun HeartRateSessionCard(
                         .toList()
                         .asReversed()
                         .forEach { (zone, count) ->
-                            val total = analysis.zoneCounts.values.sum().takeIf { it > 0 } ?: 1
-                            val progress = count.toFloat() / total
+                            val total = analysis.zoneCounts.values.sum().takeIf { it > 0.0 } ?: 1.0
+                            val progress = (count / total).toFloat()
                             val zoneRange = zoneBounds[zone]
 
                             Column(modifier = Modifier.fillMaxWidth()) {
@@ -144,7 +221,7 @@ fun HeartRateSessionCard(
                                     )
                                     Spacer(Modifier.weight(1f))
                                     Text(
-                                        text = "${(progress * 100).toInt()}% ${formatTime(count)}",
+                                        text = "${(progress * 100).toInt()}% ${formatTime(count.roundToInt())}",
                                         modifier = Modifier.weight(1f),
                                         style = MaterialTheme.typography.bodySmall,
                                         textAlign = TextAlign.End,
@@ -168,6 +245,56 @@ fun HeartRateSessionCard(
         )
     }
 }
+
+@Composable
+private fun HeartRateSourceLegend(
+    labels: List<String>,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        labels.forEachIndexed { index, label ->
+            HeartRateSourceLegendItem(
+                color = HeartRateSourceColors[index % HeartRateSourceColors.size],
+                label = label,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HeartRateSourceLegendItem(
+    color: Color,
+    label: String,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+}
+
+private val HeartRateSourceColors = listOf(
+    Color(0xFFff6700),
+    Color(0xFF38BDF8),
+    Color(0xFFB388FF),
+    Color(0xFF4DD0A0),
+)
 
 @Composable
 private fun HeartRateMetricRow(

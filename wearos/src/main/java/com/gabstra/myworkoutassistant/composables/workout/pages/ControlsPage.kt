@@ -505,6 +505,48 @@ fun ControlsPage(
             }
 
             item {
+                val activeSource by viewModel.activeHeartRateSource.collectAsState()
+                val availableSources by viewModel.availableHeartRateSources.collectAsState()
+                if (availableSources.size > 1) {
+                    val activeIndex = availableSources.indexOf(activeSource).coerceAtLeast(0)
+                    val nextSource = availableSources[(activeIndex + 1) % availableSources.size]
+
+                    WearTonalContentButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        onClick = {
+                            viewModel.setActiveHrSource(nextSource)
+                            hapticsViewModel.doGentleVibration()
+                        }
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        ) {
+                            Text(
+                                text = "Live heart rate",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Start,
+                            )
+                            Text(
+                                text = "${activeSource.shortName()} · tap for ${nextSource.shortName()}",
+                                style = MaterialTheme.typography.bodyExtraSmall,
+                                textAlign = TextAlign.Start,
+                                color = MaterialTheme.colorScheme.tertiaryContent
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
                 val useSamsungHeartRate = viewModel.useSamsungHeartRate.value
                 val updateUseSamsungHeartRate: (Boolean) -> Unit = { enabled ->
                     viewModel.setUseSamsungHeartRate(enabled)
@@ -553,6 +595,67 @@ fun ControlsPage(
                         Switch(
                             checked = useSamsungHeartRate,
                             onCheckedChange = updateUseSamsungHeartRate,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.onBackground,
+                                uncheckedTrackColor = MediumLightGray,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.onBackground,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            item {
+                val motionCapture by viewModel.motionCaptureUiState.collectAsState()
+                val motionEnabled = motionCapture.collectionEnabled
+                val toggleMotionCapture: (Boolean) -> Unit = { value ->
+                    viewModel.setMotionCaptureEnabledForSession(value)
+                    hapticsViewModel.doGentleVibration()
+                }
+
+                WearTonalContentButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        ),
+                    transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                    onClick = { toggleMotionCapture(!motionEnabled) }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        ) {
+                            Text(
+                                text = "Record motion",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Start,
+                            )
+                            Text(
+                                text = if (motionEnabled) {
+                                    "On for this workout"
+                                } else {
+                                    "Off for this workout"
+                                },
+                                style = MaterialTheme.typography.bodyExtraSmall,
+                                textAlign = TextAlign.Start,
+                                color = MaterialTheme.colorScheme.tertiaryContent
+                            )
+                        }
+                        Switch(
+                            checked = motionEnabled,
+                            onCheckedChange = toggleMotionCapture,
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,

@@ -13,6 +13,18 @@ enum class HeartRateSource {
         POLAR_BLE -> "Polar"
         WHOOP_BLE -> "WHOOP"
     }
+
+    /** Short label for the watch's small selector rows. */
+    fun shortName(): String = when (this) {
+        WATCH_SENSOR -> "Watch"
+        POLAR_BLE -> "Polar"
+        WHOOP_BLE -> "WHOOP"
+    }
+
+    companion object {
+        /** Parses a persisted tag by its enum name; anything else is unknown. */
+        fun fromName(raw: String?): HeartRateSource? = entries.firstOrNull { it.name == raw }
+    }
 }
 
 sealed class ExternalHeartRateConfig {

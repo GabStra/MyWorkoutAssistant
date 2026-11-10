@@ -96,6 +96,10 @@ import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Duration
+import com.gabstra.myworkoutassistant.heart_rate.alignedHeartRateTimes
+import com.gabstra.myworkoutassistant.heart_rate.heartRateTimesForOfRecord
+import com.gabstra.myworkoutassistant.heart_rate.secondsInHeartRateRange
+import kotlin.math.roundToInt
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
@@ -622,15 +626,20 @@ fun ExerciseHistoryScreen(
                             if (!hasTarget) {
                                 0 to 0
                             } else {
-                                var counter = 0
+                                val samples = selectedWorkoutHistory!!.heartBeatRecords
+                                val sampleTimes = alignedHeartRateTimes(
+                                    selectedWorkoutHistory!!.heartRateTimesForOfRecord(),
+                                    samples.size,
+                                )
+                                var counter = 0.0
                                 var total = 0
                                 setHistories.selectedExerciseSetHistories
                                     .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
                                     .forEach { setHistory ->
-                                        val hrTimeOffset = Duration.between(
+                                        val startOffsetMs = Duration.between(
                                             selectedWorkoutHistory!!.startTime,
                                             setHistory.startTime,
-                                        ).seconds
+                                        ).toMillis().coerceAtLeast(0)
                                         val setDuration = Duration.between(
                                             setHistory.startTime,
                                             setHistory.endTime
@@ -649,15 +658,17 @@ fun ExerciseHistoryScreen(
                                             restingHeartRate
                                         )
 
-                                        val hrEntriesCount =
-                                            selectedWorkoutHistory!!.heartBeatRecords.filterIndexed { index, value ->
-                                                index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >= lowHr && value <= highHr
-                                            }.size
-
-                                        counter += hrEntriesCount
+                                        counter += secondsInHeartRateRange(
+                                            samples = samples,
+                                            timesMs = sampleTimes,
+                                            fromMs = startOffsetMs,
+                                            toMs = startOffsetMs + setDuration * 1000L,
+                                            lowHr = lowHr,
+                                            highHr = highHr,
+                                        )
                                         total += setDuration.toInt()
                                     }
-                                counter to total
+                                counter.roundToInt() to total
                             }
                         }
 

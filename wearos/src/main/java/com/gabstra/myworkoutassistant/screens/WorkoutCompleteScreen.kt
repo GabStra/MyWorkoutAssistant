@@ -63,7 +63,7 @@ fun WorkoutCompleteScreen(
     state : WorkoutState.Completed,
     hrViewModel: SensorDataViewModel,
     hapticsViewModel: HapticsViewModel,
-    externalHeartRateController: ExternalHeartRateDeviceController?
+    externalHeartRateControllers: List<ExternalHeartRateDeviceController>
 ){
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
     val workout by viewModel.selectedWorkout
@@ -90,10 +90,9 @@ fun WorkoutCompleteScreen(
         if (!completionSyncInitiated) {
             completionSyncInitiated = true
 
-            if (!workout.usesExternalHeartRateDevice) {
-                hrViewModel.stopMeasuringHeartRate()
-            } else {
-                externalHeartRateController?.disconnectFromDevice()
+            hrViewModel.stopMeasuringHeartRate()
+            if (workout.usesExternalHeartRateDevice) {
+                externalHeartRateControllers.forEach { it.disconnectFromDevice() }
             }
             cancelWorkoutInProgressNotification(context)
 

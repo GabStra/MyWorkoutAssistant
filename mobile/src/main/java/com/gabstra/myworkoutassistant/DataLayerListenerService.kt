@@ -1340,7 +1340,14 @@ class DataLayerListenerService : WearableListenerService() {
             setIndex = setIndex.toUInt(),
             sessionState = sessionState,
             activeSessionRevision = activeSessionRevision.toUInt(),
-            sentAtEpochMs = sentAtEpochMs
+            sentAtEpochMs = sentAtEpochMs,
+            motionCaptureEnabled = if (
+                dataMap.containsKey(WorkoutSessionHeartbeatKeys.MOTION_CAPTURE_ENABLED)
+            ) {
+                dataMap.getBoolean(WorkoutSessionHeartbeatKeys.MOTION_CAPTURE_ENABLED, false)
+            } else {
+                null
+            },
         )
     }
 
@@ -1373,7 +1380,8 @@ class DataLayerListenerService : WearableListenerService() {
             // Freshness on phone must be based on local receipt time, not the watch clock.
             lastActiveSyncAt = LocalDateTime.now(),
             activeSessionRevision = heartbeat.activeSessionRevision,
-            lastKnownSessionState = heartbeat.sessionState
+            lastKnownSessionState = heartbeat.sessionState,
+            motionCaptureEnabled = heartbeat.motionCaptureEnabled ?: existingRecord.motionCaptureEnabled
         )
         workoutRecordDao.insert(updatedRecord)
 

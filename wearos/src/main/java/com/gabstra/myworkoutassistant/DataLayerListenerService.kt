@@ -24,6 +24,9 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncProgressUpdate
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommand
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommandKeys
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommandType
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.llm.DEFAULT_PHONE_LLM_OPERATION
 import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmDataMapKeys
@@ -905,6 +908,22 @@ class DataLayerListenerService : WearableListenerService() {
         Tasks.await(dataClient.putDataItem(errorRequest))
     }
 
+    private fun parseWorkoutSessionCommand(dataMap: DataMap): WorkoutSessionCommand? {
+        val type = WorkoutSessionCommandType.fromWireValue(
+            dataMap.getString(WorkoutSessionCommandKeys.COMMAND)
+        ) ?: return null
+        val workoutId = dataMap.getString(WorkoutSessionCommandKeys.WORKOUT_ID)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val sentAtEpochMs = dataMap.getLong(WorkoutSessionCommandKeys.SENT_AT_EPOCH_MS, -1L)
+        if (sentAtEpochMs <= 0L) return null
+        return WorkoutSessionCommand(
+            type = type,
+            workoutId = workoutId,
+            enabled = dataMap.getBoolean(WorkoutSessionCommandKeys.ENABLED, false),
+            sentAtEpochMs = sentAtEpochMs,
+        )
+    }
+
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         try {
             // Collect events first to avoid multiple iterations
@@ -927,6 +946,23 @@ class DataLayerListenerService : WearableListenerService() {
 
                 val path = uri.path ?: return@forEach
                 when {
+                    path == DataLayerPaths.WORKOUT_SESSION_COMMAND_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val command = parseWorkoutSessionCommand(dataMap)
+                        if (command != null) {
+                            Log.d(
+                                "WorkoutSessionCommand",
+                                "Received ${command.type} workoutId=${command.workoutId} " +
+                                    "enabled=${command.enabled}"
+                            )
+                            com.gabstra.myworkoutassistant.data.WorkoutSessionCommandBus.publish(command)
+                        }
+                        // Consume the item so a reconnect cannot replay an old toggle.
+                        scope.launch(Dispatchers.IO) {
+                            runCatching { dataClient.deleteDataItems(uri) }
+                        }
+                    }
+
                     DataLayerPaths.matchesPrefix(
                         path,
                         DataLayerPaths.PHONE_LLM_OPERATION_RESULT_PREFIX

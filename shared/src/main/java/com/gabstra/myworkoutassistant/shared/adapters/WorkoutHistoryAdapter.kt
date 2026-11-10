@@ -48,7 +48,34 @@ class WorkoutHistoryAdapter : JsonDeserializer<WorkoutHistory> {
             runningResults = jsonObject.get("runningResults")
                 ?.takeUnless { it.isJsonNull }
                 ?.let { context.deserialize<List<RunningResult>>(it, object : TypeToken<List<RunningResult>>() {}.type) }
-                ?: emptyList()
+                ?: emptyList(),
+            restRmssdMs = jsonObject.get("restRmssdMs")?.takeUnless { it.isJsonNull }?.asDouble,
+            restSdnnMs = jsonObject.get("restSdnnMs")?.takeUnless { it.isJsonNull }?.asDouble,
+            sweatLossMl = jsonObject.get("sweatLossMl")?.takeUnless { it.isJsonNull }?.asInt,
+            skinTempStartC = jsonObject.get("skinTempStartC")?.takeUnless { it.isJsonNull }?.asFloat,
+            skinTempMaxC = jsonObject.get("skinTempMaxC")?.takeUnless { it.isJsonNull }?.asFloat,
+            heartRateSource = jsonObject.get("heartRateSource")?.takeUnless { it.isJsonNull }?.asString,
+            heartRateStreams = jsonObject.get("heartRateStreams")
+                ?.takeIf { it.isJsonObject }
+                ?.let {
+                    context.deserialize<Map<String, List<Int>>>(
+                        it,
+                        object : TypeToken<Map<String, List<Int>>>() {}.type
+                    )
+                }
+                ?: emptyMap(),
+            heartRateStreamTimes = jsonObject.get("heartRateStreamTimes")
+                ?.takeIf { it.isJsonObject }
+                ?.let {
+                    context.deserialize<Map<String, List<Long>>>(
+                        it,
+                        object : TypeToken<Map<String, List<Long>>>() {}.type
+                    )
+                }
+                ?: emptyMap(),
+            heartRateStreamsStartEpochMs = jsonObject.get("heartRateStreamsStartEpochMs")
+                ?.takeUnless { it.isJsonNull }
+                ?.asLong
         )
     }
 

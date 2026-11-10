@@ -200,6 +200,17 @@ class SamsungHealthClientImpl(context: Context) : SamsungHealthTrackerClient {
 
     // ------------------------------------------------------------------------- capabilities
 
+    override suspend fun setPpgType(type: SamsungTrackerType, ppgTypes: List<String>) {
+        if (ppgTypes.isEmpty()) return
+        val svc = requireService()
+        val trackerType = SERVER_TRACKER_TYPE[type] ?: return
+        try {
+            svc.setPpgType(appId(), trackerType, ppgTypes)
+        } catch (e: RemoteException) {
+            emitError("setPpgType ${type.name} failed: ${e.message}")
+        }
+    }
+
     override suspend fun availableTrackers(): Set<SamsungTrackerType> {
         val svc = requireService()
         val strings = svc.getSupportedHealthTrackerTypes() ?: return emptySet()
@@ -391,7 +402,8 @@ class SamsungHealthClientImpl(context: Context) : SamsungHealthTrackerClient {
             SamsungTrackerType.HEART_RATE_CONTINUOUS -> sdp.convertHrToDataPoint()
             SamsungTrackerType.PPG_CONTINUOUS -> sdp.convertPpgToDataPoint()
             SamsungTrackerType.SPO2_CONTINUOUS -> sdp.convertSpO2ToDataPoint()
-            SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND -> sdp.convertSkinTemperatureToDataPoint()
+            SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND,
+            SamsungTrackerType.SKIN_TEMPERATURE_CONTINUOUS -> sdp.convertSkinTemperatureToDataPoint()
             SamsungTrackerType.SWEAT_LOSS -> sdp.convertSweatLossToDataPoint()
             SamsungTrackerType.ACCELEROMETER_CONTINUOUS -> sdp.convertAccToDataPoint()
             SamsungTrackerType.ECG_ON_DEMAND -> sdp.convertEcgToDataPoint()
@@ -403,8 +415,10 @@ class SamsungHealthClientImpl(context: Context) : SamsungHealthTrackerClient {
             SamsungTrackerType.HEART_RATE_CONTINUOUS -> {
                 val bpm: Int = dp.getValue(ValueKey.HeartRateSet.HEART_RATE) ?: return null
                 val ibi: List<Int> = dp.getValue(ValueKey.HeartRateSet.IBI_LIST) ?: emptyList()
+                val ibiStatus: List<Int> =
+                    dp.getValue(ValueKey.HeartRateSet.IBI_STATUS_LIST) ?: emptyList()
                 val status: Int? = dp.getValue(ValueKey.HeartRateSet.HEART_RATE_STATUS)
-                SamsungSample.HeartRate(bpm, ibi, status, ts)
+                SamsungSample.HeartRate(bpm, ibi, status, ts, ibiStatus)
             }
             SamsungTrackerType.PPG_CONTINUOUS -> {
                 // PPG_CONTINUOUS delivers one sample per data point with all three channels.
@@ -425,13 +439,17 @@ class SamsungHealthClientImpl(context: Context) : SamsungHealthTrackerClient {
                 val status: Int? = dp.getValue(ValueKey.SpO2Set.STATUS)
                 SamsungSample.SpO2(spo2, status, ts)
             }
-            SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND -> {
+            SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND,
+            SamsungTrackerType.SKIN_TEMPERATURE_CONTINUOUS -> {
                 val obj: Float = dp.getValue(ValueKey.SkinTemperatureSet.OBJECT_TEMPERATURE) ?: return null
-                SamsungSample.SkinTemperature(obj, ts)
+                val ambient: Float? = dp.getValue(ValueKey.SkinTemperatureSet.AMBIENT_TEMPERATURE)
+                val status: Int? = dp.getValue(ValueKey.SkinTemperatureSet.STATUS)
+                SamsungSample.SkinTemperature(obj, ts, ambient, status)
             }
             SamsungTrackerType.SWEAT_LOSS -> {
                 val ml: Float = dp.getValue(ValueKey.SweatLossSet.SWEAT_LOSS) ?: return null
-                SamsungSample.SweatLoss(ml.roundToInt(), ts)
+                val sweatStatus: Int = dp.getValue(ValueKey.SweatLossSet.STATUS) ?: 0
+                SamsungSample.SweatLoss(ml.roundToInt(), ts, sweatStatus)
             }
             SamsungTrackerType.ACCELEROMETER_CONTINUOUS -> {
                 val x: Int = dp.getValue(ValueKey.AccelerometerSet.ACCELEROMETER_X) ?: return null
@@ -476,6 +494,7 @@ class SamsungHealthClientImpl(context: Context) : SamsungHealthTrackerClient {
             SamsungTrackerType.PPG_CONTINUOUS to "PPG_CONTINUOUS",
             SamsungTrackerType.SPO2_CONTINUOUS to "SPO2",
             SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND to "SKIN_TEMPERATURE",
+            SamsungTrackerType.SKIN_TEMPERATURE_CONTINUOUS to "SKIN_TEMPERATURE_CONTINUOUS",
             SamsungTrackerType.SWEAT_LOSS to "SWEAT_LOSS",
             SamsungTrackerType.ACCELEROMETER_CONTINUOUS to "ACCELEROMETER",
             SamsungTrackerType.ECG_ON_DEMAND to "ECG",
@@ -490,7 +509,7 @@ class SamsungHealthClientImpl(context: Context) : SamsungHealthTrackerClient {
             "PPG_CONTINUOUS" to SamsungTrackerType.PPG_CONTINUOUS,
             "SPO2" to SamsungTrackerType.SPO2_CONTINUOUS,
             "SKIN_TEMPERATURE" to SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND,
-            "SKIN_TEMPERATURE_CONTINUOUS" to SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND,
+            "SKIN_TEMPERATURE_CONTINUOUS" to SamsungTrackerType.SKIN_TEMPERATURE_CONTINUOUS,
             "SWEAT_LOSS" to SamsungTrackerType.SWEAT_LOSS,
             "ACCELEROMETER" to SamsungTrackerType.ACCELEROMETER_CONTINUOUS,
             "ECG" to SamsungTrackerType.ECG_ON_DEMAND,
@@ -509,6 +528,7 @@ class SamsungHealthClientImpl(context: Context) : SamsungHealthTrackerClient {
             SamsungTrackerType.PPG_CONTINUOUS to "android.permission.BODY_SENSORS",
             SamsungTrackerType.SPO2_CONTINUOUS to "android.permission.BODY_SENSORS",
             SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND to "android.permission.BODY_SENSORS",
+            SamsungTrackerType.SKIN_TEMPERATURE_CONTINUOUS to "android.permission.BODY_SENSORS",
             SamsungTrackerType.ECG_ON_DEMAND to "android.permission.BODY_SENSORS",
             SamsungTrackerType.BIA_ON_DEMAND to "android.permission.BODY_SENSORS",
             SamsungTrackerType.EDA_CONTINUOUS to "android.permission.BODY_SENSORS",
@@ -531,8 +551,6 @@ class SamsungHealthClientImpl(context: Context) : SamsungHealthTrackerClient {
             SamsungTrackerType.HEART_RATE_CONTINUOUS to
                 listOf("android.permission.health.READ_HEART_RATE"),
             SamsungTrackerType.PPG_CONTINUOUS to listOf(PERM_READ_ADDITIONAL_HEALTH_DATA),
-            SamsungTrackerType.SPO2_CONTINUOUS to
-                listOf("android.permission.health.READ_OXYGEN_SATURATION"),
             SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND to
                 listOf("android.permission.health.READ_SKIN_TEMPERATURE"),
             SamsungTrackerType.ECG_ON_DEMAND to listOf(PERM_READ_ADDITIONAL_HEALTH_DATA),

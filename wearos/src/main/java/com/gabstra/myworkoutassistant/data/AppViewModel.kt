@@ -14,6 +14,7 @@ import com.gabstra.myworkoutassistant.DataLayerListenerService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -160,6 +161,7 @@ open class AppViewModel : WorkoutViewModel() {
     private var activeDirectSyncJob: Job? = null
     private var activeDirectSyncClaim: WearDirectHistorySyncClaim? = null
     private var motionCaptureCoordinator: MotionCaptureCoordinator? = null
+    private var sessionCommandJob: Job? = null
 
     /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
     private val pendingSyncTransactions = mutableMapOf<String, UUID>()
@@ -207,16 +209,44 @@ open class AppViewModel : WorkoutViewModel() {
                         val packageInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
                         packageInfo.versionName ?: packageInfo.longVersionCode.toString()
                     }.getOrDefault("unknown")
-                }
+                },
+                onStillnessChanged = { still -> registerMotionStillness(still) }
             )
+        }
+        if (sessionCommandJob == null) {
+            sessionCommandJob = viewModelScope.launch {
+                WorkoutSessionCommandBus.commands.collect { command ->
+                    applySessionCommand(command)
+                }
+            }
+        }
+    }
+
+    /**
+     * Applies a phone-sent setting change. The watch stays authoritative: only the workout that is
+     * actually running may be changed, and stale commands are dropped.
+     */
+    private fun applySessionCommand(command: com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommand) {
+        if (!command.isFresh()) {
+            Log.d(TAG, "Ignoring stale session command ${command.type} from ${command.sentAtEpochMs}")
+            return
+        }
+        val runningWorkoutId = selectedWorkout.value.id
+        if (command.workoutId != null && command.workoutId != runningWorkoutId) {
+            Log.d(TAG, "Ignoring session command for workout ${command.workoutId}, running $runningWorkoutId")
+            return
+        }
+        when (command.type) {
+            com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommandType.MOTION_CAPTURE ->
+                setMotionCaptureEnabledForSession(command.enabled)
         }
     }
 
     val motionCaptureUiState: StateFlow<MotionCaptureUiState>
         get() = motionCaptureCoordinator?.uiState ?: MutableStateFlow(MotionCaptureUiState()).asStateFlow()
 
-    fun setMotionCaptureEnabled(enabled: Boolean) {
-        motionCaptureCoordinator?.setCollectionEnabled(enabled)
+    fun setMotionCaptureEnabledForSession(enabled: Boolean) {
+        motionCaptureCoordinator?.setSessionCollectionEnabled(enabled)
     }
 
     suspend fun pauseMotionCaptureForBackground() {
@@ -981,7 +1011,8 @@ open class AppViewModel : WorkoutViewModel() {
             setIndex = setIndex,
             sessionState = sessionState,
             activeSessionRevision = record.activeSessionRevision,
-            sentAtEpochMs = System.currentTimeMillis()
+            sentAtEpochMs = System.currentTimeMillis(),
+            motionCaptureEnabled = motionCaptureCoordinator?.uiState?.value?.collectionEnabled,
         )
     }
 
@@ -1001,6 +1032,9 @@ open class AppViewModel : WorkoutViewModel() {
                 heartbeat.activeSessionRevision.toLong()
             )
             dataMap.putLong(WorkoutSessionHeartbeatKeys.SENT_AT_EPOCH_MS, heartbeat.sentAtEpochMs)
+            heartbeat.motionCaptureEnabled?.let { enabled ->
+                dataMap.putBoolean(WorkoutSessionHeartbeatKeys.MOTION_CAPTURE_ENABLED, enabled)
+            }
         }.asPutDataRequest().setUrgent()
 
         runCatching {

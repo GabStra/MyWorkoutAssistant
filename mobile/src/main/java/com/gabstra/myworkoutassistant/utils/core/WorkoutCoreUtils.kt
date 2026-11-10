@@ -50,6 +50,9 @@ import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
+import com.gabstra.myworkoutassistant.heart_rate.alignedHeartRateTimes
+import com.gabstra.myworkoutassistant.heart_rate.heartRateTimesForOfRecord
+import com.gabstra.myworkoutassistant.heart_rate.timeWeightedAverage
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
@@ -297,8 +300,12 @@ suspend fun sendWorkoutsToHealthConnect(
                 val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
                 val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
 
+                val streamTimes = alignedHeartRateTimes(
+                    workoutHistory.heartRateTimesForOfRecord(),
+                    workoutHistory.heartBeatRecords.size,
+                )
                 val samples = workoutHistory.heartBeatRecords.mapIndexedNotNull { index, bpm ->
-                    val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 1000))
+                    val sampleTime = startTime.plus(Duration.ofMillis(streamTimes[index]))
                     if (sampleTime.isAfter(endTime) || bpm <= 0) {
                         null
                     } else {
@@ -329,7 +336,13 @@ suspend fun sendWorkoutsToHealthConnect(
         val totalCaloriesBurnedRecords = batch
             .filter { it.heartBeatRecords.isNotEmpty() }
             .mapNotNull { workoutHistory ->
-                val avgHeartRate = workoutHistory.heartBeatRecords.averageValidHeartRateOrNull()
+                val avgHeartRate = timeWeightedAverage(
+                    samples = workoutHistory.heartBeatRecords,
+                    timesMs = alignedHeartRateTimes(
+                        workoutHistory.heartRateTimesForOfRecord(),
+                        workoutHistory.heartBeatRecords.size,
+                    ),
+                )?.toDouble() ?: workoutHistory.heartBeatRecords.averageValidHeartRateOrNull()
                     ?: return@mapNotNull null
 
                 val durationMinutes = workoutHistory.duration.toDouble() / 60

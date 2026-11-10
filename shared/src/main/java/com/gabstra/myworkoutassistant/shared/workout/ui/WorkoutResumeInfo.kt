@@ -9,4 +9,6 @@ data class WorkoutResumeInfo(
     val startedAt: LocalDateTime?,
     val sessionStatus: WorkoutSessionStatus,
     val lastActiveSyncAt: LocalDateTime?,
+    /** Live motion-recording state reported by a watch session; null when unknown. */
+    val motionCaptureEnabled: Boolean? = null,
 )

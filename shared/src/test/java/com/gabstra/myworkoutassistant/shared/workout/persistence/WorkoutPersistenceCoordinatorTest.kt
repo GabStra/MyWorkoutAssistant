@@ -220,6 +220,49 @@ class WorkoutPersistenceCoordinatorTest {
         )
     }
 
+    @Test
+    fun pushWorkoutData_persistsDerivedRecoverySignals() = runBlocking {
+        val workout = workout(
+            exerciseId = UUID.randomUUID(),
+            workSetId = UUID.randomUUID()
+        )
+        workoutStoreRepository.saveWorkoutStore(
+            WorkoutStore(
+                workouts = listOf(workout),
+                birthDateYear = 1990,
+                weightKg = 75.0,
+                progressionPercentageAmount = 0.0
+            )
+        )
+
+        val sessionStart = LocalDateTime.of(2026, 3, 30, 10, 0, 0)
+        val snapshot = coordinator.capturePushWorkoutDataSnapshot(
+            startWorkoutTime = sessionStart,
+            selectedWorkout = workout,
+            currentWorkoutHistory = null,
+            endReason = WorkoutSessionEndReason.COMPLETED,
+            heartBeatRecords = listOf(100, 105),
+            ibiRecords = emptyList(),
+            restRmssdMs = 42.5,
+            restSdnnMs = 61.25,
+            sweatLossMl = 780,
+            progressionByExerciseId = emptyMap(),
+            comparisonBaselineByExerciseId = emptyMap()
+        ) ?: error("Expected snapshot")
+
+        val persisted = coordinator.pushWorkoutData(
+            snapshot = snapshot,
+            isDone = true,
+            updateWorkoutStore = {}
+        )
+
+        val stored = database.workoutHistoryDao().getWorkoutHistoryById(persisted.id)
+            ?: error("Expected stored workout history")
+        assertEquals(42.5, stored.restRmssdMs!!, 1e-9)
+        assertEquals(61.25, stored.restSdnnMs!!, 1e-9)
+        assertEquals(780, stored.sweatLossMl)
+    }
+
     private fun workout(
         exerciseId: UUID,
         workSetId: UUID

@@ -30,6 +30,17 @@ class WorkoutAdapter : JsonDeserializer<Workout> {
                 HeartRateSource.WATCH_SENSOR
             }
 
+        val heartRateSources = jsonObject.get("heartRateSources")
+            ?.takeIf { it.isJsonArray }
+            ?.asJsonArray
+            ?.mapNotNull { element ->
+                element.takeUnless { it.isJsonNull }?.asString?.let { value ->
+                    runCatching { HeartRateSource.valueOf(value) }.getOrNull()
+                }
+            }
+            ?.toSet()
+            ?: emptySet()
+
         return Workout(
             id = UUID.fromString(jsonObject.get("id").asString),
             name = jsonObject.get("name").asString,
@@ -39,6 +50,7 @@ class WorkoutAdapter : JsonDeserializer<Workout> {
             order = jsonObject.get("order")?.asInt ?: 0,
             enabled = jsonObject.get("enabled")?.asBoolean ?: true,
             heartRateSource = heartRateSource,
+            heartRateSources = heartRateSources,
             creationDate = context.deserialize(jsonObject.get("creationDate"), LocalDate::class.java),
             previousVersionId = jsonObject.get("previousVersionId")
                 ?.takeUnless { it.isJsonNull }

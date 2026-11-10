@@ -7,8 +7,11 @@ import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -74,10 +77,16 @@ val ExternalHeartRateConnectionState.isReady: Boolean
     get() = this is ExternalHeartRateConnectionState.Connected ||
         this is ExternalHeartRateConnectionState.Streaming
 
+data class ExternalHrSample(val bpm: Int, val rrMs: List<Int>)
+
 interface ExternalHeartRateDeviceController {
     val source: HeartRateSource
     val connectionState: StateFlow<ExternalHeartRateConnectionState>
     val hrBpm: StateFlow<Int?>
+    /** Most recent beat-to-beat intervals from the strap, ms; empty when unsupported. */
+    val rrMs: StateFlow<List<Int>>
+    /** One emission per strap notification, so nothing is quantised to the UI tick. */
+    val samples: SharedFlow<ExternalHrSample>
     val hasBeenInitialized: StateFlow<Boolean>
     val isSkippedForSession: StateFlow<Boolean>
     val hasEverConnectedThisSession: StateFlow<Boolean>
@@ -112,6 +121,15 @@ abstract class BaseExternalHeartRateViewModel(
 
     private val _hrBpm = MutableStateFlow<Int?>(null)
     final override val hrBpm = _hrBpm.asStateFlow()
+
+    private val _rrMs = MutableStateFlow<List<Int>>(emptyList())
+    final override val rrMs = _rrMs.asStateFlow()
+
+    private val _samples = MutableSharedFlow<ExternalHrSample>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    final override val samples = _samples.asSharedFlow()
 
     private val _hasBeenInitialized = MutableStateFlow(false)
     final override val hasBeenInitialized = _hasBeenInitialized.asStateFlow()
@@ -226,6 +244,7 @@ abstract class BaseExternalHeartRateViewModel(
         resetRecoverySchedule()
         releaseDeviceConnection()
         _hrBpm.value = null
+        _rrMs.value = emptyList()
         _connectionState.value = if (skipped) {
             ExternalHeartRateConnectionState.Skipped(
                 source = source,
@@ -236,12 +255,17 @@ abstract class BaseExternalHeartRateViewModel(
         }
     }
 
+    protected fun publishRrIntervals(ms: List<Int>) {
+        _rrMs.value = ms
+    }
+
     protected fun publishHeartRate(bpm: Int?) {
         if (bpm != null) {
             heartRateLastReceivedAtMs = nowMs()
             receivedSampleSinceConnect = true
         }
         _hrBpm.value = bpm
+        if (bpm != null) _samples.tryEmit(ExternalHrSample(bpm, _rrMs.value))
     }
 
     private fun evaluateConnectionRecovery() {

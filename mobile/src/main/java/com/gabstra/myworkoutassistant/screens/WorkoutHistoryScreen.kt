@@ -88,10 +88,18 @@ import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSele
 import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibility
 import com.gabstra.myworkoutassistant.heart_rate.HeartRateSessionAnalysis
 import com.gabstra.myworkoutassistant.heart_rate.analyzeHeartRateSession
+import kotlin.math.roundToInt
+import com.gabstra.myworkoutassistant.heart_rate.alignedHeartRateTimes
+import com.gabstra.myworkoutassistant.heart_rate.buildExtraHeartRateSeries
+import com.gabstra.myworkoutassistant.heart_rate.heartRateTimesForOfRecord
+import com.gabstra.myworkoutassistant.heart_rate.secondsInHeartRateRange
+import com.gabstra.myworkoutassistant.heart_rate.timeWeightedAverage
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.formatTimeHourMinutes
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.FilterRange
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
+import com.gabstra.myworkoutassistant.shared.utils.HydrationEstimation
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
@@ -493,6 +501,12 @@ fun WorkoutHistoryScreen(
                 userAge = userAge,
                 measuredMaxHeartRate = measuredMaxHeartRate,
                 restingHeartRate = restingHeartRate,
+                heartRateTimesMs = workoutHistory.heartRateTimesForOfRecord(),
+                extraSeries = buildExtraHeartRateSeries(
+                    streams = workoutHistory.heartRateStreams,
+                    times = workoutHistory.heartRateStreamTimes,
+                    activeSource = HeartRateSource.fromName(workoutHistory.heartRateSource),
+                ),
             )
 
             val setHistories =
@@ -522,8 +536,13 @@ fun WorkoutHistoryScreen(
                 .filter { it.exerciseId != null && it.id !in consumedHistoryIds }
                 .groupBy { it.exerciseId!! }
             sectionMap.putAll(remainingByExerciseId)
-            val avgHeartRate =
-                workoutHistory.heartBeatRecords.averageValidHeartRateOrNull() ?: 0.0
+            val avgHeartRate = timeWeightedAverage(
+                samples = workoutHistory.heartBeatRecords,
+                timesMs = alignedHeartRateTimes(
+                    workoutHistory.heartRateTimesForOfRecord(),
+                    workoutHistory.heartBeatRecords.size,
+                ),
+            )?.toDouble() ?: (workoutHistory.heartBeatRecords.averageValidHeartRateOrNull() ?: 0.0)
 
             val currentYear = Calendar.getInstance().get(Calendar.YEAR)
             val age = currentYear - appViewModel.workoutStore.birthDateYear
@@ -837,29 +856,38 @@ fun WorkoutHistoryScreen(
                         measuredMaxHeartRate,
                         restingHeartRate
                     )
-                    var counter = 0
+                    val sampleTimes = alignedHeartRateTimes(
+                        history.heartRateTimesForOfRecord(),
+                        history.heartBeatRecords.size,
+                    )
+                    var counter = 0.0
                     var total = 0
                     histories
                         .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
                         .forEach { setHistory ->
-                            val hrTimeOffset = Duration.between(
+                            val startOffsetMs = Duration.between(
                                 history.startTime,
                                 setHistory.startTime,
-                            ).seconds.toInt().coerceAtLeast(0)
+                            ).toMillis().coerceAtLeast(0)
                             val setDuration = Duration.between(
                                 setHistory.startTime,
                                 setHistory.endTime
                             ).seconds.toInt().coerceAtLeast(0)
-                            val endOffset = (hrTimeOffset + setDuration)
-                                .coerceAtMost(history.heartBeatRecords.lastIndex)
-                            if (hrTimeOffset <= endOffset) {
-                                counter += history.heartBeatRecords
-                                    .subList(hrTimeOffset, endOffset + 1)
-                                    .count { it in lowHr..highHr }
-                            }
+                            val endOffsetMs = startOffsetMs + setDuration * 1000L
+                            counter += secondsInHeartRateRange(
+                                samples = history.heartBeatRecords,
+                                timesMs = sampleTimes,
+                                fromMs = startOffsetMs,
+                                toMs = endOffsetMs,
+                                lowHr = lowHr,
+                                highHr = highHr,
+                            )
                             total += setDuration
                         }
-                    TargetHeartRateProgress(counter = counter, total = total)
+                    TargetHeartRateProgress(
+                        counter = counter.roundToInt(),
+                        total = total,
+                    )
                 }
             }
         }
@@ -891,6 +919,15 @@ fun WorkoutHistoryScreen(
                         caloriesBurned = kiloCaloriesBurned
                             .takeIf { it != 0.0 && !it.isNaN() }
                             ?.toInt(),
+                        sweatLossMl = selectedWorkoutHistory!!.sweatLossMl,
+                        fluidsToReplaceMl = selectedWorkoutHistory!!.sweatLossMl
+                            ?.let(HydrationEstimation::replacementTargetMl),
+                        hrvRmssdMs = selectedWorkoutHistory!!.restRmssdMs,
+                        skinTempStartC = selectedWorkoutHistory!!.skinTempStartC,
+                        skinTempMaxC = selectedWorkoutHistory!!.skinTempMaxC,
+                        primarySourceLabel = HeartRateSource
+                            .fromName(selectedWorkoutHistory!!.heartRateSource)
+                            ?.displayName(),
                         onInteractionChange = { isChartInteractionActive = it },
                     )
                 }

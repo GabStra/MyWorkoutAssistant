@@ -31,7 +31,10 @@ data class MotionSensorSample(
 )
 
 data class MotionCaptureSensorConfig(
+    /** 0 requests each sensor's own maximum rate (clamped by Sensor.getMinDelay). */
     val sampleRateHz: Int = 50,
+    /** Hardware FIFO batching window; 0 = deliver immediately. Timestamps stay exact either way. */
+    val maxBatchLatencyMs: Int = 0,
     val chunkSampleCount: Int = 500,
     val enabledSensors: List<MotionSensorType> = listOf(
         MotionSensorType.ACCELEROMETER,
@@ -153,7 +156,9 @@ data class MotionCaptureEventRecord(
     val reviewStatus: MotionCaptureReviewStatus? = null,
     val notes: String? = null,
     /** Reps entered for the completed set; null for timed/no-rep states and older sessions. */
-    val actualReps: Int? = null
+    val actualReps: Int? = null,
+    /** Reps counted by the on-watch detector for the same set; the tuning pair for [actualReps]. */
+    val detectedReps: Int? = null
 )
 
 data class MotionCaptureWorkoutContext(

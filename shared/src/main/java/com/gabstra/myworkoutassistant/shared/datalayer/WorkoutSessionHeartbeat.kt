@@ -18,6 +18,7 @@ object WorkoutSessionHeartbeatKeys {
     const val SESSION_STATE = "sessionState"
     const val ACTIVE_SESSION_REVISION = "activeSessionRevision"
     const val SENT_AT_EPOCH_MS = "sentAtEpochMs"
+    const val MOTION_CAPTURE_ENABLED = "motionCaptureEnabled"
 }
 
 data class WorkoutSessionHeartbeat(
@@ -28,6 +29,8 @@ data class WorkoutSessionHeartbeat(
     val sessionState: String,
     val activeSessionRevision: UInt,
     val sentAtEpochMs: Long,
+    /** Live motion-recording state of the watch session; null when the watch did not report it. */
+    val motionCaptureEnabled: Boolean? = null,
 )
 
 enum class WorkoutSessionHeartbeatRejectReason {

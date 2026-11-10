@@ -25,12 +25,15 @@ import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionRecord
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionStatus
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureWorkoutCatalog
+import com.gabstra.myworkoutassistant.shared.motion.MotionSensorType
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.reps.RepDetector
+import com.gabstra.myworkoutassistant.reps.StillnessTracker
 import com.gabstra.myworkoutassistant.repository.MotionSensorRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,16 +69,22 @@ class MotionCaptureCoordinator(
     private val sensorRepository: MotionSensorRepository,
     private val scope: CoroutineScope,
     private val activeWorkoutHistoryIdProvider: () -> UUID?,
-    private val appVersionProvider: () -> String
+    private val appVersionProvider: () -> String,
+    private val onStillnessChanged: (Boolean) -> Unit = {}
 ) {
     private val sessionDao: MotionCaptureSessionDao = appDatabase.motionCaptureSessionDao()
     private val segmentDao: MotionCaptureSegmentDao = appDatabase.motionCaptureSegmentDao()
     private val exportService = MotionCaptureExportService()
     private val sensorConfig = MotionCaptureSensorConfig()
 
+    init {
+        sensorRepository.logInventory()
+    }
+
     private val _uiState = MutableStateFlow(
         MotionCaptureUiState(
-            collectionEnabled = MotionCapturePreferences.isEnabled(context),
+            // Motion capture is on by default; the workout settings toggle overrides it per session.
+            collectionEnabled = true,
             hasRequiredSensors = sensorRepository.hasCoreSensors()
         )
     )
@@ -93,6 +102,15 @@ class MotionCaptureCoordinator(
     private var currentChunkIndex = 0
     private var lowStorageAbortTriggered = false
     private var captureToggledOnManually = false
+    /** Per-workout override; null means "use the preference". Scoped by workout id. */
+    private var sessionOverrideEnabled: Boolean? = null
+    private var overrideWorkoutId: UUID? = null
+    private var currentWorkoutId: UUID? = null
+    private var lastScreenState: WorkoutScreenState? = null
+    private var repDetector: RepDetector? = null
+    private var repDetectorSensor: MotionSensorType? = null
+    private val stillnessTracker = StillnessTracker()
+    private var lastStillness = true
     private val eventsFileName = "events.csv"
 
     companion object {
@@ -106,17 +124,37 @@ class MotionCaptureCoordinator(
     private fun exportsRootDirectory(): File =
         File(context.filesDir, "motion_capture/exports").apply { mkdirs() }
 
-    fun setCollectionEnabled(enabled: Boolean) {
-        MotionCapturePreferences.setEnabled(context, enabled)
+    /**
+     * Per-workout override of the motion-capture default. Not persisted: the next workout
+     * starts from the preference again.
+     */
+    fun setSessionCollectionEnabled(enabled: Boolean) {
+        sessionOverrideEnabled = enabled
+        overrideWorkoutId = currentWorkoutId
         captureToggledOnManually = enabled
         _uiState.value = _uiState.value.copy(collectionEnabled = enabled)
         if (!enabled) {
-            scope.launch { stopCapture(MotionCaptureSessionStatus.ABANDONED) }
+            scope.launch {
+                if (activeSession != null) stopCapture(MotionCaptureSessionStatus.ABANDONED)
+            }
+        } else {
+            // Turning it back on mid-workout starts recording immediately.
+            lastScreenState?.let { onScreenStateChanged(it) }
         }
     }
 
     fun onScreenStateChanged(screenState: WorkoutScreenState) {
-        if (!_uiState.value.collectionEnabled || !_uiState.value.hasRequiredSensors) {
+        lastScreenState = screenState
+        currentWorkoutId = screenState.selectedWorkout.id
+        val enabled = if (overrideWorkoutId == currentWorkoutId) {
+            sessionOverrideEnabled == true
+        } else {
+            true
+        }
+        if (_uiState.value.collectionEnabled != enabled) {
+            _uiState.value = _uiState.value.copy(collectionEnabled = enabled)
+        }
+        if (!enabled || !_uiState.value.hasRequiredSensors) {
             if (activeSession != null) {
                 scope.launch { stopCapture(MotionCaptureSessionStatus.ABANDONED) }
             }
@@ -300,6 +338,9 @@ class MotionCaptureCoordinator(
         }
         recordExitEvents(previousLabel, previousSegment, transitionEpochMs, transitionElapsedRealtimeNanos, previousWorkoutState)
         closeActiveSegment(transitionEpochMs, transitionElapsedRealtimeNanos)
+        if (newLabel.kind == MotionCaptureLabelKind.EXERCISE && !newLabel.noRepExpected) {
+            repDetector?.reset()
+        }
         val startedAtEpochMs = transitionEpochMs
         val startedAtElapsedRealtimeNanos = transitionElapsedRealtimeNanos
         var segment = MotionCaptureSessionEditor.startSegment(
@@ -334,6 +375,8 @@ class MotionCaptureCoordinator(
     }
 
     private suspend fun stopCapture(status: MotionCaptureSessionStatus) {
+        stillnessTracker.reset()
+        notifyStillness(true)
         val endedAtEpochMs = System.currentTimeMillis()
         val endedAtElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         recordExitEvents(activeLabel, activeSegment, endedAtEpochMs, endedAtElapsedRealtimeNanos, lastObservedWorkoutState)
@@ -419,6 +462,7 @@ class MotionCaptureCoordinator(
 
     private fun startSensorCollection(session: MotionCaptureSessionRecord) {
         captureJob?.cancel()
+        setupRepDetector(session)
         captureJob = scope.launch(Dispatchers.IO) {
             sensorRepository.sampleFlow(sensorConfig).collect { sample ->
                 writeSample(sample)
@@ -430,8 +474,30 @@ class MotionCaptureCoordinator(
         )
     }
 
+    private fun notifyStillness(still: Boolean) {
+        if (still == lastStillness) return
+        lastStillness = still
+        onStillnessChanged(still)
+    }
+
+    /**
+     * Detected reps ride the capture stream so the ground-truth pair (actual vs detected) comes from
+     * identical samples. LINEAR_ACCELERATION is preferred; otherwise ACC with an own gravity estimate.
+     */
+    private fun setupRepDetector(session: MotionCaptureSessionRecord) {
+        val observed = session.sensorConfig.observedSensors
+            ?: sensorRepository.observedSensors(session.sensorConfig)
+        val useLinear = MotionSensorType.LINEAR_ACCELERATION in observed
+        repDetectorSensor = if (useLinear) MotionSensorType.LINEAR_ACCELERATION else MotionSensorType.ACCELEROMETER
+        repDetector = RepDetector(subtractGravity = !useLinear)
+    }
+
     private suspend fun writeSample(sample: com.gabstra.myworkoutassistant.shared.motion.MotionSensorSample) {
         val session = activeSession ?: return
+        if (sample.sensorType == repDetectorSensor) {
+            repDetector?.addSample(sample.elapsedRealtimeNanos, sample.x, sample.y, sample.z)
+            notifyStillness(stillnessTracker.addSample(sample.elapsedRealtimeNanos, sample.x, sample.y, sample.z))
+        }
         ensureChunkWriter(session)
         currentChunkWriter?.apply {
             append(
@@ -551,7 +617,8 @@ class MotionCaptureCoordinator(
                 exerciseType = previousLabel.exerciseType,
                 noRepExpected = previousLabel.noRepExpected,
                 segmentId = previousSegment?.id,
-                actualReps = completedSetReps(previousWorkoutState)
+                actualReps = completedSetReps(previousWorkoutState),
+                detectedReps = repDetector?.reps
             ),
             previousSegment?.sessionId
         )

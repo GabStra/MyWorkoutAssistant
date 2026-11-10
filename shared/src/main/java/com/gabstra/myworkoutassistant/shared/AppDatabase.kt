@@ -8,6 +8,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.room.migration.Migration
 import androidx.room.TypeConverters
 import com.gabstra.myworkoutassistant.shared.RestHistory
+import com.gabstra.myworkoutassistant.shared.typeconverters.HeartRateStreamsTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.HeartRateStreamTimesTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ExerciseSessionSnapshotTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTypeConverter
@@ -42,7 +44,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeCo
         MotionCaptureSessionEntity::class,
         MotionCaptureSegmentEntity::class
     ],
-    version = 63,
+    version = 70,
     exportSchema = false
 )
 @TypeConverters(
@@ -55,6 +57,8 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeCo
     UIntConverter::class,
     ListIntConverter::class,
     IbiRecordsTypeConverter::class,
+    HeartRateStreamsTypeConverter::class,
+    HeartRateStreamTimesTypeConverter::class,
     ExerciseSessionSnapshotTypeConverter::class,
     ListSimpleSetTypeConverter::class,
     ProgressionStateTypeConverter::class,
@@ -86,6 +90,69 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_62_63 = object : Migration(62, 63) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE workout_history ADD COLUMN ibiRecords TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+
+        private val MIGRATION_63_64 = object : Migration(63, 64) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN restRmssdMs REAL")
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN restSdnnMs REAL")
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN sweatLossMl INTEGER")
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN spo2MinPercent INTEGER")
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN spo2AvgPercent INTEGER")
+            }
+        }
+
+        private val MIGRATION_69_70 = object : Migration(69, 70) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE workout_history ADD COLUMN heartRateStreamTimes TEXT NOT NULL DEFAULT '{}'"
+                )
+                db.execSQL(
+                    "ALTER TABLE workout_history ADD COLUMN heartRateStreamsStartEpochMs INTEGER"
+                )
+            }
+        }
+
+        private val MIGRATION_68_69 = object : Migration(68, 69) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE workout_history ADD COLUMN heartRateStreams TEXT NOT NULL DEFAULT '{}'"
+                )
+                db.execSQL("ALTER TABLE workout_history DROP COLUMN secondaryHeartBeatRecords")
+                db.execSQL("ALTER TABLE workout_history DROP COLUMN secondaryIbiRecords")
+            }
+        }
+
+        private val MIGRATION_67_68 = object : Migration(67, 68) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_record ADD COLUMN motionCaptureEnabled INTEGER")
+            }
+        }
+
+        private val MIGRATION_66_67 = object : Migration(66, 67) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN heartRateSource TEXT")
+                db.execSQL(
+                    "ALTER TABLE workout_history ADD COLUMN secondaryHeartBeatRecords TEXT NOT NULL DEFAULT '[]'"
+                )
+                db.execSQL(
+                    "ALTER TABLE workout_history ADD COLUMN secondaryIbiRecords TEXT NOT NULL DEFAULT '[]'"
+                )
+            }
+        }
+
+        private val MIGRATION_65_66 = object : Migration(65, 66) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN skinTempStartC REAL")
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN skinTempMaxC REAL")
+            }
+        }
+
+        private val MIGRATION_64_65 = object : Migration(64, 65) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_history DROP COLUMN spo2MinPercent")
+                db.execSQL("ALTER TABLE workout_history DROP COLUMN spo2AvgPercent")
             }
         }
 
@@ -152,7 +219,11 @@ abstract class AppDatabase : RoomDatabase() {
                         AppDatabase::class.java,
                         "app_database_2",
                     )
-                        .addMigrations(MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63)
+                        .addMigrations(
+                            MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63, MIGRATION_63_64,
+                            MIGRATION_64_65, MIGRATION_65_66, MIGRATION_66_67, MIGRATION_67_68,
+                            MIGRATION_68_69, MIGRATION_69_70
+                        )
                         .fallbackToDestructiveMigration(dropAllTables = true)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onOpen(db: SupportSQLiteDatabase) {

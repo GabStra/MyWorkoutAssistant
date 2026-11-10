@@ -24,10 +24,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class PolarHrBpmSource(private val api: PolarBleApi) : HrBpmSource {
+class PolarHrBpmSource(
+    private val api: PolarBleApi,
+    private val onRr: (List<Int>) -> Unit,
+) : HrBpmSource {
     override fun bpmStream(deviceId: String): Flowable<Int> =
         api.startHrStreaming(deviceId)
             .map { hrData ->
+                val rr = hrData.samples
+                    .filter { it.rrAvailable && it.rrsMs.isNotEmpty() }
+                    .flatMap { it.rrsMs }
+                if (rr.isNotEmpty()) onRr(rr)
                 hrData.samples
                     .map { if (it.correctedHr > 0) it.correctedHr else it.hr }
                     .average()
@@ -287,7 +294,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
             return
         }
 
-        val stream = PolarHrBpmSource(api).bpmStream(deviceId)
+        val stream = PolarHrBpmSource(api) { rr -> publishRrIntervals(rr) }.bpmStream(deviceId)
 
         val disposable = stream
             .subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io())

@@ -28,6 +28,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -93,6 +94,7 @@ fun WorkoutOverviewTab(
     onResumeWorkout: () -> Unit,
     onRequestDeleteIncompleteWorkout: () -> Unit,
     onRequestClearAllIncompleteSessions: () -> Unit,
+    onSetWatchMotionCaptureEnabled: (Boolean) -> Unit,
     onWorkoutComponentsReordered: (List<WorkoutComponent>) -> Unit,
     workoutSchedules: List<WorkoutSchedule>,
     modifier: Modifier = Modifier,
@@ -161,7 +163,8 @@ fun WorkoutOverviewTab(
                     onRequestStartWorkout = onRequestStartWorkout,
                     onResumeWorkout = onResumeWorkout,
                     onRequestDeleteIncompleteWorkout = onRequestDeleteIncompleteWorkout,
-                    onRequestClearAllIncompleteSessions = onRequestClearAllIncompleteSessions
+                    onRequestClearAllIncompleteSessions = onRequestClearAllIncompleteSessions,
+                    onSetWatchMotionCaptureEnabled = onSetWatchMotionCaptureEnabled
                 )
 
                 Spacer(Modifier.height(Spacing.md))
@@ -340,7 +343,8 @@ private fun WorkoutSessionActionCard(
     onRequestStartWorkout: () -> Unit,
     onResumeWorkout: () -> Unit,
     onRequestDeleteIncompleteWorkout: () -> Unit,
-    onRequestClearAllIncompleteSessions: () -> Unit
+    onRequestClearAllIncompleteSessions: () -> Unit,
+    onSetWatchMotionCaptureEnabled: (Boolean) -> Unit = {}
 ) {
     val sessionStatus = workoutResumeInfo?.sessionStatus
     val hasResumeAction = when (sessionStatus) {
@@ -476,6 +480,43 @@ private fun WorkoutSessionActionCard(
                         onClick = onResumeWorkout,
                         textAlign = TextAlign.Center
                     )
+
+                    val watchMotionEnabled = workoutResumeInfo?.motionCaptureEnabled
+                    if (
+                        sessionStatus == WorkoutSessionStatus.IN_PROGRESS_ON_WEAR &&
+                        watchMotionEnabled != null
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                            ) {
+                                Text(
+                                    text = "Record motion",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Text(
+                                    text = if (watchMotionEnabled) {
+                                        "On for this workout"
+                                    } else {
+                                        "Off for this workout"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = watchMotionEnabled,
+                                onCheckedChange = onSetWatchMotionCaptureEnabled
+                            )
+                        }
+                    }
+
                     AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
                         text = "Start over",

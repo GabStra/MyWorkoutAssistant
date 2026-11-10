@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.repository
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.edit
@@ -17,7 +18,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
@@ -71,6 +75,7 @@ class SamsungSensorDataRepository(
                 is SamsungSample.HeartRate -> MeasureMessageSensor.MeasureData(
                     bpm = sample.bpm,
                     ibiList = sample.ibiList,
+                    ibiStatusList = sample.ibiStatusList,
                     heartRateStatus = sample.status,
                     timestampMs = sample.timestampMs,
                 )
@@ -88,13 +93,16 @@ class SamsungSensorDataRepository(
     fun ppgSamples(): Flow<SamsungSample.Ppg> =
         typedSamples(SamsungTrackerType.PPG_CONTINUOUS)
 
-    /** Continuous SpO2 samples. */
-    fun spo2Samples(): Flow<SamsungSample.SpO2> =
-        typedSamples(SamsungTrackerType.SPO2_CONTINUOUS)
+    /** Continuous skin temperature (object + ambient); status 0 = normal. */
+    fun skinTemperatureSamples(): Flow<SamsungSample.SkinTemperature> =
+        typedSamples(SamsungTrackerType.SKIN_TEMPERATURE_CONTINUOUS)
 
-    /** Sweat loss samples. */
+    /** Sweat loss: one cumulative sample per exercise stop. */
     fun sweatLossSamples(): Flow<SamsungSample.SweatLoss> =
-        typedSamples(SamsungTrackerType.SWEAT_LOSS)
+        // The dehydration lib emits its cumulative total with status 0 (ok) or -4 (auto-ended);
+        // any other status carries the 0.0 sentinel and must not reach the accumulator.
+        typedSamples<SamsungSample.SweatLoss>(SamsungTrackerType.SWEAT_LOSS)
+            .filter { it.status == 0 || it.status == -4 }
 
     /** Continuous accelerometer samples. */
     fun accelerometerSamples(): Flow<SamsungSample.Accelerometer> =
@@ -111,10 +119,6 @@ class SamsungSensorDataRepository(
     /** Continuous EDA (skin conductance) samples. */
     fun edaSamples(): Flow<SamsungSample.Eda> =
         typedSamples(SamsungTrackerType.EDA_CONTINUOUS)
-
-    /** On-demand skin temperature samples. */
-    fun skinTemperatureSamples(): Flow<SamsungSample.SkinTemperature> =
-        typedSamples(SamsungTrackerType.SKIN_TEMPERATURE_ON_DEMAND)
 
     private inline fun <reified T : SamsungSample> typedSamples(type: SamsungTrackerType): Flow<T> =
         trackerFlow(type) { it as? T }
@@ -136,9 +140,9 @@ class SamsungSensorDataRepository(
     private suspend fun ensureConnected() {
         activeFlowCount.incrementAndGet()
         try {
-            if (client.connectionState.value is SamsungConnectionState.Connected) return
             connectMutex.withLock {
-                // Another flow may have completed the connection while we waited.
+                // Checked under the lock: releaseConnection disconnects under the same lock, so
+                // this collector can never see Connected while its teardown is in flight.
                 if (client.connectionState.value is SamsungConnectionState.Connected) return
                 Log.i(TAG, "Connecting to Samsung Health Tracking Service")
                 val profile = trackerProfileFromWorkoutStore()
@@ -194,14 +198,18 @@ class SamsungSensorDataRepository(
     }
 
     private suspend fun releaseConnection() {
-        if (activeFlowCount.decrementAndGet() != 0) return
-        // NonCancellable: flow cancellation (stopMeasuringHeartRate) must not skip disconnect.
+        // Same lock as ensureConnected, and NonCancellable so flow cancellation cannot skip the
+        // decrement. Without the lock, a collector starting between the decrement-to-zero and the
+        // disconnect would see Connected and attach to a connection being torn down.
         withContext(NonCancellable) {
-            try {
-                Log.i(TAG, "No active flows; disconnecting from Samsung Health Tracking Service")
-                client.disconnect()
-            } catch (throwable: Throwable) {
-                Log.w(TAG, "Error disconnecting Samsung Health client", throwable)
+            connectMutex.withLock {
+                if (activeFlowCount.decrementAndGet() != 0) return@withLock
+                try {
+                    Log.i(TAG, "No active flows; disconnecting from Samsung Health Tracking Service")
+                    client.disconnect()
+                } catch (throwable: Throwable) {
+                    Log.w(TAG, "Error disconnecting Samsung Health client", throwable)
+                }
             }
         }
     }
@@ -227,6 +235,25 @@ object SamsungHeartRatePreferences {
     fun isSamsungHeartRateEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_USE_SAMSUNG_HEART_RATE, DEFAULT_USE_SAMSUNG_HEART_RATE)
+
+    /**
+     * Emits the current toggle value and every later change, so collectors can follow it live.
+     * SharedPreferences holds listeners weakly; the listener below stays referenced by the
+     * callbackFlow's collector for as long as the flow is collected.
+     */
+    fun enabledChanges(context: Context): Flow<Boolean> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return callbackFlow {
+            val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == KEY_USE_SAMSUNG_HEART_RATE) {
+                    trySend(isSamsungHeartRateEnabled(context))
+                }
+            }
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+            trySend(isSamsungHeartRateEnabled(context))
+            awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+    }
 
     fun setSamsungHeartRateEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit(commit = true) {

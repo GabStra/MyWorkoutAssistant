@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -24,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -84,7 +87,7 @@ import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun WorkoutForm(
     onWorkoutUpsert: (Workout, List<WorkoutSchedule>) -> Unit,
@@ -101,6 +104,10 @@ fun WorkoutForm(
     val timesCompletedInAWeekState = rememberSaveable { mutableStateOf(workout?.timesCompletedInAWeek?.toString() ?: "0") }
     val heartRateSourceState = rememberSaveable {
         mutableStateOf(workout?.heartRateSource ?: HeartRateSource.WATCH_SENSOR)
+    }
+    // All sources that should connect and record together for this workout.
+    val enabledHeartRateSourcesState = remember {
+        mutableStateOf(workout?.enabledHeartRateSources ?: setOf(HeartRateSource.WATCH_SENSOR))
     }
 
     val selectedWorkoutType = rememberSaveable {
@@ -237,14 +244,52 @@ fun WorkoutForm(
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        val heartRateSourceLabel = remember(heartRateSourceItems, heartRateSourceState.value) {
-                            heartRateSourceItems.firstOrNull { it.value == heartRateSourceState.value }?.label
+                        Text(
+                            text = "Heart rate sources",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            HeartRateSource.entries.forEach { source ->
+                                val enabled = source in enabledHeartRateSourcesState.value
+                                val configured = !source.isExternal ||
+                                    source in availableExternalHeartRateSources
+                                FilterChip(
+                                    selected = enabled,
+                                    onClick = {
+                                        val current = enabledHeartRateSourcesState.value
+                                        val updated = if (enabled) current - source else current + source
+                                        if (updated.isEmpty()) return@FilterChip
+                                        enabledHeartRateSourcesState.value = updated
+                                        if (heartRateSourceState.value !in updated) {
+                                            heartRateSourceState.value =
+                                                HeartRateSource.entries.first { it in updated }
+                                        }
+                                    },
+                                    enabled = configured || enabled,
+                                    label = { Text(source.displayName()) },
+                                )
+                            }
+                        }
+
+                        val enabledItems = remember(
+                            heartRateSourceItems,
+                            enabledHeartRateSourcesState.value
+                        ) {
+                            heartRateSourceItems.filter {
+                                it.value in enabledHeartRateSourcesState.value
+                            }
+                        }
+                        val heartRateSourceLabel = remember(enabledItems, heartRateSourceState.value) {
+                            enabledItems.firstOrNull { it.value == heartRateSourceState.value }?.label
                                 ?: HeartRateSource.WATCH_SENSOR.displayName()
                         }
                         StandardFilterDropdown(
-                            label = "Heart rate source",
+                            label = "Live source",
                             selectedText = heartRateSourceLabel,
-                            items = heartRateSourceItems,
+                            items = enabledItems,
                             onItemSelected = { heartRateSourceState.value = it },
                             selectedValue = heartRateSourceState.value,
                             modifier = Modifier.fillMaxWidth(),
@@ -332,13 +377,15 @@ fun WorkoutForm(
                     AppPrimaryButton(
                         text = "Save",
                         onClick = {
-                            if (
-                                heartRateSourceState.value.isExternal &&
-                                heartRateSourceState.value !in availableExternalHeartRateSources
-                            ) {
+                            val enabledSources = enabledHeartRateSourcesState.value +
+                                heartRateSourceState.value
+                            val unconfigured = enabledSources.firstOrNull { source ->
+                                source.isExternal && source !in availableExternalHeartRateSources
+                            }
+                            if (unconfigured != null) {
                                 Toast.makeText(
                                     context,
-                                    "Configure ${heartRateSourceState.value.displayName()} in Settings first.",
+                                    "Configure ${unconfigured.displayName()} in Settings first.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 return@AppPrimaryButton
@@ -349,6 +396,7 @@ fun WorkoutForm(
                                 description = workoutDescriptionState.value.trim(),
                                 workoutComponents = workout?.workoutComponents ?: listOf(),
                                 heartRateSource = heartRateSourceState.value,
+                                heartRateSources = enabledSources,
                                 creationDate = LocalDate.now(),
                                 order = workout?.order ?: 0,
                                 timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),

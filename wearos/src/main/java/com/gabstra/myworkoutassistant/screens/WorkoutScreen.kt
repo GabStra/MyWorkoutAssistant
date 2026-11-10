@@ -44,8 +44,7 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composables.HeartRateExternal
-import com.gabstra.myworkoutassistant.composables.HeartRateStandard
+import com.gabstra.myworkoutassistant.composables.HeartRateLive
 import com.gabstra.myworkoutassistant.composables.HeartRateStatus
 import com.gabstra.myworkoutassistant.composables.HrStatusBadge
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
@@ -71,7 +70,6 @@ import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
-import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.formatWeight
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -79,6 +77,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
 import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
@@ -172,20 +171,24 @@ fun WorkoutScreen(
     val userAge = screenState.userAge
     val measuredMaxHeartRate = screenState.measuredMaxHeartRate
     val restingHeartRate = screenState.restingHeartRate
-    val activeExternalHeartRateController: ExternalHeartRateDeviceController? =
-        when (selectedWorkout.heartRateSource) {
-            HeartRateSource.POLAR_BLE -> polarViewModel
-            HeartRateSource.WHOOP_BLE -> whoopHeartRateViewModel
-            HeartRateSource.WATCH_SENSOR -> null
+    // Every enabled external source connects at once; the watch sensor runs alongside them.
+    val enabledExternalHeartRateControllers: List<ExternalHeartRateDeviceController> =
+        selectedWorkout.enabledHeartRateSources.mapNotNull { source ->
+            when (source) {
+                HeartRateSource.POLAR_BLE -> polarViewModel
+                HeartRateSource.WHOOP_BLE -> whoopHeartRateViewModel
+                HeartRateSource.WATCH_SENSOR -> null
+            }
         }
-    val hasExternalSourceBeenInitialized by (
-        activeExternalHeartRateController?.hasBeenInitialized?.collectAsState()
-            ?: remember { mutableStateOf(false) }
-        )
-    val externalSkipped by (
-        activeExternalHeartRateController?.isSkippedForSession?.collectAsState()
-            ?: remember { mutableStateOf(false) }
-        )
+    val externalInitializedFlags = enabledExternalHeartRateControllers.map {
+        it.hasBeenInitialized.collectAsState()
+    }
+    val externalSkippedFlags = enabledExternalHeartRateControllers.map {
+        it.isSkippedForSession.collectAsState()
+    }
+    val shouldReconnectExternals = enabledExternalHeartRateControllers.indices.any { index ->
+        externalInitializedFlags[index].value && !externalSkippedFlags[index].value
+    }
     val isRefreshing = screenState.isRefreshing
     val renderModel = remember(sessionPhase, isRefreshing) {
         resolveWorkoutPhaseRenderModel(
@@ -198,11 +201,8 @@ fun WorkoutScreen(
             // Ensure no timer background loop remains active after leaving workout flow.
                 viewModel.workoutTimerService.unregisterAll()
             try {
-                if (selectedWorkout.usesExternalHeartRateDevice) {
-                    activeExternalHeartRateController?.disconnectFromDevice()
-                } else {
-                    hrViewModel.stopMeasuringHeartRate()
-                }
+                hrViewModel.stopMeasuringHeartRate()
+                enabledExternalHeartRateControllers.forEach { it.disconnectFromDevice() }
                 scope.launch {
                     viewModel.stopMotionCaptureForExit()
                 }
@@ -283,35 +283,22 @@ fun WorkoutScreen(
         lowerBoundMaxHRPercent: Float? = null,
         upperBoundMaxHRPercent: Float? = null
     ){
-        if(selectedWorkout.usesExternalHeartRateDevice && activeExternalHeartRateController != null){
-            HeartRateExternal(
-                modifier = modifier,
-                appViewModel = viewModel,
-                hapticsViewModel = hapticsViewModel,
-                heartRateChangeViewModel = heartRateChangeViewModel,
-                externalHeartRateController = activeExternalHeartRateController,
-                userAge = userAge,
-                measuredMaxHeartRate = measuredMaxHeartRate,
-                restingHeartRate = restingHeartRate,
-                lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
-                upperBoundMaxHRPercent = upperBoundMaxHRPercent,
-                onHrStatusChange = { status -> hrStatus = status }
-            )
-        }else{
-            HeartRateStandard(
-                modifier = modifier,
-                appViewModel = viewModel,
-                hapticsViewModel = hapticsViewModel,
-                heartRateChangeViewModel = heartRateChangeViewModel,
-                hrViewModel = hrViewModel,
-                userAge = userAge,
-                measuredMaxHeartRate = measuredMaxHeartRate,
-                restingHeartRate = restingHeartRate,
-                lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
-                upperBoundMaxHRPercent = upperBoundMaxHRPercent,
-                onHrStatusChange = { status -> hrStatus = status }
-            )
-        }
+        HeartRateLive(
+            modifier = modifier,
+            appViewModel = viewModel,
+            hapticsViewModel = hapticsViewModel,
+            heartRateChangeViewModel = heartRateChangeViewModel,
+            hrViewModel = hrViewModel,
+            externalHeartRateControllers = enabledExternalHeartRateControllers,
+            includeWatchSensor =
+                HeartRateSource.WATCH_SENSOR in selectedWorkout.enabledHeartRateSources,
+            userAge = userAge,
+            measuredMaxHeartRate = measuredMaxHeartRate,
+            restingHeartRate = restingHeartRate,
+            lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+            upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+            onHrStatusChange = { status -> hrStatus = status }
+        )
     }
 
     CustomDialogYesOnLongPress(
@@ -322,11 +309,8 @@ fun WorkoutScreen(
 
             //viewModel.pushAndStoreWorkoutData(false,context)
             try {
-                if(!selectedWorkout.usesExternalHeartRateDevice){
-                    hrViewModel.stopMeasuringHeartRate()
-                }else{
-                    activeExternalHeartRateController?.disconnectFromDevice()
-                }
+                hrViewModel.stopMeasuringHeartRate()
+                enabledExternalHeartRateControllers.forEach { it.disconnectFromDevice() }
             } catch (exception: Exception) {
                 android.util.Log.e("WorkoutScreen", "Error stopping sensors on workout end", exception)
             }
@@ -451,13 +435,28 @@ fun WorkoutScreen(
         }
     )
 
+    // Both sources run at once: the strap is the HR of record, the watch keeps measuring its own
+    // HR (recorded alongside for comparison) plus what only it can (sweat loss, skin temperature).
+    LaunchedEffect(selectedWorkout.usesExternalHeartRateDevice) {
+        // The of-record source follows the workout config until the user switches it live.
+        viewModel.setActiveHrSource(
+            if (selectedWorkout.usesExternalHeartRateDevice) {
+                selectedWorkout.heartRateSource
+            } else {
+                HeartRateSource.WATCH_SENSOR
+            }
+        )
+        hrViewModel.startMeasuringHeartRate()
+    }
+    DisposableEffect(selectedWorkout.usesExternalHeartRateDevice) {
+        onDispose { hrViewModel.stopMeasuringHeartRate() }
+    }
+
     LifecycleObserver(
         onPaused = {
             try {
                 viewModel.workoutTimerService.pauseForBackground()
-                if(!selectedWorkout.usesExternalHeartRateDevice){
-                    hrViewModel.stopMeasuringHeartRate()
-                }
+                hrViewModel.stopMeasuringHeartRate()
                 // Flush timer state to database before app pauses/closes
                 // This ensures timer progress is persisted even if app is killed
                 scope.launch {
@@ -478,12 +477,16 @@ fun WorkoutScreen(
         onResumed = {
             try {
                 viewModel.workoutTimerService.resumeFromBackground()
-                if(!selectedWorkout.usesExternalHeartRateDevice){
-                    hrViewModel.startMeasuringHeartRate()
-                }
-                else if(hasExternalSourceBeenInitialized && !externalSkipped){
-                    activeExternalHeartRateController?.foregroundEntered()
-                    activeExternalHeartRateController?.connectToDevice()
+                hrViewModel.startMeasuringHeartRate()
+                if (shouldReconnectExternals) {
+                    enabledExternalHeartRateControllers.indices.forEach { index ->
+                        if (externalInitializedFlags[index].value &&
+                            !externalSkippedFlags[index].value
+                        ) {
+                            enabledExternalHeartRateControllers[index].foregroundEntered()
+                            enabledExternalHeartRateControllers[index].connectToDevice()
+                        }
+                    }
                 }
             } catch (exception: Exception) {
                 android.util.Log.e("WorkoutScreen", "Error resuming heart-rate source", exception)
@@ -569,12 +572,13 @@ fun WorkoutScreen(
                                     hrViewModel,
                                     preparingState
                                 )
-                            } else if (activeExternalHeartRateController != null) {
+                            } else if (enabledExternalHeartRateControllers.isNotEmpty()) {
                                 PreparingExternalHeartRateScreen(
                                     viewModel,
                                     hapticsViewModel,
                                     navController,
-                                    activeExternalHeartRateController,
+                                    enabledExternalHeartRateControllers,
+                                    hrViewModel,
                                     preparingState
                                 )
                             }
@@ -585,7 +589,7 @@ fun WorkoutScreen(
                                 workoutState as WorkoutState.Completed,
                                 hrViewModel,
                                 hapticsViewModel,
-                                activeExternalHeartRateController
+                                enabledExternalHeartRateControllers
                             )
                         } else if (renderModel.renderActiveContent) {
                             when(workoutState){

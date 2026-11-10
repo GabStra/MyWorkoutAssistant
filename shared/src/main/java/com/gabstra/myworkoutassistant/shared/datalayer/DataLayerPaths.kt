@@ -24,6 +24,7 @@ object DataLayerPaths {
     const val SENSOR_SESSION_CHUNK_PREFIX = "/sensorSession/chunk"
     const val SENSOR_SESSION_DISCARD_PREFIX = "/sensorSession/discard"
     const val WORKOUT_SESSION_HEARTBEAT_PATH = "/workoutSession/heartbeat"
+    const val WORKOUT_SESSION_COMMAND_PATH = "/workoutSession/command"
     const val APP_BACKUP_START_PREFIX = "/appBackup/start"
     const val APP_BACKUP_CHUNK_PREFIX = "/appBackup/chunk"
     const val EXERCISE_MOVEMENT_START_PREFIX = "/exerciseMovement/start"

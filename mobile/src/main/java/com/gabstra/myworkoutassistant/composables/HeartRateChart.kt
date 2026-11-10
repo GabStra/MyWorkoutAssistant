@@ -292,6 +292,7 @@ fun HeartRateChartContent(
     minYBpm: Double? = null,
     zoneGuideValuesBpm: List<Double>? = null,
     lineZoneIndices: List<Int>? = null,
+    seriesColors: List<Color>? = null,
     onInteractionChange: ((Boolean) -> Unit)? = null,
 ) {
     val chartNestedScrollConnection = remember {
@@ -382,8 +383,20 @@ fun HeartRateChartContent(
         null
     }
 
-    val lines = if (effectiveLineZoneIndices != null) {
-        effectiveLineZoneIndices.map { zoneIndex ->
+    val effectiveSeriesColors = seriesColors?.takeIf {
+        it.isNotEmpty() && it.size == modelSeriesCount
+    }
+
+    val lines = when {
+        effectiveSeriesColors != null -> effectiveSeriesColors.map { color ->
+            LineCartesianLayer.rememberLine(
+                fill = LineCartesianLayer.LineFill.single(Fill(color)),
+                areaFill = null,
+                pointProvider = null,
+                interpolator = LineCartesianLayer.Interpolator.Sharp,
+            )
+        }
+        effectiveLineZoneIndices != null -> effectiveLineZoneIndices.map { zoneIndex ->
                 LineCartesianLayer.rememberLine(
                     fill = LineCartesianLayer.LineFill.single(
                         Fill(colorsByZone[zoneIndex.coerceIn(0, colorsByZone.lastIndex)])
@@ -393,8 +406,7 @@ fun HeartRateChartContent(
                     interpolator = LineCartesianLayer.Interpolator.Sharp,
                 )
             }
-    } else {
-        listOf(
+        else -> listOf(
             LineCartesianLayer.rememberLine(
                 fill = LineCartesianLayer.LineFill.single(
                     Fill(Color(0xFFff6700))

@@ -1319,6 +1319,9 @@ fun WorkoutDetailScreen(
                             onRequestClearAllIncompleteSessions = {
                                 showClearAllIncompleteSessionsDialog = true
                             },
+                            onSetWatchMotionCaptureEnabled = { enabled ->
+                                appViewModel.setWatchMotionCaptureEnabled(workout.id, enabled)
+                            },
                             onWorkoutComponentsReordered = { adjustedComponents ->
                                 val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                                 updateWorkoutWithHistory(updatedWorkout)

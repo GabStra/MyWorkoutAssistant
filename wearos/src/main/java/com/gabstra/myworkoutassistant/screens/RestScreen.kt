@@ -85,6 +85,7 @@ import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.util.UUID
+import kotlin.math.roundToInt
 
 private enum class RestHorizontalPage {
     BUTTONS,
@@ -131,6 +132,7 @@ private fun RestTimerBlock(
     var editInitialAmountToWait by remember(set.id) { mutableIntStateOf(amountToWait) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val isPaused by viewModel.isPaused
+    val restHrvRmssdMs by viewModel.restHrvRmssdMs
 
     isEditModeState.value = isTimerInEditMode
 
@@ -333,6 +335,19 @@ private fun RestTimerBlock(
                 )
                 Spacer(modifier = Modifier.height(2.5.dp))
                 textComposable(seconds = currentSeconds)
+                if (restHrvRmssdMs != null) {
+                    Spacer(modifier = Modifier.height(2.5.dp))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        restHrvRmssdMs?.let { hrvMs ->
+                            Text(
+                                text = "HRV ${hrvMs.roundToInt()} ms",
+                                style = timerHeaderStyle,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(15.dp))
                 Text(
                     text = "UP NEXT",

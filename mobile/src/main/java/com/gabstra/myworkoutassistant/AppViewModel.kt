@@ -49,6 +49,12 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
+import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommandKeys
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommandType
+import com.google.android.gms.tasks.Tasks
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -279,6 +285,41 @@ class AppViewModel(
                 _isInitialDataLoaded.value = true
                 openPendingExternalPage()
             }
+        }
+    }
+
+    /**
+     * Turns motion recording on or off for the watch session that is currently running.
+     * The watch validates and applies it; its next heartbeat reports the resulting state back.
+     */
+    fun setWatchMotionCaptureEnabled(workoutId: UUID, enabled: Boolean) {
+        val application = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val request = PutDataMapRequest.create(
+                DataLayerPaths.WORKOUT_SESSION_COMMAND_PATH
+            ).apply {
+                dataMap.putString(
+                    WorkoutSessionCommandKeys.COMMAND,
+                    WorkoutSessionCommandType.MOTION_CAPTURE.wireValue
+                )
+                dataMap.putString(WorkoutSessionCommandKeys.WORKOUT_ID, workoutId.toString())
+                dataMap.putBoolean(WorkoutSessionCommandKeys.ENABLED, enabled)
+                dataMap.putLong(
+                    WorkoutSessionCommandKeys.SENT_AT_EPOCH_MS,
+                    System.currentTimeMillis()
+                )
+            }.asPutDataRequest().setUrgent()
+
+            runCatching {
+                Tasks.await(Wearable.getDataClient(application).putDataItem(request))
+                val db = AppDatabase.getDatabase(application)
+                db.workoutRecordDao().getWorkoutRecordByWorkoutId(workoutId)?.let { record ->
+                    db.workoutRecordDao().insert(record.copy(motionCaptureEnabled = enabled))
+                }
+            }.onFailure { exception ->
+                Log.w(TAG, "Failed to send motion capture command for $workoutId", exception)
+            }
+            refreshWorkoutHistories(workoutStore.workouts)
         }
     }
 

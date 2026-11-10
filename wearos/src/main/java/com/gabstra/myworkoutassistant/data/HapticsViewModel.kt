@@ -103,8 +103,9 @@ class HapticsHelper(context: Context) {
     private companion object {
         const val HARD_VIBRATION_DURATION_MS = 200
         const val GENTLE_VIBRATION_DURATION_MS = 80
-        // Leaves a short silence between repeated pulses so they read as separate chimes.
-        const val ALERT_PERIOD_MS = 340L
+        // Onset spacing of repeated pings. Just above the ping's own length, so a double reads
+        // as one crisp "ping-ping" instead of two separate alerts.
+        const val ALERT_PERIOD_MS = 220L
 
         // The speaker path on this watch takes up to ~250 ms to go from idle to audible
         // (deep-buffer standby, route apply, PCM open), while the motor starts in ~24 ms.

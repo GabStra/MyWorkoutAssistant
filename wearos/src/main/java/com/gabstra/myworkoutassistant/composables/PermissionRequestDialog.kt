@@ -88,11 +88,10 @@ internal fun missingWorkoutPermissions(
             if (Build.VERSION.SDK_INT >= 36) {
                 // The service switches to its granular permission map when the device runs
                 // API 36+: raw PPG/ECG/BIA/EDA then need Samsung's (dangerous-level)
-                // READ_ADDITIONAL_HEALTH_DATA, HR/SpO2 need Health Connect grants. Harmless
+                // READ_ADDITIONAL_HEALTH_DATA and HR need Health Connect grants. Harmless
                 // to declare below 36; we only request it where the map actually applies.
                 add("com.samsung.android.hardware.sensormanager.permission.READ_ADDITIONAL_HEALTH_DATA")
                 add("android.permission.health.READ_HEART_RATE")
-                add("android.permission.health.READ_OXYGEN_SATURATION")
                 add(Manifest.permission.ACTIVITY_RECOGNITION)
             } else {
                 add(Manifest.permission.BODY_SENSORS)

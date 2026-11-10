@@ -21,4 +21,6 @@ data class WorkoutRecord (
     val lastActiveSyncAt: LocalDateTime? = null,
     val activeSessionRevision: UInt = 0u,
     val lastKnownSessionState: String? = null,
+    /** Last motion-recording state reported by a watch-owned session, for the phone control. */
+    val motionCaptureEnabled: Boolean? = null,
 )

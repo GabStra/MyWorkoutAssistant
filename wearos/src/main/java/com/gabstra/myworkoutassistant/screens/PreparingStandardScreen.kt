@@ -39,7 +39,9 @@ fun PreparingStandardScreen(
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     val isSessionHydrationInFlight by viewModel.isSessionHydrationInFlightFlow.collectAsState()
+    val watchHeartRateSamples by hrViewModel.heartRateSampleCount.collectAsState()
     var hasTriggeredNextState by remember { mutableStateOf(false) }
+    val watchHeartRateReady = isWatchHeartRateReady(watchHeartRateSamples, currentMillis)
 
     LaunchedEffect(isSessionHydrationInFlight) {
         if (isSessionHydrationInFlight) {
@@ -53,12 +55,18 @@ fun PreparingStandardScreen(
             }
         }
     }
-    LaunchedEffect(state.dataLoaded, hasWorkoutRecord, currentMillis, isSessionHydrationInFlight) {
+    LaunchedEffect(
+        state.dataLoaded,
+        hasWorkoutRecord,
+        currentMillis,
+        isSessionHydrationInFlight,
+        watchHeartRateSamples,
+    ) {
         if (hasTriggeredNextState || isSessionHydrationInFlight) {
             return@LaunchedEffect
         }
 
-        val isReady = state.dataLoaded && currentMillis >= 3000
+        val isReady = state.dataLoaded && watchHeartRateReady && currentMillis >= 3000
 
         if (isReady) {
             if (!viewModel.isCurrentPreparingState(state)) {
@@ -82,5 +90,7 @@ fun PreparingStandardScreen(
         }
     }
 
-    FullScreenLoadingIndicator(text = "Preparing HR sensor")
+    FullScreenLoadingIndicator(
+        text = if (watchHeartRateReady) "Preparing HR sensor" else "Waiting for HR sensor"
+    )
 }

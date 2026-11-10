@@ -39,6 +39,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.data.LongPressRepeatSpeedStage
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPressOrTap
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
@@ -49,8 +50,17 @@ internal const val WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS = 10_000L
 
 // Hold latency before steps repeat, and how long a repeat must run before it
 // switches to the coarse step (bigger jumps for the same finger time).
-private const val REPEAT_THRESHOLD_MILLIS = 400L
-internal const val COARSE_STEP_AFTER_MILLIS = 1_500L
+// Deliberately unhurried: a slow, careful tap must stay a single step, so the
+// hold only starts repeating after a clearly intentional long press.
+private const val REPEAT_THRESHOLD_MILLIS = 700L
+internal const val COARSE_STEP_AFTER_MILLIS = 2_500L
+
+/** Gentle ramp so fine adjustments stay controllable during the first seconds of a hold. */
+private val VerticalControlSpeedStages = listOf(
+    LongPressRepeatSpeedStage(holdTimeMillis = 0L, intervalMillis = 250L),
+    LongPressRepeatSpeedStage(holdTimeMillis = 2_500L, intervalMillis = 180L),
+    LongPressRepeatSpeedStage(holdTimeMillis = 5_000L, intervalMillis = 120L),
+)
 
 /** A sustained hold switches to the bigger step once it has repeated this long. */
 internal fun shouldUseCoarseStep(elapsedHoldMillis: Long, hasCoarseStep: Boolean): Boolean =
@@ -193,7 +203,8 @@ private fun ControlButton(
             }
             .repeatActionOnLongPressOrTap(
                 thresholdMillis = REPEAT_THRESHOLD_MILLIS,
-                intervalMillis = 150,
+                intervalMillis = 250,
+                speedStages = VerticalControlSpeedStages,
                 enabled = enabled,
                 onPressedChange = { isPressed = it },
                 onAction = { elapsedHoldMillis ->

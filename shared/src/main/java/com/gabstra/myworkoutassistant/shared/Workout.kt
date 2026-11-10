@@ -13,7 +13,10 @@ data class Workout(
     val workoutComponents: List<WorkoutComponent>,
     val order : Int,
     val enabled: Boolean = true,
+    /** Default live/of-record source; always part of [heartRateSources] via [enabledHeartRateSources]. */
     val heartRateSource: HeartRateSource = HeartRateSource.WATCH_SENSOR,
+    /** Every source enabled for this workout; all of them connect and record simultaneously. */
+    val heartRateSources: Set<HeartRateSource> = emptySet(),
     val creationDate: LocalDate,
     val previousVersionId: UUID? = null,
     val nextVersionId: UUID? = null,
@@ -26,6 +29,10 @@ data class Workout(
     val usePolarDevice: Boolean
         get() = heartRateSource == HeartRateSource.POLAR_BLE
 
+    /** Enabled sources, guaranteed to include the default live source. */
+    val enabledHeartRateSources: Set<HeartRateSource>
+        get() = heartRateSources + heartRateSource
+
     val usesExternalHeartRateDevice: Boolean
-        get() = heartRateSource.isExternal
+        get() = enabledHeartRateSources.any { it.isExternal }
 }

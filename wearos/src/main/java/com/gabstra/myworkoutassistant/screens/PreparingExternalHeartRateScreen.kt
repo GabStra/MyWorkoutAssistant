@@ -42,7 +42,9 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.ExternalHeartRateConnectionState
 import com.gabstra.myworkoutassistant.data.ExternalHeartRateDeviceController
 import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
@@ -59,7 +61,8 @@ fun PreparingExternalHeartRateScreen(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     navController: NavController,
-    externalHeartRateController: ExternalHeartRateDeviceController,
+    externalHeartRateControllers: List<ExternalHeartRateDeviceController>,
+    hrViewModel: SensorDataViewModel,
     state: WorkoutState.Preparing,
     onReady: () -> Unit = {},
 ) {
@@ -70,34 +73,46 @@ fun PreparingExternalHeartRateScreen(
     val selectedWorkout by viewModel.selectedWorkout
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     val isSessionHydrationInFlight by viewModel.isSessionHydrationInFlightFlow.collectAsState()
-    val connectionState by externalHeartRateController.connectionState.collectAsState()
-    val source = selectedWorkout.heartRateSource
+    val connectionStates = externalHeartRateControllers.map {
+        it.connectionState.collectAsState()
+    }
+    val watchHeartRateSamples by hrViewModel.heartRateSampleCount.collectAsState()
+    val watchEnabled = HeartRateSource.WATCH_SENSOR in selectedWorkout.enabledHeartRateSources
     val scope = rememberWearCoroutineScope()
     val context = LocalContext.current
 
     var currentMillis by remember { mutableIntStateOf(0) }
     var hasTriggeredNextState by remember { mutableStateOf(false) }
-    val isStreaming = connectionState is ExternalHeartRateConnectionState.Streaming
-    // Skip stays available whenever no heart-rate samples are arriving; the controller reports
-    // Connected as soon as GATT subscribes, which alone doesn't mean the strap is sending data.
+    val pendingIndices = externalHeartRateControllers.indices.filter {
+        connectionStates[it].value !is ExternalHeartRateConnectionState.Streaming
+    }
+    val isStreaming = pendingIndices.isEmpty()
+    // Each enabled strap plus (when enabled) the watch must be live before starting.
+    val watchHeartRateReady = !watchEnabled ||
+        isWatchHeartRateReady(watchHeartRateSamples, currentMillis)
+    // Skip stays available whenever some heart-rate samples are not arriving; a controller
+    // reports Connected as soon as GATT subscribes, which alone doesn't mean it is sending data.
+    val hasBlockingError = pendingIndices.any { index ->
+        val state = connectionStates[index].value
+        state is ExternalHeartRateConnectionState.Error ||
+            state is ExternalHeartRateConnectionState.MissingConfiguration
+    }
     val canSkip = !isStreaming && (
-        currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS ||
-            connectionState is ExternalHeartRateConnectionState.Error ||
-            connectionState is ExternalHeartRateConnectionState.MissingConfiguration
+        currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS || hasBlockingError
         )
 
-    LaunchedEffect(source) {
+    LaunchedEffect(externalHeartRateControllers) {
         // Wait for any in-flight session hydration, but don't re-initialise when the hydration
         // flag flips: that reset the controller and silently cleared the user's Skip.
         snapshotFlow { isSessionHydrationInFlight }.first { !it }
         currentMillis = 0
-        val config = viewModel.getExternalHeartRateConfig(source)
-        // A link still streaming from the previous session is healthy: keep it instead of
-        // tearing it down and making resume wait for a full reconnect (which also flashes
-        // the skip view when the transient state passes through Error).
-        if (externalHeartRateController.connectionState.value !is ExternalHeartRateConnectionState.Streaming) {
-            externalHeartRateController.initialize(context, config)
-            externalHeartRateController.connectToDevice()
+        externalHeartRateControllers.forEach { controller ->
+            // A link still streaming from the previous session is healthy: keep it instead of
+            // tearing it down and making resume wait for a full reconnect.
+            if (controller.connectionState.value !is ExternalHeartRateConnectionState.Streaming) {
+                controller.initialize(context, viewModel.getExternalHeartRateConfig(controller.source))
+                controller.connectToDevice()
+            }
         }
 
         scope.launch {
@@ -112,16 +127,17 @@ fun PreparingExternalHeartRateScreen(
     }
 
     LaunchedEffect(
-        connectionState,
+        connectionStates.map { it.value },
         state.dataLoaded,
         currentMillis,
         hasWorkoutRecord,
         hasTriggeredNextState,
-        isSessionHydrationInFlight
+        isSessionHydrationInFlight,
+        watchHeartRateSamples,
     ) {
         if (hasTriggeredNextState || isSessionHydrationInFlight) return@LaunchedEffect
 
-        val isReady = isStreaming && state.dataLoaded && currentMillis >= 3000
+        val isReady = isStreaming && watchHeartRateReady && state.dataLoaded && currentMillis >= 3000
         if (isReady) {
             if (!viewModel.isCurrentPreparingState(state)) {
                 hasTriggeredNextState = true
@@ -142,27 +158,31 @@ fun PreparingExternalHeartRateScreen(
         }
     }
 
-    val statusMessage = when (connectionState) {
-        is ExternalHeartRateConnectionState.Connecting ->
-            (connectionState as ExternalHeartRateConnectionState.Connecting).message
-        is ExternalHeartRateConnectionState.Connected ->
-            (connectionState as ExternalHeartRateConnectionState.Connected).message
-        is ExternalHeartRateConnectionState.Streaming ->
-            (connectionState as ExternalHeartRateConnectionState.Streaming).message
-        is ExternalHeartRateConnectionState.MissingConfiguration ->
-            (connectionState as ExternalHeartRateConnectionState.MissingConfiguration).message
-        is ExternalHeartRateConnectionState.Error ->
-            (connectionState as ExternalHeartRateConnectionState.Error).message
-        is ExternalHeartRateConnectionState.Skipped ->
-            (connectionState as ExternalHeartRateConnectionState.Skipped).message
-        ExternalHeartRateConnectionState.Idle -> "Waiting for ${source.displayName()} heart rate"
+    val statusSource = pendingIndices.firstOrNull()?.let { externalHeartRateControllers[it] }
+    val statusState = statusSource?.let { connectionStates[externalHeartRateControllers.indexOf(it)].value }
+        ?: ExternalHeartRateConnectionState.Idle
+    val statusMessage = when (statusState) {
+        is ExternalHeartRateConnectionState.Connecting -> statusState.message
+        is ExternalHeartRateConnectionState.Connected -> statusState.message
+        is ExternalHeartRateConnectionState.Streaming -> statusState.message
+        is ExternalHeartRateConnectionState.MissingConfiguration -> statusState.message
+        is ExternalHeartRateConnectionState.Error -> statusState.message
+        is ExternalHeartRateConnectionState.Skipped -> statusState.message
+        ExternalHeartRateConnectionState.Idle ->
+            "Waiting for ${statusSource?.source?.displayName() ?: "heart rate"}"
     }.trimEnd('.')
 
     if (!canSkip || isStreaming) {
         // One stable line while connecting: the per-state messages flashed through
         // scanning/connecting/connected in well under a second on a fast link. Errors and
         // the skip hint still appear in the buttons view below.
-        FullScreenLoadingIndicator(text = "Waiting for ${source.displayName()} heart rate")
+        val pendingName = statusSource?.source?.displayName()
+        val loadingText = when {
+            isStreaming && !watchHeartRateReady -> "Waiting for watch heart rate"
+            pendingName != null -> "Waiting for $pendingName heart rate"
+            else -> "Waiting for heart rate"
+        }
+        FullScreenLoadingIndicator(text = loadingText)
         return
     }
 
@@ -221,7 +241,7 @@ fun PreparingExternalHeartRateScreen(
                                 return@WearPrimaryButton
                             }
                             hasTriggeredNextState = true
-                            externalHeartRateController.skipConnectionForSession()
+                            externalHeartRateControllers.forEach { it.skipConnectionForSession() }
                             hapticsViewModel.doGentleVibration()
 
                             if (hasWorkoutRecord) {
@@ -249,7 +269,7 @@ fun PreparingExternalHeartRateScreen(
                         onClick = {
                             if (hasTriggeredNextState) return@ButtonWithText
                             hapticsViewModel.doGentleVibration()
-                            externalHeartRateController.disconnectFromDevice()
+                            externalHeartRateControllers.forEach { it.disconnectFromDevice() }
                             navController.navigate(Screen.WorkoutSelection.route) {
                                 popUpTo(0) { inclusive = true }
                             }

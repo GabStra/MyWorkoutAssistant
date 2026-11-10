@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.heart_rate
 
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
@@ -10,14 +11,110 @@ import kotlin.math.roundToLong
 
 data class HeartRateSessionAnalysis(
     val chartModel: CartesianChartModel,
-    val zoneCounts: Map<Int, Int>,
+    /** Seconds spent per zone, weighted by each sample's real duration. */
+    val zoneCounts: Map<Int, Double>,
     val validHeartRateCount: Int,
     val averageHeartRate: Int,
     val minHeartRate: Int,
     val maxHeartRate: Int,
     val minChartY: Double,
     val durationSeconds: Int,
+    /** Every other source recorded alongside the of-record stream, in display order. */
+    val extraSources: List<HeartRateSourceSeries> = emptyList(),
+    /** Coverage figures for each extra source. */
+    val extraSummaries: List<HeartRateSourceSummary> = emptyList(),
 )
+
+data class HeartRateSourceSeries(
+    val label: String,
+    val samples: List<Int>,
+    /** Sample offsets in ms; empty falls back to one sample per second. */
+    val timesMs: List<Long> = emptyList(),
+)
+
+data class HeartRateSourceSummary(
+    val label: String,
+    val averageHeartRate: Int,
+    val minHeartRate: Int,
+    val maxHeartRate: Int,
+)
+
+/**
+ * Turns a persisted per-source stream map into the extra series plotted beside the of-record one.
+ * Ordering is deterministic (watch, then the enum's device order) so legend colours stay stable.
+ */
+fun buildExtraHeartRateSeries(
+    streams: Map<String, List<Int>>,
+    times: Map<String, List<Long>> = emptyMap(),
+    activeSource: HeartRateSource?,
+): List<HeartRateSourceSeries> = streams
+    .mapNotNull { (rawName, samples) ->
+        val source = HeartRateSource.fromName(rawName) ?: return@mapNotNull null
+        if (source == activeSource || samples.isEmpty()) return@mapNotNull null
+        Triple(source, samples, times[rawName].orEmpty())
+    }
+    .sortedBy { (source, _, _) ->
+        if (source == HeartRateSource.WATCH_SENSOR) -1 else source.ordinal
+    }
+    .map { (source, samples, streamTimes) ->
+        HeartRateSourceSeries(source.displayName(), samples, streamTimes)
+    }
+
+/** Real sample times for the stream of record, or null for records without timestamps. */
+fun com.gabstra.myworkoutassistant.shared.WorkoutHistory.heartRateTimesForOfRecord(): List<Long>? =
+    heartRateSource?.let { heartRateStreamTimes[it] }
+
+/**
+ * Sample times aligned with [samples]. Records captured before timestamps existed fall back to
+ * the old one-sample-per-second interpretation instead of pretending to have real times.
+ */
+fun alignedHeartRateTimes(timesMs: List<Long>?, samples: Int): List<Long> =
+    if (timesMs != null && timesMs.size == samples) timesMs
+    else List(samples) { it * 1000L }
+
+/** Seconds this sample represents; a long dropout is capped so it cannot inflate zone time. */
+fun heartRateSampleSeconds(timesMs: List<Long>, index: Int, maxGapMs: Long = 5_000L): Double {
+    val start = timesMs[index]
+    val end = if (index < timesMs.lastIndex) timesMs[index + 1] else start + 1_000L
+    return ((end - start).coerceIn(0L, maxGapMs)).toDouble() / 1000.0
+}
+
+/** Mean heart rate weighted by how long each sample was current. */
+fun timeWeightedAverage(samples: List<Int>, timesMs: List<Long>): Int? {
+    if (samples.isEmpty() || timesMs.size != samples.size) return null
+    var sum = 0.0
+    var seconds = 0.0
+    samples.forEachIndexed { index, bpm ->
+        if (bpm <= 0) return@forEachIndexed
+        val weight = heartRateSampleSeconds(timesMs, index)
+        sum += bpm * weight
+        seconds += weight
+    }
+    return if (seconds > 0.0) (sum / seconds).toInt() else null
+}
+
+/** Seconds spent inside [lowHr]..[highHr] between two offsets, using real sample times. */
+fun secondsInHeartRateRange(
+    samples: List<Int>,
+    timesMs: List<Long>,
+    fromMs: Long,
+    toMs: Long,
+    lowHr: Int,
+    highHr: Int,
+): Double {
+    if (timesMs.size != samples.size || toMs <= fromMs) return 0.0
+    var seconds = 0.0
+    samples.forEachIndexed { index, bpm ->
+        val start = timesMs[index]
+        if (start < fromMs || start >= toMs || bpm !in lowHr..highHr) return@forEachIndexed
+        val end = minOf(
+            if (index < timesMs.lastIndex) timesMs[index + 1] else start + 1_000L,
+            toMs,
+        )
+        seconds += ((end - start).coerceAtLeast(0L).coerceAtMost(5_000L)).toDouble() / 1000.0
+    }
+    return seconds
+}
 
 data class HeartRateZoneSegment(
     val zoneIndex: Int,
@@ -31,24 +128,29 @@ fun analyzeHeartRateSession(
     userAge: Int,
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
+    heartRateTimesMs: List<Long>? = null,
+    extraSeries: List<HeartRateSourceSeries> = emptyList(),
 ): HeartRateSessionAnalysis? {
     val validHeartRates = heartRateSeries.filter { it > 0 }
     if (validHeartRates.isEmpty()) {
         return null
     }
 
+    val times = alignedHeartRateTimes(heartRateTimesMs, heartRateSeries.size)
     val minHeartRate = validHeartRates.min()
-    val zoneCounts = mutableMapOf<Int, Int>().apply {
-        colorsByZone.indices.forEach { put(it, 0) }
+    val zoneCounts = mutableMapOf<Int, Double>().apply {
+        colorsByZone.indices.forEach { put(it, 0.0) }
     }
-    validHeartRates.forEach { heartRate ->
+    heartRateSeries.forEachIndexed { index, heartRate ->
+        if (heartRate <= 0) return@forEachIndexed
+        val seconds = heartRateSampleSeconds(times, index)
         val zone = getZoneFromHeartRate(
             heartRate = heartRate.toDouble(),
             userAge = userAge,
             measuredMaxHeartRate = measuredMaxHeartRate,
             restingHeartRate = restingHeartRate,
         )
-        zoneCounts[zone] = (zoneCounts[zone] ?: 0) + 1
+        zoneCounts[zone] = (zoneCounts[zone] ?: 0.0) + seconds
     }
 
     val chartSeries = heartRateSeries.map {
@@ -58,20 +160,56 @@ fun analyzeHeartRateSession(
             it.toDouble()
         }
     }
+    // Only sources with usable samples get a line; their summaries drive the legend.
+    val plottedSources = extraSeries.filter { source -> source.samples.any { it > 0 } }
+    val extraSummaries = plottedSources.mapNotNull { source ->
+        val rates = source.samples.filter { it > 0 }
+        if (rates.isEmpty()) return@mapNotNull null
+        HeartRateSourceSummary(
+            label = source.label,
+            averageHeartRate = timeWeightedAverage(
+                samples = source.samples,
+                timesMs = alignedHeartRateTimes(source.timesMs, source.samples.size),
+            ) ?: rates.average().toInt(),
+            minHeartRate = rates.min(),
+            maxHeartRate = rates.max(),
+        )
+    }
+
+    val chartModel = CartesianChartModel(
+        LineCartesianLayerModel.build {
+            series(
+                x = times.map { it / 1000.0 },
+                y = chartSeries,
+            )
+            plottedSources.forEach { source ->
+                val minimum = source.samples.filter { it > 0 }.min()
+                series(
+                    x = alignedHeartRateTimes(source.timesMs, source.samples.size)
+                        .map { it / 1000.0 },
+                    y = source.samples.map { rate ->
+                        if (rate == 0) minimum.toDouble() else rate.toDouble()
+                    },
+                )
+            }
+        }
+    )
 
     return HeartRateSessionAnalysis(
-        chartModel = CartesianChartModel(
-            LineCartesianLayerModel.build {
-                series(chartSeries)
-            }
-        ),
+        chartModel = chartModel,
         zoneCounts = zoneCounts,
         validHeartRateCount = validHeartRates.size,
-        averageHeartRate = validHeartRates.average().toInt(),
+        averageHeartRate = timeWeightedAverage(heartRateSeries, times)
+            ?: validHeartRates.average().toInt(),
         minHeartRate = minHeartRate,
         maxHeartRate = validHeartRates.max(),
-        minChartY = minHeartRate.toDouble(),
-        durationSeconds = durationSeconds.coerceAtLeast(heartRateSeries.lastIndex),
+        minChartY = minOf(
+            minHeartRate,
+            extraSummaries.minOfOrNull { it.minHeartRate } ?: minHeartRate,
+        ).toDouble(),
+        durationSeconds = durationSeconds.coerceAtLeast((times.last() / 1000L).toInt()),
+        extraSources = plottedSources,
+        extraSummaries = extraSummaries,
     )
 }
 

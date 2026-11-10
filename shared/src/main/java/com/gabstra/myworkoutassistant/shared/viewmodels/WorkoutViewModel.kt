@@ -24,7 +24,6 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
-import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.running.RunningResult
@@ -113,6 +112,10 @@ import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindF
 import com.gabstra.myworkoutassistant.shared.getEffectiveMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
+import com.gabstra.myworkoutassistant.shared.utils.HeartRateQuality
+import com.gabstra.myworkoutassistant.shared.utils.HrvEstimation
+import com.gabstra.myworkoutassistant.shared.utils.HydrationEstimation
 import com.gabstra.myworkoutassistant.shared.utils.LiveCalorieAccumulator
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
@@ -147,7 +150,9 @@ import java.time.LocalTime
 import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
@@ -783,7 +788,9 @@ open class WorkoutViewModel(
     // Create a function to update the backup progress
     fun setBackupProgress(progress: Float) {
         _backupProgress.floatValue = progress
-        backupPhaseDisplay.onUiUpdated()
+        if (_backupSyncPhase.value == SyncPhase.TRANSFERRING) {
+            backupPhaseDisplay.onUiUpdated()
+        }
     }
 
     fun setBackupSyncPhase(phase: SyncPhase) {
@@ -964,6 +971,7 @@ open class WorkoutViewModel(
                 )
                 completedState.endWorkoutTime =
                     refreshedHistory.startTime.plusSeconds(refreshedHistory.duration.toLong())
+                applyDerivedSignalTransition(_workoutState.value, completedState)
                 _workoutState.value = completedState
             }
         }
@@ -1074,10 +1082,62 @@ open class WorkoutViewModel(
      */
     val executedSetsHistoryFlow = executedSetStore.executedSets
 
-    protected val heartBeatHistory: ConcurrentLinkedQueue<Int> = ConcurrentLinkedQueue()
+    protected val heartStreams: MutableMap<HeartRateSource, ConcurrentLinkedQueue<Int>> =
+        ConcurrentHashMap()
 
-    /** Beat-to-beat intervals per tick, index-aligned with [heartBeatHistory]; empty on non-Samsung paths. */
-    protected val ibiHistory: ConcurrentLinkedQueue<List<Int>> = ConcurrentLinkedQueue()
+    /** Beat-to-beat intervals per tick for each source, index-aligned with its beat stream. */
+    protected val ibiStreams: MutableMap<HeartRateSource, ConcurrentLinkedQueue<List<Int>>> =
+        ConcurrentHashMap()
+
+    /**
+     * Per-sample offsets in milliseconds from the session's timeline anchor, index-aligned with
+     * each source's beat stream. Without these a stream can only be interpreted as "one sample
+     * per second", which is false for straps that push faster or slower than 1 Hz.
+     */
+    protected val heartStreamTimes: MutableMap<HeartRateSource, ConcurrentLinkedQueue<Long>> =
+        ConcurrentHashMap()
+
+    /** Monotonic anchor for [heartStreamTimes]; null until the first sample of a session. */
+    private var hrTimelineAnchorNanos: Long? = null
+    /** Wall clock matching offset zero, persisted so absolute times survive reloads. */
+    private var hrTimelineStartEpochMs: Long? = null
+
+    /** The stream that drives the live display, zones, calories and HRV. */
+    private val _activeHeartRateSource = MutableStateFlow(HeartRateSource.WATCH_SENSOR)
+    val activeHeartRateSource: StateFlow<HeartRateSource> = _activeHeartRateSource.asStateFlow()
+
+    /** Sources that produced at least one sample this session, in display order. */
+    private val _availableHeartRateSources =
+        MutableStateFlow(listOf(HeartRateSource.WATCH_SENSOR))
+    val availableHeartRateSources: StateFlow<List<HeartRateSource>> =
+        _availableHeartRateSources.asStateFlow()
+
+    // --- Derived recovery signals ---
+
+    // IBI beats accumulated only while the session is in a Rest state. Cleared at
+    // the start of each rest window; the final window value is folded into the
+    // per-workout means below when the rest ends.
+    private val restIbiBuffer: ConcurrentLinkedQueue<Int> = ConcurrentLinkedQueue()
+    /** Last IBI list folded in; the chart polls the same sample every second. */
+    private var lastRestIbiSample: List<Int>? = null
+    private var motionStill = true
+    private val completedRestRmssdMs: CopyOnWriteArrayList<Double> = CopyOnWriteArrayList()
+    private val completedRestSdnnMs: CopyOnWriteArrayList<Double> = CopyOnWriteArrayList()
+
+    private var _restHrvRmssdMs = mutableStateOf<Double?>(null)
+    val restHrvRmssdMs: State<Double?> = _restHrvRmssdMs
+    private var _restHrvSdnnMs = mutableStateOf<Double?>(null)
+    val restHrvSdnnMs: State<Double?> = _restHrvSdnnMs
+
+
+    private var _liveSweatLossMl = mutableIntStateOf(0)
+    val liveSweatLossMl: State<Int> = _liveSweatLossMl
+
+    private var _liveSkinTempCelsius = mutableStateOf<Float?>(null)
+    val liveSkinTempCelsius: State<Float?> = _liveSkinTempCelsius
+    private var skinTempStartC: Float? = null
+    private var skinTempMaxC: Float? = null
+    private var sweatLossSamplesSeen: Boolean = false
 
     /**
      * State machine managing workout state progression.
@@ -1149,7 +1209,10 @@ open class WorkoutViewModel(
     internal fun updateStateFlowsFromMachine(activateSession: Boolean = true) {
         val machine = stateMachine
         if (machine != null) {
-            _workoutState.value = machine.currentState
+            val previousState = _workoutState.value
+            val newState = machine.currentState
+            applyDerivedSignalTransition(previousState, newState)
+            _workoutState.value = newState
             _nextWorkoutState.value = machine.upcomingNext
             _isHistoryEmpty.value = machine.isHistoryEmpty
             if (activateSession) {
@@ -1161,6 +1224,27 @@ open class WorkoutViewModel(
             _calibrationContext.value = null
         }
         rebuildScreenState()
+    }
+
+    /**
+     * Keeps the rest-HRV buffers in step with workout-state transitions: a rest
+     * start opens a fresh IBI window, and leaving a rest folds its final value
+     * into the per-workout completed-window means.
+     */
+    private fun applyDerivedSignalTransition(previousState: WorkoutState, newState: WorkoutState) {
+        if (newState is WorkoutState.Rest && previousState !is WorkoutState.Rest) {
+            restIbiBuffer.clear()
+            lastRestIbiSample = null
+            _restHrvRmssdMs.value = null
+            _restHrvSdnnMs.value = null
+        } else if (previousState is WorkoutState.Rest && newState !is WorkoutState.Rest) {
+            _restHrvRmssdMs.value?.let { completedRestRmssdMs.add(it) }
+            _restHrvSdnnMs.value?.let { completedRestSdnnMs.add(it) }
+            restIbiBuffer.clear()
+            lastRestIbiSample = null
+            _restHrvRmssdMs.value = null
+            _restHrvSdnnMs.value = null
+        }
     }
 
     /**
@@ -1713,6 +1797,7 @@ open class WorkoutViewModel(
             startedAt = workoutHistory.startTime,
             sessionStatus = sessionStatus,
             lastActiveSyncAt = workoutRecord.lastActiveSyncAt,
+            motionCaptureEnabled = workoutRecord.motionCaptureEnabled,
         )
     }
 
@@ -1868,11 +1953,38 @@ open class WorkoutViewModel(
             pendingResumeWorkoutHistoryId = null
             _hasWorkoutRecord.value = true
 
-            heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
+            val resumedSource = HeartRateSource.fromName(currentWorkoutHistory!!.heartRateSource)
+                ?: _activeHeartRateSource.value
+            setActiveHrSource(resumedSource)
+            // Per-source streams restore verbatim; the of-record columns stay authoritative for
+            // the active source because older records have no stream map.
+            currentWorkoutHistory!!.heartRateStreams.forEach { (name, beats) ->
+                val source = HeartRateSource.fromName(name) ?: return@forEach
+                if (source == resumedSource) return@forEach
+                beatsFor(source).addAll(beats)
+                // Older records carry no timestamps; fall back to a 1 Hz interpretation.
+                val times = currentWorkoutHistory!!.heartRateStreamTimes[name]
+                    ?: beats.indices.map { it * 1000L }
+                timesFor(source).addAll(times)
+            }
+            val restoredActiveTimes =
+                currentWorkoutHistory!!.heartRateStreamTimes[resumedSource.name]
+            if (restoredActiveTimes != null) {
+                timesFor(resumedSource).addAll(restoredActiveTimes)
+            } else {
+                val beats = currentWorkoutHistory!!.heartBeatRecords
+                timesFor(resumedSource).addAll(beats.indices.map { it * 1000L })
+            }
+            hrTimelineStartEpochMs = currentWorkoutHistory!!.heartRateStreamsStartEpochMs
+            resumeHrTimeline(
+                heartStreamTimes.values.maxOfOrNull { queue -> queue.lastOrNull() ?: 0L } ?: 0L
+            )
+            beatsFor(resumedSource).addAll(currentWorkoutHistory!!.heartBeatRecords)
+            val resumedIbis = ibisFor(resumedSource)
+            resumedIbis.addAll(currentWorkoutHistory!!.ibiRecords)
             // Keep the two queues index-aligned; pre-IBI histories get empty entries.
-            ibiHistory.addAll(currentWorkoutHistory!!.ibiRecords)
-            repeat((heartBeatHistory.size - ibiHistory.size).coerceAtLeast(0)) {
-                ibiHistory.add(emptyList())
+            repeat((beatsFor(resumedSource).size - resumedIbis.size).coerceAtLeast(0)) {
+                resumedIbis.add(emptyList())
             }
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(currentWorkoutHistory!!.id)
             startWorkoutTime = workoutSessionOrchestrator.deriveStartWorkoutTimeFromCompletedSetHistories(setHistories)
@@ -2423,11 +2535,34 @@ open class WorkoutViewModel(
         weightsByEquipment.clear()
         executedSetStore.clear()
         executedRestStore.clear()
-        heartBeatHistory.clear()
-        ibiHistory.clear()
+        heartStreams.values.forEach { it.clear() }
+        ibiStreams.values.forEach { it.clear() }
+        heartStreamTimes.values.forEach { it.clear() }
+        heartStreams.clear()
+        ibiStreams.clear()
+        heartStreamTimes.clear()
+        hrTimelineAnchorNanos = null
+        hrTimelineStartEpochMs = null
+        _availableHeartRateSources.value = listOf(HeartRateSource.WATCH_SENSOR)
+        resetDerivedSignals()
         startWorkoutTime = null
         currentWorkoutHistory = null
         _isPaused.value = false
+    }
+
+    private fun resetDerivedSignals() {
+        restIbiBuffer.clear()
+        lastRestIbiSample = null
+        motionStill = true
+        completedRestRmssdMs.clear()
+        completedRestSdnnMs.clear()
+        _restHrvRmssdMs.value = null
+        _restHrvSdnnMs.value = null
+        _liveSweatLossMl.intValue = 0
+        sweatLossSamplesSeen = false
+        _liveSkinTempCelsius.value = null
+        skinTempStartC = null
+        skinTempMaxC = null
     }
 
     private suspend fun prepareWorkoutForStart(foundWorkout: Workout) {
@@ -2528,10 +2663,120 @@ open class WorkoutViewModel(
         initializeExercisesMaps(selectedWorkout.value)
     }
 
-    open fun registerHeartBeat(heartBeat: Int, ibiList: List<Int> = emptyList()) {
-        heartBeatHistory.add(heartBeat)
-        ibiHistory.add(ibiList)
+    fun setActiveHrSource(source: HeartRateSource) {
+        _activeHeartRateSource.value = source
+    }
+
+    private fun beatsFor(source: HeartRateSource): ConcurrentLinkedQueue<Int> =
+        heartStreams.getOrPut(source) { ConcurrentLinkedQueue() }
+
+    private fun ibisFor(source: HeartRateSource): ConcurrentLinkedQueue<List<Int>> =
+        ibiStreams.getOrPut(source) { ConcurrentLinkedQueue() }
+
+    private fun timesFor(source: HeartRateSource): ConcurrentLinkedQueue<Long> =
+        heartStreamTimes.getOrPut(source) { ConcurrentLinkedQueue() }
+
+    /** Milliseconds since the session timeline anchor, creating it on first use. */
+    private fun hrOffsetMillis(): Long {
+        val anchor = hrTimelineAnchorNanos ?: System.nanoTime().also {
+            hrTimelineAnchorNanos = it
+            hrTimelineStartEpochMs = System.currentTimeMillis()
+        }
+        return ((System.nanoTime() - anchor) / 1_000_000L).coerceAtLeast(0L)
+    }
+
+    /** Re-anchors the timeline so new samples continue right after the restored one. */
+    private fun resumeHrTimeline(lastOffsetMillis: Long) {
+        hrTimelineAnchorNanos = System.nanoTime() - lastOffsetMillis * 1_000_000L
+    }
+
+    /** Snapshot of every source's stream, serialised by enum name. */
+    fun heartRateStreamSnapshot(): Map<String, List<Int>> =
+        heartStreams.mapKeys { (source, _) -> source.name }
+            .mapValues { (_, beats) -> beats.toList() }
+
+    fun heartRateStreamTimesSnapshot(): Map<String, List<Long>> =
+        heartStreamTimes.mapKeys { (source, _) -> source.name }
+            .mapValues { (_, times) -> times.toList() }
+
+    fun heartRateStreamsStartEpochMs(): Long? = hrTimelineStartEpochMs
+
+    fun setHrSourceAvailable(source: HeartRateSource, available: Boolean) {
+        val current = _availableHeartRateSources.value
+        if (available) {
+            if (source in current) return
+            // Watch first, then the configured straps in connection order.
+            _availableHeartRateSources.value = (current + source)
+                .sortedBy { if (it == HeartRateSource.WATCH_SENSOR) 0 else 1 }
+        } else {
+            if (source !in current || _availableHeartRateSources.value.size == 1) return
+            _availableHeartRateSources.value = current - source
+            if (_activeHeartRateSource.value == source) {
+                _activeHeartRateSource.value =
+                    _availableHeartRateSources.value.firstOrNull() ?: HeartRateSource.WATCH_SENSOR
+            }
+        }
+    }
+
+    open fun registerHeartBeat(
+        heartBeat: Int,
+        ibiList: List<Int> = emptyList(),
+        ibiStatusList: List<Int> = emptyList(),
+        heartRateStatus: Int? = null,
+        source: HeartRateSource = HeartRateSource.WATCH_SENSOR,
+    ) {
+        // Sensor flags: NONE/FIND_HR/ATTACHED are usable; move/detached/low-reliability are not.
+        if (!HeartRateQuality.isUsable(heartRateStatus)) return
+
+        // Every source is recorded side by side with its own arrival time.
+        beatsFor(source).add(heartBeat)
+        ibisFor(source).add(ibiList)
+        timesFor(source).add(hrOffsetMillis())
+        setHrSourceAvailable(source, true)
+        if (source != _activeHeartRateSource.value) return
+
         _latestHeartRateBpm.intValue = heartBeat
+
+        // A moving wrist makes beat detection unreliable: only accumulate IBI while still.
+        if (!motionStill) return
+        val goodIbi = HrvEstimation.filterUsableBeats(ibiList, ibiStatusList)
+        if (goodIbi.isNotEmpty() && _workoutState.value is WorkoutState.Rest &&
+            goodIbi != lastRestIbiSample
+        ) {
+            lastRestIbiSample = goodIbi
+            restIbiBuffer.addAll(goodIbi)
+            val restBeats = restIbiBuffer.toList()
+            _restHrvRmssdMs.value = HrvEstimation.rmssd(restBeats)
+            _restHrvSdnnMs.value = HrvEstimation.sdnn(restBeats)
+        }
+    }
+
+    /** Motion gate for HRV; fed from the capture accelerometer on the wear side. */
+    fun registerMotionStillness(still: Boolean) {
+        motionStill = still
+    }
+
+    /**
+     * Tracks the session's skin-temperature span: the first reading is the baseline, the maximum
+     * is what the session reached. Recorded as a heat-load summary, not a live medical cue.
+     */
+    fun registerSkinTemperature(celsius: Float) {
+        if (celsius !in 20f..45f) return
+        skinTempStartC = skinTempStartC ?: celsius
+        skinTempMaxC = skinTempMaxC?.let { maxOf(it, celsius) } ?: celsius
+        _liveSkinTempCelsius.value = celsius
+    }
+
+    /**
+     * Folds one raw sweat-loss sample into the live accumulated total.
+     */
+    fun registerSweatLossSample(value: Int) {
+        if (value < 0) return
+        _liveSweatLossMl.intValue = HydrationEstimation.accumulateSweatLoss(
+            accumulatedMl = _liveSweatLossMl.intValue,
+            sample = value,
+        )
+        sweatLossSamplesSeen = true
     }
 
     /**
@@ -2884,8 +3129,17 @@ open class WorkoutViewModel(
                     currentWorkoutHistory = currentWorkoutHistory,
                     runningResults = pendingRunningResults.values.toList(),
                     endReason = endReason,
-                    heartBeatRecords = heartBeatHistory.toList(),
-                    ibiRecords = ibiHistory.toList(),
+                    heartBeatRecords = beatsFor(_activeHeartRateSource.value).toList(),
+                    ibiRecords = ibisFor(_activeHeartRateSource.value).toList(),
+                    restRmssdMs = completedRestRmssdMs.takeIf { it.isNotEmpty() }?.average(),
+                    restSdnnMs = completedRestSdnnMs.takeIf { it.isNotEmpty() }?.average(),
+                    sweatLossMl = if (sweatLossSamplesSeen) _liveSweatLossMl.intValue else null,
+                    skinTempStartC = skinTempStartC,
+                    skinTempMaxC = skinTempMaxC,
+                    heartRateSource = _activeHeartRateSource.value.name,
+                    heartRateStreams = heartRateStreamSnapshot(),
+                    heartRateStreamTimes = heartRateStreamTimesSnapshot(),
+                    heartRateStreamsStartEpochMs = heartRateStreamsStartEpochMs(),
                     progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
                     comparisonBaselineByExerciseId = exercisesById.keys.associateWith { exerciseId ->
                         getProgressionComparisonBaselineSets(exerciseId).orEmpty()
@@ -3506,6 +3760,7 @@ open class WorkoutViewModel(
             val completedState = WorkoutState.Completed(workoutStart).apply {
                 endWorkoutTime = LocalDateTime.now()
             }
+            applyDerivedSignalTransition(_workoutState.value, completedState)
             _workoutState.value = completedState
             _nextWorkoutState.value = null
             _sessionPhase.value = WorkoutSessionPhase.COMPLETED
@@ -4187,6 +4442,7 @@ open class WorkoutViewModel(
                 val completedState = WorkoutState.Completed(workoutStart).apply {
                     endWorkoutTime = LocalDateTime.now()
                 }
+                applyDerivedSignalTransition(_workoutState.value, completedState)
                 _workoutState.value = completedState
                 _nextWorkoutState.value = null
                 _sessionPhase.value = WorkoutSessionPhase.COMPLETED
@@ -4263,6 +4519,7 @@ open class WorkoutViewModel(
                     val completedState = WorkoutState.Completed(workoutStart).apply {
                         endWorkoutTime = LocalDateTime.now()
                     }
+                    applyDerivedSignalTransition(_workoutState.value, completedState)
                     _workoutState.value = completedState
                     _nextWorkoutState.value = null
                     _sessionPhase.value = WorkoutSessionPhase.COMPLETED

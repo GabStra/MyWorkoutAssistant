@@ -75,7 +75,8 @@ class WhoopHeartRateViewModel : BaseExternalHeartRateViewModel(HeartRateSource.W
                         markConnectedThisSession()
                     }
                 }
-            }
+            },
+            onRrIntervals = { rr -> if (!isSessionSkipped) publishRrIntervals(rr) },
         )
         whoopClient = client
         whoopStreamDisposable = client.bpmStream(whoopConfig.deviceId.orEmpty())
@@ -129,6 +130,7 @@ private class WhoopBleClient(
     private val context: Context,
     private val config: WhoopHeartRateConfig,
     private val onStateChange: (ExternalHeartRateConnectionState) -> Unit,
+    private val onRrIntervals: (List<Int>) -> Unit,
 ) : HrBpmSource {
     companion object {
         private const val TAG = "WhoopBleClient"
@@ -594,6 +596,22 @@ private class WhoopBleClient(
         writeDescriptor(gatt, descriptor)
     }
 
+    /** RR intervals are present when bit 0x10 is set; each is uint16 LE in 1/1024 s. */
+    private fun parseRrIntervals(value: ByteArray): List<Int> {
+        if (value.size < 2) return emptyList()
+        val flags = value[0].toInt() and 0xFF
+        if (flags and 0x10 == 0) return emptyList()
+        var offset = if (flags and 0x01 != 0) 3 else 2
+        val intervals = ArrayList<Int>()
+        while (offset + 1 < value.size) {
+            val raw = (value[offset].toInt() and 0xFF) or
+                ((value[offset + 1].toInt() and 0xFF) shl 8)
+            intervals.add((raw * 1000) / 1024)
+            offset += 2
+        }
+        return intervals
+    }
+
     private fun parseHeartRate(value: ByteArray): Int? {
         if (value.size < 2) return null
         val flags = value[0].toInt() and 0xFF
@@ -632,6 +650,10 @@ private class WhoopBleClient(
             when (newState) {
                 BluetoothGatt.STATE_CONNECTED -> {
                     linkEstablished = true
+                    // Shortest connection interval the strap accepts: less notification latency.
+                    runCatching {
+                        gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+                    }
                     cachedAddressFallback?.let { handler.removeCallbacks(it) }
                     cachedAddressFallback = null
                     onStateChange(
@@ -727,6 +749,9 @@ private class WhoopBleClient(
 
             if (characteristic.uuid != HEART_RATE_MEASUREMENT_UUID) return
             val bpm = parseHeartRate(characteristic.value) ?: return
+            parseRrIntervals(characteristic.value)
+                .takeIf { it.isNotEmpty() }
+                ?.let(onRrIntervals)
             if (bpm > 0) {
                 Log.d(
                     TAG,

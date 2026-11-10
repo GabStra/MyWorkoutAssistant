@@ -98,6 +98,8 @@ sealed class MeasureMessageSensor {
         val bpm: Int,
         /** Beat-to-beat intervals in ms; non-empty only on the Samsung tracker path. */
         val ibiList: List<Int> = emptyList(),
+        /** Per-interval quality flags aligned with [ibiList]; Samsung path only. */
+        val ibiStatusList: List<Int> = emptyList(),
         /** Sensor-reported HR quality status; null on the stock sensor path. */
         val heartRateStatus: Int? = null,
         val timestampMs: Long = 0L,
