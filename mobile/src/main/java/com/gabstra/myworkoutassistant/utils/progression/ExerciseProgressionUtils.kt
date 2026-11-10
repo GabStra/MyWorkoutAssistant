@@ -801,14 +801,12 @@ fun mergeWorkoutStore(
         }
     }
     
-    // User profile data: always keep local values, ignore imported
-    val mergedBirthDateYear = existing.birthDateYear
-    val mergedWeightKg = existing.weightKg
-    val mergedProgressionPercentageAmount = existing.progressionPercentageAmount
-    val mergedExternalHeartRateConfigs = existing.externalHeartRateConfigs
-    val mergedMeasuredMaxHeartRate = existing.measuredMaxHeartRate
-    val mergedRestingHeartRate = existing.restingHeartRate
-    val mergedDeloadConfig = existing.deloadConfig
+    val mergedDefinitions = existing.exerciseDefinitions.associateBy { it.id }.toMutableMap()
+    imported.exerciseDefinitions.forEach { definition ->
+        if (definition.id !in mergedDefinitions || conflictResolution == ConflictResolution.REPLACE_EXISTING) {
+            mergedDefinitions[definition.id] = definition
+        }
+    }
     
     // Merge workout plans
     val existingPlanIds = existing.workoutPlans.map { it.id }.toSet()
@@ -842,17 +840,12 @@ fun mergeWorkoutStore(
         }
     }
     
-    return WorkoutStore(
+    // Keep local profile/settings and fields unrelated to the imported plan.
+    return existing.copy(
         workouts = mergedWorkouts,
+        exerciseDefinitions = mergedDefinitions.values.toList(),
         equipments = mergedEquipment,
         accessoryEquipments = mergedAccessories,
-        workoutPlans = mergedPlans,
-        birthDateYear = mergedBirthDateYear,
-        weightKg = mergedWeightKg,
-        progressionPercentageAmount = mergedProgressionPercentageAmount,
-        externalHeartRateConfigs = mergedExternalHeartRateConfigs,
-        deloadConfig = mergedDeloadConfig,
-        measuredMaxHeartRate = mergedMeasuredMaxHeartRate,
-        restingHeartRate = mergedRestingHeartRate
+        workoutPlans = mergedPlans
     )
 }
