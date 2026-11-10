@@ -636,7 +636,8 @@ private fun appendCompactExerciseSessionMarkdown(
     val achievableWeights = equipment?.getWeightsCombinations()?.sorted()
     val progression = progressionByExerciseId[section.exercise.id]
     val expectedSets = progression?.expectedSets.orEmpty()
-    val expectedWarmupTokens = compactExpectedWarmups(section.exercise, workoutStore, equipment)
+    val expectedWarmups = compactExpectedWarmups(section.exercise, workoutStore, equipment)
+    val expectedWarmupTokens = expectedWarmups
         ?.takeUnless { it.startsWith("enabled") }
         ?.split(", ")
         .orEmpty()
@@ -697,6 +698,9 @@ private fun appendCompactExerciseSessionMarkdown(
     }
     compactExerciseRepRangeLine(section.exercise)?.let { line ->
         markdown.append("  - $line\n")
+    }
+    expectedWarmups?.takeIf { it.startsWith("enabled (") }?.let { status ->
+        markdown.append("  - Warm-up request is $status.\n")
     }
     if (section.exercise.exerciseType == ExerciseType.BODY_WEIGHT &&
         section.exercise.bodyWeightPercentage != null
@@ -887,6 +891,7 @@ private fun compactExpectedWarmups(
     }
 
     if (!exercise.generateWarmUpSets) return null
+    if (exercise.requiresLoadCalibration) return "enabled (after load calibration)"
     val resolvedEquipment = equipment ?: exercise.equipmentId?.let { id ->
         workoutStore.equipments.find { it.id == id }
     }
@@ -906,17 +911,21 @@ private fun compactExpectedWarmups(
         .filter { it > 0.0 }
     val availableTotals = resolvedEquipment.getWeightsCombinationsNoExtra()
     val warmups = if (resolvedEquipment is Barbell) {
-        WarmupPlanner.buildWarmupSetsForBarbell(
-            availableTotals = availableTotals,
-            workWeight = firstWorkSet.weight,
-            workReps = firstWorkSet.reps,
-            barbell = resolvedEquipment,
-            exercise = exercise,
-            priorExercises = emptyList(),
-            initialSetup = emptyList(),
-            maxWarmups = 3,
-            additionalWorkWeights = additionalWorkWeights
-        )
+        try {
+            WarmupPlanner.buildWarmupSetsForBarbell(
+                availableTotals = availableTotals,
+                workWeight = firstWorkSet.weight,
+                workReps = firstWorkSet.reps,
+                barbell = resolvedEquipment,
+                exercise = exercise,
+                priorExercises = emptyList(),
+                initialSetup = emptyList(),
+                maxWarmups = 3,
+                additionalWorkWeights = additionalWorkWeights
+            )
+        } catch (_: IllegalArgumentException) {
+            return "enabled (automatic warm-up unavailable for current equipment configuration)"
+        }
     } else {
         WarmupPlanner.buildWarmupSets(
             availableTotals = availableTotals,

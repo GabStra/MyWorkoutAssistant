@@ -23,6 +23,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
@@ -69,6 +70,99 @@ class WorkoutDataMarkdownExportTest {
     @After
     fun tearDown() {
         database.close()
+    }
+
+    @Test
+    fun exports_preserveHistoryWhenWorkLoadExceedsCurrentEquipment() = runTest {
+        val baseWorkout = createWorkout()
+        val exercise = (baseWorkout.workoutComponents.single() as Exercise).copy(
+            sets = listOf(WeightSet(setId, 8, 120.0)),
+        )
+        val store = createWorkoutStore(baseWorkout.copy(workoutComponents = listOf(exercise)))
+        insertCompletedSession(
+            workoutHistoryId = UUID.randomUUID(),
+            date = LocalDate.of(2026, 1, 8),
+            weight = 120.0,
+            reps = 8,
+        )
+
+        val planResult = runCatching { buildWorkoutPlanMarkdown(store) }
+        val result = buildWorkoutDataMarkdown(
+            workoutHistoryDao = database.workoutHistoryDao(),
+            setHistoryDao = database.setHistoryDao(),
+            restHistoryDao = database.restHistoryDao(),
+            exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
+            workoutStore = store,
+        )
+        val markdown = (result as WorkoutDataMarkdownResult.Success).markdown
+        assertTrue(
+            "Plan error ${planResult.exceptionOrNull()}, skipped session ${markdown.contains("Skipped sessions")}",
+            planResult.isSuccess && !markdown.contains("Skipped sessions"),
+        )
+        assertTrue(planResult.getOrThrow().contains("automatic warm-up unavailable for current equipment configuration"))
+        assertTrue(markdown.contains("automatic warm-up unavailable for current equipment configuration"))
+        assertTrue(markdown.contains("120 kg for 8 reps"))
+        assertTrue(markdown.contains("Warm-up 1: 20 kg for 5 reps"))
+        assertFalse(markdown.contains("Warm-up 1: expected:"))
+    }
+
+    @Test
+    fun exports_deferAutomaticWarmupsUntilCalibrationAndPreserveLoggedWarmups() = runTest {
+        val baseWorkout = createWorkout()
+        val baseExercise = baseWorkout.workoutComponents.single() as Exercise
+        insertCompletedSession(
+            workoutHistoryId = UUID.randomUUID(),
+            date = LocalDate.of(2026, 1, 8),
+            weight = 40.0,
+            reps = 8,
+        )
+
+        for (exerciseType in listOf(ExerciseType.WEIGHT, ExerciseType.BODY_WEIGHT)) {
+            val pendingSet = when (exerciseType) {
+                ExerciseType.BODY_WEIGHT -> BodyWeightSet(
+                    setId, 8, 0.0, subCategory = SetSubCategory.CalibrationPendingSet
+                )
+                else -> WeightSet(setId, 8, 0.0, subCategory = SetSubCategory.CalibrationPendingSet)
+            }
+            val pendingExercise = baseExercise.copy(
+                exerciseType = exerciseType,
+                bodyWeightPercentage = if (exerciseType == ExerciseType.BODY_WEIGHT) 100.0 else null,
+                requiresLoadCalibration = true,
+                sets = listOf(pendingSet),
+            )
+            for (hasExplicitWarmup in listOf(false, true)) {
+                val exercise = if (hasExplicitWarmup) {
+                    val warmup = when (exerciseType) {
+                        ExerciseType.BODY_WEIGHT -> BodyWeightSet(
+                            UUID.randomUUID(), 5, 0.0, subCategory = SetSubCategory.WarmupSet
+                        )
+                        else -> WeightSet(UUID.randomUUID(), 5, 20.0, subCategory = SetSubCategory.WarmupSet)
+                    }
+                    pendingExercise.copy(sets = listOf(
+                        warmup,
+                        pendingSet,
+                    ))
+                } else {
+                    pendingExercise
+                }
+                val store = createWorkoutStore(baseWorkout.copy(workoutComponents = listOf(exercise)))
+                val planMarkdown = buildWorkoutPlanMarkdown(store)
+                assertTrue(planMarkdown.contains("Enabled (after load calibration)"))
+
+                val result = buildWorkoutDataMarkdown(
+                    workoutHistoryDao = database.workoutHistoryDao(),
+                    setHistoryDao = database.setHistoryDao(),
+                    restHistoryDao = database.restHistoryDao(),
+                    exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
+                    workoutStore = store,
+                )
+                val markdown = (result as WorkoutDataMarkdownResult.Success).markdown
+                assertFalse(markdown.contains("Skipped sessions"))
+                assertTrue(markdown.contains("Warm-up 1:"))
+                assertEquals(hasExplicitWarmup, markdown.contains("Warm-up 1: expected:"))
+                assertFalse(markdown.contains("Planned warm-ups not logged"))
+            }
+        }
     }
 
     @Test

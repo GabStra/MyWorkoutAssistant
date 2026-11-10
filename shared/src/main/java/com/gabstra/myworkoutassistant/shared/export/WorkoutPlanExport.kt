@@ -294,7 +294,9 @@ private fun appendExerciseDetails(
         markdown.append("  - **Warm-up Sets**: ")
         
         // Generate warmup sets if possible (only for WEIGHT exercises with equipment)
-        if (exercise.exerciseType == ExerciseType.WEIGHT && exercise.equipmentId != null) {
+        if (exercise.requiresLoadCalibration) {
+            markdown.append("Enabled (after load calibration)\n")
+        } else if (exercise.exerciseType == ExerciseType.WEIGHT && exercise.equipmentId != null) {
             val equipment = workoutStore.equipments.find { it.id == exercise.equipmentId }
             if (equipment != null && exercise.sets.isNotEmpty()) {
                 val firstWorkSet = exercise.sets.firstOrNull { it !is RestSet && it is WeightSet }
@@ -310,17 +312,21 @@ private fun appendExerciseDetails(
                         .filter { it > 0.0 }
                     
                     val warmups = if (equipment is Barbell) {
-                        WarmupPlanner.buildWarmupSetsForBarbell(
-                            availableTotals = availableTotals,
-                            workWeight = workWeight,
-                            workReps = workReps,
-                            barbell = equipment,
-                            exercise = exercise,
-                            priorExercises = priorExercises,
-                            initialSetup = emptyList(),
-                            maxWarmups = 3,
-                            additionalWorkWeights = additionalWorkWeights,
-                        )
+                        try {
+                            WarmupPlanner.buildWarmupSetsForBarbell(
+                                availableTotals = availableTotals,
+                                workWeight = workWeight,
+                                workReps = workReps,
+                                barbell = equipment,
+                                exercise = exercise,
+                                priorExercises = priorExercises,
+                                initialSetup = emptyList(),
+                                maxWarmups = 3,
+                                additionalWorkWeights = additionalWorkWeights,
+                            )
+                        } catch (_: IllegalArgumentException) {
+                            null
+                        }
                     } else {
                         WarmupPlanner.buildWarmupSets(
                             availableTotals = availableTotals,
@@ -333,7 +339,9 @@ private fun appendExerciseDetails(
                         )
                     }
                     
-                    if (warmups.isNotEmpty()) {
+                    if (warmups == null) {
+                        markdown.append("Enabled (automatic warm-up unavailable for current equipment configuration)\n")
+                    } else if (warmups.isNotEmpty()) {
                         markdown.append("\n")
                         warmups.forEachIndexed { index, (weight, reps) ->
                             markdown.append(

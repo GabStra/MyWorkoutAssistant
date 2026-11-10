@@ -8,11 +8,19 @@ import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 import java.util.UUID
 import kotlin.math.abs
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [30])
 class WarmupPlannerTest {
 
     private fun createTestBarbell(barWeight: Double = 20.0): Barbell {
@@ -70,6 +78,74 @@ class WarmupPlannerTest {
             requiresLoadCalibration = false,
             exerciseCategory = exerciseCategory
         )
+    }
+
+    @Test
+    fun buildWarmupSetsForBarbell_optimizerFailurePreservesFeasibleRampAndError() {
+        val barbell = createTestBarbell()
+        val exercise = createTestExercise(
+            equipmentId = barbell.id,
+            exerciseCategory = ExerciseCategory.HEAVY_COMPOUND,
+        )
+        val availableTotals = barbell.getWeightsCombinationsNoExtra()
+        val failure = IllegalStateException("Injected plate optimization failure")
+        val initialSetup = object : AbstractList<Double>() {
+            override val size = 1
+            override fun get(index: Int): Double = throw failure
+        }
+        ShadowLog.clear()
+
+        val warmups = WarmupPlanner.buildWarmupSetsForBarbell(
+            availableTotals = availableTotals,
+            workWeight = 100.0,
+            workReps = 5,
+            barbell = barbell,
+            exercise = exercise,
+            priorExercises = emptyList(),
+            initialSetup = initialSetup,
+        )
+
+        assertEquals(
+            WarmupPlanner.buildWarmupSets(
+                availableTotals = availableTotals,
+                workWeight = 100.0,
+                workReps = 5,
+                exercise = exercise,
+                priorExercises = emptyList(),
+                equipment = barbell,
+            ),
+            warmups,
+        )
+        assertTrue(warmups.isNotEmpty())
+        assertTrue(warmups.all { it.first in availableTotals && it.first < 100.0 })
+        assertTrue(warmups.zipWithNext().all { (previous, next) -> previous.first < next.first })
+        assertSame(failure, ShadowLog.getLogsForTag("WarmupPlanner").single().throwable)
+
+        for (invalidWorkWeight in listOf(10.0, 101.0, Double.NaN, Double.POSITIVE_INFINITY)) {
+            assertThrows(IllegalArgumentException::class.java) {
+                WarmupPlanner.buildWarmupSetsForBarbell(
+                    availableTotals = availableTotals,
+                    workWeight = invalidWorkWeight,
+                    workReps = 5,
+                    barbell = barbell,
+                    exercise = exercise,
+                    priorExercises = emptyList(),
+                    initialSetup = initialSetup,
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            WarmupPlanner.buildWarmupSetsForBarbell(
+                availableTotals = availableTotals,
+                workWeight = 100.0,
+                workReps = 5,
+                barbell = barbell,
+                exercise = exercise,
+                priorExercises = emptyList(),
+                initialSetup = initialSetup,
+                additionalWorkWeights = listOf(101.0),
+            )
+        }
     }
 
     @Test

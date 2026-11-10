@@ -328,7 +328,13 @@ object WarmupPlanner {
         convenienceStepKgTotal: Double? = null,
         additionalWorkWeights: List<Double> = emptyList(),
     ): List<Pair<Double, Int>> {
-        if (workWeight <= barbell.barWeight) return emptyList()
+        require(barbell.barWeight.isFinite() && barbell.barWeight >= 0.0) { "Invalid bar weight" }
+        val workWeights = listOf(workWeight) + additionalWorkWeights
+        require(workWeights.all { weight ->
+            weight.isFinite() && weight > 0.0 && weight >= barbell.barWeight &&
+                availableTotals.any { abs(it - weight) < EPS }
+        }) { "Work weights must be achievable barbell totals" }
+        if (workWeight == barbell.barWeight) return emptyList()
 
         // Resolve warmup profile with new logic
         val profile = resolveWarmupProfile(
@@ -380,18 +386,36 @@ object WarmupPlanner {
                         }
                     }
 
-                    return optimizedWarmups
+                    val warmups = optimizedWarmups
                         .filter { (weight, _) -> weight < workWeight }
                         .dedupeAdjacentWarmupTotals()
                         .take(maxWarmups.coerceAtLeast(0))
+                    if (warmups.isNotEmpty() &&
+                        warmups.all { (weight, _) -> availableTotals.any { abs(it - weight) < EPS } } &&
+                        warmups.zipWithNext().all { (previous, next) -> previous.first < next.first }
+                    ) {
+                        return warmups
+                    }
+                    Log.w(TAG, "Plate optimization produced no feasible progressive warm-up ramp")
                 }
             }
+        } catch (e: IllegalArgumentException) {
+            throw e
         } catch (e: Exception) {
-            // Fall through: return empty (no fallback)
+            Log.w(TAG, "Plate optimization failed; using feasible warm-up ramp", e)
         }
 
-        Log.d(TAG, "No warmups: percentage-within-band path did not produce warmups")
-        return emptyList()
+        return buildWarmupSets(
+            availableTotals = availableTotals,
+            workWeight = workWeight,
+            workReps = workReps,
+            exercise = exercise,
+            priorExercises = priorExercises,
+            equipment = barbell,
+            maxWarmups = maxWarmups,
+            baseAnchorTotal = baseAnchorTotal,
+            convenienceStepKgTotal = convenienceStepKgTotal,
+        )
     }
 
     private fun List<Pair<Double, Int>>.dedupeAdjacentWarmupTotals(): List<Pair<Double, Int>> {
