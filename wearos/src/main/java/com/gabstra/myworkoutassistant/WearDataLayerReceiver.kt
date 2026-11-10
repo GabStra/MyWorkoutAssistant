@@ -13,6 +13,7 @@ import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 internal class WearDataLayerReceiver(
@@ -51,7 +52,7 @@ internal class WearDataLayerReceiver(
         appViewModel.setBackupSyncPhase(SyncPhase.TRANSFERRING)
 
         val currentRoute = navController.currentBackStackEntry?.destination?.route
-        if (currentRoute != Screen.Workout.route) {
+        if (currentRoute != Screen.Workout.route && currentRoute != Screen.Loading.route) {
             navController.navigate(Screen.Loading.route)
         }
     }
@@ -76,10 +77,16 @@ internal class WearDataLayerReceiver(
         val appBackupEndJson =
             intent.getStringExtra(DataLayerListenerService.APP_BACKUP_END_JSON) ?: return
         Log.d("DataLayerSync", "Received APP_BACKUP_END_JSON - dismissing loading screen")
+        appViewModel.setBackupSyncPhase(SyncPhase.COMPLETED)
         val currentRoute = navController.currentBackStackEntry?.destination?.route
-        if (currentRoute != Screen.Workout.route) {
-            navController.navigate(Screen.WorkoutSelection.route) {
-                popUpTo(0) { inclusive = true }
+        if (currentRoute == Screen.Loading.route) {
+            CoroutineScope(Dispatchers.Main).launch {
+                delay(800L)
+                if (navController.currentBackStackEntry?.destination?.route == Screen.Loading.route) {
+                    navController.navigate(Screen.WorkoutSelection.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
             }
         }
         // Workout alarms are re-registered in DataLayerListenerService after backup DB commit.
@@ -98,7 +105,7 @@ internal class WearDataLayerReceiver(
                 // Show the loading screen as soon as the handshake starts so the
                 // watch mirrors the phone's stage sequence from the first step.
                 val currentRoute = navController.currentBackStackEntry?.destination?.route
-                if (currentRoute != Screen.Workout.route) {
+                if (currentRoute != Screen.Workout.route && currentRoute != Screen.Loading.route) {
                     navController.navigate(Screen.Loading.route)
                 }
             }

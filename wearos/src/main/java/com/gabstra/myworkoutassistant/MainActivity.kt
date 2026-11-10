@@ -617,7 +617,7 @@ fun WearApp(
                                 val syncPhase by appViewModel.backupSyncPhase
                                 val animatedProgress by animateFloatAsState(
                                     targetValue = progress,
-                                    animationSpec = tween(durationMillis = 400)
+                                    animationSpec = tween(durationMillis = 100)
                                 )
 
                                 val syncStageText = when (syncPhase) {

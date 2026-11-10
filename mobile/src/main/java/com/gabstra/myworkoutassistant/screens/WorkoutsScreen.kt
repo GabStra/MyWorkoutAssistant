@@ -131,7 +131,7 @@ fun WorkoutsScreen(
 ) {
     val animatedSyncProgress by animateFloatAsState(
         targetValue = syncProgress ?: 0f,
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = tween(durationMillis = 100),
         label = "Wear-acknowledged sync progress"
     )
     val watchReachable by WatchConnectionMonitor.watchReachable.collectAsState()

@@ -73,10 +73,7 @@ class StagedPhaseDisplay(
             return
         }
         if (phase == pendingPhase) {
-            // Already scheduled; the hold re-measures when the job resumes, so this
-            // progress tick simply postpones the switch until the stage has been
-            // fully visible (the 100% ring included) for the minimum hold.
-            onUiUpdated()
+            // Progress for a not-yet-visible phase must not postpone its first display.
             return
         }
         val previous = pending

@@ -51,6 +51,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -58,7 +59,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -83,6 +86,9 @@ class DataLayerListenerService : WearableListenerService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + appCeh)
     private var backupProcessingJob: Job? = null
+    private val syncProgressDispatchLock = Any()
+    private var syncProgressDispatchJob: Job? = null
+    private val pendingSyncPhaseAcks = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
     private lateinit var restHistoryDao: RestHistoryDao
@@ -430,15 +436,52 @@ class DataLayerListenerService : WearableListenerService() {
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         val path = messageEvent.path
-        if (!DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_CANCEL_PREFIX)) {
+        if (DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_CANCEL_PREFIX)) {
+            val transactionId = DataLayerPaths.parseTransactionId(
+                path,
+                DataLayerPaths.SYNC_CANCEL_PREFIX
+            ) ?: messageEvent.data.toString(Charsets.UTF_8).takeIf { it.isNotBlank() }
+            transactionId?.let(::cancelBackupTransaction)
             return
         }
-        val transactionId = DataLayerPaths.parseTransactionId(
-            path,
-            DataLayerPaths.SYNC_CANCEL_PREFIX
-        ) ?: messageEvent.data.toString(Charsets.UTF_8).takeIf { it.isNotBlank() }
-        transactionId?.let(::cancelBackupTransaction)
+
+        if (DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_PHASE_ACK_PREFIX)) {
+            val transactionId = DataLayerPaths.parseTransactionId(
+                path,
+                DataLayerPaths.SYNC_PHASE_ACK_PREFIX
+            ) ?: return
+            val phase = SyncPhase.fromWireValue(messageEvent.data.toString(Charsets.UTF_8)) ?: return
+            pendingSyncPhaseAcks.remove(syncPhaseAckKey(transactionId, phase))?.complete(Unit)
+        }
     }
+
+    private suspend fun publishSyncPhaseAndWaitForPhone(
+        transactionId: String,
+        phase: SyncPhase,
+        publish: suspend () -> Unit,
+    ) {
+        val key = syncPhaseAckKey(transactionId, phase)
+        val acknowledgment = CompletableDeferred<Unit>()
+        pendingSyncPhaseAcks.put(key, acknowledgment)?.cancel()
+        try {
+            publish()
+            val acknowledged = withTimeoutOrNull(SYNC_PHASE_ACK_TIMEOUT_MS) {
+                acknowledgment.await()
+                true
+            } ?: false
+            if (!acknowledged) {
+                Log.w(
+                    "DataLayerSync",
+                    "Phone did not acknowledge displayed phase=$phase transaction=$transactionId"
+                )
+            }
+        } finally {
+            pendingSyncPhaseAcks.remove(key, acknowledgment)
+        }
+    }
+
+    private fun syncPhaseAckKey(transactionId: String, phase: SyncPhase) =
+        "$transactionId:${phase.name}"
 
     /**
      * If persisted prefs are mutually inconsistent (e.g. process death mid-write), reset to a clean state.
@@ -1010,19 +1053,18 @@ class DataLayerListenerService : WearableListenerService() {
                         finalTransactionId?.let { tid ->
                             Log.d("DataLayerSync", "Received SYNC_REQUEST for transaction: $tid")
 
-                            // Foreground + synchronous ACK: async launch let onDataChanged return while GMS
-                            // still had events queued; the process could be killed before Tasks.await ran,
-                            // causing phone handshake timeouts and "Service disconnected before delivering all events".
-                            DataLayerSyncForegroundHelper.startIfNeeded(this@DataLayerListenerService)
-                            // Surface the CONNECTING step on the watch UI too, so both devices
-                            // show the same stage sequence from the moment the handshake starts.
-                            sendBroadcast(
-                                Intent(INTENT_ID).apply {
-                                    putExtra(APP_BACKUP_PROGRESS_UPDATE, "0.0")
-                                    putExtra(APP_BACKUP_PHASE_UPDATE, SyncPhase.CONNECTING.name)
-                                    setPackage(packageName)
-                                }
-                            )
+                            val isEndpointProbe = dataMap.getBoolean("endpointProbe", false)
+                            if (!isEndpointProbe) {
+                                // Keep the service alive while a real backup is being received.
+                                DataLayerSyncForegroundHelper.startIfNeeded(this@DataLayerListenerService)
+                                sendBroadcast(
+                                    Intent(INTENT_ID).apply {
+                                        putExtra(APP_BACKUP_PROGRESS_UPDATE, "0.0")
+                                        putExtra(APP_BACKUP_PHASE_UPDATE, SyncPhase.CONNECTING.name)
+                                        setPackage(packageName)
+                                    }
+                                )
+                            }
                             try {
                                 runBlocking(Dispatchers.IO) {
                                     val ackPath = DataLayerPaths.buildPath(
@@ -1385,15 +1427,11 @@ class DataLayerListenerService : WearableListenerService() {
                                         APP_BACKUP_PHASE_UPDATE,
                                         SyncPhase.TRANSFERRING.name
                                     )
-                                }.apply { setPackage(packageName) }
-                                sendBroadcast(progressIntent)
-
-                                transactionId?.let { tid ->
-                                    publishSyncProgress(
-                                        transactionId = tid,
-                                        progress = progress
-                                    )
+                                    setPackage(packageName)
                                 }
+                                transactionId?.let { tid ->
+                                    enqueueSyncProgress(tid, progress, progressIntent)
+                                } ?: sendBroadcast(progressIntent)
                             }
 
                             if (isLastChunk || isLastRetryChunk) {
@@ -1412,7 +1450,6 @@ class DataLayerListenerService : WearableListenerService() {
                                         )
                                         setPackage(packageName)
                                     }
-                                    sendBroadcast(processingIntent)
                                     backupProcessingJob = scope.launch(Dispatchers.IO) {
                                         // Snapshot the transaction's transfer state: the
                                         // SharedPreferences-backed properties are re-read on every
@@ -1424,35 +1461,46 @@ class DataLayerListenerService : WearableListenerService() {
                                         activeProcessingTransactionId = transactionId
                                         var processingStep = "initialization"
                                         try {
+                                            val pendingProgress = synchronized(syncProgressDispatchLock) {
+                                                syncProgressDispatchJob
+                                            }
+                                            pendingProgress?.join()
                                             transactionId?.let { tid ->
-                                                val processingPath = DataLayerPaths.buildPath(
-                                                    DataLayerPaths.SYNC_PHASE_PREFIX,
-                                                    tid
-                                                )
-                                                val processingPayload =
-                                                    SyncPhase.PROCESSING.name.toByteArray(
-                                                        Charsets.UTF_8
+                                                publishSyncPhaseAndWaitForPhone(
+                                                    transactionId = tid,
+                                                    phase = SyncPhase.PROCESSING,
+                                                ) {
+                                                    val processingPath = DataLayerPaths.buildPath(
+                                                        DataLayerPaths.SYNC_PHASE_PREFIX,
+                                                        tid
                                                     )
-                                                val connectedNodes = Tasks.await(
-                                                    Wearable.getNodeClient(this@DataLayerListenerService)
-                                                        .connectedNodes
-                                                )
-                                                connectedNodes.forEach { node ->
-                                                    Tasks.await(
-                                                        Wearable.getMessageClient(
-                                                            this@DataLayerListenerService
-                                                        ).sendMessage(
-                                                            node.id,
-                                                            processingPath,
-                                                            processingPayload
+                                                    val processingPayload =
+                                                        SyncPhase.PROCESSING.name.toByteArray(
+                                                            Charsets.UTF_8
                                                         )
+                                                    val connectedNodes = Tasks.await(
+                                                        Wearable.getNodeClient(
+                                                            this@DataLayerListenerService
+                                                        ).connectedNodes
                                                     )
+                                                    connectedNodes.forEach { node ->
+                                                        Tasks.await(
+                                                            Wearable.getMessageClient(
+                                                                this@DataLayerListenerService
+                                                            ).sendMessage(
+                                                                node.id,
+                                                                processingPath,
+                                                                processingPayload
+                                                            )
+                                                        )
+                                                    }
                                                 }
                                                 Log.d(
                                                     "DataLayerSync",
-                                                    "Published PROCESSING phase for transaction $tid"
+                                                    "Phone displayed PROCESSING phase for transaction $tid"
                                                 )
                                             }
+                                            sendBroadcast(processingIntent)
                                             processingStep = "validating chunks"
                                             
                                             // Log chunk reception details
@@ -1736,9 +1784,9 @@ class DataLayerListenerService : WearableListenerService() {
                                                             "DataLayerSync",
                                                             "Sending SYNC_COMPLETE for transaction: $tid, timestamp: $timestamp"
                                                         )
-                                                        val task =
+                                                        Tasks.await(
                                                             dataClient.putDataItem(completeRequest)
-                                                        Tasks.await(task)
+                                                        )
                                                         Log.d(
                                                             "DataLayerSync",
                                                             "Successfully sent SYNC_COMPLETE for transaction: $tid (backup)"
@@ -1972,17 +2020,28 @@ class DataLayerListenerService : WearableListenerService() {
         }
     }
 
-    private fun publishSyncProgress(
+    private fun enqueueSyncProgress(
+        transactionId: String,
+        progress: Float,
+        progressIntent: Intent,
+    ) {
+        synchronized(syncProgressDispatchLock) {
+            val previous = syncProgressDispatchJob
+            syncProgressDispatchJob = scope.launch {
+                previous?.join()
+                publishSyncProgress(transactionId, progress)
+                sendBroadcast(progressIntent)
+            }
+        }
+    }
+
+    private suspend fun publishSyncProgress(
         transactionId: String,
         progress: Float
     ) {
         val normalizedProgress = progress.coerceIn(0f, 1f)
         val previousProgress = lastPublishedProgressByTransaction[transactionId]
-        if (
-            normalizedProgress < 1f &&
-            previousProgress != null &&
-            normalizedProgress - previousProgress < MIN_PROGRESS_PUBLISH_DELTA
-        ) {
+        if (previousProgress != null && normalizedProgress <= previousProgress) {
             return
         }
         if (normalizedProgress >= 1f) {
@@ -2000,35 +2059,33 @@ class DataLayerListenerService : WearableListenerService() {
             progress = normalizedProgress
         ).toByteArray()
 
-        scope.launch {
-            try {
-                val targetNodeIds = Tasks.await(
-                    Wearable.getNodeClient(this@DataLayerListenerService).connectedNodes
-                ).map { node -> node.id }
-                check(targetNodeIds.isNotEmpty()) {
-                    "No phone node available for sync progress transaction $transactionId"
-                }
-                targetNodeIds.forEach { nodeId ->
-                    Tasks.await(
-                        Wearable.getMessageClient(this@DataLayerListenerService).sendMessage(
-                            nodeId,
-                            progressPath,
-                            payload
-                        )
+        try {
+            val targetNodeIds = Tasks.await(
+                Wearable.getNodeClient(this@DataLayerListenerService).connectedNodes
+            ).map { node -> node.id }
+            check(targetNodeIds.isNotEmpty()) {
+                "No phone node available for sync progress transaction $transactionId"
+            }
+            targetNodeIds.forEach { nodeId ->
+                Tasks.await(
+                    Wearable.getMessageClient(this@DataLayerListenerService).sendMessage(
+                        nodeId,
+                        progressPath,
+                        payload
                     )
-                }
-                Log.d(
-                    "DataLayerSync",
-                    "Published acknowledged progress $normalizedProgress for transaction $transactionId " +
-                        "to nodes=$targetNodeIds"
-                )
-            } catch (exception: Exception) {
-                Log.w(
-                    "DataLayerSync",
-                    "Failed to publish acknowledged progress for transaction $transactionId",
-                    exception
                 )
             }
+            Log.d(
+                "DataLayerSync",
+                "Published acknowledged progress $normalizedProgress for transaction $transactionId " +
+                    "to nodes=$targetNodeIds"
+            )
+        } catch (exception: Exception) {
+            Log.w(
+                "DataLayerSync",
+                "Failed to publish acknowledged progress for transaction $transactionId",
+                exception
+            )
         }
     }
 
@@ -2127,14 +2184,16 @@ class DataLayerListenerService : WearableListenerService() {
 
     override fun onDestroy() {
         DataLayerSyncForegroundHelper.stopIfActive(this)
+        pendingSyncPhaseAcks.values.forEach { it.cancel() }
+        pendingSyncPhaseAcks.clear()
         super.onDestroy()
         scope.cancel()
     }
 
     companion object {
-        private const val MIN_PROGRESS_PUBLISH_DELTA = 0.1f
         private val lastPublishedProgressByTransaction = mutableMapOf<String, Float>()
         private const val TAG = "DataLayerListenerService"
+        private const val SYNC_PHASE_ACK_TIMEOUT_MS = 5_000L
         private const val MAX_COMPLETED_TRANSACTION_IDS = 128
         private const val PREFS_COMPLETED_ORDERED = "completedTransactionIdsOrdered"
 

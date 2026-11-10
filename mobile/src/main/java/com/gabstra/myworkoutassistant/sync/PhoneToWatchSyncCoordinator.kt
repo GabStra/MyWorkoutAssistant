@@ -47,6 +47,7 @@ object PhoneToWatchSyncCoordinator {
     private const val DEBOUNCE_MS = 30_000L
     /** Defer follow-up enqueue until [MobileSyncToWatchWorker.doWork] has returned so WorkManager is not still RUNNING. */
     private const val FOLLOW_UP_ENQUEUE_DELAY_MS = 100L
+    private const val COMPLETED_PHASE_HOLD_MS = 800L
     private const val PREFS_NAME = "phone_to_watch_sync_coordinator"
     private const val KEY_PENDING_FOLLOW_UP = "pending_follow_up_sync"
     private const val KEY_PENDING_MANUAL_OVERRIDE = "pending_manual_override_sync"
@@ -259,28 +260,14 @@ object PhoneToWatchSyncCoordinator {
     /**
      * User chose "Sync with Watch" from the menu: cancel debounce and ensure a sync runs (or pending tail if busy).
      */
-    /** Called directly from the sync tap so the loader paints before any suspend work. */
-    fun showSyncStartingState() {
-        if (_manualSyncUiState.value == null) {
-            setManualSyncState(SyncPhase.CONNECTING, 0f)
-        }
-    }
-
     suspend fun requestManualSyncToWatch(context: Context): Boolean {
         val appContext = context.applicationContext
-        // Show the loader before any probe/save work: the dialog must appear instantly on tap.
-        if (_manualSyncUiState.value == null) {
-            setManualSyncState(SyncPhase.CONNECTING, 0f)
-        }
         val hasRunningWork = hasRunningSyncWork(appContext)
         mutex.withLock {
             debounceJob?.cancel()
             debounceJob = null
             if (hasRunningWork || isWorkerRunning.get()) {
-                setManualSyncState(activeWorkerSyncState.get() ?: ManualSyncUiState(
-                    SyncPhase.CONNECTING,
-                    0f
-                ))
+                activeWorkerSyncState.get()?.let(::setManualSyncState)
                 Log.d(TAG, "manual sync: attached foreground state to running worker")
                 return true
             }
@@ -298,9 +285,7 @@ object PhoneToWatchSyncCoordinator {
         }
         val workerStartedDuringEndpointProbe = hasRunningSyncWork(appContext)
         mutex.withLock {
-            setManualSyncState(
-                activeWorkerSyncState.get() ?: ManualSyncUiState(SyncPhase.CONNECTING, 0f)
-            )
+            activeWorkerSyncState.get()?.let(::setManualSyncState)
             if (workerStartedDuringEndpointProbe || isWorkerRunning.get()) {
                 Log.d(TAG, "manual sync: attached foreground state to worker started during endpoint probe")
             } else {
@@ -313,7 +298,7 @@ object PhoneToWatchSyncCoordinator {
 
     internal fun onTransactionStarted(transactionId: String) {
         activeTransactionId.set(transactionId)
-        activeWorkerSyncState.set(ManualSyncUiState(SyncPhase.CONNECTING, 0f))
+        updateManualSyncState(transactionId, SyncPhase.CONNECTING, 0f)
     }
 
     fun cancelManualSyncToWatch(context: Context) {
@@ -371,7 +356,7 @@ object PhoneToWatchSyncCoordinator {
             setManualSyncState(ManualSyncUiState(shownPhase, 1f))
         }
         scope.launch {
-            delay(FOLLOW_UP_ENQUEUE_DELAY_MS)
+            delay(COMPLETED_PHASE_HOLD_MS)
             mutex.withLock {
                 setLastCompletedAutomaticFingerprint(appContext, sentWorkoutStoreFingerprint)
                 if (pendingManualOverride.compareAndSet(true, false)) {
@@ -419,7 +404,8 @@ object PhoneToWatchSyncCoordinator {
             Log.d(TAG, "Ignoring stale sync progress for transaction=$transactionId phase=$phase")
             return
         }
-        val currentPhase = activeWorkerSyncState.get()?.phase
+        val currentState = activeWorkerSyncState.get()
+        val currentPhase = currentState?.phase
         if (currentPhase != null && phase.ordinal < currentPhase.ordinal) {
             Log.d(
                 TAG,
@@ -428,15 +414,11 @@ object PhoneToWatchSyncCoordinator {
             )
             return
         }
-        val state = ManualSyncUiState(phase, progress.coerceIn(0f, 1f))
+        val normalizedProgress = progress.coerceIn(0f, 1f)
+        val previousProgress = currentState?.takeIf { it.phase == phase }?.progress ?: 0f
+        val state = ManualSyncUiState(phase, maxOf(previousProgress, normalizedProgress))
         activeWorkerSyncState.set(state)
-        _isSyncingToWatch.value = when (phase) {
-            SyncPhase.TRANSFERRING -> true
-
-            SyncPhase.CONNECTING,
-            SyncPhase.PROCESSING,
-            SyncPhase.COMPLETED -> false
-        }
+        _isSyncingToWatch.value = phase != SyncPhase.COMPLETED
         // Always publish: the watch shows its stage loader for background syncs too,
         // so the phone must mirror the same steps instead of only during manual syncs.
         // Rapid phase flips are held on screen so every step stays visible.
@@ -447,6 +429,16 @@ object PhoneToWatchSyncCoordinator {
                 ManualSyncUiState(shownPhase, activeWorkerSyncState.get()?.progress ?: 0f)
             )
         }
+    }
+
+    internal suspend fun awaitManualSyncPhaseDisplayed(
+        transactionId: String,
+        phase: SyncPhase,
+    ): Boolean {
+        if (activeTransactionId.get() != transactionId) return false
+        return _manualSyncUiState.first {
+            activeTransactionId.get() != transactionId || it?.phase == phase
+        }?.phase == phase
     }
 
     internal fun onWorkerSyncStopped() {

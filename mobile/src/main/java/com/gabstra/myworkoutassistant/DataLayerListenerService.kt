@@ -60,6 +60,7 @@ import com.gabstra.myworkoutassistant.shared.workout.model.decideWorkoutRecordIn
 import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.sync.BackupCoordinator
+import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
 import com.gabstra.myworkoutassistant.sync.PhoneSyncToWatchSuppressor
 import com.gabstra.myworkoutassistant.sync.SensorSessionInboundReceiver
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -232,6 +233,41 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private suspend fun acknowledgeSyncPhaseAfterDisplay(
+        transactionId: String,
+        phase: SyncPhase,
+        nodeIds: List<String>? = null,
+    ) {
+        try {
+            if (!PhoneToWatchSyncCoordinator.awaitManualSyncPhaseDisplayed(transactionId, phase)) {
+                return
+            }
+            val targetNodeIds = nodeIds ?: Tasks.await(Wearable.getNodeClient(this).connectedNodes)
+                .map { it.id }
+            val path = DataLayerPaths.buildPath(
+                DataLayerPaths.SYNC_PHASE_ACK_PREFIX,
+                transactionId
+            )
+            val payload = phase.name.toByteArray(Charsets.UTF_8)
+            targetNodeIds.forEach { nodeId ->
+                Tasks.await(
+                    Wearable.getMessageClient(this@DataLayerListenerService)
+                        .sendMessage(nodeId, path, payload)
+                )
+            }
+            Log.d(
+                "DataLayerSync",
+                "Acknowledged displayed phase=$phase transaction=$transactionId to nodes=$targetNodeIds"
+            )
+        } catch (exception: Exception) {
+            Log.w(
+                "DataLayerSync",
+                "Failed to acknowledge displayed phase=$phase transaction=$transactionId",
+                exception
+            )
+        }
+    }
 
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
@@ -1400,6 +1436,15 @@ class DataLayerListenerService : WearableListenerService() {
             }
 
             SyncHandshakeManager.reportProgress(transactionId, phase, progress)
+            if (phase == SyncPhase.PROCESSING) {
+                scope.launch {
+                    acknowledgeSyncPhaseAfterDisplay(
+                        transactionId = transactionId,
+                        phase = phase,
+                        nodeIds = listOf(messageEvent.sourceNodeId),
+                    )
+                }
+            }
             Log.d(
                 "DataLayerSync",
                 "Received ${phase.name} phase for transaction $transactionId"

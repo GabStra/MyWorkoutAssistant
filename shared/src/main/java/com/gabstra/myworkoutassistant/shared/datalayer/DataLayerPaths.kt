@@ -16,6 +16,7 @@ object DataLayerPaths {
     const val SYNC_CANCEL_PREFIX = "/sync/cancel"
     const val SYNC_PROGRESS_PREFIX = "/sync/progress"
     const val SYNC_PHASE_PREFIX = "/sync/phase"
+    const val SYNC_PHASE_ACK_PREFIX = "/sync/phaseAck"
     const val WORKOUT_HISTORY_START_PREFIX = "/workoutHistory/start"
     const val WORKOUT_HISTORY_CHUNK_PREFIX = "/workoutHistory/chunk"
     const val WORKOUT_HISTORY_DISCARD_PREFIX = "/workoutHistory/discard"

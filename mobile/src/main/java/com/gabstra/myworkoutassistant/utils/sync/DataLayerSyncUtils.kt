@@ -503,6 +503,7 @@ suspend fun checkWearSyncEndpoint(context: android.content.Context): Boolean {
             val request = PutDataMapRequest.create(requestPath).apply {
                 dataMap.putString("transactionId", transactionId)
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
+                dataMap.putBoolean("endpointProbe", true)
             }.asPutDataRequest().setUrgent()
             Tasks.await(dataClient.putDataItem(request))
             withTimeoutOrNull(5_000L) {
@@ -690,8 +691,6 @@ suspend fun sendAppBackup(
             Log.e("DataLayerSync", "Failed to establish connection for app backup sync (transaction: $transactionId)")
             throw SyncError.HandshakeError(transactionId, 0)
         }
-        onProgress(SyncPhase.TRANSFERRING, 0f)
-
         // Register completion and error waiters BEFORE sending data
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
         val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
@@ -710,6 +709,7 @@ suspend fun sendAppBackup(
         }.asPutDataRequest().setUrgent()
 
         Tasks.await(dataClient.putDataItem(startRequest))
+        onProgress(SyncPhase.TRANSFERRING, 0f)
 
         // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->
