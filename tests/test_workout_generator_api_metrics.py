@@ -9,6 +9,13 @@ from workout_generator_pkg.api_metrics import api_metrics_scope
 from workout_generator_pkg.cancellation import run_cancellable
 
 
+@pytest.fixture(autouse=True)
+def _deepseek_endpoint(monkeypatch):
+    """These assertions describe the DeepSeek wire profile, which is no longer the default endpoint."""
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-flash")
+
+
 @pytest.mark.parametrize('streaming', [False, True])
 def test_json_object_requests_always_include_provider_required_instruction(streaming):
     messages = [{'role':'user','content':'Repair these fields.'}]
