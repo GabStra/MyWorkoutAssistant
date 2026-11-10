@@ -27,16 +27,16 @@ def test_weekly_shortlist_wire_shape_is_only_selection():
     tool = session_drafting.prepare_workout_sessions_tool(messages, equipment,
         selection_options={'admissibleDefinitionIds': ['LIBRARY_0']})
     schema = tool['function']['parameters']
-    assert set(schema['properties']) == {'requirementsId', 'baseDraftId', 'definition_ids'}
-    assert schema['properties']['requirementsId']['const'] == arguments['requirementsId']
-    assert schema['properties']['baseDraftId']['const'] is None
+    assert set(schema['properties']) == {'selectionMode', 'definition_ids', 'alternative_definition_ids'}
     validator = Draft7Validator(schema)
+    arguments = {'definition_ids': arguments['definition_ids'], 'selectionMode': 'selected_menu'}
     validator.validate(arguments)
     for key, value in [('sessions', []), ('numWorkSets', 3), ('trainingDays', [0, 2, 4]),
                        ('blocks', []), ('satisfiesCoverage', []), ('name', 'Model name')]:
         assert not validator.is_valid({**arguments, key: value})
     assert not validator.is_valid({**arguments, 'definition_ids': ['LIBRARY_0', 'LIBRARY_0']})
     assert not validator.is_valid({**arguments, 'definition_ids': ['LIBRARY_1']})
+    assert not validator.is_valid({**arguments, 'alternative_definition_ids': ['LIBRARY_1']})
 
 
 def test_weekly_shortlist_expands_and_solves_without_inventing_a_source_cap():
@@ -116,6 +116,23 @@ def test_weekly_shortlist_rejection_retains_selection_and_repairs_only_definitio
         **arguments, 'definition_ids': ['LIBRARY_1']}
     with pytest.raises(PlanningInputError, match='must change'):
         session_drafting.resolve_preparation_patch({**correction, 'definition_ids': ['LIBRARY_0']}, messages, equipment)
+
+
+def test_repaired_menu_compiles_its_alternative_without_reentering_the_external_patch_gate(monkeypatch):
+    equipment, messages, arguments = shortlist_case()
+    arguments['alternative_definition_ids'] = ['LIBRARY_1']
+    resolved = []
+    monkeypatch.setattr(session_drafting, 'resolve_preparation_patch',
+        lambda value, *_: resolved.append(value) or copy.deepcopy(arguments))
+    monkeypatch.setattr(session_drafting, '_preparation_choice_domain', lambda *_: None)
+    monkeypatch.setattr(session_drafting, '_expand_weekly_shortlist', lambda value, *_: value)
+    monkeypatch.setattr(session_drafting, '_prepare_week',
+        lambda value, *_, **__: {'selected': value['definition_ids']})
+    prepared = session_drafting.prepare_workout_sessions({'basePreparationId': 'PREPARATION_1',
+        'definition_ids': ['LIBRARY_0']}, messages, equipment)
+    assert len(resolved) == 1
+    assert prepared['selected'] == ['LIBRARY_0']
+    assert prepared['alternativePreparation']['selected'] == ['LIBRARY_1']
 
 
 def test_weekly_shortlist_capability_failure_does_not_create_a_selection_retry(monkeypatch):

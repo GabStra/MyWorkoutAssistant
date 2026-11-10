@@ -14,15 +14,15 @@ from .generation_audit import MUSCLES, ASSUMPTIONS, audit_workout_package, plan_
 from .plan_contract import (LIBRARY_DEFINITION_OWNED_FIELDS, validate_plan_index_contract,
     hydrate_plan_index_from_exercise_library, ContractValidationError, _exercise_requires_unilateral_rest)
 from .json_patching import apply_json_patch, validate_patch_operations_scope
-from .muscle_roles import MUSCLE_LABELS, MOVEMENT_COVERAGE_ROLES, coverage_role_descriptions
+from .muscle_roles import MUSCLE_LABELS, REGIONAL_MUSCLE_LABELS, MOVEMENT_COVERAGE_ROLES, coverage_role_descriptions
 from .programming_guidelines import (EXECUTION_RULES_SCHEMA, MINIMUM_WORK_SETS_RULE, SESSION_STRUCTURE_RULE,
     DEFAULT_ISOLATION_REST_RULE, default_block_recovery_rules, prescribe_block_recovery,
     EXECUTION_ORDER_DESCRIPTION,
     execution_rule_errors,
     render_execution_rule, audit_execution_rules, audit_execution_details, normalize_work_set_bounds,
-    native_warmup_supported, replacement_supports_required_warmup)
+    native_warmup_supported, warmup_rule_matches, replacement_supports_required_warmup)
 from .programming_policy import (INTERFERENCE_METRICS, EXECUTION_CATEGORIES, OBJECTIVE_TIERS_SCHEMA,
-    programming_policy_errors, goal_target_text)
+    GOAL_AGGREGATION_SCHEMA, programming_policy_errors, goal_target_text, goal_aggregation_text, expand_goal_tiers)
 from .domain_ops import get_selectable_weights_for_exercise
 from .requirement_accounting import (ACCOUNTING_SCHEMA, RELAXATION_PERMISSIONS_SCHEMA,
     validate_relaxation_permissions, pointer as requirement_pointer,
@@ -394,8 +394,7 @@ _BOUNDS = {"type": "object", "description": "Include only muscles with user-requ
 }, "additionalProperties": False}
 _TARGETS = {"type": "object", "properties": {
     "weeklyEffectiveSets": _BOUNDS, "perSessionEffectiveSets": _BOUNDS,
-    "maximumSessionSeconds": {"type": ["integer", "null"], "minimum": 1},
-}, "required": ["weeklyEffectiveSets", "perSessionEffectiveSets", "maximumSessionSeconds"], "additionalProperties": False}
+}, "required": ["weeklyEffectiveSets", "perSessionEffectiveSets"], "additionalProperties": False}
 _FAMILY_SET_BOUNDS = {'type': 'array', 'items': {'type': 'object', 'properties': {
     'exerciseFamilyId': {'type': 'string', 'minLength': 1},
     'minimumWeeklySets': {'type': 'integer', 'minimum': 0},
@@ -405,18 +404,28 @@ _FAMILY_SET_BOUNDS = {'type': 'array', 'items': {'type': 'object', 'properties':
         'Choose a code-provided reviewed family; preserve user quantities. Equal bounds express a target. '
         'Omission imposes no family limit. Do not infer caps from a qualitative concern.'}
 _REQUIREMENTS = {"type": "object", "properties": {
+    'generalWarmupSeconds': {'type': 'integer', 'minimum': 0,
+        'description': 'Explicit code-owned general warm-up timer at the start of each session, with no prescribed rest before the first exercise. Omission adds no general warm-up timer.'},
+    'generalWarmupDefinitionId': {'type': 'string', 'minLength': 1,
+        'description': 'Source-approved supplied COUNTDOWN library definition for general warm-up preparation. Code resolves its immutable identity and equipment; a positive explicit warm-up duration requires this selection.'},
     'objectiveTiers': OBJECTIVE_TIERS_SCHEMA,
+    'goalAggregation': GOAL_AGGREGATION_SCHEMA,
     'familySetBounds': _FAMILY_SET_BOUNDS,
     'requirementAccounting': ACCOUNTING_SCHEMA,
     'relaxationPermissions': RELAXATION_PERMISSIONS_SCHEMA,
     'objectiveOrder': {'type': 'array', 'uniqueItems': True, 'items': {'type': 'string', 'enum': [
-        'demand_distribution', 'duration_balance', 'source_balance', 'exercise_distribution',
-        'execution_order', 'time_budget', 'exercise_count', 'volume_target', 'workload_economy', 'role_concentration', 'movement_overlap', 'execution_complementarity', 'balance_control', 'duration_economy', 'setup_economy', 'distribution', 'development_emphasis', 'development_exposure',
-        'progression', 'preservation']},
-        'description': 'objectiveOrder is authoritative: list applicable supported solver preferences from highest to lowest; omitted preferences do not run. volume_target minimizes summed shortfall and excess outside explicitly supplied preferredMinimum/preferredMaximum muscle-set ranges; there is no reward for adding sets within a preferred range. These preferences never fail native volume validation or override hard limits. demand_distribution reduces per-session peaks of working-set exposure for sourced library demand properties; missing classifications are unknown, never zero demand. It is exposure distribution, not a fatigue score or tolerance limit. duration_balance minimizes excess spread beyond durationBalanceToleranceSeconds using the same timing model as the hard session limit. source_balance minimizes differences for balanced coverage pairs and one-sided undershoot for source-backed first_not_less_than_second comparisons; these are soft comparisons, not quotas. When volume or workload has already settled a dose, Python conserves the combined attained exposure within each connected set of these comparison roles while redistributing between them; shrinking both roles is not a balance improvement. exercise_distribution spreads working-set exposure across sourced movement families within completely classified qualified-role pools; variants in one reviewed family count together, and unknown pools are omitted rather than treated as diverse. workload_economy minimizes total physical working sets across the week; frequency is counted and supersets do not double-count a physical set. It is a soft preference after the earlier approved priorities and cannot change user-owned counts, hard floors, or other constraints. role_concentration minimizes the worst per-session qualified-role exposure peak relative to its weekly dose, then the remaining profile peaks; movement and code-derived primary-muscle roles count as qualified exposure, without physiological fatigue weights or tolerance thresholds. Its position must be explicit in objectiveOrder; distribution does not activate it implicitly. movement_overlap minimizes session co-location of distinct exercises sharing a specific qualified movement role or reviewed exercise family, counting each pair once. It is a redundancy preference, not a physiological fatigue score or prohibition on consecutive sets. execution_complementarity prefers a less concentrated mix of explicitly reviewed bilateral and unilateral exercise forms only within targeted movement or muscle doses that already require multiple exercises; unknown limb modes do not count as evidence, and it adds no sets. balance_control prefers weekly presence of an already-required qualified exercise explicitly reviewed as balance-control work; it is a binary presence preference, not a volume or frequency target, unknown evidence is omitted, and presence does not prove adequacy. execution_order uses the explicitly approved orderingPreferences.protectionOrder to rank cumulative prior direct/supporting exposure; phaseOrder states which categories may interleave. There is no implicit universal category rank. time_budget minimizes per-session excess above preferredSessionSeconds, never adds work below that budget, and remains independent of the hard maximum. exercise_count minimizes deviation outside exerciseSelection preferred distinct weekly exercise counts using direct or substantial secondary credit; repeated definitions count once. Counts do not prove ROM or muscle-length complementarity. Development intent controls dose, not execution precedence. setup_economy minimizes physical inventory activations and known required configuration changes, using reviewed resource roles and confirmed shared inventory. Independent ready resources retain state; missing configurations are explicit unknowns, not zero burden. Physical setup comparison does not infer measured seconds. duration_economy minimizes total estimated weekly execution time, including prescribed recovery, warm-ups, setup and calibration allowances, without changing hard requirements. Supersets earn no independent bonus: only executable compatible groupings that save time benefit. Code may enumerate compatible pairs from eligible singleton candidates. distribution reduces muscle-set concentration after settling physical, muscle and movement doses while keeping exercise identities selectable; exact recipe conservation belongs to explicit scoped preservation or redistribution constraints. requiredCoverage.intent=development describes a source-backed purpose; only its explicit minimumWeeklySets/minimumSessions fields create hard floors. Development intent never inserts extra-exposure objectives. development_emphasis and development_exposure are optional preferences, used only when explicitly supported and ranked in objectiveOrder; they maximize role exposure without creating floors or proving adequacy. The app owns progression and load calibration; this generator does not define their policy. preservation minimizes changes to the CURRENT CANDIDATE, never user requirements. Safety, equipment, duration, volume and explicit exercise bounds remain constraints, not optimization preferences. Do not invent qualitative rankings, ratios, fatigue thresholds, or numeric requirements.'},
-    'preferredSessionSeconds': {'type': 'integer', 'minimum': 1,
-        'description': 'Explicit soft per-session time budget. time_budget minimizes excess above it; no reward for adding work below it. This does not replace the hard maximum.'},
+        'demand_distribution', 'session_exercise_balance', 'session_set_balance',
+        'session_heavy_exercise_balance', 'session_heavy_set_balance', 'exercise_preference', 'source_balance', 'exercise_distribution',
+        'execution_order', 'exercise_count', 'volume_target', 'workload_economy', 'heavy_workload_economy', 'role_concentration', 'relative_role_concentration', 'relative_distribution', 'movement_overlap', 'execution_complementarity', 'balance_control', 'setup_economy', 'distribution', 'development_emphasis', 'development_exposure',
+        'progression', 'preservation', *[f'goal_tier_{index}' for index in range(8)]]},
+        'description': 'objectiveOrder is authoritative. List supported preferences in execution order. An optional goal_tier_N marker places existing objectiveTiers[N] at that point. Unmarked tiers run first. A goal tier before workload_economy may jointly compare dose, session balance, sourced interference and setup. Explicit tiers after workload_economy conserve the settled weekly dose. Omitted preferences do not run. volume_target minimizes summed shortfall and excess outside explicitly supplied preferredMinimum/preferredMaximum muscle-set ranges; there is no reward for adding sets within a preferred range. These preferences never fail native volume validation or override hard limits. demand_distribution reduces per-session peaks of working-set exposure for sourced library demand properties; missing classifications are unknown, never zero demand. It is exposure distribution, not a fatigue score or tolerance limit. session_exercise_balance minimizes the difference between the largest and smallest per-session exercise counts; superset members count separately, general warm-up is excluded, and repeated weekly sessions do not multiply the per-session count. It is a soft preference, not an equality constraint or a reason to add filler. session_set_balance minimizes the largest minus smallest per-session physical working-set total, counting each superset member and excluding general and ramp-up warm-ups. It is a soft arrangement preference and does not multiply counts by weekly session frequency or add training work for equality. session_heavy_exercise_balance and session_heavy_set_balance apply the same per-session spread comparison to HEAVY_COMPOUND occurrences and working sets using the current library categories. Unknown categories leave the metric unavailable. They are soft distribution preferences without physiological fatigue weights or hard caps. source_balance explicitly minimizes raw set-count differences for balanced coverage pairs and one-sided undershoot for first_not_less_than_second comparisons. Omit it when balance is qualitative: audited exposures and semantic review do not infer an equality ideal, ratio or quota. When volume or workload has already settled a dose, Python conserves the combined attained exposure within each connected set of these comparison roles while redistributing between them; shrinking both roles is not a balance improvement. exercise_distribution spreads working-set exposure across sourced movement families within completely classified qualified-role pools; variants in one reviewed family count together, and unknown pools are omitted rather than treated as diverse. heavy_workload_economy minimizes frequency-scaled HEAVY_COMPOUND working sets after earlier approved preferences. Unknown categories make it unavailable. It is a soft category-exposure preference without fatigue weights, dose floors or hard caps. workload_economy minimizes total physical working sets across the week; frequency is counted and supersets do not double-count a physical set. It is a soft preference after the earlier approved priorities and cannot change user-owned counts, hard floors, or other constraints. role_concentration retains the legacy raw frequency-scaled set-surplus measure. relative_role_concentration minimizes the worst qualified-role fraction max(0,max(F*s-W))/((F-1)*W); no additional profile refinement is implied. relative_distribution averages sum(f*abs(F*s-W))/(2*(F-1)*W) across the fixed targeted muscles, with F=sum(f) and W=sum(f*s). Each relative value is rounded upward to a thousandth before averaging; this is computational precision, not a physiological threshold. Zero dose or one weekly session contributes zero distribution cost, not adequacy; independent dose and coverage preferences still assess omissions. Proportional dose changes preserve relative scores. Missing evidence stays unknown. Explicit shared-tier relative metrics can participate in joint dose, selection and placement; standalone relative metrics remain conditional arrangement of a settled dose; their explicit names and scale-one units do not reinterpret legacy raw objectives. Movement and code-derived primary-muscle roles count as qualified exposure, without physiological fatigue weights or tolerance thresholds. Each objective must be explicitly ranked. movement_overlap compares documented same-family and same-limb-form overlap. Reviewed bilateral/unilateral complements are exempt, and missing evidence remains unknown. This soft proxy does not establish redundant stimulus or personal fatigue. execution_complementarity prefers a less concentrated mix of explicitly reviewed bilateral and unilateral exercise forms only within targeted movement or muscle doses that already require multiple exercises; unknown limb modes do not count as evidence, and it adds no sets. balance_control prefers weekly presence of an already-required qualified exercise explicitly reviewed as balance-control work; it is a binary presence preference, not a volume or frequency target, unknown evidence is omitted, and presence does not prove adequacy. execution_order uses the explicitly approved orderingPreferences.protectionOrder to rank cumulative prior direct/supporting exposure; phaseOrder states which categories may interleave. There is no implicit universal category rank. exercise_count minimizes deviation outside exerciseSelection preferred distinct weekly exercise counts using direct or substantial secondary credit; repeated definitions count once. Counts do not prove ROM or muscle-length complementarity. Development intent controls dose, not execution precedence. setup_economy minimizes physical inventory activations and known required configuration changes, using reviewed resource roles and confirmed shared inventory. Independent ready resources retain state; missing configurations are explicit unknowns, not zero burden. Physical setup comparison does not infer measured seconds. The shared-tier execution_blocks metric counts each straight-set block or compatible superset once, excluding warm-ups, to prefer useful grouping. Raw inventory handoffs remain separate facts and late tie-breakers when not explicitly grouped. Code may enumerate compatible pairs from eligible singleton candidates. distribution reduces muscle-set concentration after settling physical, muscle and movement doses while keeping exercise identities selectable; exact recipe conservation belongs to explicit scoped preservation or redistribution constraints. requiredCoverage.intent=development describes a source-backed purpose; only its explicit minimumWeeklySets/minimumSessions fields create hard floors. Development intent never inserts extra-exposure objectives. development_emphasis and development_exposure are optional preferences, used only when explicitly supported and ranked in objectiveOrder; they maximize role exposure without creating floors or proving adequacy. The app owns progression and load calibration; this generator does not define their policy. preservation minimizes changes to the CURRENT CANDIDATE, never user requirements. Safety, equipment, volume and explicit exercise bounds remain constraints, not optimization preferences. Do not invent qualitative rankings, ratios, fatigue thresholds, or numeric requirements.'},
     'exerciseSelection': {'type': 'object', 'properties': {
+        'requiredNames': {'type': 'array', 'uniqueItems': True,
+            'items': {'type': 'string', 'minLength': 1},
+            'description': 'Explicit source-required exercises to include at least once in the week. Exact names resolve to unique current library identities; an exclusion or unavailable configuration is a conflict, not permission to substitute.'},
+        'preferredByCoverage': {'type': 'object', 'additionalProperties': {
+            'type': 'array', 'minItems': 1, 'uniqueItems': True, 'items': {'type': 'string', 'minLength': 1}},
+            'description': 'Explicit source-preferred exercise alternatives for each approved coverage key. exercise_preference minimizes distinct selected definitions outside the preferred alternatives for that role. This soft choice establishes no safety, ROM or load capability and never creates coverage or dose.'},
         'preferredMinimum': {'type': 'integer', 'minimum': 0},
         'preferredMaximum': {'type': 'integer', 'minimum': 0},
         'muscles': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
@@ -428,13 +437,14 @@ _REQUIREMENTS = {"type": "object", "properties": {
     'orderingPreferences': {'type': 'object', 'properties': {
         'phaseOrder': {'type': 'array', 'items': {'type': 'array', 'minItems': 1,
             'uniqueItems': True, 'items': {'enum': list(EXECUTION_CATEGORIES)}},
-            'description': 'Earlier groups precede later groups; categories within one group may interleave. Include all categories once, or [] for no category phase restriction. Explicit executionRules precedence takes priority.'},
+            'description': 'Earlier groups precede later groups; categories within one group may interleave. Include all categories once, or [] for no category phase restriction. Explicit executionRules precedence must respect these phases.'},
+        'explosiveDefinitionIds': {'type': 'array', 'uniqueItems': True,
+            'items': {'type': 'string', 'pattern': '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'},
+            'description': 'Explicit source-approved library definition IDs for explosive work. Selected matches precede category phases. Omission or [] adds no exercises and designates no explosive work.'},
         'protectionOrder': {'type': 'array', 'uniqueItems': True,
             'items': {'enum': list(INTERFERENCE_METRICS)},
-            'description': 'Explicit lexicographic cumulative prior primary/supporting exposure metrics for execution_order. priority means explicit before roles, heavy/main mean reviewed exercise categories, adjacent means the immediately previous block. These proxies do not measure fatigue or personal recovery.'}},
+            'description': 'Explicit cumulative prior primary/supporting exposure metrics for execution_order. They are lexicographic unless included in an approved shared goal tier. priority means explicit before roles, heavy/main mean reviewed exercise categories, adjacent means the immediately previous block. These proxies do not measure fatigue or personal recovery.'}},
         'required': ['phaseOrder', 'protectionOrder'], 'additionalProperties': False},
-    'durationBalanceToleranceSeconds': {'type': 'integer', 'minimum': 0,
-        'description': 'Optional source-stated soft tolerance for duration_balance: spreads up to this many seconds count as equally balanced, allowing lower-ranked objectives to choose among them. When maximumSessionSeconds is set, this cannot exceed that hard limit. Use only an explicit numeric tolerance from the user; do not translate “similar” or other qualitative wording into guessed seconds. This is not a hard time limit.'},
     "executionRules": EXECUTION_RULES_SCHEMA,
     "requiredCoverage": {"type": "array", "maxItems": 30, "description": "Select only code-defined movement or supported muscle-role keys. Aggregate muscle roles are derived from library primary muscleGroups; secondary muscle credit does not satisfy direct muscle coverage. An eachSession role requires qualified direct work in every session, using the existing minimum working sets per selected exercise. Do not add exercise-variant qualifiers in free text; the original user source remains the authority for qualitative meaning. `intent` distinguishes source-backed inclusion from development emphasis; development is qualitative and creates no automatic numeric floor. If approved constraints make the coverage infeasible, report the conflict instead of dropping the role. No invented dose or numeric balance rules.", "items": {
         "type": "object", "properties": {
@@ -492,6 +502,16 @@ def _coverage_role_schema(supported_muscles):
     normalized_supported = {muscle.replace('lowerBack', 'lower_back') for muscle in supported_muscles}
     available_roles = set(MOVEMENT_COVERAGE_ROLES) | normalized_supported
     schema['items']['properties']['key']['enum'] = sorted(available_roles)
+    return schema
+
+
+def _exercise_selection_schema(supported_muscles):
+    schema = copy.deepcopy(_REQUIREMENTS['properties']['exerciseSelection'])
+    preferences = schema['properties']['preferredByCoverage']
+    choice = preferences['additionalProperties']
+    roles = _coverage_role_schema(supported_muscles)['items']['properties']['key']['enum']
+    preferences['properties'] = {role: copy.deepcopy(choice) for role in roles}
+    preferences['additionalProperties'] = False
     return schema
 
 
@@ -795,7 +815,7 @@ def _merge_requirement_updates(base, updates, schema):
 
 def _live_relaxation_permissions_schema(equipment, requirements=None):
     supported = available_muscle_targets(equipment)
-    paths = ['/auditTargets/maximumSessionSeconds']
+    paths = []
     for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets'):
         targets = (requirements or {}).get('auditTargets', {}).get(field, {})
         for muscle in sorted(supported):
@@ -835,6 +855,22 @@ def _render_requirement_changes(before, after):
     return '\n'.join(lines)
 
 
+def _general_warmup_selection_schema(equipment):
+    schema = copy.deepcopy(_REQUIREMENTS['properties']['generalWarmupDefinitionId'])
+    cardio = {item['id'] for item in (equipment or {}).get('equipments', [])
+        if item.get('type') == 'CARDIO_MACHINE'}
+    available = {item['id'] for key in ('equipments', 'accessoryEquipments')
+        for item in (equipment or {}).get(key, [])}
+    choices = {item['id']: item['name']
+        for item in (equipment or {}).get('exerciseDefinitions', [])
+        if item.get('exerciseType') == 'COUNTDOWN' and item.get('equipmentId') in cardio
+        and all(key in available for key in (item.get('requiredAccessoryEquipmentIds') or []))}
+    schema['enum'] = list(choices)
+    schema['description'] += ' Available cardio countdown choices are supplied by code; select a suitable preparation exercise using the source purpose, not its name alone.'
+    schema['description'] += ' Available definitions ' + json.dumps(choices, ensure_ascii=False) + '.'
+    return schema
+
+
 def _requirement_update_tool(equipment, base, messages=None):
     from .planning_decisions import record_planning_decisions_tool
     properties = {key: _partial_requirement_schema(value)
@@ -843,9 +879,11 @@ def _requirement_update_tool(equipment, base, messages=None):
     properties['relaxationPermissions'] = _partial_requirement_schema(
         _live_relaxation_permissions_schema(equipment, base.get('requirements')))
     supported = available_muscle_targets(equipment)
+    properties['exerciseSelection'] = _partial_requirement_schema(_exercise_selection_schema(supported))
     properties['requiredCoverage'] = _coverage_role_schema(supported)
     properties['executionRules'] = _partial_requirement_schema(_execution_rules_schema(supported, equipment))
     properties['familySetBounds'] = _family_set_bounds_schema(equipment)
+    properties['generalWarmupDefinitionId'] = _general_warmup_selection_schema(equipment)
     for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets'):
         properties['auditTargets']['properties'][field]['properties'] = {
             key: value for key, value in properties['auditTargets']['properties'][field]['properties'].items()
@@ -880,8 +918,10 @@ def workout_requirements_tool(equipment, messages=None, *, accounting_only=None)
     tool['function']['parameters']['properties'].pop('requirementAccounting', None)
     tool['function']['parameters']['properties']['relaxationPermissions'] = _live_relaxation_permissions_schema(equipment)
     tool['function']['parameters']['properties']['requiredCoverage'] = _coverage_role_schema(supported)
+    tool['function']['parameters']['properties']['exerciseSelection'] = _exercise_selection_schema(supported)
     tool['function']['parameters']['properties']['executionRules'] = _execution_rules_schema(supported, equipment)
     tool['function']['parameters']['properties']['familySetBounds'] = _family_set_bounds_schema(equipment)
+    tool['function']['parameters']['properties']['generalWarmupDefinitionId'] = _general_warmup_selection_schema(equipment)
     from .planning_decisions import record_planning_decisions_tool
     tool['function']['parameters']['properties']['planningDecisions'] = copy.deepcopy(
         record_planning_decisions_tool(messages, equipment)['function']['parameters'])
@@ -906,13 +946,18 @@ def _structured_requirements_tool(tool, messages, base=None):
     if authority:
         parameters = tool['function']['parameters']
         if complete_structured_requirements(authority, _REQUIREMENTS, (base or {}).get('requirements')):
-            decisions = parameters['properties']['planningDecisions']['properties']['decisions']['items']
-            context_fields = [field for field in ('confirmedSetupAccess', 'confirmedSharedStation',
-                'executionPrescription') if field in decisions['properties']]
-            if context_fields:
-                decisions['anyOf'] = [{'required': [field]} for field in context_fields]
+            # The complete policy is source-owned. Context facts use their separate decision tool.
+            if base:
+                parameters['properties'] = {'updates': {
+                    'type': 'object', 'properties': {}, 'additionalProperties': False}}
+                parameters['required'] = ['updates']
             else:
-                parameters['properties'].pop('planningDecisions', None)
+                parameters['properties'] = {}
+                parameters['required'] = []
+            tool['function']['description'] = (
+                'Load and validate the complete user-supplied structured requirements. '
+                'Python supplies the policy and defaults. Context decisions use record_planning_decisions.')
+            return tool
         if base:
             parameters = parameters['properties']['updates']
         for key, value in authority['requirements'].items():
@@ -971,12 +1016,10 @@ _EXERCISE = {"type": "object", "properties": {
     "restAfterExerciseSeconds": {"type": "integer", "minimum": 0, "maximum": 1800, "description": "Transition after the complete exercise/block, not between superset rounds. Must be 0 on non-final superset members."},
     "superset": {"type": ["string", "null"], "minLength": 1},
     "restAfterSupersetExerciseSeconds": {"type": "integer", "minimum": 0, "maximum": 1800, "description": "Rest after this member every superset round: A-to-B on A, round recovery on the final member (omitted after the last round). Must be 0 for straight sets. Zero transition is allowed only when intended."},
-    "intraSetRestInSeconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 300, "description": "Positive seconds between sides of a unilateral set; null for bilateral work. Both sides count for duration, once for muscle volume."},
+    "intraSetRestInSeconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 300, "description": "Positive seconds between sides of a unilateral set; null for bilateral work. Complete both sides before logging the physical working set once for volume."},
     "generateWarmUpSets": {"type": "boolean"},
-    "setupSeconds": {"type": "integer", "minimum": 0, "maximum": 1800,
-        "description": "Estimated setup time before this exercise, separate from prescribed rest. Itemize each transition in time-limited plans, including plate/rack/bench/attachment changes. Zero needs a genuinely unchanged or pre-staged setup. This is an estimate, not a measurement."},
     "repDurationSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0,
-        "description": "Total seconds per rep including concentric, eccentric and pauses. Default 3 when no tempo is specified. Includes concentric and eccentric phases and pauses. For timed/running work use null."},
+        "description": "Total seconds per rep including concentric, eccentric and pauses. Supply only an explicit tempo prescription. Includes concentric and eccentric phases and pauses. For timed/running work use null."},
     "workSetTemplate": {"type": "object", "properties": _WORK_SET_FIELDS,
         "required": ["reps"], "additionalProperties": False,
         "description": "Uniform target for every working set. Prefer this for the same reps and load across sets, allowing counts to vary within allocationBounds. For a known starting load, supply weight for WEIGHT or additionalWeight for BODY_WEIGHT using app load conventions. When no starting load is prescribed, omit it; Python enables the app's native requiresLoadCalibration mode. Never combine with targetSetPrescriptions."},
@@ -992,7 +1035,7 @@ _EXERCISE = {"type": "object", "properties": {
 }
 AUDIT_WORKOUT_PLAN_TOOL = {"type": "function", "function": {
     "name": "audit_workout_plan",
-    "description": "Call only when creating or changing the structured draft; questions and explanations do not require another audit. Python audits volume, estimated duration and approved executionRules; a passing preview requires the independent execution review too. On failure, follow errors[].repair, change the draft and resubmit without changing requirements. If constraints conflict, explain and ask the user; never silently relax goals or loop on an unchanged failing draft. Export uses this exact draft after CONFIRM GENERATE. Superset members must be contiguous with equal sets; only the final member may have outer rest. Put block timers (round cadence, time cap, AMRAP) in supersetModes, keyed by the same superset label.",
+    "description": "Call only when creating or changing the structured draft; questions and explanations do not require another audit. Python audits volume and approved executionRules; a passing preview requires the independent execution review too. On failure, follow errors[].repair, change the draft and resubmit without changing requirements. If constraints conflict, explain and ask the user; never silently relax goals or loop on an unchanged failing draft. Export uses this exact draft after CONFIRM GENERATE. Superset members must be contiguous with equal sets; only the final member may have outer rest. Put block timers (round cadence, time cap, AMRAP) in supersetModes, keyed by the same superset label.",
     "parameters": {"type": "object", "properties": {
         "requirementsId": {"type": "string"}, "name": {"type": "string", "minLength": 1, "maxLength": 200},
         "programGuidance": {"type": "string", "minLength": 1,
@@ -1359,7 +1402,61 @@ def coordinated_repair_tool(task=None, *, for_compilation=False):
             'When replacing a rejected manual proposal, send the complete destination-only intent plus the other required corrections.')
     if has_rejected_proposal:
         tool['function']['description'] += (' Rejected edits were not applied or merged. Submit a complete correction against currentDraft; every actionable finding still needs to be addressed.')
-    if not for_compilation and permitted_paths is None:
+    if (not for_compilation and permitted_paths is None and assessed_repair
+            and any('exercise_selection' in repair_group_dimensions(group) for group in repair_groups)
+            and uses_menu_selection(task, domain=repair_domain)):
+        editable = repair_domain['editable']
+        sources = {f'EXERCISE_{index}': exercise for index, exercise in enumerate(
+            exercise for workout in workouts for exercise in workout.get('exercises', []))}
+        members = [{'type': 'string', 'enum': editable}]
+        allowed_by_occurrence = task.get('replacementDefinitionReferencesByExercise') or {}
+        for reference in editable:
+            choices = sorted(set(allowed_by_occurrence.get(reference, available_definition_references))
+                - {sources[reference].get('definition_id')})
+            if choices:
+                members.append({'type': 'object', 'properties': {
+                    'replaces': {'const': reference},
+                    'definition_id': {'type': 'string', 'enum': choices},
+                    'satisfiesCoverage': copy.deepcopy(_EXERCISE['properties']['satisfiesCoverage'])},
+                    'required': ['replaces', 'definition_id', 'satisfiesCoverage'],
+                    'additionalProperties': False})
+        properties = {key: copy.deepcopy(value) for key, value in parameters['properties'].items()
+            if key != 'edits'}
+        properties['sessionBlocks'] = {'type': 'array', 'minItems': len(workout_refs),
+            'maxItems': len(workout_refs), 'items': {'type': 'object', 'properties': {
+                'sessionReference': {'type': 'string', 'enum': workout_refs},
+                'blocks': {'type': 'array', 'maxItems': len(editable), 'items': {
+                    'type': 'object', 'properties': {'exercises': {'type': 'array',
+                        'minItems': 1, 'maxItems': len(editable), 'uniqueItems': True,
+                        'items': {'oneOf': members}}},
+                    'required': ['exercises'], 'additionalProperties': False}}},
+                'required': ['sessionReference', 'blocks'], 'additionalProperties': False}}
+        required = [key for key in parameters['required'] if key != 'edits'] + ['sessionBlocks']
+        if redistribution_objectives:
+            properties['edits'] = {'type': 'object', 'properties': {'redistributionTargets':
+                copy.deepcopy(edit_schema['properties']['redistributionTargets'])},
+                'required': ['redistributionTargets'], 'additionalProperties': False}
+            required.append('edits')
+        if any('session_labels' in repair_group_dimensions(group) for group in repair_groups):
+            label_updates = copy.deepcopy(edit_schema['properties']['workoutUpdates'])
+            label_fields = label_updates['items']['properties']
+            label_fields.pop('removeOptionalFields', None)
+            label_fields['setFields']['properties'] = {key: value for key, value in
+                label_fields['setFields']['properties'].items() if key in ('name', 'description')}
+            label_fields['setFields']['minProperties'] = 1
+            label_updates['items']['required'] = ['workoutRef', 'setFields']
+            properties['workoutUpdates'] = label_updates
+        tool['function']['parameters'] = {'type': 'object', 'properties': properties,
+            'required': required, 'additionalProperties': False}
+        tool['function']['description'] = (
+            'Choose the complete semantic exercise menu using sessionBlocks for every current WORKOUT_n. '
+            'Keep editable source EXERCISE_n references or select an offered replacement; omit sources to remove them. '
+            'Blocks choose straight sets or superset membership. Python owns prescriptions, exact quantities and final order, '
+            'places protected redistribution sources, qualifies the selected movements, and audits and reviews the whole candidate. '
+            + '; '.join(exercise_ownership))
+        return tool
+    sparse_user_edit = task.get('preferSparseEdits') is True and not assessed_repair
+    if not for_compilation and permitted_paths is None and not sparse_user_edit:
         feasible_menu = (task.get('solverMenu') or {}).get('feasible') is True
         properties = {
             'requirementsId': {'const': task.get('requirementsId')},
@@ -1668,11 +1765,9 @@ def _normalize_replacement_exercise(item, source, reference, task, *, error_path
             'Choose a replacement in the same prescription family so Python can preserve valid counts and ranges.')
 
     requirements = task.get('requirements') or {}
-    warmup_roles = {rule.get('coverageKey') for rule in requirements.get('executionRules', [])
-                    if rule.get('kind') == 'warmup' and rule.get('coverageKey')}
     source_coverage = source.get('satisfiesCoverage')
-    needs_warmup = bool(warmup_roles and (not isinstance(source_coverage, list)
-        or warmup_roles.intersection(source_coverage)))
+    needs_warmup = any(warmup_rule_matches(rule, source_coverage, replacement_definition)
+        for rule in requirements.get('executionRules', []))
     equipment_ids = set(task.get('equipmentIds') or [])
     warmup_supported = native_warmup_supported(replacement_definition, equipment_ids)
     allowed_by_occurrence = task.get('replacementDefinitionReferencesByExercise') or {}
@@ -1682,15 +1777,14 @@ def _normalize_replacement_exercise(item, source, reference, task, *, error_path
             'The selected replacement is outside the code-computed choices for this source occurrence.',
             error_path,
             'Choose a replacement from the current occurrence-specific menu or keep the source exercise.')
-    if needs_warmup:
-        if not replacement_supports_required_warmup(source_coverage, replacement_definition,
-                                                    equipment_ids, requirements):
-            raise PlanningInputError('replacement_warmup_unsupported',
-                'The selected replacement cannot provide the approved native ramp-up for this source role.',
-                error_path,
-                'Keep the source exercise or choose a loaded replacement with supported equipment; preserve its approved warm-up rule.')
-    item['generateWarmUpSets'] = bool(needs_warmup or (
-        source.get('generateWarmUpSets') and warmup_supported))
+    if not replacement_supports_required_warmup(source_coverage, replacement_definition,
+                                                equipment_ids, requirements, source_definition):
+        raise PlanningInputError('replacement_warmup_unsupported',
+            'The selected replacement cannot provide the approved native ramp-up for this source role.',
+            error_path,
+            'Keep the source exercise or choose a loaded replacement with supported equipment; preserve its approved warm-up rule.')
+    item['generateWarmUpSets'] = bool(warmup_supported and (
+        needs_warmup or source.get('generateWarmUpSets')))
     item['intraSetRestInSeconds'] = (_UNILATERAL_SIDE_REST_DEFAULT_SECONDS
         if replacement_definition and _exercise_requires_unilateral_rest(replacement_definition) else None)
     explicit_fields = set(explicit_fields)
@@ -2595,7 +2689,7 @@ def _operation_repair_dimensions(operation, current_draft):
         if exercise_move:
             dimensions = {'ordering'}
             if source_exercise[1] != destination_exercise[1]:
-                dimensions.update({'exercise_selection', 'session_timing'})
+                dimensions.update({'exercise_selection', 'prescription'})
             return dimensions
         return {'ordering'} if workout_move else set()
     if operation.get('op') in ('test', 'copy'):
@@ -2613,7 +2707,7 @@ def _operation_repair_dimensions(operation, current_draft):
     if 'effortAcceptance' in parts:
         return _repair_field_dimensions('effortAcceptance')
     if 'workSetTemplate' in parts or 'targetSetPrescriptions' in parts:
-        return {'prescription', 'session_timing'}
+        return {'prescription'}
     if 'trainingDays' in parts:
         return _repair_field_dimensions('trainingDays')
     return _repair_field_dimensions(field)
@@ -3262,6 +3356,7 @@ def _strip_legacy_calibration_fields(draft):
                 exercise.pop('progressionPlan', None)
                 exercise.pop('requiresEffortCalibration', None)
                 exercise.pop('calibrationAttempts', None)
+                exercise.pop('setupSeconds', None)
     return draft
 
 
@@ -3347,18 +3442,15 @@ def _structured_requirement_source(sources):
 def render_requirements(requirements, restriction_policy=None, confirmation=False, intake=None):
     lines = ["## Program requirements", "", "### Schedule", "",
              f"- Sessions per week: **{requirements['sessionsPerWeek'] or 'unspecified'}**"]
-    limit = requirements["auditTargets"]["maximumSessionSeconds"]
-    lines.append(f"- Session duration limit: **{limit / 60:g} minutes**" if limit else "- Session duration limit: unspecified")
-    if 'preferredSessionSeconds' in requirements:
-        lines.append(f"- Preferred session budget: **{requirements['preferredSessionSeconds'] / 60:g} minutes**; soft excess preference, with no minimum duration.")
+    if 'generalWarmupSeconds' in requirements:
+        lines.append(f"- General warm-up: **{requirements['generalWarmupSeconds'] / 60:g} minutes** at the start of every session, then begin the first exercise with **0 seconds prescribed rest**.")
+    if 'generalWarmupDefinitionId' in requirements:
+        lines.append(f"- General warm-up library selection: `{requirements['generalWarmupDefinitionId']}`; preparation only, without working-set volume credit.")
     lines.append('- Preference resolution: ' + ('explicit choice for opposing soft preferences; objective order ranks solver candidates, while acceptance preserves hard checks and discloses unknowns.'
         if requirements.get('preferenceResolution') == 'explicit_tradeoffs' else
         'strict lexicographic objective order.'))
-    if 'durationBalanceToleranceSeconds' in requirements:
-        tolerance = requirements['durationBalanceToleranceSeconds']
-        lines.append(f"- Soft duration-balance tolerance: spreads up to **{tolerance / 60:g} minutes** count as equally balanced, allowing lower-ranked objectives to choose within that range; this is not a hard session limit.")
     if requirements.get('objectiveTiers'):
-        lines.append('- Shared goal policy: minimize the worst normalized shortfall in each tier, then the sum of per-group mean shortfalls and ungrouped shortfalls; efficiency tie-breakers cannot worsen attained tier scores. Targets are soft and do not establish personal suitability.')
+        lines.append('- Shared goal policy. ' + goal_aggregation_text(requirements) + '. Each tier runs at its explicit objectiveOrder marker, or first when unmarked. Later stages preserve attained earlier scores. Targets are soft programming preferences.')
         for index, tier in enumerate(requirements['objectiveTiers']):
             lines.append(f"- Goal tier {index + 1}: " + '; '.join(
                 goal_target_text(goal) for goal in tier))
@@ -3447,35 +3539,34 @@ def render_requirements(requirements, restriction_policy=None, confirmation=Fals
             lines.append('No target changes are authorized for relaxation.')
         else:
             directions = {'lower_minimum': 'may propose reducing the minimum',
-                          'raise_maximum': 'may propose increasing the maximum',
-                          'increase_duration': 'may propose increasing the time limit'}
+                          'raise_maximum': 'may propose increasing the maximum'}
             for permission in permissions:
                 path = permission['path']
                 parts = path.strip('/').split('/')
                 current = requirement_pointer(requirements, path)
-                if parts == ['auditTargets', 'maximumSessionSeconds']:
-                    target = f"Session duration limit (currently {current / 60:g} minutes)"
-                else:
-                    interval = 'weekly' if parts[1] == 'weeklyEffectiveSets' else 'per session'
-                    muscle = MUSCLE_LABELS.get(parts[2], parts[2].capitalize())
-                    target = f"{interval.capitalize()} {muscle} {parts[3]} (currently {current:g})"
+                interval = 'weekly' if parts[1] == 'weeklyEffectiveSets' else 'per session'
+                muscle = MUSCLE_LABELS.get(parts[2], parts[2].capitalize())
+                target = f"{interval.capitalize()} {muscle} {parts[3]} (currently {current:g})"
                 rank = f"; compromise rank {permission['rank']}" if 'rank' in permission else ''
                 lines.append(f"- {target}: {directions[permission['direction']]}{rank}.")
             lines.append('These permissions allow proposals only; any proposed change still needs review and your approval.')
     if requirements.get('objectiveOrder'):
         objective_labels = {
             'demand_distribution': 'reduce known per-session demand peaks',
-            'duration_balance': 'balance estimated session durations',
-            'source_balance': 'reduce source-backed movement set-count differences',
+            'session_exercise_balance': 'prefer similar exercise counts across sessions; each superset member counts separately and the general warm-up is excluded',
+            'session_set_balance': 'prefer similar physical working-set totals across sessions, excluding warm-ups and preserving the settled weekly dose',
+            'exercise_preference': 'prefer the explicitly named alternatives for each approved movement role',
+            'source_balance': 'explicitly minimize source-backed numerical movement set-count differences',
             'exercise_distribution': 'spread exposure across qualified exercises',
             'workload_economy': 'minimize physical working sets across the week',
+            'heavy_workload_economy': 'minimize weekly HEAVY_COMPOUND working sets after earlier approved preferences; category exposure, without physiological fatigue weights',
             'execution_order': 'protect work using the explicitly approved exposure ranking',
-            'time_budget': 'reduce session time above the preferred budget; no reward for filling shorter sessions',
             'exercise_count': 'reduce deviation outside preferred distinct qualified weekly exercise counts; no complementarity claim',
             'volume_target': 'reduce shortfall and excess outside preferred muscle-set ranges; no reward for extra sets within a range',
             'movement_overlap': 'reduce same-session exercises sharing qualified movement roles; separate overlapping blocks where ordering permits',
-            'duration_economy': 'minimize total estimated weekly session time within approved requirements',
-            'role_concentration': 'reduce qualified-role session exposure peaks before lower-ranked preferences; no fatigue threshold or quota',
+            'role_concentration': 'reduce legacy raw frequency-scaled qualified-role set surplus; no fatigue threshold or quota',
+            'relative_role_concentration': 'reduce the worst relative qualified-role concentration; dimensionless, upward thousandth precision, no dose or adequacy claim',
+            'relative_distribution': 'reduce mean relative muscle-dose imbalance; dimensionless, upward thousandth precision, no dose or adequacy claim',
             'execution_complementarity': 'prefer complementary reviewed bilateral and unilateral exercise forms within already-settled doses',
             'balance_control': 'prefer weekly presence of an already-required exercise with explicit balance-control evidence; no volume/frequency target or adequacy claim',
             'setup_economy': 'minimize physical inventory activations and known required configuration changes; unknown setup/travel remains unmeasured',
@@ -3485,9 +3576,18 @@ def render_requirements(requirements, restriction_policy=None, confirmation=Fals
             'progression': 'consider app-supported progression configuration during exercise selection',
             'preservation': 'preserve the current candidate',
         }
-        lines.append('Approved optimization order: ' + ', then '.join(
-            objective_labels.get(objective, objective) for objective in requirements['objectiveOrder']) + '.')
+        effective_order = expand_goal_tiers(requirements, requirements['objectiveOrder'])
+        for index in range(len(requirements.get('objectiveTiers', []))):
+            objective_labels[f'goal_tier_{index}_total'] = f'compare the combined normalized goals of tier {index + 1}'
+            objective_labels[f'goal_tier_{index}_worst'] = f'compare the worst normalized miss of tier {index + 1}'
+        lines.append('Approved optimization order. ' + ', then '.join(
+            objective_labels.get(objective, objective) for objective in effective_order) + '.')
     lines.extend(['', 'Your original instructions and clarification answers also apply.'])
+    selection = requirements.get('exerciseSelection') or {}
+    if selection.get('requiredNames'):
+        lines.append('Required weekly exercise choices: ' + ', '.join(selection['requiredNames']) + '.')
+    for role, names in selection.get('preferredByCoverage', {}).items():
+        lines.append(f"Preferred alternatives for {role}: " + ', '.join(names) + '; qualification and hard constraints still apply.')
     restrictions = requirements.get('exerciseRestrictions', {})
     sections = [('Excluded exercise / equipment terms', restrictions.get('excludeNameTerms', []))]
     if restriction_policy:
@@ -3499,18 +3599,10 @@ def render_requirements(requirements, restriction_policy=None, confirmation=Fals
         if names:
             lines.extend(['', f'### {label}', ''])
             lines.extend('- ' + name for name in names)
-    lines.extend(['', '### Duration-estimate defaults', '',
-        'These are application estimates, separate from your requirements.', '',
-        '| Item | Estimate |', '| :--- | ---: |',
-        f"| Each rep | {ASSUMPTIONS['secondsPerRep']} seconds |",
-        f"| General warm-up | {ASSUMPTIONS['generalWarmupSeconds']//60} minutes |",
-        f"| Ramp-up per flagged exercise | {ASSUMPTIONS['generatedRampUpSecondsPerExercise']//60} minutes |",
-        f"| Setup before every exercise, including the opener | {ASSUMPTIONS['transitionSeconds']} seconds |", '',
-        'Any conflict with your explicit instructions needs clarification.'])
     if intake:
         lines.extend(['', '### Intake normalization', '',
             'Extracted instructions remain subject to source review. Application defaults below are not user-supplied targets.',
-            'Application bounds and estimation conventions are not recommended training doses or guarantees of personal suitability.'])
+            'Application bounds do not establish recommended training doses or personal suitability.'])
         for item in intake.get('applicationDefaults', []):
             lines.append(f"- Application default `{item['path']}`: `{json.dumps(item['value'], ensure_ascii=False)}`.")
         if intake.get('unspecified'):
@@ -3579,8 +3671,7 @@ def _normalize_requirement_omissions(arguments):
     fill(arguments, 'auditTargets', {}, '/auditTargets')
     targets = arguments['auditTargets']
     if isinstance(targets, dict):
-        for key, value in (('weeklyEffectiveSets', {}), ('perSessionEffectiveSets', {}),
-                           ('maximumSessionSeconds', None)):
+        for key, value in (('weeklyEffectiveSets', {}), ('perSessionEffectiveSets', {})):
             fill(targets, key, value, '/auditTargets/' + key)
     for index, rule in enumerate(arguments.get('executionRules', [])):
         if isinstance(rule, dict) and rule.get('kind') == 'supersetNoReconfiguration':
@@ -3593,7 +3684,7 @@ def _normalize_requirement_omissions(arguments):
 
 
 def set_workout_requirements(arguments, messages, equipment=None, client=None, progress=None):
-    from .restriction_policy import RESTRICTION_POLICY_VERSION
+    from .restriction_policy import restriction_policy_matches_library
     from .planning_decisions import resolved_decisions
     arguments = copy.deepcopy(arguments)
     supported = available_muscle_targets(equipment)
@@ -3661,19 +3752,6 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
         if family_errors:
             first = family_errors[0]
             raise PlanningInputError(first['code'], first['message'], first['path'], first['repair'], errors=family_errors)
-    duration_tolerance = arguments.get('durationBalanceToleranceSeconds')
-    hard_duration_limit = arguments['auditTargets']['maximumSessionSeconds']
-    if duration_tolerance is not None and 'duration_balance' not in arguments.get('objectiveOrder', []):
-        raise PlanningInputError('duration_balance_tolerance_without_objective',
-            'A duration-balance tolerance requires the approved duration_balance objective.',
-            '/durationBalanceToleranceSeconds',
-            'Add duration_balance only when the original source supports it, or omit the tolerance.')
-    if (duration_tolerance is not None and hard_duration_limit is not None
-            and duration_tolerance > hard_duration_limit):
-        raise PlanningInputError('duration_balance_tolerance_exceeds_session_limit',
-            'The approved duration-balance tolerance cannot exceed the hard maximum session duration.',
-            '/durationBalanceToleranceSeconds',
-            'Use a source-supported tolerance no greater than auditTargets.maximumSessionSeconds, or omit it; do not alter the hard duration limit.')
     arguments = {**copy.deepcopy(arguments), 'notes': ''}
     from .requirement_accounting import validate_accounting
     if not inherited_legacy_accounting:
@@ -3703,6 +3781,8 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
         first = rule_errors[0]
         raise PlanningInputError(first['code'], first['message'], first['path'], first['repair'], errors=rule_errors)
     # Use the shared target validator even before a draft exists.
+    from .programming_policy import resolve_exercise_choices
+    resolve_exercise_choices(arguments, equipment or {})
     from .generation_audit import validate_audit_targets
     validate_audit_targets(arguments["auditTargets"])
     requested = {muscle for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets')
@@ -3717,15 +3797,12 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
     restricted = any(arguments.get('exerciseRestrictions', {}).values())
     restriction_policy = None
     if scoped_update and restricted:
-        from .restriction_policy import RESTRICTION_POLICY_VERSION
         previous_policy = update_base.get('restrictionPolicy') or {}
         if (update_base['requirements'].get('exerciseRestrictions') == arguments.get('exerciseRestrictions')
-                and previous_policy.get('libraryFingerprint') == library_fingerprint(equipment or {})
-                and previous_policy.get('resolutionVersion') == RESTRICTION_POLICY_VERSION):
+                and restriction_policy_matches_library(previous_policy, equipment or {})):
             restriction_policy = copy.deepcopy(previous_policy)
     if prior.get('supportedMuscleTargets') == supported and prior.get('libraryFingerprint') == library_fingerprint(equipment or {}) and prior.get('requirementsVersion') == REQUIREMENTS_VERSION and prior.get('sourceMessages') == sources and prior.get('resolvedDecisions', {}) == decisions and prior.get("requirements") == arguments and (not restricted or
-            (prior.get('restrictionPolicy', {}).get('libraryFingerprint') == library_fingerprint(equipment or {})
-             and prior.get('restrictionPolicy', {}).get('resolutionVersion') == RESTRICTION_POLICY_VERSION)):
+            restriction_policy_matches_library(prior.get('restrictionPolicy', {}), equipment or {})):
         return {**copy.deepcopy(prior), "cached": True}
     coverage_refresh = (prior.get('requirementsVersion') != REQUIREMENTS_VERSION
         and {key: value for key, value in prior.get('requirements', {}).items() if key not in ('requiredCoverage', 'executionRules', 'minimumRestDaysBetweenSessions', 'workingSetRIR', 'requirementAccounting', 'objectiveOrder')}
@@ -3764,6 +3841,12 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
         result['restrictionPolicy'] = resolve_restrictions(arguments['exerciseRestrictions'], equipment or {}, client, progress,
             source_messages=sources, retained_policy=retained_policy)
         result['requirementsId'] = 'REQUIREMENTS_' + _fingerprint({'version': REQUIREMENTS_VERSION, 'requirements': arguments, 'sources': sources, 'restrictionPolicy': result['restrictionPolicy']})[:16]
+    choices = resolve_exercise_choices(arguments, equipment or {})
+    if choices['required'] & set(result.get('restrictionPolicy', {}).get('excludedDefinitionIds', [])):
+        raise PlanningInputError('required_exercise_excluded',
+            'A required exercise is also excluded by the approved restrictions.',
+            '/exerciseSelection/requiredNames',
+            'Resolve this explicit source conflict before approval; do not drop the required choice or lift its exclusion silently.')
     if scoped_update or accounting_refresh:
         base_intake = (update_base if scoped_update else base).get('intakeNormalization', {})
         for item in base_intake.get('applicationDefaults', []):
@@ -3776,7 +3859,6 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
     result['intakeNormalization'] = {'applicationDefaults': intake_defaults,
         'unspecified': [path for path, value in (
             ('/sessionsPerWeek', arguments['sessionsPerWeek']),
-            ('/auditTargets/maximumSessionSeconds', targets['maximumSessionSeconds']),
             ('/auditTargets/weeklyEffectiveSets', targets['weeklyEffectiveSets']),
             ('/auditTargets/perSessionEffectiveSets', targets['perSessionEffectiveSets']))
             if value is None or value == {}]}
@@ -3834,19 +3916,20 @@ def require_approved_requirements(messages):
                                  f'Display the requirements and wait for {REQUIREMENTS_CONFIRMATION}. Do not search, plan, or invent an approved tradeoff.')
 
 
-def _normalize_required_warmup_flags(arguments, equipment, requirements):
-    definitions = {f'LIBRARY_{index}': definition for index, definition in enumerate(
+def _normalize_required_warmup_flags(arguments, equipment, requirements, *, execution_definitions=None):
+    definitions = {f'LIBRARY_{index}': (execution_definitions or {}).get(definition['id'], definition)
+        for index, definition in enumerate(
         sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id']))}
     equipment_ids = {item['id'] for item in equipment.get('equipments', [])}
-    warmup_roles = {rule['coverageKey'] for rule in (requirements or {}).get('executionRules', [])
-        if rule.get('kind') == 'warmup'}
-    if not warmup_roles:
-        return
+    warmup_rules = [rule for rule in (requirements or {}).get('executionRules', [])
+        if rule.get('kind') == 'warmup']
     for day in arguments.get('workouts', []):
         for item in day.get('exercises', []):
             definition = definitions.get(item.get('definition_id'))
-            if (native_warmup_supported(definition, equipment_ids)
-                    and warmup_roles.intersection(item.get('satisfiesCoverage', []))):
+            if not native_warmup_supported(definition, equipment_ids):
+                item['generateWarmUpSets'] = False
+            elif any(warmup_rule_matches(rule, item.get('satisfiesCoverage', []), definition)
+                     for rule in warmup_rules):
                 item['generateWarmUpSets'] = True
 
 
@@ -3855,16 +3938,17 @@ def _filter_unsupported_warmup_candidates(workouts, equipment, requirements):
     definitions = {f'LIBRARY_{index}': definition for index, definition in enumerate(
         sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id']))}
     equipment_ids = {item['id'] for item in equipment.get('equipments', [])}
-    warmup_roles = {rule['coverageKey'] for rule in (requirements or {}).get('executionRules', [])
-        if rule.get('kind') == 'warmup'}
+    warmup_rules = [rule for rule in (requirements or {}).get('executionRules', [])
+        if rule.get('kind') == 'warmup' and not rule.get('whenSupported')]
     removed = []
-    if not warmup_roles:
+    if not warmup_rules:
         return removed
     for day in workouts:
         retained = []
         for item in day.get('exercises', []):
-            if warmup_roles.intersection(item.get('satisfiesCoverage', [])):
-                definition = definitions.get(item.get('definition_id'))
+            definition = definitions.get(item.get('definition_id'))
+            if any(warmup_rule_matches(rule, item.get('satisfiesCoverage', []), definition)
+                   for rule in warmup_rules):
                 if not native_warmup_supported(definition, equipment_ids):
                     removed.append(copy.deepcopy(item))
                     continue
@@ -3880,7 +3964,6 @@ def _normalize_definition_dependent_fields(arguments, equipment, requirements=No
             sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id']))}
     for day in arguments.get('workouts', []):
         for item in day.get('exercises', []):
-            item.setdefault('setupSeconds', ASSUMPTIONS['transitionSeconds'])
             definition = definitions.get(item.get('definition_id'))
             if not definition:
                 continue
@@ -3892,7 +3975,8 @@ def _normalize_definition_dependent_fields(arguments, equipment, requirements=No
             else:
                 item['intraSetRestInSeconds'] = None
         prescribe_block_recovery(day, requirements or {}, definitions, complete_session=complete_session)
-    _normalize_required_warmup_flags(arguments, equipment, requirements or {})
+    _normalize_required_warmup_flags(arguments, equipment, requirements or {},
+                                     execution_definitions=execution_definitions)
 
 
 def _merge_superset_modes(day, groups, day_index, input_errors):
@@ -3990,6 +4074,18 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
         first = prescription_errors[0]
         raise PlanningInputError(first['code'], first['message'], first['path'], first['repair'], errors=prescription_errors)
     loading_equipment = {item['id']: item for item in equipment.get('equipments', [])}
+    warmup_definition = None
+    if requirements.get('generalWarmupSeconds', 0) > 0:
+        warmup_definition = next((definition for definition in definitions
+            if definition['id'] == requirements.get('generalWarmupDefinitionId')), None)
+        available = {item['id'] for key in ('equipments', 'accessoryEquipments') for item in equipment.get(key, [])}
+        if (warmup_definition is None or warmup_definition.get('exerciseType') != 'COUNTDOWN'
+                or warmup_definition.get('equipmentId') is not None and warmup_definition['equipmentId'] not in available
+                or any(key not in available for key in (warmup_definition.get('requiredAccessoryEquipmentIds') or []))):
+            raise PlanningInputError('general_warmup_definition_required',
+                'An explicit general warm-up requires an available COUNTDOWN library definition and its equipment.',
+                '/generalWarmupDefinitionId',
+                'Select a suitable supplied timed exercise and confirm its equipment through the existing requirements decision path.')
     plan = {"planName": arguments["name"], "auditTargets": copy.deepcopy(requirements["auditTargets"]),
             "equipments": copy.deepcopy(equipment.get("equipments", [])),
             "accessoryEquipments": copy.deepcopy(equipment.get("accessoryEquipments", [])), "exercises": [], "workouts": []}
@@ -4001,6 +4097,12 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
     for day_index, day in enumerate(arguments["workouts"]):
         workout = {"id": f"WORKOUT_{day_index}", "name": day["name"], "description": day["description"],
                    "timesCompletedInAWeek": int(day["timesCompletedInAWeek"]), "exerciseIds": [], "restToNextSeconds": [], "supersetGroups": []}
+        if 'generalWarmupSeconds' in requirements:
+            workout['generalWarmupSeconds'] = requirements['generalWarmupSeconds']
+        if warmup_definition:
+            workout['generalWarmupDefinition'] = {'id': warmup_definition['id'], **{
+                field: copy.deepcopy(warmup_definition[field]) for field in LIBRARY_DEFINITION_OWNED_FIELDS
+                if field in warmup_definition}}
         if 'trainingDays' in day:
             workout['trainingDays'] = list(day['trainingDays'])
             workout['description'] += workout_schedule_suffix(day['trainingDays'])
@@ -4023,7 +4125,7 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
             if item['superset'] is not None and item['restBetweenSetsSeconds']:
                 input_errors.append({'code': 'conflicting_superset_rest', 'path': path + '/restBetweenSetsSeconds',
                     'message': 'Superset member has a straight-set rest that the app does not execute.',
-                    'repair': 'Put the intended A-to-B or round recovery in restAfterSupersetExerciseSeconds and set restBetweenSetsSeconds=0. Do not remove the intended rest to meet the time limit.'})
+                    'repair': 'Put the intended A-to-B or round recovery in restAfterSupersetExerciseSeconds and set restBetweenSetsSeconds=0. Preserve the intended recovery.'})
             if item['superset'] is None and item['restAfterSupersetExerciseSeconds']:
                 input_errors.append({'code': 'unused_superset_rest', 'path': path + '/restAfterSupersetExerciseSeconds',
                     'message': 'Straight-set exercise has a superset rest that the app does not execute.',
@@ -4044,22 +4146,17 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
                 if item.get(goal_field) is not None:
                     exercise[goal_field] = item[goal_field]
             exercise['satisfiesCoverage'] = copy.deepcopy(item.get('satisfiesCoverage', []))
-            if 'setupSeconds' in item:
-                exercise['setupSeconds'] = item['setupSeconds']
             if 'allocationBounds' in item:
                 exercise['allocationBounds'] = copy.deepcopy(item['allocationBounds'])
             exercise['notes'] = exercise.get('notes', '')
             exercise['notes'] += ' ' + effort_acceptance_guidance(
                 item.get('effortAcceptance'), requirements.get('workingSetRIR'))
-            exercise['notes'] += (f" Setup: prepare {definition['name']} before starting; allow "
-                f"{item.get('setupSeconds', ASSUMPTIONS['transitionSeconds'])}s estimated changeover time "
-                '(actual setup time is unverified).')
-            if item['generateWarmUpSets'] and definition.get('equipmentId'):
-                exercise['notes'] += (' Warm-up: complete the app-generated ramp-up sets before working sets; '
-                    'follow their displayed loads, repetitions and rests. Exact ramp-ups depend on the working '
-                    'load and available equipment, and are generated at runtime.')
-            elif kind == 'BODY_WEIGHT' and not definition.get('equipmentId'):
-                exercise['notes'] += (' Warm-up: this unweighted configuration cannot generate lighter loaded ramp-up sets; '
+            if item['generateWarmUpSets']:
+                exercise['notes'] += (' Warm-up: follow any app-generated ramp-up sets before working sets, '
+                    'using their displayed loads, repetitions and rests. Actual ramp-ups depend on the working '
+                    'load and available lighter resistance at runtime; enabling this path does not guarantee generated sets or sufficient preparation.')
+            elif not native_warmup_supported(definition, {gear['id'] for gear in equipment.get('equipments', [])}):
+                exercise['notes'] += (' Warm-up: this configuration cannot generate lighter loaded ramp-up sets through the native app path; '
                     'an exercise-specific preparation protocol is not established by this plan. '
                     'Personal capability remains unverified.')
             elif not item['generateWarmUpSets']:
@@ -4074,8 +4171,11 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
                     'not a separate prescription for each side or direction.')
             if item['superset'] is None:
                 exercise['notes'] += (f" Straight sets: complete all {item['numWorkSets']} working sets with "
-                    f"{item['restBetweenSetsSeconds']}s between sets, then {item['restAfterExerciseSeconds']}s recovery rest. "
-                    "The next exercise's estimated setup time is additional to this rest.")
+                    f"{item['restBetweenSetsSeconds']}s between sets.")
+                if item['restAfterExerciseSeconds'] or exercise_index < len(day['exercises']) - 1:
+                    exercise['notes'] += f" Then take {item['restAfterExerciseSeconds']}s recovery rest."
+                if exercise_index < len(day['exercises']) - 1:
+                    exercise['notes'] += " Keep the next exercise's physical setup separate from this recovery prescription."
             else:
                 exercise['notes'] += (f" Superset: perform one set of each member in displayed order for "
                     f"{item['numWorkSets']} rounds. Rest {item['restAfterSupersetExerciseSeconds']}s after this "
@@ -4083,8 +4183,7 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
                     f"After completing the group, this member contributes {item['restAfterExerciseSeconds']}s transition rest.")
                 if (item['restAfterSupersetExerciseSeconds'] == 0 and item['restBetweenSetsSeconds'] == 0
                         and item['restAfterExerciseSeconds'] == 0):
-                    exercise['notes'] += (' Station changeover time is not prescribed or measured; keep every '
-                        'station reachable so the next movement can start at the slot boundary.')
+                    exercise['notes'] += ' Keep each station reachable throughout the group.'
             if item.get("targetSetPrescriptions"):
                 exercise["targetSetPrescriptions"] = copy.deepcopy(item["targetSetPrescriptions"])
             if 'workSetTemplate' in item:
@@ -4194,15 +4293,15 @@ def render_draft(plan, requirements, report, restriction_policy=None, source_dra
         for identifier, item in zip(day['exerciseIds'], source_day['exercises']) if 'workSetTemplate' in item}
     for day, audit in zip(plan["workouts"], report["workouts"]):
         lines.extend(["", f"## {cell(day['name'])}", cell(day["description"]),
-                      f"Frequency: {day['timesCompletedInAWeek']} per week. Estimated duration: {audit['estimatedSeconds'] / 60:.1f} min.",
+                      f"Frequency: {day['timesCompletedInAWeek']} per week.",
                       f"Working sets: {audit['workingSets']} (warm-ups excluded).",
-                      "Timing breakdown: " + '; '.join(f"{label}: {audit['timing'].get(key, 0) / 60:.1f} min" for key, label in (
-                          ('workSeconds', 'work'), ('restSeconds', 'rest'), ('generalWarmupSeconds', 'general warm-up'),
-                          ('rampUpSeconds', 'ramp-up'), ('transitionSeconds', 'setup'), ('calibrationSeconds', 'calibration'))),
                       "", "| Order | Exercise | Sets | Reps / duration | Effort acceptance | Primary muscles | Secondary muscles | Rest between sets | Rest after exercise | Superset rest after this exercise | Notes |",
                       "|---|---|---|---|---|---|---|---|---|---|---|"])
         credits = {item['exerciseId']: item['credits'] for item in audit['contributions']}
         groups = {reference: (i + 1, group) for i, group in enumerate(day["supersetGroups"]) for reference in group["exerciseIds"]}
+        if day.get('generalWarmupSeconds'):
+            warmup = day['generalWarmupDefinition']
+            lines.append(f"| Warm-up | {cell(warmup['name'])} | 1 preparation timer | {day['generalWarmupSeconds']}s | — | No working-set credit | — | — | 0s | — | Use the selected library equipment; begin the first exercise without a prescribed rest. Station preparation time is unverified. |")
         for i, reference in enumerate(day["exerciseIds"]):
             e = by_id[reference]
             if e.get("targetDistanceMeters") is not None:
@@ -4214,7 +4313,7 @@ def render_draft(plan, requirements, report, restriction_policy=None, source_dra
                 reps = f"{e['timeInMillis'] / 1000:g}s"
             else:
                 reps = "—"
-            if e.get('repDurationSeconds', ASSUMPTIONS['secondsPerRep']) != ASSUMPTIONS['secondsPerRep']:
+            if e.get('repDurationSeconds') is not None:
                 reps += f"; {e['repDurationSeconds']:g}s/rep"
             if e.get("intraSetRestInSeconds"):
                 reps += f" per side; {e['intraSetRestInSeconds']}s between sides"
@@ -4232,9 +4331,8 @@ def render_draft(plan, requirements, report, restriction_policy=None, source_dra
             else:
                 effort_text = 'Unspecified'
             notes = ('Straight sets. ' if not pair else f'Superset {pair[0]}. ') + e.get("notes", "")
-            notes += f" Setup estimate: {e.get('setupSeconds', ASSUMPTIONS['transitionSeconds'])}s before this exercise."
             if e["generateWarmUpSets"]:
-                notes += " Ramp-up sets before work."
+                notes += " Native ramp-up path enabled; actual sets depend on runtime resistance."
             if reference in templates:
                 notes += ' Starting target per work set: ' + json.dumps(templates[reference], separators=(',', ':'))
             elif e.get("targetSetPrescriptions"):
@@ -4255,9 +4353,11 @@ def render_draft(plan, requirements, report, restriction_policy=None, source_dra
             lines.append(f"| {cell(canonical_names.get(definition_id, definition_id))} | {counts['weeklySessions']} | {counts['weeklyWorkingSets']} |")
     lines.extend(["", "Weekly volume audit:",
                   f"Effective sets = direct sets + {indirect_credit:g} × indirect sets. Credits follow the selected library's primary/secondary roles, which may differ from illustrative examples; these are accounting conventions, not exact physiological equivalences.",
+                  "All tracked aggregate groups are reported, including zero credited sets. Reporting creates no volume target or claim of adequacy; unrequested regional evidence remains separate.",
                   "", "| Muscle | Direct sets | Indirect sets | Effective sets | Hard weekly range | Hard status | Preferred range | Preference status |", "|---|---|---|---|---|---|---|---|"])
     for muscle, values in report["weeklyVolume"].items():
-        if values["effective"] or muscle in requirements["auditTargets"]["weeklyEffectiveSets"]:
+        if (muscle not in REGIONAL_MUSCLE_LABELS or values["effective"]
+                or muscle in requirements["auditTargets"]["weeklyEffectiveSets"]):
             unknown = report.get('regionalTargetEvidence', {}).get(muscle, {}).get('status') == 'unknown_selected_aggregate_contributions'
             bounds = requirements['auditTargets']['weeklyEffectiveSets'].get(muscle)
             if bounds:
@@ -4280,7 +4380,6 @@ def render_draft(plan, requirements, report, restriction_policy=None, source_dra
             effective = f"Unknown (known credit: {values['effective']:g})" if unknown else f"{values['effective']:g}"
             lines.append(f"| {MUSCLE_LABELS.get(muscle, muscle.capitalize())} | {values['direct']:g} | {values['indirect'] / indirect_credit:g} | {effective} | {target} | {status} | {preference} | {preference_status} |")
     lines.extend(["", "Superset rests apply after each listed member; omit the final member's recovery after the last round. Outer exercise rests are separate.",
-                  f"Duration estimate: {ASSUMPTIONS['secondsPerRep']}s/rep by default (per-exercise overrides shown above), both sides when unilateral, {ASSUMPTIONS['generalWarmupSeconds']//60} min general warm-up, {ASSUMPTIONS['generatedRampUpSecondsPerExercise']//60} min per generated ramp-up, {ASSUMPTIONS['transitionSeconds']}s default setup allowance before every exercise including the opener, plus prescribed rests.",
                  "", "Choose an answer in the separate approval question, or describe a revision."])
     return "\n".join(lines)
 
@@ -4319,7 +4418,8 @@ def _audit_coverage(arguments, requirements, report):
         audit_coverage_minimums(report, rules.values())
 
 
-def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guesses=True, training_history=None):
+def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guesses=True, training_history=None,
+                       *, semantic_selection=None):
     from .planning_decisions import resolved_decisions, render_decisions
     require_approved_requirements(messages)
     arguments, revision_id = _resolve_draft_submission(arguments, messages, equipment)
@@ -4355,10 +4455,15 @@ def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guess
     overrides = ({'status': 'approved' if proposal.get('approvedAlternativeId')
         and proposal.get('requiresUserApproval') is False else 'proposed', 'changes': copy.deepcopy(proposal['changes'])}
         if proposal else None)
+    from .session_drafting import current_semantic_selection
+    if semantic_selection is None:
+        semantic_selection = current_semantic_selection(messages, equipment, stored['requirementsId'],
+            getattr(training_history, 'fingerprint', None))
     draft_id = "DRAFT_" + _fingerprint({"auditVersion": AUDIT_VERSION, "draft": arguments, "library": fingerprint,
         "history": training_history.fingerprint if training_history else None,
         "calibration": allow_educated_load_guesses, "assumptions": ASSUMPTIONS, 'resolvedDecisions': decisions,
-        "muscles": {key: sorted(tags) for key, tags in MUSCLES.items()}})
+        "muscles": {key: sorted(tags) for key, tags in MUSCLES.items()},
+        **({'semanticSelection': semantic_selection} if semantic_selection is not None else {})})
     _, previous = _latest_result(messages, "audit_workout_plan")
     if (not training_history and not unverified_fixed_bodyweight
             and previous.get("draftId") == draft_id and 'review' not in previous):
@@ -4387,6 +4492,10 @@ def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guess
         coverage_by_exercise=draft_coverage_assignments(plan, arguments),
         **family_set_audit_options(requirements, equipment))
     audit_programming_preferences(report, plan, requirements)
+    from .generation_audit import audit_required_exercises
+    audit_required_exercises(report, plan, requirements, equipment)
+    from .generation_audit import audit_semantic_selection
+    audit_semantic_selection(report, arguments, semantic_selection, equipment)
     if overrides:
         report['requirementOverrides'] = overrides
     _audit_coverage(arguments, requirements, report)
@@ -4414,7 +4523,7 @@ def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guess
                 continue
             day_index, exercise_index = positions[exercise['id']]
             add_audit_issue(report, 'training_load_suitability_unresolved',
-                'Capability evidence is missing for a fixed, unweighted exercise configuration.',
+                'Capability evidence is missing at the minimum resistance of a bodyweight exercise configuration.',
                 'Confirm capability with comparable recorded performance, or select a supported variant; selecting the same exercise does not establish capability.',
                 path=f'/workouts/{day_index}/exercises/{exercise_index}',
                 exerciseId=exercise['id'], exercise=exercise.get('name', exercise['id']),
@@ -4442,6 +4551,8 @@ def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guess
               'resolvedDecisions': decisions,
               "libraryFingerprint": fingerprint, "allowEducatedLoadGuesses": allow_educated_load_guesses}
     result['historyFingerprint'] = getattr(training_history, 'fingerprint', None)
+    if semantic_selection is not None:
+        result['semanticSelection'] = copy.deepcopy(semantic_selection)
     from .session_drafting import accepted_fresh_programming_artifact
     programming_selection = accepted_fresh_programming_artifact(result, equipment, messages,
         result['historyFingerprint'])

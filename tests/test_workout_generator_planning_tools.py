@@ -19,15 +19,14 @@ def planning_case():
         "exerciseCategory": "MODERATE_COMPOUND",
     }]}
     requirements = {"auditTargets": {"weeklyEffectiveSets": {"chest": {"minimum": 5, "maximum": 6}},
-                    "perSessionEffectiveSets": {"chest": {"minimum": 5, "maximum": 6}},
-                    "maximumSessionSeconds": 1000}, "sessionsPerWeek": 1, "notes": "Working sets at 1–2 RIR."}
+                    "perSessionEffectiveSets": {"chest": {"minimum": 5, "maximum": 6}}}, "sessionsPerWeek": 1, "notes": "Working sets at 1–2 RIR."}
     stored = set_workout_requirements(requirements, [{"role": "user", "content": "Plan 5-6 chest sets"}])
     draft = {"name": "Program", "requirementsId": stored["requirementsId"], "workouts": [{
         "name": "Day A", "description": "Full body", "timesCompletedInAWeek": 1,
         "exercises": [{"definition_id": "LIBRARY_0", "numWorkSets": 5, "minReps": 8, "maxReps": 10,
                        "durationSeconds": None, "restBetweenSetsSeconds": 90, "restAfterExerciseSeconds": 0,
                        "superset": None, "restAfterSupersetExerciseSeconds": 0,
-                       "intraSetRestInSeconds": None, "generateWarmUpSets": False, "setupSeconds": 60,
+                       "intraSetRestInSeconds": None, "generateWarmUpSets": False,
                        "placementNotes": "Controlled reps.", "effortAcceptance": {
                            "kind": "technical_criteria", "minimumRIR": None, "maximumRIR": None,
                            "acceptanceCriterion": "Each repetition reaches the same controlled range of motion.",
@@ -75,7 +74,7 @@ def test_initial_targets_are_soft_and_weekly_movement_coverage_precedes_practica
     from workout_generator_pkg.planning_tools import workout_requirements_tool
 
     requirements = json.loads(Path('docs/workout_generator_initial_requirements.json').read_text(encoding='utf-8'))
-    assert 'Barbell Deadlift' in requirements['exerciseRestrictions']['excludeNameTerms']
+    assert 'deadlift' in requirements['exerciseRestrictions']['excludeNameTerms']
     target_muscles = set(requirements['auditTargets']['weeklyEffectiveSets'])
     each_session = {rule['key'] for rule in requirements['requiredCoverage']
         if rule['scope'] == 'eachSession'}
@@ -92,47 +91,29 @@ def test_initial_targets_are_soft_and_weekly_movement_coverage_precedes_practica
             'lateral_movement', 'rotational_core'} <= weekly_roles
     assert all(bounds == {'minimum': 0, 'maximum': None,
         'preferredMinimum': 10, 'preferredMaximum': 15}
-        for bounds in requirements['auditTargets']['weeklyEffectiveSets'].values())
+        for muscle, bounds in requirements['auditTargets']['weeklyEffectiveSets'].items() if muscle != 'abs')
+    assert requirements['auditTargets']['weeklyEffectiveSets']['abs']['preferredMinimum'] == 9
     assert all('minimumWeeklySets' not in rule and 'minimumSessions' not in rule
                for rule in requirements['requiredCoverage'])
-    assert order.index('volume_target') < order.index('duration_economy')
-    assert order.index('source_balance') < order.index('workload_economy')
-    assert order.index('role_concentration') < order.index('workload_economy')
-    assert order.index('distribution') < order.index('duration_economy')
-    assert order.index('distribution') < order.index('setup_economy')
+    assert order.index('goal_tier_0') < order.index('workload_economy')
+    assert 'source_balance' not in order
+    assert 'relative_role_concentration' not in order
+    assert order.index('workload_economy') < order.index('session_set_balance')
+    assert order.index('workload_economy') < order.index('setup_economy')
     assert {'execution_complementarity', 'balance_control'} <= set(objective_schema['items']['enum'])
     assert 'balance_control prefers weekly presence of an already-required qualified exercise' in objective_schema['description']
     assert 'Preferred weekly range' in rendered
     assert 'Preferred ranges are soft goals' in rendered
     assert 'each session, using direct primary-muscle work' not in rendered
-    assert requirements['auditTargets']['maximumSessionSeconds'] == 5400
+    assert 'maximumSessionSeconds' not in requirements['auditTargets']
+    assert 'preferredSessionSeconds' not in requirements
+    assert 'durationBalanceToleranceSeconds' not in requirements
+    assert not {'time_budget', 'duration_balance', 'duration_economy'} & set(objective_schema['items']['enum'])
+    assert all(goal['metric'] not in {'time_budget', 'duration_balance', 'duration_economy'}
+        for tier in requirements['objectiveTiers'] for goal in tier)
+    assert 'Duration-estimate defaults' not in rendered
 
 
-def test_reordering_promotes_code_default_setup_for_new_transition():
-    from workout_generator_pkg.json_patching import apply_json_patch
-    from workout_generator_pkg.planning_tools import compile_coordinated_repair
-
-    equipment, requirements, stored, draft = planning_case()
-    first = draft['workouts'][0]['exercises'][0]
-    first.pop('setupSeconds')
-    second = copy.deepcopy(first)
-    first['numWorkSets'] = 4
-    second['numWorkSets'] = 2
-    second['setupSeconds'] = 30
-    draft['workouts'][0]['exercises'].append(second)
-    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1',
-            'currentDraft': draft, 'requirements': requirements}
-    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1', 'edits': {
-        'exerciseOrders': [{'workoutRef': 'WORKOUT_0', 'exerciseRefs': ['EXERCISE_1', 'EXERCISE_0']}],
-    }}
-
-    compiled, _ = compile_coordinated_repair(arguments, task, draft)
-    candidate = apply_json_patch(draft, compiled['patch'])
-    audited = audit_workout_plan(candidate, equipment, capability_requirement_messages(stored, equipment))
-
-    assert audited['passed']
-    assert audited['submittedDraft']['workouts'][0]['exercises'][1]['setupSeconds'] == 60
-    assert audited['audit']['workouts'][0]['timing']['transitionSeconds'] == 90
 
 
 def requirement_messages(stored):
@@ -205,41 +186,6 @@ def test_empty_requirement_refresh_after_consumed_decision_keeps_approved_base()
     candidate_index, candidate = active_requirement_result(messages)
     assert candidate_index == len(messages) - 1
     assert candidate['requirementsId'] == 'REQUIREMENTS_NOOP'
-def test_duration_balance_tolerance_is_optional_approved_requirement_and_respects_hard_cap():
-    from workout_generator_pkg.planning_tools import workout_requirements_tool
-
-    equipment, arguments, _, _ = planning_case()
-    properties = workout_requirements_tool(equipment)['function']['parameters']['properties']
-    schema = properties['durationBalanceToleranceSeconds']
-    assert schema['type'] == 'integer' and schema['minimum'] == 0
-    assert 'explicit numeric tolerance' in schema['description']
-
-    arguments['objectiveOrder'] = ['duration_balance', 'distribution']
-    arguments['durationBalanceToleranceSeconds'] = 300
-    stored = set_workout_requirements(arguments, [{'role': 'user', 'content':
-        'Prefer similar session durations, allowing up to a 5-minute difference.'}], equipment)
-    assert stored['requirements']['durationBalanceToleranceSeconds'] == 300
-    assert 'spreads up to **5 minutes** count as equally balanced' in stored['requirementsPreview']
-    assert 'this is not a hard session limit' in stored['requirementsPreview']
-
-    update_schema = workout_requirements_tool(equipment, source_checked_unconfirmed_messages(stored))
-    update_properties = update_schema['function']['parameters']['properties']['updates']['properties']
-    assert update_properties['durationBalanceToleranceSeconds']['minimum'] == 0
-    assert 'durationBalanceToleranceSeconds' not in set_workout_requirements(
-        {key: value for key, value in planning_case()[1].items()},
-        [{'role': 'user', 'content': 'Plan chest sets.'}], equipment)['requirements']
-
-    over_limit = copy.deepcopy(arguments)
-    over_limit['durationBalanceToleranceSeconds'] = 1001
-    with pytest.raises(PlanningInputError) as error:
-        set_workout_requirements(over_limit, [{'role': 'user', 'content': 'Plan chest sets.'}], equipment)
-    assert error.value.code == 'duration_balance_tolerance_exceeds_session_limit'
-
-    orphaned = copy.deepcopy(arguments)
-    orphaned['objectiveOrder'] = ['distribution']
-    with pytest.raises(PlanningInputError) as error:
-        set_workout_requirements(orphaned, [{'role': 'user', 'content': 'Plan chest sets.'}], equipment)
-    assert error.value.code == 'duration_balance_tolerance_without_objective'
 
 
 def test_exercise_distribution_is_explicit_ordered_priority_and_rendered_for_approval():
@@ -247,9 +193,9 @@ def test_exercise_distribution_is_explicit_ordered_priority_and_rendered_for_app
 
     equipment, requirements, _, _ = planning_case()
     requirements['objectiveOrder'] = [
-        'demand_distribution', 'duration_balance', 'source_balance', 'exercise_distribution',
+        'demand_distribution', 'source_balance', 'exercise_distribution',
         'workload_economy', 'distribution']
-    source = ('Prioritize demand reduction, similar session durations, movement balance, qualified exercise-family '
+    source = ('Prioritize demand reduction, movement balance, qualified exercise-family '
         'distribution, lower total weekly working sets, then session muscle-set distribution.')
     stored = set_workout_requirements(requirements, [{'role': 'user', 'content': source}], equipment)
 
@@ -262,8 +208,8 @@ def test_exercise_distribution_is_explicit_ordered_priority_and_rendered_for_app
     assert 'Development intent never inserts extra-exposure objectives' in objective_schema['description']
     assert 'app owns progression and load calibration' in objective_schema['description']
     assert stored['requirements']['objectiveOrder'] == requirements['objectiveOrder']
-    assert ('Approved optimization order: reduce known per-session demand peaks, then balance estimated '
-            'session durations, then reduce source-backed movement set-count differences, then spread exposure '
+    assert ('Approved optimization order: reduce known per-session demand peaks, then reduce source-backed '
+            'movement set-count differences, then spread exposure '
             'across qualified exercises, then minimize physical working sets across the week, then reduce '
             'muscle-set concentration across sessions.') in stored['requirementsPreview']
 
@@ -315,15 +261,13 @@ def test_requirements_tool_uses_structured_initial_extraction_and_sparse_updates
 
     updated = set_workout_requirements({
         'baseRequirementsId': stored['requirementsId'],
-        'updates': {'auditTargets': {'weeklyEffectiveSets': {'chest': {'maximum': 8}},
-                                    'maximumSessionSeconds': None},
+        'updates': {'auditTargets': {'weeklyEffectiveSets': {'chest': {'maximum': 8}}},
                     'workingSetRIR': None,
                     'requiredCoverage': []},
     }, messages, equipment)
     assert updated['baseRequirementsId'] == stored['requirementsId']
     assert updated['requirements']['auditTargets']['weeklyEffectiveSets']['chest'] == {'minimum': 5, 'maximum': 8}
     assert updated['requirements']['auditTargets']['perSessionEffectiveSets']['chest'] == {'minimum': 5, 'maximum': 6}
-    assert updated['requirements']['auditTargets']['maximumSessionSeconds'] is None
     assert 'workingSetRIR' not in updated['requirements']
     assert updated['requirements']['requiredCoverage'] == []
     assert not requirements_approved(messages, updated)
@@ -475,22 +419,24 @@ def test_scoped_requirement_update_can_clear_nested_optional_target_and_rejects_
 
 def test_scoped_requirement_update_reuses_unchanged_restriction_resolution(monkeypatch):
     from workout_generator_pkg import restriction_policy
-    from workout_generator_pkg.planning_tools import library_fingerprint
 
     equipment, requirements, _, _ = planning_case()
     requirements['exerciseRestrictions'] = {'excludeNameTerms': ['Burpee'], 'exceptNameTerms': []}
     calls = []
 
-    def resolve(restrictions, current_equipment, *_args):
+    def resolve(restrictions, current_equipment, *_args, **_kwargs):
         calls.append(copy.deepcopy(restrictions))
         return {'resolutionVersion': restriction_policy.RESTRICTION_POLICY_VERSION,
-                'libraryFingerprint': library_fingerprint(current_equipment), 'matches': [],
+                'libraryFingerprint': restriction_policy.restriction_library_fingerprint(current_equipment), 'matches': [],
                 'excludedDefinitionIds': [], 'exceptDefinitionIds': [],
                 'excludedExerciseNames': [], 'exceptExerciseNames': []}
 
     monkeypatch.setattr(restriction_policy, 'resolve_restrictions', resolve)
     stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Exclude burpees and plan 5-6 chest sets.'}], equipment)
     assert len(calls) == 1
+    equipment['exerciseDefinitions'][0]['reviewedExecution'] = {
+        'source': 'https://example.test/execution', 'basis': 'Documented support for this fixture.',
+        'supportingMuscles': ['abs']}
 
     updated = set_workout_requirements({'baseRequirementsId': stored['requirementsId'],
         'updates': {'auditTargets': {'weeklyEffectiveSets': {'chest': {'maximum': 7}}}}},
@@ -503,7 +449,7 @@ def test_scoped_requirement_update_reuses_unchanged_restriction_resolution(monke
         source_checked_unconfirmed_messages(updated, 'Also exclude mountain climbers.'), equipment)
     assert len(calls) == 2
     assert calls[-1]['excludeNameTerms'] == ['Burpee', 'Mountain climber']
-    assert changed['restrictionPolicy']['libraryFingerprint'] == library_fingerprint(equipment)
+    assert changed['restrictionPolicy']['libraryFingerprint'] == restriction_policy.restriction_library_fingerprint(equipment)
 
 
 def test_requirements_are_separate_and_frozen_during_repair():
@@ -558,11 +504,9 @@ def test_single_draft_audits_real_reps_rests_and_roles_then_renders():
     equipment, _, stored, draft = planning_case()
     result = audit_workout_plan(draft, equipment, capability_requirement_messages(stored, equipment))
     assert result["passed"]
-    assert result["audit"]["workouts"][0]["estimatedSeconds"] == 870
     assert result["audit"]["weeklyVolume"]["triceps"]["effective"] == 2.5
     assert "| 1 | Push-Up | 5 | 8–10 | Technical criteria (plan choice) | Chest | Triceps | 90s |" in result["preview"]
     assert 'Working-set acceptance (plan-selected technical criteria)' in result['planIndex']['exercises'][0]['notes']
-    assert "Estimated duration: 14.5 min" in result["preview"]
     approved_input = approved_messages(stored, result)
     approved_input[len(requirement_messages(stored)):len(requirement_messages(stored))] = (
         capability_requirement_messages(stored, equipment)[len(requirement_messages(stored)):])
@@ -572,18 +516,12 @@ def test_single_draft_audits_real_reps_rests_and_roles_then_renders():
     assert result["planIndex"]["exercises"][0]["numWorkSets"] == 5
 
 
-def test_volume_and_time_failures_return_feedback_without_a_preview():
+def test_volume_failures_return_feedback_without_a_preview():
     equipment, requirements, stored, draft = planning_case()
     draft["workouts"][0]["exercises"][0]["numWorkSets"] = 3
     failed = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert not failed["passed"] and "preview" not in failed
     assert any("chest: 3 effective sets" in issue for issue in failed["audit"]["issues"])
-    requirements["auditTargets"]["maximumSessionSeconds"] = 500
-    stored = set_workout_requirements(requirements, [])
-    draft["requirementsId"] = stored["requirementsId"]
-    draft["workouts"][0]["exercises"][0]["numWorkSets"] = 5
-    failed = audit_workout_plan(draft, equipment, requirement_messages(stored))
-    assert not failed["passed"] and any("810s exceeds 500s" in issue for issue in failed["audit"]["issues"])
 
 
 def test_confirmation_requires_display_current_library_settings_and_successful_replacement():
@@ -613,7 +551,6 @@ def test_prescriptions_have_unique_occurrence_ids_and_superset_rounds():
     equipment, requirements, stored, draft = planning_case()
     requirements["auditTargets"]["weeklyEffectiveSets"] = {}
     requirements["auditTargets"]["perSessionEffectiveSets"] = {}
-    requirements["auditTargets"]["maximumSessionSeconds"] = 4500
     stored = set_workout_requirements(requirements, [])
     draft["requirementsId"] = stored["requirementsId"]
     first = draft["workouts"][0]["exercises"][0]
@@ -624,7 +561,8 @@ def test_prescriptions_have_unique_occurrence_ids_and_superset_rounds():
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert result["passed"]
     assert [e["id"] for e in result["planIndex"]["exercises"]] == ["EXERCISE_0", "EXERCISE_1"]
-    assert result["audit"]["workouts"][0]["timing"]["restSeconds"] == 5 * (40 + 75) - 75
+    assert result["planIndex"]["workouts"][0]["supersetGroups"][0]["restSecondsByExercise"] == {
+        "EXERCISE_0": 40, "EXERCISE_1": 75}
     second["numWorkSets"] = 3
     failed = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert not failed["passed"] and "shortest member" in failed["audit"]["issues"][0]
@@ -665,7 +603,7 @@ def test_plan_validation_skips_motion_payload_copy_and_keeps_definition_checks()
 
 def test_timed_draft_uses_real_interval_duration():
     equipment, requirements, _, draft = planning_case()
-    requirements.update(sessionsPerWeek=1, auditTargets={"weeklyEffectiveSets": {}, "perSessionEffectiveSets": {}, "maximumSessionSeconds": 1000})
+    requirements.update(sessionsPerWeek=1, auditTargets={"weeklyEffectiveSets": {}, "perSessionEffectiveSets": {}})
     stored = set_workout_requirements(requirements, [])
     draft["requirementsId"] = stored["requirementsId"]
     equipment["exerciseDefinitions"][0].update(exerciseType="COUNTDOWN", muscleGroups=[], secondaryMuscleGroups=[],
@@ -674,7 +612,7 @@ def test_timed_draft_uses_real_interval_duration():
     item.update(numWorkSets=2, minReps=None, maxReps=None, durationSeconds=30, restBetweenSetsSeconds=60)
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert result["passed"]
-    assert result["audit"]["workouts"][0]["estimatedSeconds"] == 480
+    assert result["planIndex"]["exercises"][0]["timeInMillis"] == 30000
     assert "| 2 | 30s | Technical criteria (plan choice) | — | — | 60s |" in result["preview"]
 
 
@@ -695,7 +633,7 @@ def test_timed_search_and_audit_share_the_same_volume_policy():
     assert entry['creditsPerWorkingSet'] == {} and 'volumeAuditNote' in entry
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert not result['passed'] and result['audit']['weeklyVolume']['quads']['effective'] == 0
-    assert result['audit']['workouts'][0]['timing']['workSeconds'] == 90
+    assert result['planIndex']['exercises'][0]['timeInMillis'] == 45000
 
 
 def test_status_question_and_identical_submission_reuse_audited_draft(monkeypatch):
@@ -722,8 +660,8 @@ def test_changed_requirements_invalidate_previous_successful_draft():
     equipment, requirements, stored, draft = planning_case()
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
     messages = approved_messages(stored, result)
-    messages.append({"role": "user", "content": "Limit sessions to 10 minutes"})
-    requirements["auditTargets"]["maximumSessionSeconds"] = 600
+    messages.append({"role": "user", "content": "Raise the weekly chest ceiling to 8 sets"})
+    requirements["auditTargets"]["weeklyEffectiveSets"]["chest"]["maximum"] = 8
     updated = set_workout_requirements(requirements, messages)
     messages.extend([
         {"role": "assistant", "tool_calls": [{"id": "new-goals", "function": {"name": "set_workout_requirements"}}]},
@@ -878,7 +816,6 @@ def test_loaded_exercises_without_any_targets_enable_native_calibration(exercise
     assert 'targetSetPrescriptions' not in plan['exercises'][0]
     audited = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert audited['planIndex']['exercises'][0]['requiresLoadCalibration'] is True
-    assert audited['audit']['workouts'][0]['timing']['calibrationSeconds'] == 30
 
 
 @pytest.mark.parametrize('indexed', [False, True])
@@ -1000,7 +937,6 @@ def test_preview_distinguishes_raw_indirect_sets_from_fractional_credit_and_show
     assert '| Triceps | 0 | 5 | 2.5 | — | Reported |' in result['preview']
     assert '| Chest | 5 | 0 | 5 | 5–6 | Within target |' in result['preview']
     assert 'Primary muscles | Secondary muscles' in result['preview']
-    assert 'Timing breakdown:' in result['preview']
     assert 'Total weekly working sets: 5' in result['preview']
     assert '| upper push | 5 |' in result['preview']
     from workout_generator_pkg.plan_review import _context
@@ -1153,7 +1089,7 @@ def test_rep_timing_is_rendered_and_only_rep_based_exercises_accept_it():
     item['repDurationSeconds'] = 6
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert result['passed']
-    assert result['audit']['workouts'][0]['timing']['workSeconds'] == 5 * 10 * 6
+    assert result['planIndex']['exercises'][0]['repDurationSeconds'] == 6
     assert '6s/rep' in result['preview'] and 'complete calibration trial budgets' not in result['preview']
     definition = equipment['exerciseDefinitions'][0]
     definition.update(exerciseType='COUNTDOWN', bodyWeightPercentage=None)
@@ -1171,16 +1107,20 @@ def test_execution_instructions_follow_final_prescription_and_runtime_warmup_sup
     item['generateWarmUpSets'] = warmups
     plan = build_draft_plan(draft, equipment, requirements)
     notes = plan['exercises'][0]['notes']
-    assert '60s estimated changeover' in notes
+    assert 'estimated changeover' not in notes
     assert '5 working sets with 90s between sets' in notes
-    assert '0s recovery rest' in notes and 'setup time is additional to this rest' in notes
+    assert 'recovery rest' not in notes and 'next exercise' not in notes
     assert 'cannot generate lighter loaded ramp-up sets' in notes
     assert 'Personal capability remains unverified.' in notes
     assert item['generateWarmUpSets'] is False and plan['exercises'][0]['generateWarmUpSets'] is False
     other = copy.deepcopy(item)
+    draft['workouts'][0]['exercises'].append(other)
+    plan = build_draft_plan(draft, equipment, requirements)
+    assert '0s recovery rest' in plan['exercises'][0]['notes']
+    assert 'estimated setup' not in plan['exercises'][0]['notes']
+    assert 'next exercise' not in plan['exercises'][1]['notes']
     item.update(superset='PAIR', restBetweenSetsSeconds=0, restAfterExerciseSeconds=0, restAfterSupersetExerciseSeconds=15)
     other.update(superset='PAIR', restBetweenSetsSeconds=0, restAfterExerciseSeconds=30, restAfterSupersetExerciseSeconds=90)
-    draft['workouts'][0]['exercises'].append(other)
     plan = build_draft_plan(draft, equipment, requirements)
     assert 'displayed order for 5 rounds' in plan['exercises'][0]['notes']
     assert 'Rest 15s after this member' in plan['exercises'][0]['notes']
@@ -1201,7 +1141,6 @@ def test_unilateral_rendering_and_unsupported_warmup_match_audit_semantics():
     assert 'Each set includes both sides' in notes and 'Finish both sides before logging that set once' in notes
     assert 'count that paired set once for muscle volume' in notes
     report = audit_workout_package(plan_audit_package(plan, False), requirements['auditTargets'])
-    assert report['workouts'][0]['timing']['rampUpSeconds'] == 0
     assert report['weeklyVolume']['chest']['direct'] == 5
 
 

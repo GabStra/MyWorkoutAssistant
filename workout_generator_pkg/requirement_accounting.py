@@ -26,6 +26,11 @@ def comparison_requirements(requirements):
     for field in ('excludeNameTerms', 'exceptNameTerms'):
         if field in value.get('exerciseRestrictions', {}):
             value['exerciseRestrictions'][field].sort()
+    selection = value.get('exerciseSelection', {})
+    if 'requiredNames' in selection:
+        selection['requiredNames'].sort()
+    for choices in selection.get('preferredByCoverage', {}).values():
+        choices.sort()
     return value
 
 REQUIREMENT_INTAKE_POLICY = (
@@ -44,7 +49,7 @@ REQUIREMENT_INTAKE_POLICY = (
 
 
 def structured_requirement_source(sources, schema):
-    """Recognize the explicit user intake format, never arbitrary conversation JSON."""
+    """Parse marked source; schema=None projects historical text without approving new intake."""
     from jsonschema import validate
 
     def object_pairs(pairs):
@@ -86,9 +91,10 @@ def structured_requirement_source(sources, schema):
     if text[start:].startswith('```json\n') or text[start:].startswith('```json\r\n'):
         start = text.index('\n', start) + 1
     payload, consumed = decoder.raw_decode(text[start:])
-    input_schema = copy.deepcopy({key: value for key, value in schema.items() if key != 'required'})
-    input_schema['properties']['auditTargets'].pop('required', None)
-    validate(payload, input_schema)
+    if schema is not None:
+        input_schema = copy.deepcopy({key: value for key, value in schema.items() if key != 'required'})
+        input_schema['properties']['auditTargets'].pop('required', None)
+        validate(payload, input_schema)
     if not isinstance(payload, dict) or not payload:
         raise ValueError('The structured requirements block must be a nonempty object.')
     end = start + consumed
@@ -240,7 +246,7 @@ MINIMUM_TARGET_POLICY = (
     'only when the user specifically permits reducing the affected minimum targets. For a range, '
     'account for its minimum and maximum separately when their permissions differ. Permission to '
     'exceed a volume ceiling authorizes raise_maximum only; preserve the minimum and all equipment, '
-    'safety and duration restrictions unless separately authorized.'
+    'safety restrictions unless separately authorized.'
 )
 
 ACCOUNTING_SCHEMA = {'type': 'array', 'items': {'type': 'object', 'properties': {
@@ -248,11 +254,11 @@ ACCOUNTING_SCHEMA = {'type': 'array', 'items': {'type': 'object', 'properties': 
     'sourceReferences': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
                          'items': {'type': 'string', 'pattern': '^SOURCE_[0-9]+$'}},
     'requirementPaths': {'type': 'array', 'items': {'type': 'string',
-        'pattern': '^/(auditTargets|sessionsPerWeek|trainingDays|minimumRestDaysBetweenSessions|workingSetRIR|requiredCoverage|executionRules|exerciseRestrictions|objectiveOrder|objectiveTiers|durationBalanceToleranceSeconds|familySetBounds)(/.*)?$'},
+        'pattern': '^/(auditTargets|sessionsPerWeek|trainingDays|minimumRestDaysBetweenSessions|workingSetRIR|generalWarmupSeconds|generalWarmupDefinitionId|requiredCoverage|executionRules|exerciseRestrictions|objectiveOrder|objectiveTiers|goalAggregation|familySetBounds)(/.*)?$'},
         'description': 'JSON pointers into the submitted requirements object, e.g. /auditTargets/weeklyEffectiveSets/chest/minimum or /requiredCoverage/0. Coverage keys such as knee_dominant_each_session are VALUES, never pointer indices. Use [] for semantic instructions not represented by a numeric field.'},
     'priority': {'type': 'string', 'enum': ['mandatory', 'negotiable', 'preference'],
-        'description': 'mandatory means fixed; negotiable means the source permits exploring a compromise, but the current value remains binding until a specific alternative is approved. Preserve explicit source-ranked compromises such as time over a volume target. preference is a soft goal, never a hard minimum.'},
-    'relaxationDirection': {'type': 'string', 'enum': ['lower_minimum', 'raise_maximum', 'increase_duration'],
+        'description': 'mandatory means fixed; negotiable means the source permits exploring a compromise, but the current value remains binding until a specific alternative is approved. Preserve explicit source-ranked compromises among volume targets. preference is a soft goal, never a hard minimum.'},
+    'relaxationDirection': {'type': 'string', 'enum': ['lower_minimum', 'raise_maximum'],
         'description': 'For every negotiable numeric constraint that supports an alternative, state the exact source-authorized direction. Omit for mandatory and preference entries. A negotiable label alone does not authorize changing both ends of a range. ' + MINIMUM_TARGET_POLICY},
     'relaxationRank': {'type': 'integer', 'minimum': 1,
         'description': 'Optional source-backed compromise order for negotiable supported numeric constraints. Lower ranks are relaxed sooner; equal ranks are tied. Omit when the user did not order trade-offs.'},
@@ -263,8 +269,8 @@ ACCOUNTING_SCHEMA = {'type': 'array', 'items': {'type': 'object', 'properties': 
     'description': 'Account for EVERY explicit instruction, including qualitative goals and exceptions. For movement goals, distinguish requested inclusion from development emphasis in requiredCoverage.intent, and encode only explicit source-backed comparisons in coverageBalance.relationship. Development intent does not create an extra-exposure objective or a numeric floor; encode approved floors with explicit minimumWeeklySets/minimumSessions fields, and include any extra-exposure preference only when explicitly ranked in objectiveOrder. The approved soft workload_economy preference minimizes physical weekly working sets after earlier preferences in the approved objectiveOrder; it cannot alter explicit user numbers or hard constraints. The app owns progression and load calibration. Cite original user SOURCE_n. Constraints point to existing extracted fields. Semantic checks retain instructions that require judgment. Mark genuinely unsupported or ambiguous instructions before drafting. Mandatory is the default; negotiable requires source authorization. A preference is never a new hard threshold.'}
 
 RELAXATION_PERMISSIONS_SCHEMA = {'type': 'array', 'items': {'type': 'object', 'properties': {
-    'path': {'type': 'string', 'pattern': '^/auditTargets/(maximumSessionSeconds|weeklyEffectiveSets/.+/(minimum|maximum)|perSessionEffectiveSets/.+/(minimum|maximum))$'},
-    'direction': {'type': 'string', 'enum': ['lower_minimum', 'raise_maximum', 'increase_duration']},
+    'path': {'type': 'string', 'pattern': '^/auditTargets/(weeklyEffectiveSets/.+/(minimum|maximum)|perSessionEffectiveSets/.+/(minimum|maximum))$'},
+    'direction': {'type': 'string', 'enum': ['lower_minimum', 'raise_maximum']},
     'rank': {'type': 'integer', 'minimum': 1}},
     'required': ['path', 'direction'], 'additionalProperties': False},
     'description': 'Explicit source-authorized numeric changes that may be proposed for human review. Permissions never approve a change. Restrictions, equipment, and safety requirements cannot be relaxed.'}
@@ -302,7 +308,7 @@ def alternative_evaluation_contract(original_record, candidate_record):
                 or not math.isfinite(new) or new == old):
             raise ValueError('Alternative evaluation change does not match its bound requirements: ' + path)
         if ((path.endswith('/minimum') and new >= old)
-                or (path.endswith(('/maximum', '/maximumSessionSeconds')) and new <= old)):
+                or (path.endswith('/maximum') and new <= old)):
             raise ValueError('Alternative evaluation changed a requirement in an unauthorized direction: ' + path)
         parent_path, _, field = path.rpartition('/')
         pointer(expected, parent_path)[field] = new
@@ -346,7 +352,7 @@ def validate_accounting(requirements, sources):
                 and item['priority'] == 'negotiable' and item['enforcement'] == 'constraint'
                 and any(path.startswith('/auditTargets/') for path in item['requirementPaths'])):
             relaxable_paths = set()
-            for direction in ('lower_minimum', 'raise_maximum', 'increase_duration'):
+            for direction in ('lower_minimum', 'raise_maximum'):
                 probe = copy.deepcopy(requirements)
                 probe['requirementAccounting'] = [{**item, 'relaxationDirection': direction}]
                 relaxable_paths.update(relaxation_paths(probe))
@@ -381,12 +387,6 @@ def validate_accounting(requirements, sources):
 
 def _supported_permission(requirements, path, direction):
     parts = path.split('/')
-    if path == '/auditTargets/maximumSessionSeconds':
-        try:
-            value = pointer(requirements, path)
-        except (KeyError, ValueError, IndexError, TypeError):
-            return False
-        return direction == 'increase_duration' and isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
     if (len(parts) != 5 or parts[1] != 'auditTargets'
             or parts[2] not in ('weeklyEffectiveSets', 'perSessionEffectiveSets')
             or parts[4] not in ('minimum', 'maximum')):
@@ -412,7 +412,7 @@ def validate_relaxation_permissions(requirements):
     for item in permissions:
         if (not isinstance(item, dict) or set(item) - {'path', 'direction', 'rank'}
                 or not isinstance(item.get('path'), str)
-                or item.get('direction') not in ('lower_minimum', 'raise_maximum', 'increase_duration')):
+                or item.get('direction') not in ('lower_minimum', 'raise_maximum')):
             raise ValueError('Each relaxation permission needs a supported path and direction.')
         path = item['path']
         if path in seen:
@@ -437,10 +437,7 @@ def relaxation_paths(requirements):
         return sorted(item['path'] for item in requirements['relaxationPermissions'])
     paths = set()
     def supported(path, value, direction):
-        if path == '/auditTargets/maximumSessionSeconds':
-            if direction == 'increase_duration' and isinstance(value, (int, float)) and not isinstance(value, bool):
-                paths.add(path)
-        elif path.startswith(('/auditTargets/weeklyEffectiveSets', '/auditTargets/perSessionEffectiveSets')):
+        if path.startswith(('/auditTargets/weeklyEffectiveSets', '/auditTargets/perSessionEffectiveSets')):
             if isinstance(value, dict):
                 for key, child in value.items():
                     supported(path + '/' + key.replace('~', '~0').replace('/', '~1'), child, direction)
@@ -469,7 +466,7 @@ def has_unresolved_numeric_relaxation(requirements):
                 or item.get('relaxationDirection')
                 or not any(path.startswith('/auditTargets/') for path in item.get('requirementPaths', []))):
             continue
-        for direction in ('lower_minimum', 'raise_maximum', 'increase_duration'):
+        for direction in ('lower_minimum', 'raise_maximum'):
             probe = copy.deepcopy(requirements)
             probe['requirementAccounting'] = [{**item, 'relaxationDirection': direction}]
             if relaxation_paths(probe):

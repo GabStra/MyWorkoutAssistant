@@ -136,14 +136,14 @@ def test_unverified_fixed_bodyweight_capability_is_gated_without_history():
     assert concerns['LIBRARY_0'][0]['code'] == 'unverified_fixed_bodyweight_capability'
 
 
-def test_capability_evidence_helper_accepts_only_fixed_bodyweight_matching_records():
+def test_capability_evidence_helper_requires_bodyweight_matching_records_with_or_without_equipment():
     fixed = {'exerciseType': 'BODY_WEIGHT', 'equipmentId': None}
     assert unverified_fixed_bodyweight_capability_concern(fixed) is not None
     assert unverified_fixed_bodyweight_capability_concern(fixed, {'totalSessions': 1}) is not None
     assert unverified_fixed_bodyweight_capability_concern(fixed,
         {'sessions': [{'performances': [{'record': {'actualReps': 6}}]}]}) is None
     assert unverified_fixed_bodyweight_capability_concern(
-        {'exerciseType': 'BODY_WEIGHT', 'equipmentId': 'vest'}) is None
+        {'exerciseType': 'BODY_WEIGHT', 'equipmentId': 'vest'}) is not None
     assert unverified_fixed_bodyweight_capability_concern({'exerciseType': 'WEIGHT'}) is None
 
 

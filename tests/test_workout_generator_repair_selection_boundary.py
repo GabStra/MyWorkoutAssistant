@@ -6,7 +6,7 @@ from workout_generator_pkg import alternative_repair
 from test_workout_generator_alternative_repair import _repair_scope_case, _stub_repair_preconditions
 
 
-@pytest.mark.parametrize('dimension', ['prescription', 'ordering', 'exercise_selection', 'session_timing'])
+@pytest.mark.parametrize('dimension', ['prescription', 'ordering', 'session_timing'])
 def test_nonmetadata_repair_without_solver_candidate_has_only_the_none_choice(dimension):
     from workout_generator_pkg.planning_tools import coordinated_repair_tool
 

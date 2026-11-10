@@ -15,6 +15,64 @@ from workout_generator_pkg.planning_tools import PlanningInputError, library_fin
 from test_workout_generator_planning_decisions import store
 
 
+def test_preparation_capability_repair_exposes_the_existing_factual_decision_tool(monkeypatch):
+    from workout_generator_pkg import interactive_shell
+
+    messages = [{'role': 'user', 'content': 'I can perform pull-ups at bodyweight without assistance.'}]
+    error = {'code': 'prepared_design_finding', 'sourceCode': 'training_load_suitability_unresolved',
+        'owner': 'candidate', 'definition_id': 'LIBRARY_0',
+        'concerns': [{'code': 'unverified_fixed_bodyweight_capability'}]}
+    store(messages, 'prepare_workout_sessions', {}, {'passed': False, 'errors': [error]}, 'prepare')
+    monkeypatch.setattr(interactive_shell, 'preparation_patch_tool',
+        lambda task: {'type': 'function', 'function': {'name': 'prepare_workout_sessions'}})
+    tools = interactive_shell._preparation_repair_tools({'errors': [error]}, messages)
+    decision = next(tool for tool in tools if tool['function']['name'] == 'record_planning_decisions')
+    schema = decision['function']['parameters']['properties']['decisions']['items']
+    assert schema['properties']['confirmedCapabilityReference']['enum'] == ['LIBRARY_0']
+    assert 'confirmedCapabilityReference' in schema['required']
+    assert 'ask_user' in [tool['function']['name'] for tool in tools]
+    with pytest.raises(ValidationError):
+        validate({'decisions': [{'topic': 'Capability', 'choice': 'Confirmed',
+            'sourceReferences': ['SOURCE_0'], 'supersedes': None, 'reason': 'Explicit user statement.'}]},
+            decision['function']['parameters'])
+
+
+def test_bodyweight_capability_can_be_bound_before_selection_without_requiring_it_for_other_decisions():
+    equipment = {'exerciseDefinitions': [
+        {'id': 'a', 'name': 'Pull-up', 'exerciseType': 'BODY_WEIGHT'},
+        {'id': 'b', 'name': 'Row', 'exerciseType': 'WEIGHT'}]}
+    messages = [{'role': 'user', 'content': 'I can perform pull-ups without assistance.'}]
+    schema = record_planning_decisions_tool(messages, equipment)['function']['parameters']
+    assert schema['properties']['decisions']['items']['properties'][
+        'confirmedCapabilityReference']['enum'] == ['LIBRARY_0']
+    decision = {'topic': 'Training preference', 'choice': 'Prefer straight sets.',
+        'sourceReferences': ['SOURCE_0']}
+    validate({'decisions': [decision]}, schema)
+    decision['confirmedCapabilityReference'] = 'LIBRARY_0'
+    validate({'decisions': [decision]}, schema)
+    decision['confirmedCapabilityReference'] = 'LIBRARY_1'
+    with pytest.raises(ValidationError):
+        validate({'decisions': [decision]}, schema)
+
+
+def test_pending_execution_counting_requires_a_typed_binding_instead_of_prose():
+    messages = [{'role': 'user', 'content': 'Repeat the reps on each side.'}]
+    equipment = {'exerciseDefinitions': [{'id': 'rotation', 'name': 'Woodchopper'}]}
+    store(messages, 'draft_workout_sessions', {}, {'passed': False, 'errors': [{
+        'code': 'execution_semantics_unresolved', 'definition_id': 'LIBRARY_0',
+        'canonicalDefinitionId': 'rotation'}]}, 'draft')
+    schema = record_planning_decisions_tool(messages, equipment)['function']['parameters']
+    decision = {'topic': 'Counting', 'choice': 'Repeat the reps on each side.',
+        'sourceReferences': ['SOURCE_0'], 'supersedes': None, 'reason': 'Explicit user choice.'}
+    with pytest.raises(ValidationError):
+        validate({'decisions': [decision]}, schema)
+    decision['executionPrescription'] = {'exercise': 'Woodchopper', 'setMode': 'paired_sides'}
+    validate({'decisions': [decision]}, schema)
+    decision['executionPrescription']['exercise'] = 'Another movement'
+    with pytest.raises(ValidationError):
+        validate({'decisions': [decision]}, schema)
+
+
 def context_case():
     equipment = {'exerciseDefinitions': [
         {'id': 'raise', 'name': 'Dumbbell lateral raise', 'equipmentId': 'db',
@@ -84,6 +142,8 @@ def test_live_decision_gate_compiles_reviewed_setup_and_execution_without_mutati
     changed = copy.deepcopy(equipment)
     changed['exerciseDefinitions'][0]['requiredAccessoryEquipmentIds'] = ['bench']
     assert not confirmed_setup_access(messages, changed, requirements)['bindings']
+    assert execution_decision_definitions(messages, changed)['rotation']['reviewedExecution']['setMode'] == 'paired_sides'
+    changed['exerciseDefinitions'] = [item for item in changed['exerciseDefinitions'] if item['id'] != 'rotation']
     assert execution_decision_definitions(messages, changed) == {}
 
 
@@ -142,6 +202,26 @@ def test_changed_execution_choice_requires_superseding_identity_even_under_new_t
     store(messages, 'record_planning_decisions', {'decisions': [changed]},
         {**replacement, 'passed': True, 'decisionReview': {'passed': True}}, 'replacement')
     assert execution_decision_definitions(messages, equipment)['rotation']['reviewedExecution']['setMode'] == 'single_sequence'
+
+
+def test_authorized_prose_choice_can_gain_a_typed_binding_without_changing_its_meaning():
+    equipment, _, messages, arguments = context_case()
+    counting = copy.deepcopy(arguments['decisions'][1])
+    prose = copy.deepcopy(counting)
+    prose.pop('executionPrescription')
+    first = propose_decisions({'decisions': [prose]}, messages, equipment)
+    store(messages, 'record_planning_decisions', {'decisions': [prose]},
+        {**first, 'passed': True, 'decisionReview': {'passed': True}}, 'prose')
+    counting.update(supersedes='DECISION_0', reason='Bind the already authorized choice.')
+    proposal = propose_decisions({'decisions': [counting]}, messages, equipment)
+    assert proposal['newDecisionIds'] == ['DECISION_1']
+    assert proposal['decisions']['DECISION_1']['executionPrescription'] == {
+        'definitionId': 'rotation', 'setMode': 'paired_sides'}
+    assert execution_decision_definitions(messages, equipment) == {}
+    counting['choice'] = 'Use a different counting convention.'
+    with pytest.raises(PlanningInputError) as error:
+        propose_decisions({'decisions': [counting]}, messages, equipment)
+    assert error.value.code == 'decision_already_recorded'
 
 
 def test_original_physical_source_names_resolve_to_current_canonical_definitions():

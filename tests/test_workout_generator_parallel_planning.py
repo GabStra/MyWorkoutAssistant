@@ -67,6 +67,20 @@ def week_case(execution_rules=None, occurrences=1, coverage=None, working_set_ri
     return equipment, messages, prepared, draft['workouts'][0]['exercises']
 
 
+def test_drafting_preserves_the_conversation_for_configuration_capability_checks(monkeypatch):
+    equipment, messages, prepared, _ = week_case()
+    state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    def concerns(sessions, current_equipment, history, current_messages=None):
+        assert current_messages is messages
+        raise RuntimeError('Configuration context verified before workers')
+
+    monkeypatch.setattr(session_drafting, '_history_configuration_concerns', concerns)
+    with pytest.raises(RuntimeError, match='Configuration context verified before workers'):
+        session_drafting.draft_workout_sessions(None, {'preparationId': prepared['preparationId']},
+            messages, equipment, state)
+
+
 def test_infeasible_menu_returns_to_selection_before_workers_and_resumes_started_work():
     from workout_generator_pkg.planner_context import construction_tool_failure
     equipment, messages, prepared, _ = week_case()

@@ -16,7 +16,7 @@ from test_workout_generator_planning_tools import planning_case, requirement_mes
 
 def case(rules):
     equipment, requirements, _, draft = planning_case()
-    requirements['auditTargets'] = {'weeklyEffectiveSets': {}, 'perSessionEffectiveSets': {}, 'maximumSessionSeconds': 10000}
+    requirements['auditTargets'] = {'weeklyEffectiveSets': {}, 'perSessionEffectiveSets': {}}
     requirements['requiredCoverage'] = [
         {'key': key, 'description': key + ' work', 'scope': 'eachSession'} for key in ('priority', 'accessory')]
     requirements['executionRules'] = rules
@@ -231,8 +231,7 @@ def test_zero_superset_transition_recovery_survives_validation_and_emission():
     assert len(components) == 1
     assert components[0]['restSecondsByExercise'] == expected_rests
     report = audit_workout_package(package, stored['requirements']['auditTargets'])
-    assert report['workouts'][0]['timing']['restSeconds'] == 60
-    assert report['workouts'][0]['timing']['transitionSeconds'] == 120
+    assert not {'timing', 'estimatedSeconds', 'setupEstimates'} & report['workouts'][0].keys()
     assert '0–0s prescribed recovery between superset partners' in render_execution_rule(transition)
     assert 'Physical changeover and setup time are separate' in render_execution_rule(transition)
 
@@ -314,31 +313,6 @@ def test_export_preserves_local_notes_without_adding_calibration_protocol():
     assert 'trial' not in emitted['placementNotes'].lower()
 
 
-def test_default_setup_replaces_missing_value_and_explicit_estimate_reaches_final_uuid_audit():
-    from workout_generator_pkg.generation_audit import audit_workout_package, plan_audit_package
-    from test_workout_generator_planning_tools import capability_requirement_messages
-    equipment, _, stored, draft = case([])
-    second = draft['workouts'][0]['exercises'][1]
-    del second['setupSeconds']
-    defaulted = audit_workout_plan(draft, equipment, capability_requirement_messages(stored, equipment))
-    assert defaulted['passed']
-    assert defaulted['submittedDraft']['workouts'][0]['exercises'][1]['setupSeconds'] == 60
-    assert defaulted['submittedDraft']['workouts'][0]['exercises'][0]['setupSeconds'] == 60
-    assert defaulted['audit']['workouts'][0]['timing']['transitionSeconds'] == 120
-    second['setupSeconds'] = 120
-    result = audit_workout_plan(draft, equipment, capability_requirement_messages(stored, equipment))
-    assert result['passed']
-    assert result['audit']['workouts'][0]['timing']['transitionSeconds'] == 180
-    package = plan_audit_package(result['planIndex'])
-    for index, exercise in enumerate(package['workouts'][0]['workoutComponents']):
-        exercise.pop('setupSeconds', None)
-        exercise['id'] = f'converted-{index}'
-    final = audit_workout_package(package, stored['requirements']['auditTargets'], setup_seconds_by_exercise={'converted-1': 120})
-    assert final['workouts'][0]['estimatedSeconds'] == result['audit']['workouts'][0]['estimatedSeconds']
-    assert [item['basis'] for item in final['workouts'][0]['setupEstimates']] == [
-        'default_allowance', 'declared_estimate']
-    invalid = audit_workout_package(package, stored['requirements']['auditTargets'], setup_seconds_by_exercise={'converted-1': -120})
-    assert invalid['errors'][0]['code'] == 'invalid_setup_time'
 
 
 def test_rest_rules_select_immutable_library_category_without_coverage_labels():
@@ -458,7 +432,7 @@ def test_history_rep_conflict_uses_requested_rir_instead_of_assuming_equal_reps(
     (None, None, False, 'guidance', False),
     (None, None, False, None, True),
 ])
-def test_canonical_export_preserves_setup_timing_without_model_repairs(
+def test_canonical_export_preserves_reviewed_artifact_without_model_repairs(
     tmp_path, monkeypatch, program_guidance, emitter_guidance, fail_guidance_write, final_mutation, alias_renumbering
 ):
     from dataclasses import replace
@@ -482,7 +456,6 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
     draft['requirementsId'] = stored['requirementsId']
     if program_guidance:
         draft['programGuidance'] = program_guidance
-    draft['workouts'][0]['exercises'][1]['setupSeconds'] = 120
     from test_workout_generator_planning_tools import capability_requirement_messages
     from test_workout_generator_single_review import request_data, response_for
     messages = capability_requirement_messages(stored, equipment)
@@ -554,15 +527,11 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
     from workout_generator_pkg.interactive_shell import _metadata_for_generation_result
     metadata = _metadata_for_generation_result(exported, None)
     assert exported['guidance_filepath'] in metadata['generated_output_paths']
-    reports = list(Path(tmp_path).rglob('*.audit.json')) + list(Path(tmp_path).rglob('*audit*.json'))
-    report = next(json.loads(path.read_text(encoding='utf-8')) for path in reports
-                  if 'setupEstimates' in path.read_text(encoding='utf-8'))
+    report = json.loads(Path(exported['filepath']).with_suffix('.audit.json').read_text(encoding='utf-8'))
     from workout_generator_pkg.generation_audit import render_plan_disclosures
     assert render_plan_disclosures(report, stored['requirements']['auditTargets']['weeklyEffectiveSets'],
         result['submittedDraft'], stored['requirements'].get('requiredCoverage', [])) in guidance
-    assert report['workouts'][0]['timing']['transitionSeconds'] == 180
-    # Planned time uses upper rep targets; emitted reps may take less work time.
-    assert report['workouts'][0]['estimatedSeconds'] <= result['audit']['workouts'][0]['estimatedSeconds']
+    assert not {'timing', 'estimatedSeconds', 'setupEstimates'} & report['workouts'][0].keys()
 
 
 def test_directional_coverage_comparison_is_rendered_as_soft_source_backed_preference():

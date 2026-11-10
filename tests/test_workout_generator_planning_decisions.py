@@ -537,6 +537,37 @@ def test_decision_review_failure_is_cached_until_explicit_retry(monkeypatch):
     assert retried['passed'] and len(calls) == 2
 
 
+def test_authorization_review_hides_backend_candidate_bindings_and_preserves_scope_cache(monkeypatch):
+    equipment, _, stored, _ = planning_case()
+    messages = source_messages(stored)
+    proposal = propose_decisions(choice(), messages, equipment)
+    decision = proposal['decisions']['DECISION_0']
+    decision['acceptedCandidateScope'] = {'requirementsId': 'PRIVATE_CURRENT', 'workoutsFingerprint': 'PRIVATE_PLAN'}
+    decision['authorizationSourceHash'] = 'PRIVATE_SOURCE_HASH'
+    calls = []
+
+    def respond(client, request, **options):
+        payload = request[-1]['content']
+        assert 'PRIVATE_' not in payload
+        projected = json.loads(payload)['decisions']['DECISION_0']
+        assert projected['choice'] == decision['choice']
+        assert projected['sourceReferences'] == decision['sourceReferences']
+        calls.append(1)
+        return '{"findings":[]}', None, None
+
+    monkeypatch.setattr(review, '_review_call', respond)
+    result = review._review_planning_decisions(None, proposal, stored['requirements'], messages, equipment=equipment)
+    assert result['passed'] and result['decisions']['DECISION_0'] == decision
+    store(messages, 'record_planning_decisions', choice(), result, 'scope-reviewed')
+    repeated = review._review_planning_decisions(None, proposal, stored['requirements'], messages, equipment=equipment)
+    assert repeated['passed'] and len(calls) == 1
+    changed = copy.deepcopy(proposal)
+    changed['decisions']['DECISION_0']['acceptedCandidateScope']['workoutsFingerprint'] = 'PRIVATE_OTHER_PLAN'
+    reviewed = review._review_planning_decisions(None, changed, stored['requirements'], messages, equipment=equipment)
+    assert reviewed['passed'] and len(calls) == 2
+    assert reviewed['decisions']['DECISION_0']['acceptedCandidateScope']['workoutsFingerprint'] == 'PRIVATE_OTHER_PLAN'
+
+
 def test_rejected_decision_reference_retries_as_draft_without_superseding_approved_choice(monkeypatch):
     from workout_generator_pkg.planning_tools import requirement_sources
 
@@ -681,3 +712,27 @@ def test_choices_are_available_before_requirements_are_extracted(monkeypatch):
     state = json.loads(next(m['content'].split('\n', 1)[1] for m in outgoing
                             if m.get('content', '').startswith('Requirement discussion state')))
     assert state['resolvedDecisions']['DECISION_0']['sourceReferences'] == ['SOURCE_1']
+
+
+def test_decision_review_keeps_historical_artifact_acceptances_out_of_current_authority(monkeypatch):
+    equipment, _, stored, _ = planning_case()
+    messages = source_messages(stored)
+    proposal = propose_decisions(choice(), messages, equipment)
+    proposal['decisions']['DECISION_1'] = {**proposal['decisions']['DECISION_0'],
+        'choice': 'Historical candidate-only shortfall acceptance',
+        'acceptedCandidateScope': {'requirementsId': 'OLD', 'workoutsFingerprint': 'OLD_PLAN'}}
+    proposal['decisions']['DECISION_2'] = {**proposal['decisions']['DECISION_0'],
+        'choice': 'A reusable factual choice'}
+    monkeypatch.setattr(review, 'candidate_acceptance_scope', lambda audit: {
+        'requirementsId': 'CURRENT', 'workoutsFingerprint': 'CURRENT_PLAN'})
+
+    def respond(client, request, **options):
+        decisions = json.loads(request[-1]['content'])['decisions']
+        assert set(decisions) == {'DECISION_0', 'DECISION_2'}
+        return '{"findings":[]}', None, None
+
+    monkeypatch.setattr(review, '_review_call', respond)
+    result = review._review_planning_decisions(None, proposal, stored['requirements'], messages,
+        equipment=equipment)
+    assert result['passed']
+    assert result['decisions'] == proposal['decisions']

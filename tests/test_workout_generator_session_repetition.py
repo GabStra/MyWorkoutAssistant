@@ -13,12 +13,15 @@ def repetition_case(monkeypatch):
     for definition in equipment['exerciseDefinitions']:
         definition.update(muscleGroups=['BACK_CALVES'], secondaryMuscleGroups=[], exerciseCategory='ISOLATION')
     annotations = {definition['id']: {'exerciseFamilyId': 'fixture_family',
-        'source': 'https://example.org/reviewed-family', 'basis': 'Fixture reviewed movement identity.'}
+        'source': 'https://example.org/reviewed-family', 'basis': 'Fixture reviewed movement identity.',
+        'execution': {'limbMode': 'bilateral', 'source': 'https://example.org/reviewed-family',
+            'basis': 'Fixture reviewed bilateral form.'}}
         for definition in equipment['exerciseDefinitions']}
     monkeypatch.setattr(recipe_contracts, '_reviewed_exercise_annotations_by_definition', lambda: annotations)
     requirements = record['requirements']
+    requirements['auditTargets'].pop('maximumSessionSeconds', None)
     requirements.update(objectiveOrder=['volume_target', 'movement_overlap', 'workload_economy',
-        'duration_economy', 'setup_economy'], objectiveTiers=[[
+        'setup_economy'], objectiveTiers=[[
             {'metric': 'weekly_volume:calves', 'target': 0, 'scale': 5},
             {'metric': 'movement_overlap', 'target': 0, 'scale': 2}]])
     requirements['auditTargets']['weeklyEffectiveSets'] = {
@@ -32,6 +35,8 @@ def repetition_case(monkeypatch):
         'historyFingerprint': None, 'sourceWorkingSetBudget': None,
         'qualifiedRoleEvidence': {ref: ['calves'] for ref in definitions},
         'exerciseFamilyEvidence': recipe_contracts.reviewed_exercise_family_evidence(equipment),
+        'executionPropertiesByReference': recipe_contracts.reviewed_execution_properties(
+            equipment)['propertiesByReference'],
         'demandEvidence': {}, 'demandUnion': None, 'setupDefinitions': definitions}
     monkeypatch.setattr(allocation, '_joint_candidate_comparison_context', lambda *a, **k: context)
     return equipment, record, draft, context
@@ -43,7 +48,9 @@ def test_reviewed_family_overlap_reaches_solver_comparison_and_existing_choice_g
     items = draft['workouts'][0]['exercises']
     families = context['exerciseFamilyEvidence']['familyByReference']
     assert joint_planning.overlapping_movement_pairs(items) == []
-    assert joint_planning.overlapping_movement_pairs(items, families) == [('LIBRARY_0', 'LIBRARY_1')]
+    assert joint_planning.overlapping_movement_pairs(items, families) == []
+    assert joint_planning.overlapping_movement_pairs(items, families,
+        context['executionPropertiesByReference']) == [('LIBRARY_0', 'LIBRARY_1')]
     assert joint_planning.overlapping_movement_pairs(items, {'LIBRARY_0': 'known'}) == []
 
     requirements = copy.deepcopy(record['requirements'])

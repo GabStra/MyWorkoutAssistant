@@ -31,22 +31,67 @@ def test_group_means_remove_field_count_weight_without_changing_worst_or_legacy_
             'goal_tier_0_worst': .5, 'goal_tier_0_total': .75}
 
 
-def test_approved_cost_goals_reward_improvement_below_reference_and_include_duration_balance():
+@pytest.mark.parametrize('aggregation,expected', [(None, 1), ('worst_then_total', 1), ('total_then_worst', 0)])
+def test_approved_aggregation_ranks_the_same_feasible_choices_in_solver_and_comparison(aggregation, expected):
+    from workout_generator_pkg.cp_solver import solve
+    from workout_generator_pkg.programming_policy import goal_tier_names, normalize_programming_policy
+
+    requirements = {'objectiveOrder': ['volume_target', 'setup_economy'], 'objectiveTiers': [[
+        {'metric': 'volume_target', 'target': 0, 'scale': 1},
+        {'metric': 'setup_economy', 'target': 0, 'scale': 1}]]}
+    if aggregation:
+        requirements['goalAggregation'] = aggregation
+        assert normalize_programming_policy(requirements)['goalAggregation'] == aggregation
+    # A has better combined quality (.6 versus .8); B has a better worst miss (.4 versus .6).
+    profiles = {'volume_target': [.6, .4], 'setup_economy': [0, .4]}
+    variables = [{'lower': 0, 'upper': 1, 'integer': True} for _ in range(2)]
+    rows = [(('choose_one',), 1, 1, 0, {0: 1, 1: 1})]
+
+    def variable(**kwargs):
+        index = len(variables)
+        variables.append({'lower': kwargs.get('lower', 0), 'upper': kwargs['upper'],
+            'integer': kwargs['integer'], 'domainIdentity': kwargs['domain_identity']})
+        return index
+
+    def constraint(label, lower, upper, coefficients, intercept=0):
+        rows.append((label, lower, upper, intercept, coefficients))
+
+    stages = joint._goal_programming_objectives(variable, constraint, variables, requirements,
+        {name: dict(enumerate(values)) for name, values in profiles.items()}, {})
+    assert [name for name, _ in stages] == goal_tier_names(requirements)
+    for name, costs in stages:
+        status, chosen = solve([{**v, 'objectiveCost': costs.get(i, 0)}
+            for i, v in enumerate(variables)], rows, timeout_seconds=5)
+        assert status == 'optimal'
+        assert chosen[expected] == 1
+        score = sum(chosen[i] * cost for i, cost in costs.items())
+        rows.append((('attained', name), -float('inf'), score, 0, costs))
+    before = {name: values[0] for name, values in profiles.items()}
+    after = {name: values[1] for name, values in profiles.items()}
+    before.update(goal_programming_costs(requirements, before, {}))
+    after.update(goal_programming_costs(requirements, after, {}))
+    compared = assess_audited_programming_tradeoff({'audit': {'errors': []}}, {'audit': {'errors': []}},
+        requirements=requirements, baseline_costs=before, candidate_costs=after,
+        objective_names=requirements['objectiveOrder'], same_selected_work=False)
+    assert compared['status'] == ('baseline_preferred' if expected == 0 else 'candidate_preferred')
+
+
+def test_approved_cost_goals_reward_improvement_without_duration_similarity_dominating():
     from pathlib import Path
     import json
 
     approved = json.loads(Path('docs/workout_generator_initial_requirements.json').read_text(encoding='utf-8'))
     costs = {'setup_economy': 37, 'exercise_count': 3, 'movement_overlap': 1, 'duration_balance': 312}
-    tier = [goal for goal in approved['objectiveTiers'][0] if goal['metric'] in costs]
+    tier = [goal for source_tier in approved['objectiveTiers'] for goal in source_tier
+        if goal['metric'] in {'setup_economy', 'exercise_count', 'movement_overlap'}]
     requirements = {'objectiveTiers': [tier]}
     baseline = goal_programming_costs(requirements, costs, {})
     improved = goal_programming_costs(requirements,
         {**costs, 'setup_economy': 30, 'exercise_count': 0, 'movement_overlap': 0}, {})
-    assert baseline['goal_tier_0_worst'] == improved['goal_tier_0_worst'] == 312 / 300
+    assert baseline['goal_tier_0_worst'] > improved['goal_tier_0_worst']
     assert improved['goal_tier_0_total'] < baseline['goal_tier_0_total']
     balanced = goal_programming_costs(requirements, {**costs, 'duration_balance': 0}, {})
-    assert balanced['goal_tier_0_worst'] < baseline['goal_tier_0_worst']
-    assert balanced['goal_tier_0_total'] < baseline['goal_tier_0_total']
+    assert balanced == baseline
 
 
 def test_joint_selection_setup_and_exposure_choose_a_compromise_before_single_metric_extremes():
@@ -57,8 +102,8 @@ def test_joint_selection_setup_and_exposure_choose_a_compromise_before_single_me
     approved = json.loads(Path('docs/workout_generator_initial_requirements.json').read_text(encoding='utf-8'))
     validate(approved, _REQUIREMENTS)
     assert not programming_policy_errors(approved)
-    goals = {goal['metric']: goal for goal in approved['objectiveTiers'][0]}
-    metrics = ('weekly_effective_sets:chest', 'setup_economy', 'role_concentration')
+    goals = {goal['metric']: goal for tier in approved['objectiveTiers'] for goal in tier}
+    metrics = ('weekly_volume:chest', 'execution_blocks', 'movement_overlap')
     requirements = {'objectiveTiers': [[goals[metric] for metric in metrics]]}
     # Each column is an alternative: favor dose, favor setup, compromise, forbidden ideal.
     misses = ((0, 1, .5, 0), (1, 0, .5, 0), (1, 1, .5, 0))
@@ -353,3 +398,117 @@ def test_explicit_ordering_goal_reaches_joint_solver_and_native_comparison():
         objective_names=['duration_economy', 'ordering_heavy_direct'], same_selected_work=False)
     assert any(row['objective'] == 'ordering_heavy_direct' for row in assessment['worsened'])
     assert assessment['status'] == 'baseline_preferred'
+
+
+@pytest.mark.parametrize('metric', ['session_heavy_exercise_balance', 'session_heavy_set_balance'])
+def test_heavy_session_balance_uses_the_same_counts_in_solver_and_comparison(monkeypatch, metric):
+    from test_workout_generator_joint_prescriptions import two_recipe_order_case
+    from workout_generator_pkg.programming_policy import session_balance_count
+
+    monkeypatch.setenv('MYWORKOUT_SOLVER_SEARCH_SECONDS', '15')
+    equipment, requirements, sessions = two_recipe_order_case()
+    template = equipment['exerciseDefinitions'][0]
+    equipment['exerciseDefinitions'] = [{**copy.deepcopy(template), 'id': f'definition-{index}',
+        'name': f'Exercise {index}', 'exerciseCategory': 'HEAVY_COMPOUND' if index < 3 else 'ISOLATION'}
+        for index in range(6)]
+    item = sessions[0]['exercises'][0]
+    menu = [{**copy.deepcopy(item), 'definition_id': f'LIBRARY_{index}', 'numWorkSets': 2,
+        'satisfiesCoverage': [], 'superset': None} for index in range(6)]
+    sessions = [{**copy.deepcopy(sessions[0]), 'name': f'Day {index}', 'trainingDays': [index * 2],
+        'exercises': copy.deepcopy(menu)} for index in range(3)]
+    requirements.update(sessionsPerWeek=3, requiredCoverage=[],
+        auditTargets={'weeklyEffectiveSets': {'chest': {'minimum': 12, 'maximum': 12}},
+            'perSessionEffectiveSets': {}},
+        executionRules=[{'kind': 'workSets', 'coverageKey': None, 'minimumSets': 2, 'maximumSets': 2},
+            {'kind': 'sessionStructure', 'maximumExercises': 2, 'maximumSupersetSize': 2,
+                'maximumSupersets': 0}],
+        objectiveOrder=['goal_tier_0', metric],
+        objectiveTiers=[[{'metric': metric, 'target': 0, 'scale': 1}]],
+        goalAggregation='total_then_worst')
+    validate(requirements, _REQUIREMENTS)
+    result = joint.solve_prescribed_week(sessions, requirements, equipment,
+        semantic_selection={'mode': 'selected_menu',
+            'definitionIds': [definition['id'] for definition in equipment['exerciseDefinitions']]})
+    assert result['feasible'], result
+    definitions = {f'LIBRARY_{i}': definition for i, definition in enumerate(equipment['exerciseDefinitions'])}
+    counts = [session_balance_count(day['exercises'], definitions, metric) for day in result['sessions']]
+    assert counts == ([1, 1, 1] if metric.endswith('exercise_balance') else [2, 2, 2])
+    artifact = {'workouts': result['sessions'], 'audit': result['audit']}
+    costs = joint._joint_candidate_objective_costs(artifact, requirements, {'setupDefinitions': definitions})
+    assert costs[metric] == 0
+    assert next(stage['value'] for stage in result['objectiveProgress']
+        if stage['goal'] == 'goal_tier_0_total') == costs['goal_tier_0_total'] == 0
+    definitions['LIBRARY_0'].pop('exerciseCategory')
+    assert session_balance_count(menu, definitions, metric) is None
+    assert joint._joint_candidate_objective_costs(artifact, requirements,
+        {'setupDefinitions': definitions})[metric] is None
+
+
+def test_shared_quality_compares_dose_balance_setup_and_sequence_before_workload(monkeypatch):
+    from test_workout_generator_joint_prescriptions import two_recipe_order_case
+    from test_workout_generator_joint_candidate_comparison import _context
+    from workout_generator_pkg.programming_policy import selection_precedes_execution
+
+    monkeypatch.setenv('MYWORKOUT_SOLVER_SEARCH_SECONDS', '15')
+    equipment, requirements, sessions = two_recipe_order_case()
+    equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'type': 'BARBELL', 'name': 'Barbell',
+        'barWeight': 10, 'sleeveLength': 100,
+        'availablePlates': [{'weight': 5, 'thickness': 1}] * 2}]
+    for definition in equipment['exerciseDefinitions']:
+        definition.update(exerciseType='WEIGHT', equipmentId='EQUIPMENT_0', bodyWeightPercentage=None)
+    sessions.append(copy.deepcopy(sessions[0]))
+    sessions[1].update(name='Day 2', trainingDays=[2])
+    requirements.update(sessionsPerWeek=2,
+        objectiveOrder=['volume_target', 'workload_economy', 'execution_order'],
+        orderingPreferences={'phaseOrder': [], 'protectionOrder': ['main_direct']})
+    requirements['auditTargets'] = {'weeklyEffectiveSets': {'chest': {
+        'minimum': 0, 'maximum': None, 'preferredMinimum': 9, 'preferredMaximum': 12}},
+        'perSessionEffectiveSets': {}}
+    requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': None,
+        'minimumSets': 2, 'maximumSets': 3}]
+    for day in sessions:
+        for item in day['exercises']:
+            item['numWorkSets'] = 2
+            item['workSetTemplate'] = {'reps': 8, 'weight': 10}
+    baseline = joint.solve_prescribed_week(sessions, requirements, equipment)
+    assert baseline['feasible'], baseline
+    assert baseline['audit']['weeklyWorkingSets'] == 9
+
+    requirements.update(
+        objectiveOrder=['goal_tier_0', 'session_exercise_balance', 'session_set_balance',
+            'setup_economy', 'workload_economy', 'relative_distribution', 'execution_order'],
+        objectiveTiers=[[
+            {'metric': 'weekly_volume:chest', 'target': 0, 'scale': 9, 'group': 'training'},
+            {'metric': 'session_exercise_balance', 'target': 0, 'scale': 1, 'group': 'balance'},
+            {'metric': 'session_set_balance', 'target': 0, 'scale': 1, 'group': 'balance'},
+            {'metric': 'setup_economy', 'target': 0, 'scale': 40, 'group': 'setup'},
+            {'metric': 'setup_economy_resource_switches', 'target': 0, 'scale': 40, 'group': 'setup'},
+            {'metric': 'execution_blocks', 'target': 0, 'scale': 40, 'group': 'setup'},
+            {'metric': 'relative_distribution', 'target': 0, 'scale': 1, 'group': 'exposure'},
+            {'metric': 'relative_distribution_worst', 'target': 0, 'scale': 1, 'group': 'exposure'},
+            {'metric': 'ordering_main_direct', 'target': 0, 'scale': 16, 'group': 'interference'},
+        ]], goalAggregation='total_then_worst', preferenceResolution='explicit_tradeoffs')
+    validate(requirements, _REQUIREMENTS)
+    assert not programming_policy_errors(requirements)
+    assert not selection_precedes_execution(requirements)
+    candidate = joint.solve_prescribed_week(sessions, requirements, equipment)
+    assert candidate['feasible'], (candidate.get('status'), candidate.get('instruction'), candidate.get('errors'))
+    assert candidate['audit']['weeklyWorkingSets'] == 10
+    assert [day['workingSets'] for day in candidate['audit']['workouts']] == [5, 5]
+    assert candidate['objectiveProgress'][0]['goal'] == 'goal_tier_0_total'
+    assert candidate['finalOrdering']['status'] == 'evaluated_in_shared_goal_tier'
+
+    context = _context()
+    context.update(qualifiedRoleEvidence={'LIBRARY_0': ['first'], 'LIBRARY_1': ['second']},
+        setupDefinitions={f'LIBRARY_{i}': value for i, value in enumerate(
+            sorted(equipment['exerciseDefinitions'], key=lambda definition: definition['id']))},
+        setupEquipmentById={item['id']: item for item in equipment['equipments']})
+    artifacts = [{'workouts': plan['sessions'], 'audit': plan['audit']} for plan in (baseline, candidate)]
+    scores = [joint._joint_candidate_objective_costs(artifact, requirements, context) for artifact in artifacts]
+    for stage in candidate['objectiveProgress']:
+        if stage['goal'].startswith('goal_tier_'):
+            assert stage['value'] == pytest.approx(scores[1][stage['goal']])
+    compared = joint.compare_audited_joint_candidates(*artifacts, requirements=requirements, context=context)
+    assert compared['decision'] == 'promote_candidate', compared
+    assert any(row['objective'] == 'workload_economy'
+        for row in compared['programmingTradeoff']['worsened'])

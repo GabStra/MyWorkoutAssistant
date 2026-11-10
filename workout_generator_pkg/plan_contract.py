@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .exercise_contracts import execution_set_mode, execution_semantics_problem
+from .muscle_roles import project_training_muscles
 from .domain_ops import (
     get_selectable_weights_for_exercise,
     pair_implement_total_for,
@@ -42,7 +43,7 @@ def hydrate_plan_index_from_exercise_library(
         return plan_index
 
     definitions_by_id = {
-        definition.get("id"): definition
+        definition.get("id"): project_training_muscles(copy.deepcopy(definition))
         for definition in exercise_definitions
         if isinstance(definition, dict) and definition.get("id")
     }
@@ -58,6 +59,13 @@ def hydrate_plan_index_from_exercise_library(
                 exercise[field] = copy.deepcopy(definition[field])
             else:
                 exercise.pop(field, None)
+    for day in plan_index.get('workouts', []):
+        selected = day.get('generalWarmupDefinition')
+        if isinstance(selected, dict) and selected.get('id') in definitions_by_id:
+            definition = definitions_by_id[selected['id']]
+            day['generalWarmupDefinition'] = {'id': selected['id'], **{
+                field: copy.deepcopy(definition[field]) for field in LIBRARY_DEFINITION_OWNED_FIELDS
+                if field in definition}}
     return plan_index
 
 
@@ -418,8 +426,19 @@ def _collect_contract_issues_plan_index(
         for definition in library_definitions
         if isinstance(definition, dict) and definition.get("id")
     }
-    library_definitions_by_id = {definition.get('id'): definition for definition in library_definitions
+    library_definitions_by_id = {definition.get('id'): project_training_muscles(copy.deepcopy(definition)) for definition in library_definitions
         if isinstance(definition, dict) and definition.get('id')}
+    for day in plan_index.get('workouts', []):
+        if not day.get('generalWarmupSeconds'):
+            continue
+        definition = day.get('generalWarmupDefinition') or {}
+        source = library_definitions_by_id.get(definition.get('id'))
+        if (not source or source.get('exerciseType') != 'COUNTDOWN'
+                or any(definition.get(field) != source.get(field) for field in LIBRARY_DEFINITION_OWNED_FIELDS)
+                or source.get('equipmentId') is not None and source['equipmentId'] not in equipment_lookup
+                or any(key not in equipment_lookup for key in source.get('requiredAccessoryEquipmentIds', []))):
+            issues.append(ContractIssue('general_warmup_definition_mismatch',
+                'General warm-up must use an available selected COUNTDOWN library definition and its equipment.'))
     if library_definition_ids:
         provided_equipment_ids = {
             item.get("id")
@@ -1578,11 +1597,22 @@ def validate_workout_structures_contract(
 
 def validate_assembled_workout_contract(plan_index, workout_store):
     """Recheck prescriptions and component placement after JSON repair."""
+    from .domain_ops import general_warmup_exercises, general_warmup_matches
+    warmups = general_warmup_exercises(plan_index)
     exercises = {}
     structures = {}
     for workout in workout_store.get("workouts", []):
         components = []
-        for component in workout.get("workoutComponents", []):
+        emitted_components = workout.get('workoutComponents', [])
+        warmup = warmups.get(workout['id'])
+        if warmup:
+            seconds = warmup['sets'][0]['timeInMillis'] // 1000
+            definition = next(day['generalWarmupDefinition'] for day in plan_index['workouts'] if day['id'] == workout['id'])
+            if (not emitted_components or not general_warmup_matches(emitted_components[0], warmup['id'], seconds, definition)
+                    or len(emitted_components) > 1 and emitted_components[1].get('type') == 'Rest'):
+                raise ContractValidationError('General warm-up must match the approved first timer with no following rest.')
+            emitted_components = emitted_components[1:]
+        for component in emitted_components:
             kind = component.get("type")
             if kind == "Exercise":
                 exercises[component["id"]] = component

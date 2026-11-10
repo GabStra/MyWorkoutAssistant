@@ -106,12 +106,11 @@ def test_soft_regional_goal_preserves_unknown_evidence_without_hard_failure():
     assert 'regional_target_evidence_unknown' in {issue['code'] for issue in legacy_report['errors']}
 
 
-def test_programming_preferences_use_selected_canonical_exercises_and_audited_time():
+def test_programming_preferences_use_selected_canonical_exercises():
     from test_workout_generator_planning_tools import planning_case
     from workout_generator_pkg.allocation import _audit_raw
 
     equipment, requirements, _, draft = planning_case()
-    requirements['preferredSessionSeconds'] = 400
     requirements['exerciseSelection'] = {'preferredMinimum': 2, 'preferredMaximum': 3,
         'muscles': ['chest', 'triceps']}
     day = draft['workouts'][0]
@@ -125,21 +124,27 @@ def test_programming_preferences_use_selected_canonical_exercises_and_audited_ti
     assert evidence['chest']['primaryExerciseIds'] == ['press']
     assert evidence['triceps']['secondaryExerciseIds'] == ['press']
     assert evidence['chest']['shortfall'] == 1
-    actual = report['workouts'][0]['estimatedSeconds']
-    assert report['sessionTimeBudgetEvidence']['totalWeeklyExcessSeconds'] == max(0, actual - 400) * 2
     text = audit.render_plan_disclosures(report)
-    assert 'Preferred session-time budget' in text
     assert 'Count alone does not establish complementary ROM' in text
 
 
-def test_decimal_timing_is_exact_at_public_boundary_without_rounding_inputs():
-    package = _package(3)
-    exercise = package['workouts'][0]['workoutComponents'][0]
-    exercise['sets'] = [{'type': 'WeightSet', 'reps': 3, 'subCategory': 'WorkSet'}] * 3
-    exercise['repDurationSeconds'] = 0.1
-    exercise['setupSeconds'] = 0
-    report = audit.audit_workout_package(package, {'weeklyEffectiveSets': {},
-        'perSessionEffectiveSets': {}, 'maximumSessionSeconds': None})
-    assert report['workouts'][0]['timing']['workSeconds'] == 0.9
-    assert report['workouts'][0]['estimatedSeconds'] == 300.9
-    json.dumps(report, allow_nan=False)
+def test_reported_muscles_do_not_acquire_targets_and_zero_exposure_stays_visible():
+    from pathlib import Path
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg.allocation import _audit_raw
+    from workout_generator_pkg.planning_tools import render_draft
+
+    equipment, requirements, _, draft = planning_case()
+    approved = json.loads(Path('docs/workout_generator_initial_requirements.json').read_text(encoding='utf-8'))
+    requirements['auditTargets'] = approved['auditTargets']
+    plan, report = _audit_raw(draft, equipment, requirements, None, True)
+    assert not report['errors']
+    selected = set(requirements['auditTargets']['weeklyEffectiveSets'])
+    assert {item['muscle'] for item in report['volumePreferenceEvidence']['weekly']} == selected
+    assert report['weeklyVolume']['triceps']['indirect'] > 0
+    assert report['weeklyVolume']['calves']['effective'] == 0
+    assert report['weeklyVolume']['abs']['effective'] == 0
+    preview = render_draft(plan, requirements, report, source_draft=draft)
+    assert '| Calves | 0 | 0 | 0 | — | Reported | — | — |' in preview
+    assert '| Abdominals | 0 | 0 | 0 | — | Reported | — | — |' in preview
+    assert 'Reporting creates no volume target or claim of adequacy' in preview

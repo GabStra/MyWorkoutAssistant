@@ -8,8 +8,7 @@ MUSCLE_LABELS = {
     'forearms': 'Forearms', 'traps': 'Trapezius', 'tibialis': 'Tibialis anterior', 'neck': 'Neck',
 }
 
-# These reviewed regions are reported separately from the library's aggregate
-# muscleGroups credits. An omitted region remains unknown.
+# An omitted reviewed region remains unknown.
 REGIONAL_MUSCLE_LABELS = {
     'latissimus_dorsi': 'Latissimus dorsi',
     'upper_back': 'Upper back',
@@ -19,6 +18,68 @@ REGIONAL_MUSCLE_LABELS = {
     'pectoralis_clavicular': 'Clavicular pectoralis',
     'pectoralis_sternocostal': 'Sternocostal pectoralis',
 }
+
+AGGREGATE_MUSCLE_TAGS = {
+    'chest': {'FRONT_CHEST'}, 'back': {'BACK_UPPER_BACK'},
+    'quads': {'FRONT_QUADRICEPS'}, 'hamstrings': {'BACK_HAMSTRING'},
+    'glutes': {'BACK_GLUTEAL'}, 'shoulders': {'FRONT_DELTOIDS', 'BACK_DELTOIDS'},
+    'biceps': {'FRONT_BICEPS'}, 'triceps': {'FRONT_TRICEPS', 'BACK_TRICEPS'},
+    'calves': {'FRONT_CALVES', 'BACK_CALVES'}, 'abs': {'FRONT_ABS'},
+    'obliques': {'FRONT_OBLIQUES'}, 'adductors': {'FRONT_ADDUCTORS', 'BACK_ADDUCTORS'},
+    'forearms': {'FRONT_FOREARM', 'BACK_FOREARM'}, 'traps': {'FRONT_TRAPEZIUS', 'BACK_TRAPEZIUS'},
+    'lowerBack': {'BACK_LOWER_BACK'}, 'tibialis': {'FRONT_TIBIALIS'}, 'neck': {'FRONT_NECK', 'BACK_NECK'},
+}
+REGIONAL_MUSCLE_PARENT = {
+    'latissimus_dorsi': 'back', 'upper_back': 'back',
+    'deltoid_anterior': 'shoulders', 'deltoid_lateral': 'shoulders', 'deltoid_posterior': 'shoulders',
+    'pectoralis_clavicular': 'chest', 'pectoralis_sternocostal': 'chest',
+}
+
+
+def muscle_credits_per_set(exercise):
+    """Combine legacy aggregate roles and positive reviewed evidence, once per parent."""
+    if exercise.get('exerciseType') is not None and exercise['exerciseType'] not in {'WEIGHT', 'BODY_WEIGHT'}:
+        return {}
+    primary = set(exercise.get('muscleGroups') or ())
+    secondary = set(exercise.get('secondaryMuscleGroups') or ())
+    credits = {}
+    for muscle, tags in AGGREGATE_MUSCLE_TAGS.items():
+        if primary & tags:
+            credits[muscle] = {'direct': 1, 'indirect': 0}
+        elif secondary & tags:
+            credits[muscle] = {'direct': 0, 'indirect': 0.5}
+    from .recipe_contracts import regional_muscle_credit_roles
+    regional = regional_muscle_credit_roles(exercise)
+    for region, roles in regional.items():
+        parent = REGIONAL_MUSCLE_PARENT[region]
+        existing = credits.get(parent, {'direct': 0, 'indirect': 0})
+        if sum(roles.values()) > sum(existing.values()):
+            credits[parent] = dict(roles)
+    credits.update(regional)
+    return credits
+
+
+def project_training_muscles(definition):
+    """Synchronize exported roles with the same accounting used by planning and audit."""
+    credits = muscle_credits_per_set(definition)
+    primary = list(definition.get('muscleGroups') or ())
+    secondary = list(definition.get('secondaryMuscleGroups') or ())
+    for muscle, tags in AGGREGATE_MUSCLE_TAGS.items():
+        roles = credits.get(muscle, {})
+        if roles.get('direct') and not set(primary) & tags:
+            primary.extend([tag for tag in secondary if tag in tags] or [sorted(tags)[0]])
+            secondary = [tag for tag in secondary if tag not in tags]
+        elif roles.get('indirect') and not (set(primary) | set(secondary)) & tags:
+            secondary.append(sorted(tags)[0])
+    if primary != list(definition.get('muscleGroups') or ()):
+        definition['muscleGroups'] = primary
+    if secondary != list(definition.get('secondaryMuscleGroups') or ()):
+        definition['secondaryMuscleGroups'] = secondary
+    definition['trainingMuscles'] = {
+        'primary': sorted(muscle for muscle, roles in credits.items() if roles['direct']),
+        'secondary': sorted(muscle for muscle, roles in credits.items() if roles['indirect']),
+    }
+    return definition
 
 MOVEMENT_COVERAGE_ROLES = {
     'knee_dominant': 'Knee-dominant lower-body work',

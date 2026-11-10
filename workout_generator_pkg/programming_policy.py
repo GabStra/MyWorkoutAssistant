@@ -12,17 +12,38 @@ from .cp_solver import _rational
 INTERFERENCE_METRICS = ('priority_direct', 'priority_support', 'heavy_direct', 'heavy_support',
     'main_direct', 'main_support', 'adjacent_direct', 'adjacent_support')
 EXECUTION_CATEGORIES = ('HEAVY_COMPOUND', 'MODERATE_COMPOUND', 'ISOLATION', 'CORE')
-GOAL_METRICS = ('time_budget', 'volume_target', 'source_balance', 'workload_economy',
-    'duration_balance', 'duration_economy', 'role_concentration', 'distribution',
-    'movement_overlap', 'execution_complementarity', 'balance_control', 'exercise_count',
-    'exercise_distribution', 'setup_economy', *('ordering_' + name for name in INTERFERENCE_METRICS))
+SESSION_BALANCE_METRICS = ('session_exercise_balance', 'session_set_balance',
+    'session_heavy_exercise_balance', 'session_heavy_set_balance')
+arrangement_objectives = ('relative_role_concentration', 'relative_distribution', 'relative_distribution_worst')
+GOAL_METRICS = ('volume_target', 'source_balance', 'workload_economy', 'heavy_workload_economy',
+    *SESSION_BALANCE_METRICS, 'role_concentration', 'distribution',
+    'movement_overlap', 'execution_complementarity', 'balance_control', 'exercise_count', 'exercise_preference',
+    'exercise_distribution', 'setup_economy', 'setup_economy_transitions',
+    'setup_economy_resource_switches', 'superset_lower_body_overlap', 'execution_blocks',
+    *arrangement_objectives,
+    *('ordering_' + name for name in INTERFERENCE_METRICS))
 OBJECTIVE_TIERS_SCHEMA = {'type': 'array', 'minItems': 1, 'maxItems': 8, 'items': {
     'type': 'array', 'minItems': 1, 'maxItems': 30, 'items': {'type': 'object', 'properties': {
         'metric': {'type': 'string', 'pattern': '^(?:' + '|'.join(GOAL_METRICS) + '|(?:coverage|weekly_volume|weekly_effective_sets):[a-z][a-z0-9_]{0,59})$'},
         'target': {'type': 'number'}, 'scale': {'type': 'number', 'exclusiveMinimum': 0},
         'group': {'type': 'string', 'pattern': '^[a-z][a-z0-9_]{0,59}$'}},
         'required': ['metric', 'target', 'scale'], 'additionalProperties': False}},
-    'description': 'Optional source-approved goal tiers. Within a tier minimize the worst normalized target miss, then the total of group means plus ungrouped misses. Optional group labels give each group equal total weight regardless of its field count; ungrouped goals retain weight one. A miss is max(0, (metric-target)/scale); reaching a target earns no further reward. coverage:ROLE uses negative weekly qualified working sets. weekly_volume:MUSCLE uses deviation outside its existing preferred weekly range. weekly_effective_sets:MUSCLE uses negative audited weekly effective sets, so a negative target can favour additional volume within that range. Scales explicitly define comparable shortfalls; do not invent them or infer physiological adequacy. Tiers precede remaining objectiveOrder tie-breakers. Omission preserves the existing policy. Hard requirements remain independent.'}
+    'description': 'Optional source-approved goal tiers. goalAggregation selects whether the combined total or worst normalized target miss is compared first within each tier. Optional group labels give each group equal total weight regardless of its field count; ungrouped goals retain weight one. A miss is max(0, (metric-target)/scale); reaching a target earns no further reward. An explicitly approved accepted shortfall may be a target for a reviewed-plan adjustment; it does not change the underlying preferred range or establish adequacy. coverage:ROLE uses negative weekly qualified working sets. weekly_volume:MUSCLE uses deviation outside its existing preferred weekly range. weekly_effective_sets:MUSCLE uses negative audited weekly effective sets, so a negative target can favour additional volume within that range. Scales explicitly define comparable shortfalls; do not invent them or infer physiological adequacy. An objectiveOrder goal_tier_N marker places existing tier N at that stage. Unmarked tiers precede remaining objectives. Goals before workload_economy have authority to select training dose. Explicit mixed tiers remain supported and can retain additional work for arrangement improvements, including relative exposure, session balance, interference or setup. When arrangement must conserve training dose, place its tier explicitly after standalone workload_economy. These post-workload tiers preserve selected weekly muscle and role doses, physical work and exercise membership while allowing session placement and compatible grouping to change. Separate tiers express priority between grouping, physical setup and distribution without inventing exchange rates. Omission preserves the existing policy. Hard requirements remain independent.'}
+GOAL_AGGREGATION_SCHEMA = {'type': 'string', 'enum': ['worst_then_total', 'total_then_worst'],
+    'description': 'Source-approved within-tier comparison: total_then_worst compares the sum of group-mean misses and ungrouped misses first, then the worst individual miss; worst_then_total reverses those two stages. Omission retains worst_then_total. Hard requirements do not change.'}
+
+
+def session_balance_count(exercises, definitions, metric, work_sets=None):
+    """Count prescribed work by category, without estimating personal fatigue."""
+    if metric.startswith('session_heavy_'):
+        if any(definitions.get(item['definition_id'], {}).get('exerciseCategory')
+                not in EXECUTION_CATEGORIES for item in exercises):
+            return None
+        exercises = [item for item in exercises
+            if definitions[item['definition_id']]['exerciseCategory'] == 'HEAVY_COMPOUND']
+    if metric.endswith('set_balance'):
+        return sum(item['numWorkSets'] if work_sets is None else work_sets for item in exercises)
+    return len(exercises)
 
 
 def normalize_programming_policy(requirements):
@@ -30,13 +51,96 @@ def normalize_programming_policy(requirements):
     return {key: copy.deepcopy(requirements[key]) for key in (
         'auditTargets', 'sessionsPerWeek', 'trainingDays', 'minimumRestDaysBetweenSessions', 'workingSetRIR',
         'requiredCoverage', 'exerciseRestrictions', 'executionRules', 'familySetBounds',
-        'objectiveOrder', 'preferredSessionSeconds', 'exerciseSelection', 'orderingPreferences',
-        'durationBalanceToleranceSeconds', 'preferenceResolution', 'objectiveTiers') if key in requirements}
+        'objectiveOrder', 'exerciseSelection', 'orderingPreferences',
+        'preferenceResolution', 'objectiveTiers', 'goalAggregation',
+        'generalWarmupSeconds', 'generalWarmupDefinitionId') if key in requirements}
+
+
+def resolve_exercise_choices(requirements, equipment):
+    """Bind explicit names to unique library identities; permission never implies selection."""
+    from .planning_tools import PlanningInputError
+
+    selection = requirements.get('exerciseSelection') or {}
+    names = {}
+    for definition in equipment.get('exerciseDefinitions', []):
+        names.setdefault(' '.join(definition['name'].casefold().split()), set()).add(definition['id'])
+
+    def resolve(name):
+        matches = names.get(' '.join(name.casefold().split()), set())
+        if len(matches) != 1:
+            raise PlanningInputError('exercise_choice_unresolved',
+                f"Exercise choice '{name}' must identify exactly one available library definition.",
+                '/exerciseSelection', 'Resolve the name against the current library or ask which definition is intended; do not omit or broaden the choice.')
+        return next(iter(matches))
+
+    return {'required': {resolve(name) for name in selection.get('requiredNames', [])},
+        'preferred': {role: {resolve(name) for name in choices}
+            for role, choices in selection.get('preferredByCoverage', {}).items()}}
+
+
+def exercise_preference_cost(workouts, definitions, choices):
+    """Count distinct nonpreferred definitions within each explicitly scoped role."""
+    return sum(len({definitions[item['definition_id']]['id']
+        for day in workouts for item in day.get('exercises', [])
+        if role in item.get('satisfiesCoverage', [])
+        and definitions[item['definition_id']]['id'] not in preferred})
+        for role, preferred in choices['preferred'].items())
+
+
+def semantic_selection_ids(selection, equipment):
+    """A semantic menu owns membership, never prescriptions or evidence claims."""
+    if selection is None:
+        return None
+    from .planning_tools import PlanningInputError
+    identifiers = selection.get('definitionIds') if isinstance(selection, dict) else None
+    available = {item['id'] for item in equipment.get('exerciseDefinitions', [])}
+    if (not isinstance(selection, dict) or selection.get('mode') != 'selected_menu'
+            or not isinstance(identifiers, list) or not identifiers
+            or any(not isinstance(value, str) for value in identifiers)
+            or len(set(identifiers)) != len(identifiers) or set(identifiers) - available):
+        raise PlanningInputError('invalid_semantic_selection',
+            'The semantic exercise menu must name unique current library identities.',
+            '/semanticSelection', 'Select an executable menu from the current candidates; code must not infer or replace its members.')
+    return set(identifiers)
 
 
 def goal_tier_names(requirements):
+    kinds = ('total', 'worst') if requirements.get('goalAggregation') == 'total_then_worst' else ('worst', 'total')
     return [f'goal_tier_{index}_{kind}' for index, _ in enumerate(requirements.get('objectiveTiers', []))
-        for kind in ('worst', 'total')]
+        for kind in kinds]
+
+
+def expand_goal_tiers(requirements, objective_names):
+    """Place explicit tier markers while retaining the legacy prepend for unmarked tiers."""
+    names = goal_tier_names(requirements)
+    tiers = {f'goal_tier_{index}': names[index * 2:index * 2 + 2]
+        for index, _ in enumerate(requirements.get('objectiveTiers', []))}
+    marked = set(requirements.get('objectiveOrder') or []) & tiers.keys()
+    grouped = {goal['metric'] for tier in requirements.get('objectiveTiers', []) for goal in tier}
+    result = [name for marker, stages in tiers.items() if marker not in marked for name in stages]
+    for name in objective_names:
+        if name in tiers:
+            result.extend(tiers[name])
+        elif name not in grouped:
+            result.append(name)
+    return list(dict.fromkeys(result))
+
+
+def settled_dose_goal_stages(requirements):
+    """Explicit post-workload tiers arrange the already selected weekly training doses."""
+    order = requirements.get('objectiveOrder') or []
+    if 'workload_economy' not in order:
+        return set()
+    following = set(order[order.index('workload_economy') + 1:])
+    return {name for name in goal_tier_names(requirements)
+        if name.rsplit('_', 1)[0] in following}
+
+
+def goal_aggregation_text(requirements):
+    total = 'the sum of per-group mean shortfalls and ungrouped shortfalls'
+    worst = 'the worst individual normalized shortfall'
+    first, second = (total, worst) if requirements.get('goalAggregation') == 'total_then_worst' else (worst, total)
+    return f'minimize {first} in each tier, then {second}'
 
 
 def goal_target_text(goal):
@@ -81,7 +185,213 @@ def goal_programming_costs(requirements, costs, coverage):
     return result
 
 
+# Computational resolution, not a programming tolerance or an adequacy threshold.
+RELATIVE_SHARE_UNITS = 1000
+
+
+def relative_share_cost(numerator, denominator):
+    """Round a nonnegative share upward on the same finite lattice as the solver."""
+    numerator, denominator = _rational(numerator), _rational(denominator)
+    if numerator < 0 or denominator < 0 or numerator > denominator:
+        raise ValueError('Relative exposure requires 0 <= numerator <= denominator.')
+    return math.ceil(RELATIVE_SHARE_UNITS * numerator / denominator) if denominator else 0
+
+
+def add_relative_share_objective(variable, constraint, numerator_coeffs, denominator_coeffs,
+        *, numerator_intercept=0, denominator_intercept=0, denominator_upper, label):
+    """Compile a bounded share epigraph using the existing linear solver rows."""
+    quantities = [denominator_intercept, denominator_upper, *denominator_coeffs.values()]
+    if any(_rational(value).denominator != 1 or value < 0 for value in quantities):
+        raise ValueError('Relative share denominators require nonnegative integer units.')
+    upper = int(denominator_upper)
+    if denominator_intercept > upper:
+        raise ValueError('Relative share denominator upper bound excludes its intercept.')
+    q = variable(upper=RELATIVE_SHARE_UNITS, domain_identity={
+        'kind': 'relative_share', 'label': label})
+    if not denominator_coeffs:
+        denominator = int(denominator_intercept)
+        if denominator:
+            constraint(('relative_share', label, 'constant'), -math.inf, 0,
+                {**{index: RELATIVE_SHARE_UNITS * value for index, value in numerator_coeffs.items()},
+                    q: -denominator}, RELATIVE_SHARE_UNITS * numerator_intercept)
+        else:
+            constraint(('relative_share', label, 'empty'), 0, 0, {q: 1})
+            constraint(('relative_share', label, 'empty_numerator'), 0, 0,
+                numerator_coeffs, numerator_intercept)
+        return q
+    stride = math.gcd(int(denominator_intercept),
+        *(int(value) for value in denominator_coeffs.values())) or 1
+    # All possible denominators share this divisor; recipe exclusions may remove more.
+    selectors = {dose: variable(domain_identity={
+        'kind': 'relative_share_denominator', 'label': label, 'value': dose})
+        for dose in range(0, upper + 1, stride)}
+    constraint(('relative_share', label, 'one_denominator'), 1, 1,
+        {index: 1 for index in selectors.values()})
+    denominator_row = dict(denominator_coeffs)
+    for dose, index in selectors.items():
+        denominator_row[index] = -dose
+    constraint(('relative_share', label, 'denominator'), 0, 0,
+        denominator_row, denominator_intercept)
+    bound = RELATIVE_SHARE_UNITS * upper
+    for dose, index in selectors.items():
+        row = {key: RELATIVE_SHARE_UNITS * value for key, value in numerator_coeffs.items()}
+        row[index] = bound
+        if dose:
+            row[q] = -dose
+        else:
+            constraint(('relative_share', label, 'zero_dose'), -math.inf,
+                RELATIVE_SHARE_UNITS, {q: 1, index: RELATIVE_SHARE_UNITS})
+        constraint(('relative_share', label, dose), -math.inf, bound, row,
+            RELATIVE_SHARE_UNITS * numerator_intercept)
+    return q
+
+
+def role_concentration_keys(requirements):
+    from .recipe_contracts import CODE_OWNED_DIRECT_COVERAGE_ROLES
+    targets = requirements.get('auditTargets') or {}
+    targeted = {key.replace('lowerBack', 'lower_back') for scope in (
+        'weeklyEffectiveSets', 'perSessionEffectiveSets') for key in targets.get(scope, {})}
+    sessions = requirements.get('sessionsPerWeek')
+    return sorted({rule['key'] for rule in requirements.get('requiredCoverage', [])
+        if ((rule['key'] in CODE_OWNED_DIRECT_COVERAGE_ROLES and rule['key'] in targeted)
+            or rule.get('intent') == 'development')
+        and (rule.get('scope') == 'eachSession' or sessions is not None
+            and rule.get('minimumSessions') is not None and rule['minimumSessions'] >= sessions)})
+
+
+def conserved_coverage_roles(requirements):
+    """Preserve dose authority while inclusion minima remain native constraints."""
+    roles = {rule['key'] for rule in requirements.get('requiredCoverage', [])
+        if rule.get('intent') != 'inclusion'}
+    roles.update(goal['metric'].split(':', 1)[1]
+        for tier in requirements.get('objectiveTiers', []) for goal in tier
+        if goal['metric'].startswith('coverage:'))
+    for rule in requirements.get('executionRules', []):
+        if rule.get('kind') == 'coverageBalance':
+            roles.update((rule['first'], rule['second']))
+    return sorted(roles)
+
+
+def same_weekly_training_doses(baseline, candidate, requirements):
+    """Compare dose identities; None preserves unknown evidence instead of implying a mismatch."""
+    targets = requirements.get('auditTargets', {})
+    muscles = set(targets.get('weeklyEffectiveSets', {})) | set(targets.get('perSessionEffectiveSets', {}))
+    roles = conserved_coverage_roles(requirements)
+
+    def identity(value):
+        audit = value.get('audit', {})
+        if unknown_exposure_muscles(audit, requirements, muscles=muscles):
+            return None
+        workouts = value.get('workouts', audit.get('workouts', []))
+        frequencies = [day.get('timesCompletedInAWeek') for day in workouts]
+        if not frequencies or any(type(frequency) is not int or frequency < 1 for frequency in frequencies):
+            return None
+        doses = [audit.get('weeklyVolume', {}).get(muscle, {}).get('effective') for muscle in sorted(muscles)]
+        doses.extend(audit.get('weeklyCoverageSets', {}).get(role) for role in sorted(roles))
+        if any(type(dose) not in (int, float) or not math.isfinite(dose) or dose < 0 for dose in doses):
+            return None
+        return tuple(frequencies), tuple(_rational(dose) for dose in doses)
+
+    before, after = identity(baseline), identity(candidate)
+    return None if before is None or after is None else before == after
+
+
+def marked_arrangement_comparable(baseline, candidate, requirements):
+    """Keep physical work and selected references fixed within the shared candidate domain."""
+    same_doses = same_weekly_training_doses(baseline, candidate, requirements)
+    if same_doses is not True:
+        return same_doses
+
+    def identity(value):
+        audit = value.get('audit', {})
+        physical_sets = audit.get('weeklyWorkingSets')
+        workouts = value.get('workouts', audit.get('workouts'))
+        if (type(physical_sets) not in (int, float) or not math.isfinite(physical_sets)
+                or physical_sets < 0 or not isinstance(workouts, list)):
+            return None
+        selected = set()
+        for day in workouts:
+            for item in day.get('exercises', []):
+                count, reference = item.get('numWorkSets'), item.get('definition_id')
+                if type(count) is not int or count < 0 or not isinstance(reference, str):
+                    return None
+                if count:
+                    selected.add(reference)
+        return _rational(physical_sets), selected
+
+    before, after = identity(baseline), identity(candidate)
+    return None if before is None or after is None else before == after
+
+
+def muscle_distribution_scope(requirements):
+    """Balance supported muscle groups independently of approved volume bounds."""
+    from .muscle_roles import MUSCLE_LABELS, REGIONAL_MUSCLE_PARENT
+
+    targets = requirements.get('auditTargets', {})
+    targeted = set(targets.get('weeklyEffectiveSets', {})) | set(targets.get('perSessionEffectiveSets', {}))
+    regions = targeted & REGIONAL_MUSCLE_PARENT.keys()
+    return sorted((set(MUSCLE_LABELS) | targeted)
+        - {REGIONAL_MUSCLE_PARENT[region] for region in regions})
+
+
+def unknown_exposure_muscles(audit, requirements, *, muscles=None):
+    muscles = set(muscle_distribution_scope(requirements) if muscles is None else muscles)
+    unknown = {muscle for muscle in muscles if audit.get('regionalTargetEvidence', {}).get(
+        muscle, {}).get('status') == 'unknown_selected_aggregate_contributions'}
+    evidence = audit.get('volumePreferenceEvidence', {})
+    unknown.update(row['muscle'] for scope in ('weekly', 'perSession') for row in evidence.get(scope, [])
+        if row.get('muscle') in muscles and row.get('status') == 'unknown')
+    return unknown
+
+
+def relative_exposure_costs(workouts, audit, requirements, role_evidence=None):
+    """Measure distribution independently of dose; zero exposure proves no adequacy."""
+    days = audit.get('workouts', [])
+    frequencies = [day.get('timesCompletedInAWeek', 1) for day in workouts]
+    names = ('relative_role_concentration', 'relative_distribution', 'relative_distribution_worst')
+    if len(days) != len(frequencies) or any(type(value) is not int or value < 1 for value in frequencies):
+        return dict.fromkeys(names)
+    occurrences = sum(frequencies)
+    if not days:
+        return dict.fromkeys(names, 0)
+
+    def doses(section, key):
+        values = [day.get(section, {}).get(key) for day in days]
+        if section == 'volume':
+            values = [value.get('effective') if isinstance(value, dict) else None for value in values]
+        return values if all(type(value) in (int, float) and math.isfinite(value)
+            and value >= 0 for value in values) else None
+
+    role_costs = []
+    for role in role_concentration_keys(requirements):
+        values = doses('coverageSets', role)
+        if values is None:
+            role_costs = None
+            break
+        weekly = sum(value * frequency for value, frequency in zip(values, frequencies))
+        role_costs.append(relative_share_cost(max(0, occurrences * max(values) - weekly),
+            (occurrences - 1) * weekly))
+    muscles = muscle_distribution_scope(requirements)
+    muscle_costs = None if unknown_exposure_muscles(audit, requirements) else []
+    for muscle in sorted(muscles) if muscle_costs is not None else []:
+        values = doses('volume', muscle)
+        if values is None:
+            muscle_costs = None
+            break
+        weekly = sum(value * frequency for value, frequency in zip(values, frequencies))
+        muscle_costs.append(relative_share_cost(sum(frequency * abs(occurrences * value - weekly)
+            for value, frequency in zip(values, frequencies)), 2 * (occurrences - 1) * weekly))
+    return {'relative_role_concentration': (max(role_costs, default=0) / RELATIVE_SHARE_UNITS
+                if role_costs is not None else None),
+        'relative_distribution': (sum(muscle_costs) / (RELATIVE_SHARE_UNITS * len(muscles))
+                if muscle_costs and muscles else 0 if muscle_costs is not None else None),
+        'relative_distribution_worst': (max(muscle_costs, default=0) / RELATIVE_SHARE_UNITS
+                if muscle_costs is not None else None)}
+
+
 def execution_order_phase(priority, requirements):
+    if priority == -1:
+        return -1
     phases = requirements.get('orderingPreferences', {}).get('phaseOrder', [])
     category = EXECUTION_CATEGORIES[priority]
     return next((index for index, categories in enumerate(phases) if category in categories), 0)
@@ -129,11 +439,15 @@ def source_balance_dose_components(requirements):
 def selection_precedes_execution(requirements):
     order = requirements.get('objectiveOrder') or []
     return ('execution_order' in order and 'workload_economy' in order
-        and order.index('workload_economy') < order.index('execution_order'))
+        and order.index('workload_economy') < order.index('execution_order')
+        and not any(goal['metric'].startswith('ordering_')
+            or goal['metric'] in ('setup_economy_transitions', 'setup_economy_resource_switches')
+            for tier in requirements.get('objectiveTiers', []) for goal in tier))
 
 
 def assess_audited_programming_tradeoff(baseline, candidate, *, requirements,
-        baseline_costs, candidate_costs, objective_names, same_selected_work):
+        baseline_costs, candidate_costs, objective_names, same_selected_work,
+        same_selected_weekly_work=False):
     """Compare supplied native facts without assigning exchange rates to preferences."""
     result = {'status': 'unknown', 'improved': [], 'worsened': [], 'unchanged': [],
         'unknownObjectives': [], 'developmentChanges': [], 'hardErrors': {}}
@@ -159,9 +473,11 @@ def assess_audited_programming_tradeoff(baseline, candidate, *, requirements,
     baseline_costs = baseline_costs if isinstance(baseline_costs, dict) else {}
     candidate_costs = candidate_costs if isinstance(candidate_costs, dict) else {}
     owners = {'distribution_worst': 'distribution',
+        'relative_distribution_worst': 'relative_distribution',
         'role_concentration_tiebreak': 'role_concentration',
         'exercise_distribution_development': 'exercise_distribution',
         'superset_lower_body_overlap': 'movement_overlap',
+        'execution_blocks': 'setup_economy',
         'setup_economy_transitions': 'setup_economy',
         'setup_economy_resource_switches': 'setup_economy'}
     setup_refinements = ('setup_economy_transitions', 'setup_economy_resource_switches')
@@ -171,11 +487,23 @@ def assess_audited_programming_tradeoff(baseline, candidate, *, requirements,
     if 'execution_order' in names:
         names.remove('execution_order')
         names.extend('ordering_' + name for name in execution_interference_metric_names(requirements))
+    arrangement_comparable = same_weekly_training_doses(baseline, candidate, requirements)
     for name in dict.fromkeys(names):
+        if name.startswith('goal_tier_'):
+            continue
         owner = 'execution_order' if name.startswith('ordering_') else owners.get(name, name)
-        if owner not in requested or (owner == 'execution_order' and not same_selected_work and name not in grouped):
+        if owner not in requested or (owner == 'execution_order'
+                and not (same_selected_work or same_selected_weekly_work) and name not in grouped):
             continue
         before, after = baseline_costs.get(name), candidate_costs.get(name)
+        if name in arrangement_objectives and name not in grouped:
+            if arrangement_comparable is False:
+                result.setdefault('inapplicableObjectives', []).append({'objective': name,
+                    'baseline': before, 'candidate': after, 'reason': 'weekly_training_doses_differ'})
+                continue
+            if arrangement_comparable is None:
+                result['unknownObjectives'].append(name)
+                continue
         if not known_number(before) or not known_number(after):
             result['unknownObjectives'].append(name)
             continue
@@ -205,31 +533,28 @@ def assess_audited_programming_tradeoff(baseline, candidate, *, requirements,
         tier_names = goal_tier_names(requirements)
         result['goalTiers'] = [{'objective': name, 'baseline': baseline_costs.get(name),
             'candidate': candidate_costs.get(name)} for name in tier_names]
+        settled_stages = settled_dose_goal_stages(requirements)
+        marked_comparable = (marked_arrangement_comparable(baseline, candidate, requirements)
+            if settled_stages else None)
         relations = {row['objective']: relation for relation in ('improved', 'worsened', 'unchanged')
             for row in result[relation]}
-        overlap_relation = relations.get('movement_overlap')
-        if overlap_relation in ('improved', 'worsened'):
-            for row in result['volumeChanges']:
-                before, after = row['baselineEffectiveSets'], row['candidateEffectiveSets']
-                if (row['preferredMinimum'] is not None
-                        and ((overlap_relation == 'improved' and after < before)
-                             or (overlap_relation == 'worsened' and after > before))):
-                    # Equivalent-movement repetition versus soft dose needs an artifact choice, not a hidden exchange rate.
-                    result['status'] = 'requires_programming_decision'
+        for name in expand_goal_tiers(requirements, names):
+            if name in tier_names:
+                before, after = baseline_costs.get(name), candidate_costs.get(name)
+                if name in settled_stages:
+                    if marked_comparable is False:
+                        result.setdefault('inapplicableObjectives', []).append({'objective': name,
+                            'baseline': before, 'candidate': after, 'reason': 'selected_weekly_work_or_training_doses_differ'})
+                        continue
+                    if marked_comparable is None:
+                        result['unknownObjectives'].append(name)
+                        return result
+                if not known_number(before) or not known_number(after):
+                    result['unknownObjectives'].append(name)
                     return result
-        for row in result['goalTiers']:
-            if any(not known_number(row[label]) for label in ('baseline', 'candidate')):
-                result['unknownObjectives'].append(row['objective'])
-                return result
-            if row['baseline'] != row['candidate']:
-                result['status'] = ('candidate_preferred' if row['candidate'] < row['baseline']
-                    else 'baseline_preferred')
-                return result
-        grouped = {goal['metric'] for tier in requirements['objectiveTiers'] for goal in tier}
-        relations = {row['objective']: relation for relation in ('improved', 'worsened', 'unchanged')
-            for row in result[relation]}
-        for name in names:
-            if name in grouped:
+                if before != after:
+                    result['status'] = 'candidate_preferred' if after < before else 'baseline_preferred'
+                    return result
                 continue
             if name in result['unknownObjectives']:
                 return result
@@ -317,16 +642,38 @@ def exercise_count_preference_facts(definitions, requirements):
 
 def programming_policy_errors(requirements):
     errors = []
+    order = requirements.get('objectiveOrder') or []
+    tiers = requirements.get('objectiveTiers', [])
+    grouped = {goal['metric'] for tier in tiers for goal in tier}
+    markers = [name for name in order if name.startswith('goal_tier_')]
+    for marker in markers:
+        if not re.fullmatch('goal_tier_[0-7]', marker) or int(marker.removeprefix('goal_tier_')) >= len(tiers):
+            errors.append(('objectiveOrder', 'Each goal_tier_N marker must refer to an existing tier from 0 to 7.'))
+        if markers.count(marker) > 1:
+            errors.append(('objectiveOrder', 'Each goal tier may have only one objectiveOrder marker.'))
+    if settled_dose_goal_stages(requirements) and any(goal['metric'] == 'workload_economy'
+            for tier in tiers for goal in tier):
+        errors.append(('objectiveTiers',
+            'Post-workload tiers require a standalone workload_economy stage to fix the selected weekly doses.'))
+    if any(metric in order and metric not in grouped and ('workload_economy' not in order
+            or order.index('workload_economy') > order.index(metric)) for metric in arrangement_objectives):
+        errors.append(('objectiveOrder',
+            'Relative exposure arrangement requires workload_economy earlier in objectiveOrder to settle the weekly dose.'))
+    aggregation = requirements.get('goalAggregation')
+    if aggregation is not None and (aggregation not in GOAL_AGGREGATION_SCHEMA['enum']
+            or not requirements.get('objectiveTiers')):
+        errors.append(('goalAggregation', 'An approved aggregation mode requires nonempty goal tiers.'))
     if ('trainingDays' in requirements and requirements.get('sessionsPerWeek') is not None
             and len(requirements['trainingDays']) != requirements['sessionsPerWeek']):
         errors.append(('trainingDays', 'Explicit weekdays must provide one day per approved weekly session.'))
-    preferred = requirements.get('preferredSessionSeconds')
-    hard = requirements.get('auditTargets', {}).get('maximumSessionSeconds')
-    if preferred is not None and hard is not None and preferred > hard:
-        errors.append(('preferredSessionSeconds', 'The preferred session budget exceeds the hard ceiling.'))
     selection = requirements.get('exerciseSelection')
     if selection and selection['preferredMinimum'] > selection['preferredMaximum']:
         errors.append(('exerciseSelection', 'The preferred exercise-count minimum exceeds its maximum.'))
+    if selection and selection.get('preferredByCoverage'):
+        if 'exercise_preference' not in order:
+            errors.append(('objectiveOrder', 'Scoped exercise preferences require an explicitly ranked exercise_preference objective.'))
+        if set(selection['preferredByCoverage']) - {rule['key'] for rule in requirements.get('requiredCoverage', [])}:
+            errors.append(('exerciseSelection/preferredByCoverage', 'Exercise preferences must refer to approved coverage roles.'))
     phases = requirements.get('orderingPreferences', {}).get('phaseOrder', [])
     categories = [category for phase in phases for category in phase]
     if len(categories) != len(set(categories)):
@@ -336,18 +683,32 @@ def programming_policy_errors(requirements):
     seen = set()
     coverage = {rule['key'] for rule in requirements.get('requiredCoverage', [])}
     for index, tier in enumerate(requirements.get('objectiveTiers', [])):
+        marker = f'goal_tier_{index}'
+        explicitly_placed = marker in order
+        after_workload = (explicitly_placed and 'workload_economy' in order
+            and order.index('workload_economy') < order.index(marker))
         for goal in tier:
             metric = goal['metric']
+            if after_workload and (metric.startswith(('coverage:', 'weekly_volume:', 'weekly_effective_sets:'))
+                    or metric in ('volume_target', 'source_balance', 'workload_economy')):
+                errors.append((f'objectiveTiers/{index}',
+                    'Post-workload goal tiers must preserve selected weekly doses and cannot contain dose-selection goals.'))
             if metric in seen:
                 errors.append((f'objectiveTiers/{index}', 'Each metric may belong to only one goal tier.'))
             seen.add(metric)
             if metric.startswith(('weekly_volume:', 'weekly_effective_sets:')):
                 bounds = requirements.get('auditTargets', {}).get('weeklyEffectiveSets', {}).get(metric.split(':', 1)[1], {})
-                approved = ('preferredMinimum' in bounds and 'volume_target' in requirements.get('objectiveOrder', []))
+                approved = 'preferredMinimum' in bounds
             elif metric.startswith('ordering_'):
                 approved = ('execution_order' in requirements.get('objectiveOrder', [])
                     and metric.removeprefix('ordering_') in requirements.get(
                         'orderingPreferences', {}).get('protectionOrder', []))
+            elif metric in ('setup_economy_transitions', 'setup_economy_resource_switches', 'execution_blocks'):
+                approved = 'setup_economy' in order
+            elif metric == 'relative_distribution_worst':
+                approved = 'relative_distribution' in order
+            elif metric == 'superset_lower_body_overlap':
+                approved = 'movement_overlap' in order
             else:
                 approved = (metric.split(':', 1)[1] in coverage if metric.startswith('coverage:')
                     else metric in requirements.get('objectiveOrder', []))

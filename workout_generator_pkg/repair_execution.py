@@ -362,11 +362,43 @@ def _current_audited_preservation_workouts(requirements_id, equipment, messages,
     return copy.deepcopy(source['workouts'])
 
 
+def semantic_selection_for_admitted_repair(workouts, equipment, messages, *,
+                                           requirements_id, history_fingerprint,
+                                           repair_context):
+    """Commit an admitted semantic edit from its qualified full candidate."""
+    from .session_drafting import current_semantic_selection
+    from .repair_capabilities import exercise_selection_changed
+
+    selection = current_semantic_selection(messages, equipment, requirements_id, history_fingerprint)
+    context = repair_context if isinstance(repair_context, dict) else {}
+    if (selection is None or context.get('selectionRepairAuthorized') is not True
+            or context.get('numericSolverMenuSelected') is True
+            or not isinstance(context.get('baseDraft'), dict)
+            or not exercise_selection_changed(context['baseDraft'].get('workouts', []), workouts)):
+        return selection
+
+    from .planning_tools import PlanningInputError
+    from .recipe_contracts import library_definitions_by_reference
+    from .programming_policy import semantic_selection_ids
+
+    fixed = selection.get('fixedWorkouts', [])
+    if workouts[:len(fixed)] != fixed:
+        raise PlanningInputError('semantic_fixed_prefix_changed',
+            'An admitted semantic repair changed an accepted fixed workout.',
+            '/semanticSelection/fixedWorkouts', 'Preserve the exact accepted prefix and repair only the mutable sessions.')
+    definitions = library_definitions_by_reference(equipment)
+    updated = {**copy.deepcopy(selection), 'definitionIds': sorted({
+        definitions[item['definition_id']]['id']
+        for day in workouts[len(fixed):] for item in day.get('exercises', [])})}
+    semantic_selection_ids(updated, equipment)
+    return updated
+
+
 def solve_repair_candidate(workouts, requirements, equipment, restriction_policy, *,
                            repair_contract, requirements_id, allow_educated_load_guesses,
                            training_history, messages, preserve_source_selection,
                            redistribution_constraints, balance=False,
-                           validated_source_working_set_budget=None):
+                           validated_source_working_set_budget=None, semantic_selection=None):
     from .joint_planning import solve_prescribed_week
     from .repair_contract import RepairContractError, carry_repair_contract, repair_contract_errors
 
@@ -403,13 +435,17 @@ def solve_repair_candidate(workouts, requirements, equipment, restriction_policy
             and 'preservation' in (requirements.get('objectiveOrder') or [])):
         reviewed_baseline_workouts = _current_audited_preservation_workouts(
             requirements_id, equipment, messages, training_history)
+    if semantic_selection is None:
+        from .session_drafting import current_semantic_selection
+        semantic_selection = current_semantic_selection(messages, equipment, requirements_id,
+            getattr(training_history, 'fingerprint', None))
     joint = solve_prescribed_week(workouts, requirements, equipment, restriction_policy,
         allow_educated_load_guesses=allow_educated_load_guesses,
         training_history=training_history, messages=messages, balance=balance,
         preserve_source_selection=preserve_source_selection,
         redistribution_constraints=redistribution_constraints,
         source_working_set_budget=source_working_set_budget,
-        reviewed_baseline_workouts=reviewed_baseline_workouts)
+        reviewed_baseline_workouts=reviewed_baseline_workouts, semantic_selection=semantic_selection)
     carried_contract = copy.deepcopy(repair_contract)
     carry_error = None
     contract_errors = []

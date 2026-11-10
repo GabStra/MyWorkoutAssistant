@@ -42,7 +42,7 @@ def _alternative_case(allocation_conflict=None, *, expect_stale=False, messages=
         if minimum > 15:
             return {'feasible': False, 'status': 'infeasible', 'problemFingerprint': 'fixture-conflict'}
         return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
-            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}}, 'workouts': []}}
+            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}}, 'workouts': []}}
 
     with pytest.MonkeyPatch.context() as patcher:
         patcher.setattr(joint_planning, 'solve_prescribed_week', solve)
@@ -79,7 +79,7 @@ def test_unresolved_preference_compares_exact_baseline_with_authorized_single_pa
     from workout_generator_pkg.plan_review import REVIEW_VERSION
 
     equipment, requirements, sessions = _alternative_inputs()
-    requirements['objectiveOrder'] = ['demand_distribution', 'duration_balance']
+    requirements['objectiveOrder'] = ['demand_distribution']
     solver_calls = []
     solver_options = []
 
@@ -89,9 +89,9 @@ def test_unresolved_preference_compares_exact_baseline_with_authorized_single_pa
         candidate_sessions = copy.deepcopy(sessions)
         candidate_sessions[0]['exercises'][0]['numWorkSets'] -= 1
         return {'feasible': True, 'status': 'optimal', 'sessions': candidate_sessions,
-            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}},
+            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}},
                 'weeklyCoverageSets': {'horizontal_push': 3},
-                'workouts': [{'sessionId': 'A', 'estimatedSeconds': 3600,
+                'workouts': [{'sessionId': 'A',
                     'volume': {'chest': {'effective': 5}}}]}}
 
     monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
@@ -100,7 +100,7 @@ def test_unresolved_preference_compares_exact_baseline_with_authorized_single_pa
     baseline = {'sessions': copy.deepcopy(sessions),
         'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 16}},
             'weeklyCoverageSets': {'horizontal_push': 4},
-            'workouts': [{'sessionId': 'A', 'estimatedSeconds': 3700,
+            'workouts': [{'sessionId': 'A',
                 'volume': {'chest': {'effective': 6}}}]},
         'review': baseline_review, 'priorityExecution': {'completed': True},
         'objectiveProgress': {'distribution': 'needs_correction'},
@@ -161,12 +161,12 @@ def test_selected_priority_comparison_reports_conditional_ordered_solver_scenari
     equipment, requirements, sessions = prescription_case()
     fixed_workouts, variable_sessions = copy.deepcopy(sessions[:1]), copy.deepcopy(sessions[1:])
     requirements['objectiveOrder'] = [
-        'demand_distribution', 'duration_balance', 'source_balance',
+        'demand_distribution', 'source_balance',
         'exercise_distribution', 'workload_economy', 'distribution']
     baseline_audit = {'errors': [], 'weeklyWorkingSets': 12,
         'weeklyVolume': {'chest': {'effective': 16}},
         'weeklyCoverageSets': {'horizontal_push': 6},
-        'workouts': [{'sessionId': 'A', 'estimatedSeconds': 3600,
+        'workouts': [{'sessionId': 'A',
             'volume': {'chest': {'effective': 8}}, 'coverageSets': {'horizontal_push': 3}}]}
     baseline = {'sessions': copy.deepcopy(sessions), 'audit': baseline_audit,
         'review': {'passed': True, 'preview': 'Exact reviewed baseline.'},
@@ -189,9 +189,9 @@ def test_selected_priority_comparison_reports_conditional_ordered_solver_scenari
         candidate[0]['exercises'][0]['numWorkSets'] -= 1
         return {'feasible': True, 'status': 'optimal', 'sessions': candidate,
             'audit': {'errors': [], 'weeklyWorkingSets': 11,
-                'weeklyVolume': {'chest': {'effective': 15}},
+                'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}},
                 'weeklyCoverageSets': {'horizontal_push': 5},
-                'workouts': [{'sessionId': 'A', 'estimatedSeconds': 3500,
+                'workouts': [{'sessionId': 'A',
                     'volume': {'chest': {'effective': 7}}, 'coverageSets': {'horizontal_push': 2}}]},
             'priorityExecution': {'approvedPriorities': []},
             'objectiveProgress': [{'goal': name, 'status': 'optimal', 'value': index}
@@ -221,18 +221,16 @@ def test_selected_priority_comparison_reports_conditional_ordered_solver_scenari
         'native_warmup_unavailable': ['LIBRARY_191']}
     assert [scenario['objectiveOrder'] for scenario in comparison['scenarios']] == [
         requirements['objectiveOrder'],
-        ['demand_distribution', 'duration_balance', 'source_balance',
+        ['demand_distribution', 'source_balance',
          'exercise_distribution', 'distribution', 'workload_economy'],
-        ['demand_distribution', 'duration_balance', 'source_balance',
+        ['demand_distribution', 'source_balance',
          'distribution', 'exercise_distribution', 'workload_economy'],
-        ['demand_distribution', 'duration_balance', 'distribution',
+        ['demand_distribution', 'distribution',
          'source_balance', 'exercise_distribution', 'workload_economy'],
-        ['demand_distribution', 'distribution', 'duration_balance',
-         'source_balance', 'exercise_distribution', 'workload_economy'],
-        ['distribution', 'demand_distribution', 'duration_balance',
+        ['distribution', 'demand_distribution',
          'source_balance', 'exercise_distribution', 'workload_economy'],
     ]
-    assert len(calls) == 6
+    assert len(calls) == 5
     for candidate_workouts, candidate_requirements, kwargs in calls:
         assert candidate_workouts == variable_sessions
         assert {key: value for key, value in candidate_requirements.items()
@@ -252,7 +250,7 @@ def test_selected_priority_comparison_reports_conditional_ordered_solver_scenari
         {'first': 'push', 'second': 'pull', 'status': 'optimal'}]
     assert comparison['scenarios'][1]['releasedPrecedenceAgainst'] == ['workload_economy']
     assert comparison['scenarios'][-1]['releasedPrecedenceAgainst'] == [
-        'demand_distribution', 'duration_balance', 'source_balance',
+        'demand_distribution', 'source_balance',
         'exercise_distribution', 'workload_economy']
     assert 'proposals' not in result
 
@@ -261,7 +259,7 @@ def test_priority_scenario_infeasible_or_unproven_is_not_a_conflict_claim(monkey
     from workout_generator_pkg import joint_planning
 
     equipment, requirements, sessions = prescription_case()
-    requirements['objectiveOrder'] = ['demand_distribution', 'duration_balance', 'source_balance']
+    requirements['objectiveOrder'] = ['demand_distribution', 'source_balance']
     baseline = {'sessions': copy.deepcopy(sessions), 'audit': {'errors': [], 'workouts': []},
         'review': {'passed': True}, 'priorityExecution': {}, 'objectiveProgress': [],
         'sourceWorkingSetBudget': {'source': 'user_approved', 'variableWeeklyWorkingSets': 12}}
@@ -299,7 +297,7 @@ def test_priority_comparison_timeout_and_attempt_budget_remain_unproven(monkeypa
     from workout_generator_pkg import joint_planning
 
     equipment, requirements, sessions = prescription_case()
-    requirements['objectiveOrder'] = ['demand_distribution', 'duration_balance', 'source_balance']
+    requirements['objectiveOrder'] = ['demand_distribution', 'source_balance']
     baseline = {'sessions': copy.deepcopy(sessions), 'audit': {'errors': [], 'workouts': []},
         'review': {'passed': True}, 'priorityExecution': {}, 'objectiveProgress': [],
         'sourceWorkingSetBudget': {'source': 'user_approved', 'variableWeeklyWorkingSets': 12}}
@@ -333,7 +331,7 @@ def test_unverified_candidate_pool_falls_back_to_exact_supplied_menu(monkeypatch
     from workout_generator_pkg import joint_planning
 
     equipment, requirements, sessions = prescription_case()
-    requirements['objectiveOrder'] = ['duration_balance']
+    requirements['objectiveOrder'] = ['distribution']
     baseline_budget = {'source': 'user_approved', 'variableWeeklyWorkingSets': 12}
     baseline = {'sessions': copy.deepcopy(sessions), 'audit': {'errors': [], 'workouts': []},
         'review': {'passed': True}, 'priorityExecution': {}, 'objectiveProgress': [],
@@ -354,7 +352,7 @@ def test_unverified_candidate_pool_falls_back_to_exact_supplied_menu(monkeypatch
         base_draft_id='DRAFT_POOL_FALLBACK', workouts=copy.deepcopy(sessions),
         requirements=requirements, equipment=equipment, restriction_policy=None,
         review_candidate=_review, preference_baseline=baseline,
-        unresolved_preferences=[{'priority': 'duration_balance'}], max_solver_attempts=2)
+        unresolved_preferences=[{'priority': 'distribution'}], max_solver_attempts=2)
 
     assert len(calls) == 1
     assert calls[0][0] == sessions
@@ -434,38 +432,20 @@ def test_stale_count_conflict_cannot_start_tradeoff_search():
 def test_unneeded_temporary_relaxations_are_restored_to_approved_values():
     _, original, _ = prescription_case()
     original['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 10, 'maximum': 20}
-    original['auditTargets']['maximumSessionSeconds'] = 1000
+    original['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 10}
     temporary = copy.deepcopy(original)
     temporary['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 0, 'maximum': 100}
-    temporary['auditTargets']['maximumSessionSeconds'] = None
-    receipt = {'audit': {'weeklyVolume': {'chest': {'effective': 15}},
-        'workouts': [{'estimatedSeconds': 900}]}}
+    temporary['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 100}
+    receipt = {'audit': {'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}},
+        'workouts': [{}]}}
     paths = [
         '/auditTargets/weeklyEffectiveSets/chest/minimum',
         '/auditTargets/weeklyEffectiveSets/chest/maximum',
-        '/auditTargets/maximumSessionSeconds',
+        '/auditTargets/weeklyEffectiveSets/triceps/maximum',
     ]
     tightened, changes = _tighten_to_audited_volume(temporary, paths, receipt, original)
     assert tightened == original
     assert changes == []
-
-
-def test_time_cap_is_removed_then_tightened_to_audited_duration():
-    equipment, requirements, sessions = prescription_case()
-    requirements['auditTargets']['maximumSessionSeconds'] = 500
-    requirements['requirementAccounting'] = [{
-        'instruction': 'Negotiable session cap', 'sourceReferences': ['SOURCE_0'],
-        'requirementPaths': ['/auditTargets/maximumSessionSeconds'], 'priority': 'negotiable',
-        'relaxationDirection': 'increase_duration', 'enforcement': 'constraint',
-        'reason': 'User authorized this duration target to be negotiable.'}]
-    result = diagnose_conflict_and_propose(requirements_id='REQ_TIME', base_draft_id='DRAFT_TIME',
-        workouts=sessions, requirements=requirements, equipment=equipment, restriction_policy=None,
-        review_candidate=_review, max_solver_attempts=8)
-    assert result['outcome'] == 'alternatives_ready', result
-    proposal = result['proposals'][0]
-    actual = max(row['estimatedSeconds'] for row in proposal['audit']['workouts'])
-    assert actual > 500
-    assert proposal['requirements']['auditTargets']['maximumSessionSeconds'] == actual
 
 
 def test_upper_volume_cap_is_raised_then_tightened_to_audited_output():
@@ -537,25 +517,25 @@ def test_second_alternative_review_timeout_preserves_first_validated_proposal(mo
 
     equipment, requirements, sessions = prescription_case()
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 16, 'maximum': 20}
-    requirements['auditTargets']['maximumSessionSeconds'] = 500
+    requirements['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 4}
     requirements['requirementAccounting'] = [
         {'instruction': 'Negotiable weekly chest minimum', 'sourceReferences': ['SOURCE_0'],
          'requirementPaths': ['/auditTargets/weeklyEffectiveSets/chest'], 'priority': 'negotiable',
          'relaxationDirection': 'lower_minimum', 'enforcement': 'constraint',
          'reason': 'User authorized lowering this target.'},
-        {'instruction': 'Negotiable session duration', 'sourceReferences': ['SOURCE_1'],
-         'requirementPaths': ['/auditTargets/maximumSessionSeconds'], 'priority': 'negotiable',
-         'relaxationDirection': 'increase_duration', 'enforcement': 'constraint',
+        {'instruction': 'Negotiable triceps ceiling', 'sourceReferences': ['SOURCE_1'],
+         'requirementPaths': ['/auditTargets/weeklyEffectiveSets/triceps/maximum'], 'priority': 'negotiable',
+         'relaxationDirection': 'raise_maximum', 'enforcement': 'constraint',
          'reason': 'User authorized increasing this target.'},
     ]
 
     def solve(workouts, candidate_requirements, *args, **kwargs):
         targets = candidate_requirements['auditTargets']
-        if targets['weeklyEffectiveSets']['chest']['minimum'] >= 16 and targets['maximumSessionSeconds'] == 500:
+        if targets['weeklyEffectiveSets']['chest']['minimum'] >= 16 and targets['weeklyEffectiveSets']['triceps']['maximum'] == 4:
             return {'feasible': False, 'status': 'infeasible', 'problemFingerprint': 'fixture-conflict'}
         return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
-            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}},
-                'workouts': [{'estimatedSeconds': 600}]}}
+            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}},
+                'workouts': [{}]}}
 
     monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
     calls = 0
@@ -585,17 +565,17 @@ def test_matching_infeasible_receipt_skips_repeating_original_joint_solve(monkey
     from workout_generator_pkg import joint_planning
 
     equipment, requirements, sessions = prescription_case()
-    requirements['auditTargets']['maximumSessionSeconds'] = 500
+    requirements['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 4}
     requirements['requirementAccounting'] = [{
-        'instruction': 'Negotiable session cap', 'sourceReferences': ['SOURCE_0'],
-        'requirementPaths': ['/auditTargets/maximumSessionSeconds'], 'priority': 'negotiable',
-        'relaxationDirection': 'increase_duration', 'enforcement': 'constraint',
-        'reason': 'User authorized this duration target to be negotiable.'}]
+        'instruction': 'Negotiable triceps ceiling', 'sourceReferences': ['SOURCE_0'],
+        'requirementPaths': ['/auditTargets/weeklyEffectiveSets/triceps/maximum'], 'priority': 'negotiable',
+        'relaxationDirection': 'raise_maximum', 'enforcement': 'constraint',
+        'reason': 'User authorized this volume ceiling to be negotiable.'}]
     fingerprint = joint_planning.joint_problem_fingerprint(
         sessions, requirements, equipment, None, [], restriction_policy=None,
         existing=None, allow_educated_load_guesses=True)
     existing = {'status': 'infeasible', 'problemFingerprint': fingerprint,
-        'consideredConstraints': ['session duration']}
+        'consideredConstraints': ['weekly volume']}
     real_solve = joint_planning.solve_prescribed_week
     solver_requirements = []
 
@@ -617,12 +597,12 @@ def test_current_required_coverage_failure_stops_numeric_relaxation(monkeypatch)
     from workout_generator_pkg import joint_planning
 
     equipment, requirements, sessions = prescription_case()
-    requirements['auditTargets']['maximumSessionSeconds'] = 500
+    requirements['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 4}
     requirements['requirementAccounting'] = [{
-        'instruction': 'Negotiable session cap', 'sourceReferences': ['SOURCE_0'],
-        'requirementPaths': ['/auditTargets/maximumSessionSeconds'], 'priority': 'negotiable',
-        'relaxationDirection': 'increase_duration', 'enforcement': 'constraint',
-        'reason': 'User authorized this duration target to be negotiable.'}]
+        'instruction': 'Negotiable triceps ceiling', 'sourceReferences': ['SOURCE_0'],
+        'requirementPaths': ['/auditTargets/weeklyEffectiveSets/triceps/maximum'], 'priority': 'negotiable',
+        'relaxationDirection': 'raise_maximum', 'enforcement': 'constraint',
+        'reason': 'User authorized this volume ceiling to be negotiable.'}]
     messages = [
         {'role': 'assistant', 'tool_calls': [{'id': 'audit-current', 'type': 'function',
             'function': {'name': 'audit_workout_plan', 'arguments': '{}'}}]},
@@ -662,11 +642,11 @@ def test_validated_menu_scoped_tradeoff_is_available_without_claiming_global_bes
     from workout_generator_pkg.planning_tools import library_fingerprint
 
     equipment, requirements, sessions = prescription_case()
-    requirements['auditTargets']['maximumSessionSeconds'] = 500
+    requirements['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 4}
     requirements['requirementAccounting'] = [{
-        'instruction': 'Negotiable session cap', 'sourceReferences': ['SOURCE_0'],
-        'requirementPaths': ['/auditTargets/maximumSessionSeconds'], 'priority': 'negotiable',
-        'relaxationDirection': 'increase_duration', 'enforcement': 'constraint',
+        'instruction': 'Negotiable triceps ceiling', 'sourceReferences': ['SOURCE_0'],
+        'requirementPaths': ['/auditTargets/weeklyEffectiveSets/triceps/maximum'], 'priority': 'negotiable',
+        'relaxationDirection': 'raise_maximum', 'enforcement': 'constraint',
         'reason': 'User authorized this target to be negotiable.'}]
     fingerprint = joint_planning.joint_problem_fingerprint(
         sessions, requirements, equipment, None, [], restriction_policy=None,
@@ -753,11 +733,11 @@ def test_candidate_scoped_tradeoff_keeps_original_shortfall_and_binds_saved_menu
 
 def test_source_rank_requires_supported_negotiable_numeric_constraint():
     _, requirements, _ = prescription_case()
-    entry = {'instruction': 'Prioritize shorter sessions over volume.', 'sourceReferences': ['SOURCE_0'],
-        'requirementPaths': ['/auditTargets/maximumSessionSeconds'], 'priority': 'negotiable',
-        'relaxationDirection': 'increase_duration', 'relaxationRank': 2,
+    entry = {'instruction': 'Prioritize the triceps ceiling over the chest floor.', 'sourceReferences': ['SOURCE_0'],
+        'requirementPaths': ['/auditTargets/weeklyEffectiveSets/triceps/maximum'], 'priority': 'negotiable',
+        'relaxationDirection': 'raise_maximum', 'relaxationRank': 2,
         'enforcement': 'constraint', 'reason': 'The user explicitly ordered this compromise.'}
-    requirements['auditTargets']['maximumSessionSeconds'] = 600
+    requirements['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 6}
     requirements['requirementAccounting'] = [entry]
     sources = {'SOURCE_0': {'role': 'user'}}
     validate([entry], ACCOUNTING_SCHEMA)
@@ -777,8 +757,8 @@ def test_source_rank_requires_supported_negotiable_numeric_constraint():
 def test_changing_explicit_relaxation_rank_invalidates_approval_inheritance():
     from workout_generator_pkg.planning_tools import _accounting_refresh_preserves_approved_requirements
 
-    entry = {'instruction': 'Time can yield before volume.', 'requirementPaths': ['/auditTargets/maximumSessionSeconds'],
-        'priority': 'negotiable', 'enforcement': 'constraint', 'relaxationDirection': 'increase_duration',
+    entry = {'instruction': 'The triceps ceiling can yield before the chest floor.', 'requirementPaths': ['/auditTargets/weeklyEffectiveSets/triceps/maximum'],
+        'priority': 'negotiable', 'enforcement': 'constraint', 'relaxationDirection': 'raise_maximum',
         'relaxationRank': 1}
     base = {'requirements': {'requirementAccounting': [entry]}, 'sourceMessages': [],
         'resolvedDecisions': {}, 'supportedMuscleTargets': [], 'restrictionPolicy': None}
@@ -792,15 +772,15 @@ def test_ranked_tradeoffs_advance_only_after_lower_rank_is_proven_infeasible(mon
 
     equipment, requirements, sessions = prescription_case()
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 16, 'maximum': 20}
-    requirements['auditTargets']['maximumSessionSeconds'] = 400
+    requirements['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 4}
     requirements['requirementAccounting'] = [
         {'instruction': 'Volume compromise first', 'sourceReferences': ['SOURCE_0'],
          'requirementPaths': ['/auditTargets/weeklyEffectiveSets/chest'], 'priority': 'negotiable',
          'relaxationDirection': 'lower_minimum', 'relaxationRank': 1,
          'enforcement': 'constraint', 'reason': 'Explicit rank one.'},
-        {'instruction': 'Longer sessions second', 'sourceReferences': ['SOURCE_0'],
-         'requirementPaths': ['/auditTargets/maximumSessionSeconds'], 'priority': 'negotiable',
-         'relaxationDirection': 'increase_duration', 'relaxationRank': 2,
+        {'instruction': 'Higher triceps volume second', 'sourceReferences': ['SOURCE_0'],
+         'requirementPaths': ['/auditTargets/weeklyEffectiveSets/triceps/maximum'], 'priority': 'negotiable',
+         'relaxationDirection': 'raise_maximum', 'relaxationRank': 2,
          'enforcement': 'constraint', 'reason': 'Explicit rank two.'},
     ]
     tried = []
@@ -810,20 +790,20 @@ def test_ranked_tradeoffs_advance_only_after_lower_rank_is_proven_infeasible(mon
         if candidate_requirements == requirements:
             return {'feasible': False, 'status': 'infeasible'}
         chest_minimum = candidate_requirements['auditTargets']['weeklyEffectiveSets']['chest']['minimum']
-        if chest_minimum == 0 and candidate_requirements['auditTargets']['maximumSessionSeconds'] == 400:
+        if chest_minimum == 0 and candidate_requirements['auditTargets']['weeklyEffectiveSets']['triceps']['maximum'] == 4:
             assert candidate_requirements['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] == 0
             return {'feasible': False, 'status': 'infeasible'}
-        if chest_minimum == 15 and candidate_requirements['auditTargets']['maximumSessionSeconds'] == 700:
+        if chest_minimum == 15 and candidate_requirements['auditTargets']['weeklyEffectiveSets']['triceps']['maximum'] == 7:
             return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
-                'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}},
-                          'workouts': [{'estimatedSeconds': 700}]}}
+                'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}},
+                          'workouts': [{}]}}
         # Rank two alone is insufficient; rank two is admitted only cumulatively
         # with the already-proven-infeasible rank-one relaxation.
         assert chest_minimum == 0
-        assert candidate_requirements['auditTargets']['maximumSessionSeconds'] is None
+        assert candidate_requirements['auditTargets']['weeklyEffectiveSets']['triceps']['maximum'] == 100
         return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
-            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}},
-                      'workouts': [{'estimatedSeconds': 700}]}}
+            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}},
+                      'workouts': [{}]}}
 
     monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
     result = diagnose_conflict_and_propose(requirements_id='REQ_RANKED', base_draft_id='DRAFT_RANKED',
@@ -834,7 +814,7 @@ def test_ranked_tradeoffs_advance_only_after_lower_rank_is_proven_infeasible(mon
     assert labels.index('relax:rank:1') < labels.index('relax:rank:2')
     assert result['proposals'][0]['relaxationRanks'] == {
         '/auditTargets/weeklyEffectiveSets/chest/minimum': 1,
-        '/auditTargets/maximumSessionSeconds': 2,
+        '/auditTargets/weeklyEffectiveSets/triceps/maximum': 2,
     }
     assert CONFLICT_RESOLUTION_VERSION == 4
 
@@ -844,15 +824,15 @@ def test_feasible_lower_rank_holds_higher_rank_fixed(monkeypatch):
 
     equipment, requirements, sessions = prescription_case()
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 16, 'maximum': 20}
-    requirements['auditTargets']['maximumSessionSeconds'] = 400
+    requirements['auditTargets']['weeklyEffectiveSets']['triceps'] = {'minimum': 0, 'maximum': 4}
     requirements['requirementAccounting'] = [
         {'instruction': 'Volume first', 'sourceReferences': ['SOURCE_0'],
          'requirementPaths': ['/auditTargets/weeklyEffectiveSets/chest'], 'priority': 'negotiable',
          'relaxationDirection': 'lower_minimum', 'relaxationRank': 1,
          'enforcement': 'constraint', 'reason': 'Rank one.'},
-        {'instruction': 'Time second', 'sourceReferences': ['SOURCE_0'],
-         'requirementPaths': ['/auditTargets/maximumSessionSeconds'], 'priority': 'negotiable',
-         'relaxationDirection': 'increase_duration', 'relaxationRank': 2,
+        {'instruction': 'Triceps ceiling second', 'sourceReferences': ['SOURCE_0'],
+         'requirementPaths': ['/auditTargets/weeklyEffectiveSets/triceps/maximum'], 'priority': 'negotiable',
+         'relaxationDirection': 'raise_maximum', 'relaxationRank': 2,
          'enforcement': 'constraint', 'reason': 'Rank two.'},
     ]
     tried = []
@@ -862,7 +842,7 @@ def test_feasible_lower_rank_holds_higher_rank_fixed(monkeypatch):
         if candidate_requirements == requirements:
             return {'feasible': False, 'status': 'infeasible'}
         return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
-            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}},
+            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}},
                       'workouts': []}}
 
     monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
@@ -1049,7 +1029,7 @@ def test_repaired_alternative_acceptance_preserves_fixed_restrictions_and_opens_
         if minimum > 15:
             return {'feasible': False, 'status': 'infeasible', 'problemFingerprint': 'fixture-conflict'}
         return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
-            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}}, 'workouts': []}}
+            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}, 'triceps': {'effective': 7}}, 'workouts': []}}
     monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
     stored_messages = [
         source,

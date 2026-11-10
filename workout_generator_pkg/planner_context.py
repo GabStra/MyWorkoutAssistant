@@ -9,7 +9,8 @@ from .planning_tools import (library_fingerprint, requirements_approved, latest_
                              rejected_metadata_patch, approved_requirement_base, latest_requirement_candidate,
                              accepted_menu_preparation)
 from .json_patching import apply_json_patch
-from .training_history import compact_training_evidence, merge_training_evidence, pool_execution_contexts
+from .training_history import (compact_training_evidence, merge_training_evidence, pool_execution_contexts,
+                               selection_training_evidence)
 from .planning_decisions import resolved_decisions, latest_decision_receipt, _active_reusable_decision_state
 from .programming_guidelines import GUIDELINE_POLICY
 from .planning_tools import is_metadata_error, description_text_contract
@@ -178,26 +179,15 @@ def _movement_selection_context(state, *, selected_menu_definition_ids=None):
     state['volumeCreditCoupling'] = muscle_credit_coupling_evidence(
         [{'id': reference, **entry} for reference, entry in candidates.items()],
         state.get('requirements', {}), selected_definition_ids=selected_menu_definition_ids)
-    if 'progression' in state.get('requirements', {}).get('objectiveOrder', []):
-        state['progressionSelectionPolicy'] = ('Assess practical progression during movement selection and review using comparable performance and available configurations. '
-            'Selectable external-load steps describe equipment, not training quality or a working-set target. '
-            'Missing history is unknown capacity, not failure. For bodyweight work, added resistance and native load calibration do not establish unassisted ability or assistance. '
-            'The app owns progression. Include supported alternative configurations when useful; the solver cannot invent unproposed recipes.')
-    else:
-        state['progressionSelectionPolicy'] = ('Use load-headroom evidence to check suitability and feasibility only. Do not prefer a movement '
-            'for progression margin unless progression is present in the approved optimization order.')
+    state['progressionSelectionPolicy'] = ('Assess movement-level progression practicality against approved requirements and preferences using comparable and related performance, resistance ceilings and increments, and setup constraints. '
+        'This semantic comparison is independent of numeric objectiveOrder. Load headroom alone does not establish training quality. '
+        'Missing history is unknown capacity. For bodyweight work, added resistance and native load calibration do not establish unassisted ability or assistance. '
+        'Ask about material unresolved capability or setup through the supplied gates. The app owns calibration and double progression.')
     for key in ('exerciseCandidates', 'cachedCandidateIndex', 'candidateAlternatives'):
         for entry in state.get(key, {}).values():
             history = entry.get('trainingEvidence')
             if isinstance(history, dict):
-                summary = {field: history[field] for field in ('status', 'totalSessions', 'daysSinceLatestSession',
-                    'loadSuitabilityConcerns', 'relatedHistoryStatus', 'candidateConfigurationHistory', 'uncertainty') if field in history}
-                headroom = history.get('loadHeadroom', {})
-                if headroom:
-                    summary['loadHeadroom'] = {field: headroom[field] for field in (
-                        'observedAtCurrentEquipmentMaximum', 'latestObservedLoadsNotSelectableNow', 'higherLoadOptionCount',
-                        'maximumSelectableLoadKg', 'latestSessionHeaviestLoadKg', 'nextHigherSelectableLoadKg') if field in headroom}
-                entry['trainingEvidence'] = summary
+                entry['trainingEvidence'] = selection_training_evidence(history, state.get('trainingEvidence'))
 
 
 def _preparation_selection_context(state, messages, equipment, training_history):
@@ -638,7 +628,8 @@ def replacement_definition_references_by_occurrence(current_draft, replacement_r
             source_roles = source.get('satisfiesCoverage')
             result[f'EXERCISE_{occurrence}'] = [reference for reference in replacement_references
                 if replacement_supports_required_warmup(source_roles, definitions.get(reference),
-                                                        equipment_ids, requirements)]
+                                                        equipment_ids, requirements,
+                                                        definitions.get(source.get('definition_id')))]
             occurrence += 1
     return result
 
@@ -886,8 +877,7 @@ def _session_blockers(state):
     return [error for error in state.get('currentDraftAuditErrors', [])
             if isinstance(error, dict) and error.get('scope') != 'weekly'
             and (error.get('scope') == 'per_session' or error.get('code') in {
-                'duration_exceeded', 'superset_set_count_mismatch', 'empty_superset', 'unbounded_volume',
-                'unknown_duration', 'unknown_running_duration'}
+                'superset_set_count_mismatch', 'empty_superset', 'unbounded_volume'}
                  or re.match(r'^/(?:(?:draft|audit)/)?workouts/\d+(?:/|$)', error.get('draftPath', error.get('path', ''))))]
 
 
@@ -1643,7 +1633,7 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
     eligible = [i for i, error in enumerate(errors) if not blockers or error in blockers]
     if not eligible:
         return
-    numeric = {'duration_exceeded', 'volume_below_target', 'volume_above_target', 'superset_set_count_mismatch'}
+    numeric = {'volume_below_target', 'volume_above_target', 'superset_set_count_mismatch'}
     effort_contract_errors = {'missing_effort_acceptance', 'invalid_effort_acceptance',
                               'effort_acceptance_conflicts_with_requirement'}
     local_note_errors = {'effort_acceptance_in_local_notes', 'progression_in_local_notes'}
@@ -1799,9 +1789,8 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
     history_references |= set(fresh_evidence)
     for reference in history_references:
         include(reference)
-    state['trainingEvidenceSummary'] = {reference: {key: entry[key] for key in (
-        'name', 'status', 'totalSessions', 'daysSinceLatestSession', 'loadHeadroom',
-        'loadSuitabilityConcerns', 'relatedHistoryStatus', 'uncertainty', 'candidateContext', 'otherSetupSessionCount', 'candidateConfigurationHistory') if key in entry}
+    state['trainingEvidenceSummary'] = {
+        reference: selection_training_evidence(entry, evidence)
         for reference, entry in evidence.items() if reference in selected and reference not in detailed}
     state['trainingEvidence'] = {reference: entry for reference, entry in evidence.items() if reference in detailed}
     # Broad repair instructions in older receipts are replaced only in this request.
@@ -2008,7 +1997,7 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
         state['repairTask']['instruction'] = (
             'Address every actionable assessment group using the sessionBlocks choices in audit_workout_plan. '
             'Choose replacements, grouping and order from the supplied editable occurrences. Python compiles assessed '
-            'redistributions separately and owns prescriptions, counts and timing. '
+            'redistributions separately and owns prescriptions and counts. '
             'Rejected proposals remain unapplied. The complete result requires numerical audit and independent review.')
     state['repairTask']['editableWorkoutReferences'] = [f'WORKOUT_{i}' for i in sorted(affected_days)]
     exercise_domain = repair_exercise_domain(state['repairTask'], draft)
@@ -2091,7 +2080,7 @@ def _focus_construction(state, new_user_instruction=False):
         'action': 'append_session' if draft else 'create_first_session',
         'baseDraftId': state.get('currentDraftId'),
         'remainingWeeklySessions': max(0, target - frequency) if target else None,
-        'instruction': 'When at least two sessions remain, use prepare_workout_sessions: select ordered blocks and schedule for all remaining sessions. Select movements and groups only; one member means straight sets, multiple members mean a superset. Omit count bounds unless source constraints require them; encode user-fixed counts as equal bounds. Do not hand-solve counts. Python expands groups, allocates integer counts and independently checks the weekly design before concurrent prescriptions. Otherwise build only the next workout session and submit it to audit_workout_plan. '
+        'instruction': 'When at least two sessions remain, use prepare_workout_sessions to select the complete weekly definition_ids menu. Supply alternative_definition_ids only for one meaningful competing menu. Python owns slots, grouping, schedule and counts. Python expands groups, allocates integer counts and independently checks the weekly design before concurrent prescriptions. Otherwise build only the next workout session and submit it to audit_workout_plan. '
             'For a direct single-session submission, provide name/workouts with exactly one workout initially. For later single sessions append one workout '
             'using a JSON Patch add at /workouts/-. Preserve previously saved sessions until construction is complete. '
             'Include the user-requested movement coverage and effort; use available candidates and current evidence. '
@@ -2140,6 +2129,7 @@ def planner_response_profile(state):
 def _focus_edit(state, evidence, fresh_references):
     """Keep an existing plan as the patch base; fetch exact evidence only for actual candidates."""
     state['editTask'] = {'requirementsId': state.get('requirementsId'), 'baseDraftId': state['currentDraftId'],
+        'preferSparseEdits': True,
         'instruction': 'Address the latest user request. Questions need an answer, not a mutation. For an edit, use typed stable WORKOUT_n and EXERCISE_n edits '
             'against currentDraftId; do not rebuild the week or rerun preparation. Preserve untouched prescriptions and approved requirements. '
             'For an exercise substitution, resolve an eligible LIBRARY_n and use its own evidence, equipment and prescription type; '
@@ -2150,9 +2140,8 @@ def _focus_edit(state, evidence, fresh_references):
             'Python rechecks whole-week numbers and independent review checks execution and source compliance. '
             'If the request changes requirements, record that change or ask about genuine ambiguity before editing. Never silently relax them.'}
     detailed = compact_training_evidence(evidence[reference] for reference in fresh_references if reference in evidence)
-    state['trainingEvidenceSummary'] = {reference: {key: value for key, value in item.items() if key in (
-        'name', 'status', 'totalSessions', 'daysSinceLatestSession', 'loadHeadroom', 'loadSuitabilityConcerns',
-        'relatedHistoryStatus', 'candidateContext', 'otherSetupSessionCount', 'candidateConfigurationHistory', 'uncertainty')}
+    state['trainingEvidenceSummary'] = {
+        reference: selection_training_evidence(item, evidence)
         for reference, item in evidence.items() if reference not in detailed}
     state['trainingEvidence'] = detailed
 
@@ -2309,7 +2298,7 @@ def _focus_session_preparation(state, preparation, evidence, history_enabled, *,
         task['reviewAllocationBeforeDrafting'] = False
         task['stage'] = 'retrieve_evidence' if task.get('missingEvidence') else 'draft_sessions'
     task['instruction'] = (
-        'Follow stage=' + task['stage'] + '. When two or more sessions remain, use prepare_workout_sessions with one weekly definition_ids shortlist. Python builds the calendar and recipe pool, then solves placement, counts, ordering and compatible grouping under the approved requirements. '
+        'Follow stage=' + task['stage'] + '. When two or more sessions remain, use prepare_workout_sessions with one complete weekly definition_ids menu and, for a material selection tradeoff, one alternative_definition_ids menu. Python builds the calendar and recipe pool, then solves placement, counts, ordering and compatible grouping under the approved requirements. '
         'For a single session choose its exact movements with prepare_workout_session, '
         'Before committing, check required coverage and the supplied candidate menu against approved priorities; reuse completed queries and candidates. '
         'or submit the bounded session directly if ready. Preparation returns authoritative metadata and Python retrieves '
@@ -2334,9 +2323,8 @@ def _focus_session_preparation(state, preparation, evidence, history_enabled, *,
         detailed = compact_training_evidence(evidence[reference] for reference in references if reference in evidence)
     else:
         detailed = {} if (task.get('remainingWeeklySessions') or 0) >= 2 else state['trainingEvidence']
-    state['trainingEvidenceSummary'] = {reference: {key: item[key] for key in (
-        'name', 'status', 'totalSessions', 'daysSinceLatestSession', 'loadHeadroom', 'loadSuitabilityConcerns',
-        'relatedHistoryStatus', 'candidateContext', 'otherSetupSessionCount', 'candidateConfigurationHistory', 'uncertainty') if key in item}
+    state['trainingEvidenceSummary'] = {
+        reference: selection_training_evidence(item, evidence)
         for reference, item in evidence.items() if reference not in detailed}
     state['trainingEvidence'] = detailed
     if references:
@@ -2357,13 +2345,11 @@ def _focus_session_preparation(state, preparation, evidence, history_enabled, *,
         # Selection owns movement suitability; the allocator owns working-set arithmetic.
         _movement_selection_context(state)
         task['instruction'] = (
-            'Select the complete remaining week by movement role, equipment, history suitability, pairing and schedule. '
-            'Return prepare_workout_sessions promptly, using movement-only blocks. Do not assign counts, '
-            'calculate effective sets or test numerical feasibility: Python checks the full approved targets and returns conflicts. '
-            'Set limits come only from approved executionRules kind=workSets. Do not supply allocationBounds or counts. '
-            'Targets and library credits are provided to guide candidate choice; Python owns the actual calculation. '
-            'Exact history and prescriptions belong to the prepared-session stage. '
-            'Search only for genuinely missing coverage. Never waive a source requirement.')
+            'Select the complete remaining weekly menu using equipment, accessories, preferences, setup and comparable or related performance evidence. '
+            'Return prepare_workout_sessions with definition_ids and optionally one alternative_definition_ids menu for a meaningful tradeoff. '
+            'Python owns schedule, grouping, quantities and numerical feasibility. '
+            'Compare practical loading room and increments alongside movement value and setup. '
+            'Use the existing question gate for a material unknown physical fact.')
 
 
 def focus_planner_context(messages, original, equipment=None, history_enabled=False,
@@ -3120,7 +3106,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             and not candidate_validation_errors and not state['draftRequiresReaudit'] and not state['lastAuditStale']
             and not stale_history_audit and not audit_stale and not review_stale and not stale_joint_receipt
             and decision_index < last_instruction and not state.get('evidenceReaudit'))
-        if (new_instruction and pending_decision_edit and not candidate_validation_errors
+        if (new_instruction and current_receipt
+                and (pending_decision_edit or current_receipt.get('passed') is True)
+                and not candidate_validation_errors
                 and not any((state['draftRequiresReaudit'], state['lastAuditStale'], stale_history_audit,
                     audit_stale, stale_joint_receipt, state.get('evidenceReaudit')))):
             supersedes_pending_review = True
@@ -3902,6 +3890,25 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             'comparison': copy.deepcopy(choice_source['jointCandidateComparison']['programmingTradeoff']),
             'selected': selection,
         }
+        artifacts = choice_source['jointCandidateComparison'].get('programmingArtifacts') or {}
+        if set(artifacts) == {'baseline', 'candidate'}:
+            state['programmingChoice']['menus'] = {
+                name: {'workouts': copy.deepcopy(artifact['submittedDraft']['workouts']),
+                    'audit': {key: copy.deepcopy(artifact['audit'][key]) for key in (
+                        'workouts', 'weeklyWorkingSets', 'weeklyVolume', 'weeklyCoverageSets')
+                        if key in artifact['audit']}}
+                for name, artifact in artifacts.items()}
+            from .exercise_library_tools import get_exercise_candidates
+            references = sorted({item['definition_id'] for artifact in artifacts.values()
+                for day in artifact['submittedDraft']['workouts'] for item in day['exercises']})
+            entries = []
+            for start in range(0, len(references), 100):
+                entries.extend(get_exercise_candidates({'definition_ids': references[start:start + 100]},
+                    equipment, original)['exercises'])
+            if training_history is not None:
+                training_history.annotate_search({'results': [{'exercises': entries}]}, equipment)
+            state['exerciseCandidates'] = {entry['id']: entry for entry in entries}
+            _movement_selection_context(state, selected_menu_definition_ids=references)
         if not selection:
             state['planningDecisionNeeded'] = True
         if (choice_source.get('preparationId')
@@ -3945,7 +3952,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         work_order = 'Extract and review requirements from sourceMessages; prior confirmation commands are not new authorization.'
     elif state.get('programmingChoice') and not state['programmingChoice']['selected']:
         work_order = ('Use the displayed code-computed programming comparison. Record the authorized choice through '
-            'record_planning_decisions, or await a genuine user choice. Do not redraft or audit either artifact before selection.')
+            'record_planning_decisions, or await a genuine user choice. When menus are supplied, judge their actual exercises '
+            'and prescriptions using source preferences, setup and training evidence. Numerical metrics inform that semantic choice. '
+            'Do not redraft or audit either artifact before selection.')
     elif state.get('newInstructionPending') and state.get('editTask'):
         work_order = ('Follow editTask for the latest user instruction before any older candidate diagnosis. '
             'Keep planningDecisionNeeded active; do not claim the remaining clarification is resolved.')
@@ -4090,12 +4099,8 @@ def pending_reaudit(state, user_input):
             and isinstance(native_audit, dict)
             and not native_audit.get('errors') and not native_audit.get('issues')
             and errors and unresolved_errors
-            and all(isinstance(error, dict)
-                    and error.get('code') == 'joint_candidate_comparison_unresolved'
-                    and error.get('owner') == 'generator' for error in errors)
-            and all(isinstance(error, dict)
-                    and error.get('code') == 'joint_candidate_comparison_unresolved'
-                    and error.get('owner') == 'generator' for error in unresolved_errors)):
+            and all(isinstance(error, dict) and error.get('owner') == 'generator' for error in errors)
+            and all(isinstance(error, dict) and error.get('owner') == 'generator' for error in unresolved_errors)):
         return {'requirementsId': state['requirementsId'], 'baseDraftId': state['currentDraftId'],
                 'patch': [], '_internalAuditAction': 'saved_candidate_revalidation'}
     if user_input.strip() in ('/continue', 'CONFIRM REQUIREMENTS', 'CONFIRM GENERATE'):

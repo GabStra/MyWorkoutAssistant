@@ -110,7 +110,7 @@ def _timestamp_now() -> str:
     return datetime.now().astimezone().isoformat()
 
 
-def _preparation_repair_tools(task):
+def _preparation_repair_tools(task, messages=None, equipment=None):
     """Keep free-form questions out of candidate-owned repairs unless evidence needs the user."""
     errors = task.get('errors') or []
     candidate_error_codes = {
@@ -132,6 +132,12 @@ def _preparation_repair_tools(task):
     tools = [preparation_patch_tool(task)]
     if not candidate_owned or user_evidence_needed:
         tools.append(ASK_USER_TOOL)
+    if user_evidence_needed and messages is not None:
+        decision_tool = record_planning_decisions_tool(messages, equipment)
+        decision = decision_tool['function']['parameters']['properties']['decisions']['items']
+        if 'confirmedCapabilityReference' in decision['properties']:
+            decision['required'].append('confirmedCapabilityReference')
+            tools.append(decision_tool)
     return tools
 
 
@@ -781,6 +787,7 @@ def _admit_repair_scope(function_args, repair_task, current_draft, messages, att
             'repairContract': repair_contract,
             'selectionRepairAuthorized': assessment_repairs_dimension(
                 repair_task.get('findingsAssessment'), 'exercise_selection'),
+            'numericSolverMenuSelected': function_args.get('useSolverMenu') is True,
             'baseDraft': copy.deepcopy(compiler_draft),
         }
     return admitted
@@ -1055,9 +1062,9 @@ def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, tr
             compact['reviewFindings'] = payload.get('review', {}).get('findings', payload.get('reviewFindings', []))
             assessment = payload.get('review', {}).get('assessment') or payload.get('findingsAssessment')
             compact['findingsAssessment'] = assessment
-            if 'requirementAssessments' in payload.get('review', {}):
+            if isinstance(payload.get('review', {}).get('assessment'), dict):
                 compact['review'] = {key: copy.deepcopy(payload['review'][key]) for key in
-                    ('version', 'inputHash', 'findings', 'assessment', 'requirementAssessments', 'sourceCoverage')
+                    ('version', 'inputHash', 'findings', 'assessment')
                     if key in payload['review']}
             compact['assessmentDraftId'] = (payload.get('assessmentDraftId') or
                 (payload.get('currentDraftId') if assessment else None))
@@ -1070,7 +1077,7 @@ def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, tr
                     compact[key] = payload[key]
             compact["audit"] = {key: audit[key] for key in ("targets", "assumptions", "weeklyVolume") if key in audit}
             compact["audit"]["workouts"] = [
-                {key: workout[key] for key in ("name", "volume", "contributions", "timing", "estimatedSeconds") if key in workout}
+                {key: workout[key] for key in ("name", "volume", "contributions") if key in workout}
                 for workout in audit.get("workouts", [])]
             payload = compact
         elif name == "propose_workout_alternatives":
@@ -1121,10 +1128,9 @@ def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, tr
         if request_planning_state(result).get('metadataOnlyRepair'):
             return result
         result.append({"role": "system", "content": CANONICAL_PLANNING_INSTRUCTION})
-        result.append({'role': 'system', 'content': 'Application auditPolicy (estimates and counting conventions, not user requirements): '
+        result.append({'role': 'system', 'content': 'Application auditPolicy (counting conventions and capability limits): '
             + json.dumps(audit_policy(available_muscle_targets(provided_equipment))) + '. Muscle credits use the selected library roles. Omit unspecified muscle targets; 0-0 is a prohibition. '
-            'Apply auditPolicy.capabilityLimits when extracting targets or proposing choices. '
-            'Explicit timing instructions must be reflected in estimates; ask about a conflict the current estimator cannot represent.'})
+            'Apply auditPolicy.capabilityLimits when extracting targets or proposing choices.'})
         if not requirements_approved(messages):
             result.append({'role': 'system', 'content': 'Current stage: extract requirements only. Submit set_workout_requirements for independent review; Python displays the approval question. Planning starts after approval.'})
     if training_history:
@@ -1628,7 +1634,7 @@ def handle_function_call(
         if comparison_requested:
             from .plan_review import (_context as review_context, _review_base_hash,
                 _review_checklist, _review_ledger_fingerprint, _review_input_hash,
-                _source_message_items, _followup_context, _hash)
+                validate_review_subjects, _followup_context, _hash)
             from .review_assessment import validate_assessment
             from .user_interaction import preference_comparison_concerns, preference_comparison_priorities
 
@@ -1679,16 +1685,13 @@ def handle_function_call(
             review_context = review_context(review_snapshot, messages, provided_equipment,
                 training_history, boundary)
             ledger = {'reviewChecklist': checklist} if checklist else {}
-            source_keys = {key for key, source in _source_message_items(review_context.get('sourceMessages', {}))
-                if isinstance(source, dict) and source.get('role') == 'user' and source.get('content', '').strip()}
             if (baseline_review.get('reviewBaseHash') != _review_base_hash(review_context)
                     or baseline_review.get('inputHash') != _review_input_hash(review_context, revision)
                     or baseline_review.get('reviewLedgerOutputFingerprint') != _review_ledger_fingerprint(ledger)
-                    or baseline_review.get('reviewedArtifact') != review_context.get('finalArtifact')
-                    or set(baseline_review.get('sourceCoverage', {})) != source_keys
-                    or not all(baseline_review.get('sourceCoverage', {}).values())):
-                raise ValueError('The current review no longer matches its artifact, source coverage, or finding ledger.')
+                    or baseline_review.get('reviewedArtifact') != review_context.get('finalArtifact')):
+                raise ValueError('The current review no longer matches its artifact, source requirements, or finding ledger.')
             validate_assessment(baseline_review, review_context)
+            validate_review_subjects(baseline_review, review_context)
             followup = _followup_context(review_snapshot, messages)
             if followup is not None:
                 followup_review = baseline_review.get('followupReview', {})
@@ -1954,6 +1957,14 @@ def handle_function_call(
             function_args, qualification = qualify_coordinated_candidate(client, function_args, provided_equipment or {},
                 messages, training_history, logger,
                 coordinated_repair_context=coordinated_repair if isinstance(coordinated_repair, dict) else None)
+        from .repair_execution import semantic_selection_for_admitted_repair
+        semantic_selection = semantic_selection_for_admitted_repair(
+            function_args.get('workouts', []), provided_equipment or {}, messages,
+            requirements_id=stored_requirements.get('requirementsId'),
+            history_fingerprint=getattr(training_history, 'fingerprint', None),
+            repair_context=coordinated_repair)
+        semantic_selection_options = ({'semantic_selection': semantic_selection}
+            if semantic_selection is not None else {})
         _, prior_candidate = _latest_result(messages, 'audit_workout_plan')
         worker_index, workers = _latest_result(messages, 'draft_workout_sessions')
         audit_index, prior_audit = _latest_result(messages, 'audit_workout_plan')
@@ -2028,7 +2039,8 @@ def handle_function_call(
                     function_args, qualification = qualify_coordinated_candidate(client, function_args,
                         provided_equipment or {}, messages, training_history, logger)
         try:
-            result = audit_workout_plan(function_args, provided_equipment or {}, messages, allow_educated_load_guesses, training_history)
+            result = audit_workout_plan(function_args, provided_equipment or {}, messages,
+                allow_educated_load_guesses, training_history, **semantic_selection_options)
         except PlanningInputError as error:
             if not qualification:
                 raise
@@ -2231,7 +2243,8 @@ def handle_function_call(
                     allow_educated_load_guesses=allow_educated_load_guesses,
                     training_history=training_history, messages=messages,
                     preserve_source_selection=preserve_selection,
-                    redistribution_constraints=redistribution_solver_constraints(repair_contract), balance=True)
+                    redistribution_constraints=redistribution_solver_constraints(repair_contract), balance=True,
+                    **semantic_selection_options)
                 if joint['feasible']:
                     if carry_error:
                         result.update(passed=False, repairContract=copy.deepcopy(repair_contract),
@@ -2245,7 +2258,8 @@ def handle_function_call(
                     if not carry_error and not contract_errors:
                         result = audit_workout_plan({'requirementsId': result['requirementsId'],
                             'name': result['submittedDraft']['name'], 'workouts': joint['sessions']},
-                            provided_equipment or {}, messages, allow_educated_load_guesses, training_history)
+                            provided_equipment or {}, messages, allow_educated_load_guesses, training_history,
+                            **semantic_selection_options)
                         if repair_contract:
                             from .repair_contract import repair_contract_errors
                             outcome_errors = repair_contract_errors(repair_contract, result.get('submittedDraft', {}))
@@ -2332,7 +2346,7 @@ def handle_function_call(
                             client, current_submission, provided_equipment or {}, messages,
                             training_history, logger)
                         result = audit_workout_plan(qualified_submission, provided_equipment or {}, messages,
-                            allow_educated_load_guesses, training_history)
+                            allow_educated_load_guesses, training_history, **semantic_selection_options)
                         result['recipeQualification'] = copy.deepcopy(current_qualification)
                         if current_submission.get('repairContract') and not result.get('repairContract'):
                             result['repairContract'] = copy.deepcopy(current_submission['repairContract'])
@@ -3324,8 +3338,9 @@ def main(deps=None):
                 selection_options = planning_state.get('preparationSelectionOptions') or {}
                 configuration_clarification = (selection_options.get('admissibleDefinitionIds') == []
                     and bool(selection_options.get('unresolvedConfigurations')))
-                if planning_state.get('preparationRepairTask') and not configuration_clarification:
-                    request_tools = _preparation_repair_tools(planning_state['preparationRepairTask'])
+                if planning_state.get('preparationRepairTask'):
+                    request_tools = _preparation_repair_tools(
+                        planning_state['preparationRepairTask'], state['messages'], provided_equipment)
                 needs_week_preparation = (
                     planning_state.get('metadataOnlyRepair')
                     and planning_state.get('metadataRepairTool') == 'prepare_workout_sessions'
@@ -3582,7 +3597,8 @@ def main(deps=None):
                     break
                 else:
                     if configuration_clarification:
-                        request_tools = [ASK_USER_TOOL]
+                        request_tools = [tool for tool in request_tools
+                            if tool.get('function', {}).get('name') in ('ask_user', 'record_planning_decisions')]
                         request_options.update(activity='Clarifying exercise configuration',
                             tool_choice={'type': 'function', 'function': {'name': ASK_USER_TOOL['function']['name']}})
                     model_messages = (focus_alternative_repair_request(api_messages, planning_state)
@@ -3800,7 +3816,7 @@ def main(deps=None):
                             'set_workout_requirements': 'Resolving workout requirements',
                             'record_planning_decisions': 'Checking planning choices',
                             "search_exercise_library": "Searching exercise library",
-                            "audit_workout_plan": "Auditing workout volume and duration",
+                            "audit_workout_plan": "Auditing workout volume",
                             'get_training_evidence': 'Retrieving training evidence',
                             'get_exercise_candidates': 'Retrieving exercise details',
                             'prepare_workout_session': 'Preparing next session',

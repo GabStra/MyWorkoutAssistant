@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from .constants import JSON_SCHEMA, MUSCLE_GROUP_FIXES
 from .exercise_contracts import get_exercise_emission_profile, execution_semantics_problem, execution_set_mode
+from .muscle_roles import project_training_muscles
 from .json_patching import build_allowed_patch_scope, collect_changed_json_paths, validate_changed_paths_scope
 
 try:
@@ -108,6 +109,64 @@ def build_workout_structure(workout_entry):
         "workoutPlanId": workout_entry.get("workoutPlanId"),
     }
     return {"workoutMetadata": metadata, "workoutComponents": components}
+
+
+def general_warmup_exercises(plan):
+    """Allocate preparation occurrences outside the selected exercise-library work."""
+    last_id = max((int(item['id'].removeprefix('EXERCISE_'))
+        for item in plan.get('exercises', [])
+        if re.fullmatch(r'EXERCISE_\d+', str(item.get('id')))), default=-1)
+    result = {}
+    for index, day in enumerate(plan.get('workouts', [])):
+        if 'generalWarmupSeconds' not in day:
+            continue
+        seconds = day['generalWarmupSeconds']
+        if type(seconds) is not int or seconds < 0:
+            raise ValueError('General warm-up duration must be nonnegative integer seconds.')
+        result[day['id']] = (general_warmup_exercise(f'EXERCISE_{last_id + index + 1}', seconds,
+                day.get('generalWarmupDefinition'))
+            if seconds else None)
+    return result
+
+
+def general_warmup_exercise(exercise_id, seconds, definition):
+    if not isinstance(definition, dict) or not definition.get('id') or definition.get('exerciseType') != 'COUNTDOWN':
+        raise ValueError('An explicit general warm-up requires a selected COUNTDOWN library definition.')
+    number = int(exercise_id.removeprefix('EXERCISE_'))
+    return {**{key: copy.deepcopy(definition[key]) for key in DEFINITION_OWNED_FIELDS if key in definition},
+        'id': exercise_id, 'type': 'Exercise', 'enabled': True,
+        'notes': 'General warm-up preparation, excluded from working-set volume. Begin the first exercise without a prescribed rest. Station preparation time is unverified.',
+        'generateWarmUpSets': False, 'progressionMode': 'OFF', 'keepScreenOn': False,
+        'showCountDownTimer': True, 'requiresLoadCalibration': False,
+        'intraSetRestInSeconds': None,
+        'sets': [{'id': f'SET_{number * 50}', 'type': 'TimedDurationSet',
+            'timeInMillis': seconds * 1000, 'autoStart': True, 'autoStop': True}]}
+
+
+def general_warmup_matches(component, exercise_id, seconds, definition):
+    """Validate code-owned execution fields before or after UUID conversion."""
+    expected = general_warmup_exercise('EXERCISE_0', seconds, definition)
+    return (isinstance(component, dict) and component.get('id') == exercise_id
+        and component.get('exerciseDefinitionId', definition['id']) == definition['id']
+        and all(component.get(key) == value for key, value in expected.items() if key not in ('id', 'sets'))
+        and len(component.get('sets', [])) == 1
+        and all(component['sets'][0].get(key) == value for key, value in expected['sets'][0].items()
+            if key != 'id'))
+
+
+def general_warmup_audit_options(plan, id_map=None):
+    mapping = id_map or {}
+    days = {day['id']: day for day in plan.get('workouts', [])}
+    result = {}
+    for day_id, exercise in general_warmup_exercises(plan).items():
+        definition = copy.deepcopy(days[day_id].get('generalWarmupDefinition'))
+        if definition:
+            definition['equipmentId'] = mapping.get(definition.get('equipmentId'), definition.get('equipmentId'))
+            definition['requiredAccessoryEquipmentIds'] = [mapping.get(key, key)
+                for key in definition.get('requiredAccessoryEquipmentIds', [])]
+        result[mapping.get(day_id, day_id)] = {'exerciseId': mapping.get(exercise['id'], exercise['id'])
+            if exercise else None, 'seconds': days[day_id]['generalWarmupSeconds'], 'definition': definition}
+    return result
 
 
 def reviewable_workout_artifact(plan, guidance, workout_store=None, id_map=None):
@@ -1637,7 +1696,7 @@ def apply_exercise_library_schema_v2(
     for raw_definition in supplied_definitions or []:
         if not isinstance(raw_definition, dict) or not raw_definition.get("id"):
             raise ValueError("Every supplied exercise definition must have an id")
-        definition = copy.deepcopy(raw_definition)
+        definition = project_training_muscles(copy.deepcopy(raw_definition))
         definition.pop("instructions", None)
         definition.pop("instructionEquipmentIds", None)
         for key in ("programmingDemands", "anatomy", "reviewedExerciseFamily", "reviewedExecution"):
@@ -1676,6 +1735,7 @@ def apply_exercise_library_schema_v2(
     canonical_by_identity = {}
 
     def generated_definition(exercise):
+        exercise = project_training_muscles(copy.deepcopy(exercise))
         definition = {
             "name": exercise.get("name", ""),
         }
@@ -1942,6 +2002,7 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
     # Build workouts array: use plan_index workout order so order field matches user-provided order (0, 1, 2, ...)
     workouts = []
     plan_workouts = plan_index.get("workouts", [])
+    general_warmups = general_warmup_exercises(plan_index)
 
     # Deterministic CrossFit-mode carry-through: the planner encodes time caps, EMOM
     # cadence and cardio quantities on the plan index (supersetGroups / timed
@@ -2032,7 +2093,8 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
         components_spec = workout_structure.get("workoutComponents", [])
 
         # Resolve workoutComponents from the structure spec into actual components
-        workout_components = []
+        warmup = general_warmups.get(workout_id)
+        workout_components = [copy.deepcopy(warmup)] if warmup else []
         component_id_counter = 0
 
         for component_spec in components_spec:
@@ -2452,6 +2514,8 @@ def sync_plan_owned_exercise_fields(exercise, plan_entry):
     """
     if not isinstance(exercise, dict) or not isinstance(plan_entry, dict):
         return exercise
+    if "muscleGroups" in plan_entry:
+        plan_entry = project_training_muscles(copy.deepcopy(plan_entry))
 
     fields_to_sync = [
         "name",
@@ -3336,6 +3400,7 @@ def WorkoutStructure(workout_structure_dict):
 
 def _materialize_exercise_definition(exercise_entry):
     """Build an exercise object when its approved PlanIndex has enough data."""
+    exercise_entry = project_training_muscles(copy.deepcopy(exercise_entry))
     execution_problem = execution_semantics_problem(exercise_entry)
     if execution_problem:
         raise ValueError(execution_problem)
@@ -3511,6 +3576,7 @@ def _materialize_exercise_definition(exercise_entry):
         "intraSetRestInSeconds": exercise_entry["intraSetRestInSeconds"],
         "muscleGroups": copy.deepcopy(exercise_entry["muscleGroups"]),
         "secondaryMuscleGroups": copy.deepcopy(exercise_entry["secondaryMuscleGroups"]),
+        "trainingMuscles": copy.deepcopy(exercise_entry["trainingMuscles"]),
         "requiredAccessoryEquipmentIds": copy.deepcopy(exercise_entry["requiredAccessoryEquipmentIds"]),
         "requiresLoadCalibration": supports_load_calibration and not goal_fields and (
             exercise_entry.get("requiresLoadCalibration") is True or not exercise_entry.get("targetSetPrescriptions")

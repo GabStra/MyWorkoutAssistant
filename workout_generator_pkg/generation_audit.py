@@ -3,43 +3,19 @@
 import copy
 import json
 import math
-from fractions import Fraction
 
 from .api_client import json_call_reasoner_only_with_loading
 from .domain_ops import build_workout_structure
 from .plan_contract import ContractValidationError, validate_plan_index_contract
-from .muscle_roles import MUSCLE_LABELS, REGIONAL_MUSCLE_LABELS
+from .muscle_roles import (MUSCLE_LABELS, REGIONAL_MUSCLE_LABELS, AGGREGATE_MUSCLE_TAGS,
+    REGIONAL_MUSCLE_PARENT, muscle_credits_per_set)
 from .repair_capabilities import RECOVERY_ADJUSTMENT_GUIDANCE
 
 
-MUSCLES = {
-    "chest": {"FRONT_CHEST"},
-    "back": {"BACK_UPPER_BACK"},
-    "quads": {"FRONT_QUADRICEPS"},
-    "hamstrings": {"BACK_HAMSTRING"},
-    "glutes": {"BACK_GLUTEAL"},
-    "shoulders": {"FRONT_DELTOIDS", "BACK_DELTOIDS"},
-    "biceps": {"FRONT_BICEPS"},
-    "triceps": {"FRONT_TRICEPS", "BACK_TRICEPS"},
-    "calves": {"FRONT_CALVES", "BACK_CALVES"},
-    'abs': {'FRONT_ABS'}, 'obliques': {'FRONT_OBLIQUES'}, 'adductors': {'FRONT_ADDUCTORS', 'BACK_ADDUCTORS'},
-    'forearms': {'FRONT_FOREARM', 'BACK_FOREARM'}, 'traps': {'FRONT_TRAPEZIUS', 'BACK_TRAPEZIUS'},
-    'lowerBack': {'BACK_LOWER_BACK'}, 'tibialis': {'FRONT_TIBIALIS'}, 'neck': {'FRONT_NECK', 'BACK_NECK'},
-    **{region: set() for region in REGIONAL_MUSCLE_LABELS},
-}
-REGIONAL_MUSCLE_PARENT = {
-    'latissimus_dorsi': 'back', 'upper_back': 'back',
-    'deltoid_anterior': 'shoulders', 'deltoid_lateral': 'shoulders', 'deltoid_posterior': 'shoulders',
-    'pectoralis_clavicular': 'chest', 'pectoralis_sternocostal': 'chest',
-}
+MUSCLES = {**AGGREGATE_MUSCLE_TAGS, **{region: set() for region in REGIONAL_MUSCLE_LABELS}}
 ASSUMPTIONS = {
-    "secondsPerRep": 3, "generalWarmupSeconds": 300,
-    "generatedRampUpSecondsPerExercise": 120, "transitionSeconds": 60,
     "primarySetCredit": 1, "secondarySetCredit": 0.5,
 }
-CALIBRATION_TIMING = ('estimatedSeconds includes one app-inserted calibration performance for supported loaded exercises, using the first work set reps and the normal seconds-per-rep estimate. Declared between-side rest is included when applicable. Load selection, calibration interaction, retries, and actual execution time remain unknown.')
-CONSERVATIVE_REP_TIMING_BASIS = ('For duration limits and balance, timing uses exact targetSetPrescriptions reps when present; otherwise it uses the plan entry maxReps. '
-    'The separate emitted-prescription estimate uses the actual reps in the materialized workout sets.')
 EXCLUDED_VOLUME_CATEGORIES = {"WarmupSet", "CalibrationSet"}
 VOLUME_SET_TYPES = {'WEIGHT': 'WeightSet', 'BODY_WEIGHT': 'BodyWeightSet'}
 
@@ -107,12 +83,6 @@ def render_plan_disclosures(report, muscles=None, source_draft=None, coverage_ru
                     actual += f"; soft aspiration {item['aspiration']:g}; aspiration shortfall {remaining}"
                 lines.append(f"{label} {MUSCLE_LABELS.get(item['muscle'], item['muscle'])}: "
                     f"preferred {preferred} effective sets; {actual}.")
-    budget = report.get('sessionTimeBudgetEvidence')
-    if budget:
-        lines.extend(['', f"Preferred session-time budget: {budget['preferredSessionSeconds'] / 60:g} minutes (soft)."])
-        for day in budget['sessions']:
-            lines.append(f"{day['session']}: estimated {day['estimatedSeconds'] / 60:g} minutes; "
-                f"{day['excessSeconds'] / 60:g} minutes above the preferred budget.")
     selection = report.get('exerciseSelectionEvidence')
     if selection:
         lines.extend(['', 'Weekly exercise-count preferences (distinct qualified definitions, repeated sessions counted once):'])
@@ -199,8 +169,8 @@ def render_optimization_disclosure(priority_execution):
     lines = ['Programming-priority evidence:']
     goal_policy = priority_execution.get('goalPolicy') or {}
     if goal_policy:
-        from .programming_policy import goal_target_text
-        lines.append('Shared goal tiers minimize the worst normalized target miss, then the sum of per-group mean misses and ungrouped misses, before remaining efficiency tie-breakers. Meeting a target earns no additional reward; these are approved preferences, not physiological adequacy findings.')
+        from .programming_policy import goal_target_text, goal_aggregation_text
+        lines.append('Shared goal tiers ' + goal_aggregation_text(goal_policy) + ', before remaining efficiency tie-breakers. Meeting a target earns no additional reward; these are approved preferences, not physiological adequacy findings.')
         for index, tier in enumerate(goal_policy.get('tiers', [])):
             lines.append(f"Goal tier {index + 1}: " + '; '.join(
                 goal_target_text(goal) for goal in tier) + '.')
@@ -215,17 +185,8 @@ def render_optimization_disclosure(priority_execution):
         before, after = arrangement['before'], arrangement['after']
         lines.append('Grouping was compared at unchanged training doses: '
             f"declared equipment switches {before['weeklyDeclaredResourceSwitches']} to {after['weeklyDeclaredResourceSwitches']} per week; "
-            f"total estimated session time {before['weeklyEstimatedSeconds']} to {after['weeklyEstimatedSeconds']} seconds per week. "
             'Equipment references do not establish measured physical changeovers. '
             'The earlier joint-solver scores describe its original grouping; global optimality of this final arrangement is not established.')
-    for entry in priorities:
-        if entry.get('priority') != 'duration_balance':
-            continue
-        stage = entry.get('solverStage') or {}
-        residual = stage.get('value')
-        if isinstance(residual, (int, float)) and not isinstance(residual, bool) and math.isfinite(residual) and residual > 0:
-            lines.append(f"Duration balance retains {residual:g} seconds of excess beyond the approved duration-similarity band; "
-                'the preferred tolerance remains unmet.')
     movement_priority = next((entry for entry in priorities if entry.get('priority') == 'movement_overlap'), None)
     if movement_priority:
         paired = next((stage for stage in movement_priority.get('subStages', [])
@@ -498,22 +459,17 @@ def render_program_guidance(report, muscles=None, source_draft=None, coverage_ru
 
 
 def session_interference_evidence(artifact_day, sources, definitions, emitted, requirements, rep_durations):
-    """Describe preceding library-tagged work and audited time, never predicted recovery."""
+    """Describe preceding library-tagged working sets and block order."""
     from collections import Counter
     from .programming_guidelines import (execution_interference_profile, execution_interference_score,
         superset_lower_body_pair_sets)
     primary, supporting = Counter(), Counter()
     last_exposure = {}
-    elapsed = ASSUMPTIONS['generalWarmupSeconds']
-    recovery = 0
     profiles, blocks, superset_evidence = [], [], []
     superset_member_working_sets = total_member_working_sets = 0
     superset_primary, superset_supporting = Counter(), Counter()
-    setup = {item['exerciseId']: item['seconds'] for item in emitted.get('setupEstimates', [])}
     for component in artifact_day['components']:
         if component['type'] == 'Rest':
-            elapsed += component['timeInSeconds']
-            recovery += component['timeInSeconds']
             continue
         members = component.get('exercises', []) if component['type'] == 'Superset' else [component]
         if not members or any(member.get('id') not in sources for member in members):
@@ -573,12 +529,9 @@ def session_interference_evidence(artifact_day, sources, definitions, emitted, r
         prior_supporting = (sum(supporting[muscle] for muscle in profile['primary'])
             + sum(primary[muscle] + supporting[muscle] for muscle in profile['supporting']
                   if muscle not in profile['primary']))
-        start = elapsed + sum(setup.get(member['id'], 0) for member in members)
         overlap = {muscle: {'priorPrimaryWorkingSets': primary[muscle],
             'priorSupportingWorkingSets': supporting[muscle],
-            'interveningBlocks': len(blocks) - last_exposure[muscle][0] - 1,
-            'estimatedSecondsSincePriorBlock': start - last_exposure[muscle][1],
-            'prescribedRecoverySecondsSincePriorBlock': recovery - last_exposure[muscle][2]}
+            'interveningBlocks': len(blocks) - last_exposure[muscle] - 1}
             for muscle in sorted(wanted) if muscle in last_exposure}
         blocks.append({'exerciseRefs': [member['id'] for member in members],
             'priorityFromExplicitOrderRule': profile['priority'],
@@ -593,18 +546,10 @@ def session_interference_evidence(artifact_day, sources, definitions, emitted, r
             'executionSupportEvidence': profile['executionSupportEvidence'],
             'supportingCountsMeaning': profile['supportingCountsMeaning'],
             'scope': 'before_block; superset members interleave rather than execute as complete consecutive exercises'})
-        block_report = audit_workout_package({'workouts': [{'name': 'Block', 'workoutComponents': [component]}]},
-            {'weeklyEffectiveSets': {}, 'perSessionEffectiveSets': {}, 'maximumSessionSeconds': None},
-            rep_duration_seconds_by_exercise={member['id']: rep_durations[member['id']]
-                for member in members if member['id'] in rep_durations})
-        timing = block_report['workouts'][0]['timing']
-        elapsed = start + sum(timing[field] for field in
-            ('workSeconds', 'restSeconds', 'rampUpSeconds', 'calibrationSeconds'))
-        recovery += timing['restSeconds']
         primary.update(profile['primary'])
         supporting.update(profile['supporting'])
         for muscle in wanted:
-            last_exposure[muscle] = (len(blocks) - 1, elapsed, recovery)
+            last_exposure[muscle] = len(blocks) - 1
     scores = execution_interference_score(list(range(len(profiles))), profiles)
     return {'status': ('partial_library_evidence' if any(not profile['primaryKnown'] for profile in profiles)
             else 'partial_execution_support_evidence' if any(fact['status'] == 'unknown'
@@ -629,8 +574,7 @@ def session_interference_evidence(artifact_day, sources, definitions, emitted, r
             'supersetPrimaryWorkingSetsByMuscle': dict(superset_primary),
             'supersetSupportingWorkingSetsByMuscle': dict(superset_supporting),
             'interpretation': 'These are code-computed session totals and their superset contribution, not a fatigue score.'},
-        'interpretation': 'Primary and supporting sets remain separate raw exposure counts. Timing is an estimate, '
-            'not a recovery model; setup time is not prescribed recovery. No fatigue weights, decay rates, '
+        'interpretation': 'Primary and supporting sets remain separate raw exposure counts. No fatigue weights, decay rates, '
             'tolerance thresholds or physiological predictions are inferred. Unrecorded grip/trunk demands remain unknown. Working-set overlap excludes unmeasured warm-up and calibration effort.'}
 
 
@@ -907,12 +851,14 @@ def _declared_physical_setup_evidence(source_blocks, shared_resource_groups):
     for block in source_blocks:
         for profile in block['profiles']:
             if not profile['resourceIds']:
-                entry = {'resourceId': None, 'role': 'unknown', 'implementQuantity': None,
+                entry = {'definitionId': profile.get('definitionId'),
+                    'resourceId': None, 'role': 'unknown', 'implementQuantity': None,
                     'loadRequired': profile.get('loadField') is not None,
                     'knownStateDimensions': [], 'loadKnown': False}
                 coverage[json.dumps(entry, sort_keys=True, separators=(',', ':'))] = entry
             for requirement in physical_setup_requirements(profile, shared_resource_groups):
                 entry = {key: requirement[key] for key in ('resourceId', 'role', 'implementQuantity', 'loadRequired')}
+                entry['definitionId'] = profile.get('definitionId')
                 entry['knownStateDimensions'] = sorted(requirement['state'])
                 entry['loadKnown'] = requirement['load'] is not None
                 coverage[json.dumps(entry, sort_keys=True, separators=(',', ':'))] = entry
@@ -1003,12 +949,12 @@ def _declared_physical_setup_evidence(source_blocks, shared_resource_groups):
             'independently retained resource does not rebuild the first. Shared domains invalidate other roles, '
             'without making their identities or implement quantities interchangeable. Unknown dimensions remain '
             'explicit and cannot establish complete configurations or zero preparation burden. Counts are required '
-            'planning operations, not measured actions or durations; setupSeconds allowances remain separate.'}
+            'planning operations, not measured actions or durations; physical changeover time remains unknown.'}
 
 
 def primary_inventory_key(profile, shared_resource_groups=None):
     """Physical implement identity, independent of load, quantity and accessories."""
-    if profile.get('equipmentId') is None and profile.get('exerciseType') == 'BODY_WEIGHT':
+    if profile.get('equipmentId') is None and profile.get('exerciseType') in ('BODY_WEIGHT', 'COUNTDOWN', 'COUNTUP'):
         return 'no_primary_implement'
     return next((item['activationKey'] for item in physical_setup_requirements(
         profile, shared_resource_groups) if item['role'] == 'equipment'), None)
@@ -1100,6 +1046,7 @@ def _setup_evidence_for_blocks(source_blocks, shared_resource_groups=None):
         **primary_inventory_switch_evidence(source_blocks, shared_resource_groups),
         'status': 'partial_declared_physical_setup',
         'blockCount': len(blocks), 'supersetGroupCount': sum(block['kind'] == 'superset' for block in blocks),
+        'workingBlockCount': sum(block['rounds'] > 0 for block in source_blocks),
         'distinctEquipmentIds': equipment_ids, 'distinctAccessoryIds': accessory_ids,
         'firstUseBlockByResourceId': first_use, 'resourceReferenceReturnCount': len(returns),
         'resourceReferenceReturns': returns,
@@ -1119,7 +1066,7 @@ def _setup_evidence_for_blocks(source_blocks, shared_resource_groups=None):
             for item in transition_list),
         'preparationTaskCountBasis': 'Distinct declared physical resource roles, implement quantities, sourced setup requirements and known prescribed-load sequences; exercise-definition identity is diagnostic only. Missing or app-calibrated dimensions remain unknown and this signature count is not physical preparation burden.',
         'physicalSetup': 'Rack, attachment position, load handling details after app calibration, layout, station independence and changeover time remain unknown.',
-        'interpretation': 'PreparationTaskCount is a conservative planning identity count, not a count of measured physical setup actions. Resource returns count exact IDs, not proven station returns. Repeated resource references may need reconfiguration; different IDs may refer to shared or related physical resources. Transitions include successive straight working sets and each scheduled superset round, including returns from the last member to the first between rounds; physical changeovers and their time remain unmeasured. Declared setup allowances are timing estimates, not measured physical setup time.'}
+        'interpretation': 'PreparationTaskCount is a conservative planning identity count, not a count of measured physical setup actions. Resource returns count exact IDs, not proven station returns. Repeated resource references may need reconfiguration; different IDs may refer to shared or related physical resources. Transitions include successive straight working sets and each scheduled superset round, including returns from the last member to the first between rounds; physical changeovers and their time remain unmeasured.'}
 
 
 def build_programming_summary(report, emitted_report, source_draft, plan_index, review_draft,
@@ -1313,44 +1260,13 @@ def build_programming_summary(report, emitted_report, source_draft, plan_index, 
     sessions = []
     for day, emitted, artifact_day in zip(report['workouts'], emitted_report['workouts'],
                                           final_artifact['workouts'], strict=True):
-        setup_by_exercise = {item['exerciseId']: item for item in emitted.get('setupEstimates', [])}
-        exercise_order = []
-        transitions = []
-        previous_block_last = None
-        pending_rest_seconds = 0
-        for component in artifact_day['components']:
-            if component['type'] == 'Rest':
-                if previous_block_last is not None:
-                    pending_rest_seconds += component['timeInSeconds']
-                continue
-            exercises = (component.get('exercises', []) if component['type'] == 'Superset'
-                         else [component] if component['type'] == 'Exercise' else [])
-            if not exercises:
-                continue
-            current_block = [{'id': exercise['id'], 'name': exercise['name']} for exercise in exercises]
-            exercise_order.extend(current_block)
-            if previous_block_last is not None:
-                current = current_block[0]
-                setup_seconds = setup_by_exercise.get(current['id'], {}).get('seconds')
-                transitions.append({
-                    'scope': 'between_blocks',
-                    'fromExerciseId': previous_block_last['id'], 'toExerciseId': current['id'],
-                    'recoveryOwner': {'exerciseRef': previous_block_last['id'],
-                        'field': 'restAfterExerciseSeconds'},
-                    'setupOwner': {'exerciseRef': current['id'], 'field': 'setupSeconds'},
-                    'betweenExerciseRestComponentSeconds': pending_rest_seconds,
-                    'estimatedSetupSeconds': setup_seconds,
-                    'setupScope': 'one_time_before_destination_block',
-                    'estimatedTransitionSeconds': (pending_rest_seconds + setup_seconds
-                        if setup_seconds is not None else None),
-                })
-            previous_block_last = current_block[-1]
-            pending_rest_seconds = 0
-        timing = emitted['timing']
+        exercise_order = [{'id': exercise['id'], 'name': exercise['name']}
+            for component in artifact_day['components']
+            for exercise in (component.get('exercises', []) if component['type'] == 'Superset'
+                else [component] if component['type'] == 'Exercise' else [])]
         sessions.append({
             'name': day['name'], 'muscles': {muscle: day['volume'].get(muscle) for muscle in weekly_targets},
-            'movementSets': day.get('coverageSets', {}), 'conservativeEstimatedSeconds': day['estimatedSeconds'],
-            'emittedPrescriptionEstimatedSeconds': emitted['estimatedSeconds'],
+            'movementSets': day.get('coverageSets', {}),
             'finalExerciseOrder': exercise_order,
             'setupEvidence': session_setup_evidence(artifact_day, sources_by_exercise, library_definitions,
                 [group for rule in (requirements or {}).get('executionRules', [])
@@ -1358,31 +1274,14 @@ def build_programming_summary(report, emitted_report, source_draft, plan_index, 
                     for group in rule.get('sharedResourceGroups', [])], equipment_by_id),
             'interferenceEvidence': session_interference_evidence(artifact_day, sources_by_exercise,
                 library_definitions, emitted, requirements or {}, report.get('repDurationSecondsByExercise', {})),
-            'timingComponents': {
-                'prescribedRecoveryRestSeconds': timing['restSeconds'],
-                'estimatedSetupSeconds': timing['transitionSeconds'],
-                'setupEstimates': copy.deepcopy(emitted.get('setupEstimates', [])),
-                'estimatedTotalSeconds': emitted['estimatedSeconds'],
-                'transitions': transitions,
-                'setupScope': 'One-time allowance before every exercise, including the opener; not repeated per set or superset round.',
-                'supersetRoundSetup': ('Repeated equipment setup, station travel, and physical changeovers between superset members are not timed. A supported grouping assumes both stations can remain ready; '
-                    'that assumption is not measured zero travel time, and any required reconfiguration may make actual duration longer.'),
-                'note': ('Setup estimates include every exercise, including the opener and each superset member. Transition rows show separate Rest components and destination setup estimates between blocks. Setup and station travel are not prescribed recovery; '
-                    'superset rest remains recovery time and does not establish that physical changeovers fit within it. Where a grouping is supported, its configurations are assumed ready, '
-                    'but any extra travel or reconfiguration time is unmeasured. Prescribed set, explicit Rest, and superset-round rests are included in prescribedRecoveryRestSeconds. '
-                    'The estimate may understate actual duration when physical changeovers are needed.'),
-            },
         })
 
-    timing_assumptions = copy.deepcopy(report['assumptions'])
-    if report.get('timingRepBasis'):
-        timing_assumptions['repCountBasis'] = report['timingRepBasis']
     summary = {'sessions': sessions,
-        'exposures': exposures, 'timingAssumptions': timing_assumptions, 'executionTimeVerified': False,
+        'exposures': exposures, 'executionTimeVerified': False,
         'muscleCreditReliance': copy.deepcopy(report.get('muscleCreditReliance', {})),
         **({'volumePreferenceEvidence': copy.deepcopy(report['volumePreferenceEvidence'])}
            if report.get('volumePreferenceEvidence') else {}),
-        **{key: copy.deepcopy(report[key]) for key in ('sessionTimeBudgetEvidence', 'exerciseSelectionEvidence')
+        **{key: copy.deepcopy(report[key]) for key in ('exerciseSelectionEvidence',)
            if key in report},
         'regionalMuscleSummary': {region: {
             'status': ('unknown_selected_aggregate_contributions' if totals['unknownOccurrences'] else
@@ -1470,9 +1369,11 @@ def available_muscle_targets(equipment=None):
 def muscle_metadata_policy(supported):
     return {
         'interpretation': ('Aggregate targets use library muscleGroups (primary, 1 credit/set) and secondaryMuscleGroups '
-            '(secondary, 0.5 credit/set), with primary precedence. Separately requested anatomical subregions use only '
+            '(secondary, 0.5 credit/set), with primary precedence. Positive source-backed regional roles can upgrade their '
+            'aggregate parent using its strongest role once per set. Missing regional evidence preserves legacy aggregate roles. '
+            'trainingMuscles is a derived view of these same aggregate and regional roles. Anatomical subregions use only '
             'source-backed regional annotations; missing annotations are unknown and never become zero or an aggregate '
-            'back/shoulder substitute. Regional credits are reported separately and are not added to aggregate totals. '
+            'back/shoulder substitute. Multiple regions never sum into additional aggregate set credits. '
             'These are accounting conventions, not measured stimulus.'),
         'bodyMapTargetMapping': {tag: sorted(muscle for muscle, tags in MUSCLES.items()
             if tag in tags and muscle in supported and muscle not in REGIONAL_MUSCLE_LABELS)
@@ -1482,25 +1383,19 @@ def muscle_metadata_policy(supported):
 
 
 def audit_policy(muscle_targets=None):
-    """Expose the estimator's inputs as well as its default overheads."""
+    """Expose supported volume targets and their library-role accounting."""
     supported = available_muscle_targets() if muscle_targets is None else muscle_targets
     return {**ASSUMPTIONS,
         'supportedMuscleTargets': supported,
         'muscleLabels': {key: value for key, value in {**MUSCLE_LABELS, 'back': 'Back (combined lats and upper back)',
             'shoulders': 'Shoulders (combined deltoids)'}.items() if key in supported},
         'capabilityLimits': 'Aggregate supportedMuscleTargets come from the library primary and secondary muscle arrays. Separately named regional targets are supported only when reviewed source-backed anatomy annotations exist for the participating exercises; an unannotated contribution remains unknown and cannot be inferred from an aggregate back, shoulder or chest credit. Regional credits are audited separately from aggregate totals. Do not invent regional credits or silently replace a regional target with its aggregate parent; explain incomplete evidence and resolve it before planning.',
-        'prescribedRests': 'Explicit between-set rests, workout rest components and per-member superset rests are counted separately from setup transitions. The final superset recovery is omitted after the last round.',
-        'setupTiming': ('setupSeconds is a one-time allowance before every exercise, including the opener; it is separate from prescribed recovery. Superset-round rest is recovery only, not setup or station travel. Zero prescribed recovery between members does not imply zero physical changeover time. '
-            'A supported superset assumes both configurations can remain ready; any required recurring reconfiguration or travel is unmeasured and can make actual duration longer. '
-            'The final audit reuses setup estimates by occurrence ID; duration remains an estimate, not a guarantee.'),
-        'unilateralWork': 'Both sides of each set plus the prescribed between-side rest count for time; the working set counts once for muscle volume.',
-        'volumeAccounting': 'Credits follow library primary/secondary roles. A working set may credit multiple muscles; summing muscle credits does not count distinct sets.',
-        'precision': 'Duration is an estimate using the defaults above, plus prescribed work and rests; it is not a second-precise prediction.'}
+        'volumeAccounting': 'Credits follow library primary/secondary roles. A working set may credit multiple muscles; summing muscle credits does not count distinct sets.'}
 
 
 def validate_audit_targets(targets):
     if not isinstance(targets, dict):
-        raise ContractValidationError("PlanIndex must include auditTargets with agreed numeric goals (empty volume maps and null time limit when unspecified).")
+        raise ContractValidationError("PlanIndex must include auditTargets with agreed numeric goals (empty volume maps when unspecified).")
     for field in ("weeklyEffectiveSets", "perSessionEffectiveSets"):
         values = targets.get(field, {})
         if not isinstance(values, dict) or set(values) - MUSCLES.keys():
@@ -1523,9 +1418,9 @@ def validate_audit_targets(targets):
                             or not math.isfinite(preferred_upper) or not preferred_lower <= preferred_upper <= 100)
                         or upper is not None and (preferred_upper is None or preferred_upper > upper)):
                     raise ContractValidationError(f"Invalid {field} preferred range for {muscle}: {bounds}.")
-    limit = targets.get("maximumSessionSeconds")
-    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0):
-        raise ContractValidationError("auditTargets.maximumSessionSeconds must be a positive integer or null.")
+    if targets.get("maximumSessionSeconds") is not None:
+        raise ContractValidationError("Session-duration estimation is unavailable. Remove maximumSessionSeconds.")
+
 
 
 def volume_target_bounds(bounds):
@@ -1554,6 +1449,70 @@ def volume_target_text(bounds):
 
 
 
+def selected_definition_ids_by_workout(package, equipment):
+    """Use stable identities across draft, plan-index and emitted-package representations."""
+    by_reference = {f'LIBRARY_{index}': item['id'] for index, item in enumerate(
+        sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id']))}
+    indexed = {item['id']: item for item in package.get('exercises', [])}
+    result = []
+    for day in package['workouts']:
+        if 'exerciseIds' in day:
+            exercises = [indexed[identifier] for identifier in day['exerciseIds']]
+        elif 'workoutComponents' in day:
+            exercises = [item for component in day['workoutComponents']
+                for item in (component.get('exercises', []) if component['type'] == 'Superset'
+                    else [component] if component['type'] == 'Exercise' else [])]
+        else:
+            exercises = day.get('exercises', [])
+        result.append({item.get('libraryDefinitionId') or item.get('exerciseDefinitionId')
+                or by_reference.get(item.get('definition_id'), item.get('definition_id'))
+            for item in exercises if item.get('numWorkSets', 0) > 0
+                or any(target.get('subCategory') == 'WorkSet' for target in item.get('sets', []))})
+    return result
+
+
+def audit_semantic_selection(report, package, selection, equipment):
+    """Check the selector's variable menu; the solver cannot replace semantic decisions."""
+    from .programming_policy import semantic_selection_ids
+
+    expected = semantic_selection_ids(selection, equipment)
+    if expected is None:
+        return
+    prefix = selection.get('fixedWorkouts', [])
+    days = selected_definition_ids_by_workout(package, equipment)
+    expected_prefix = selected_definition_ids_by_workout({'workouts': prefix}, equipment)
+    raw_prefix_changed = any('exercises' in actual and actual['exercises'] != source['exercises']
+        for actual, source in zip(package['workouts'][:len(prefix)], prefix))
+    if days[:len(prefix)] != expected_prefix or raw_prefix_changed:
+        add_audit_issue(report, 'semantic_fixed_prefix_changed',
+            'An accepted fixed workout changed during variable-menu planning.',
+            'Restore its exact prescriptions and membership, or obtain a new semantic selection for the intended edit.',
+            path='/semanticSelection/fixedWorkouts')
+    actual = set().union(*days[len(prefix):])
+    if actual != expected:
+        add_audit_issue(report, 'semantic_menu_changed',
+            'The allocated exercise membership differs from the semantic selector menu.',
+            'Return the membership conflict to the selector. Do not silently add, drop or substitute main work during numerical optimization.',
+            missingDefinitionIds=sorted(expected - actual), unexpectedDefinitionIds=sorted(actual - expected),
+            path='/semanticSelection')
+
+
+def audit_required_exercises(report, package, requirements, equipment):
+    """Check positive exercise requirements independently of permission and muscle credit."""
+    from .programming_policy import resolve_exercise_choices
+
+    required = resolve_exercise_choices(requirements, equipment)['required']
+    if not required:
+        return
+    selected = set().union(*selected_definition_ids_by_workout(package, equipment))
+    names = {item['id']: item['name'] for item in equipment.get('exerciseDefinitions', [])}
+    for identifier in sorted(required - selected):
+        add_audit_issue(report, 'required_exercise_missing',
+            f"Required weekly exercise is missing: {names[identifier]}.",
+            'Include this exact qualified exercise or report the conflict through the existing question gate; permission and another exercise sharing its muscle credits do not satisfy this choice.',
+            exerciseDefinitionId=identifier, path='/exerciseSelection/requiredNames')
+
+
 def audit_programming_preferences(report, plan, requirements):
     """Report soft goals from the exact selected artifact without creating hard failures."""
     aspirations = {goal['metric'].split(':', 1)[1]: -goal['target']
@@ -1564,16 +1523,6 @@ def audit_programming_preferences(report, plan, requirements):
             entry['aspiration'] = aspirations[entry['muscle']]
             entry['aspirationShortfall'] = (None if entry['actual'] is None
                 else max(0, entry['aspiration'] - entry['actual']))
-    preferred = requirements.get('preferredSessionSeconds')
-    if preferred is not None:
-        sessions = [{'session': day['name'], 'estimatedSeconds': day['estimatedSeconds'],
-            'excessSeconds': max(0, day['estimatedSeconds'] - preferred),
-            'weeklyFrequency': day.get('timesCompletedInAWeek', 1)} for day in report['workouts']]
-        report['sessionTimeBudgetEvidence'] = {'preferredSessionSeconds': preferred,
-            'maximumSessionSeconds': requirements.get('auditTargets', {}).get('maximumSessionSeconds'),
-            'sessions': sessions, 'totalWeeklyExcessSeconds': sum(
-                day['excessSeconds'] * day['weeklyFrequency'] for day in sessions),
-            'interpretation': 'A preferred budget is a soft goal, distinct from the hard ceiling; elapsed time remains estimated.'}
     if requirements.get('exerciseSelection'):
         from .programming_policy import exercise_count_preference_facts
         selected = {identifier for day in plan['workouts'] for identifier in day['exerciseIds']}
@@ -1588,25 +1537,6 @@ def _is_work_set(item):
 
 def _empty_volume():
     return {muscle: {"direct": 0, "indirect": 0, "effective": 0} for muscle in MUSCLES}
-
-
-def muscle_credits_per_set(exercise):
-    if exercise.get('exerciseType') is not None and exercise['exerciseType'] not in VOLUME_SET_TYPES:
-        return {}
-    primary = set(exercise.get("muscleGroups") or [])
-    secondary = set(exercise.get("secondaryMuscleGroups") or [])
-    credits = {}
-    for muscle, tags in MUSCLES.items():
-        if muscle in REGIONAL_MUSCLE_LABELS:
-            continue
-        direct = ASSUMPTIONS["primarySetCredit"] if primary & tags else 0
-        indirect = ASSUMPTIONS["secondarySetCredit"] if not direct and secondary & tags else 0
-        if direct or indirect:
-            credits[muscle] = {"direct": direct, "indirect": indirect}
-    from .recipe_contracts import regional_muscle_credit_roles
-    regional_definition = {**exercise, 'id': exercise.get('libraryDefinitionId', exercise.get('id'))}
-    credits.update(regional_muscle_credit_roles(regional_definition))
-    return credits
 
 
 def muscle_credit_coupling_evidence(candidates, requirements, *, selected_definition_ids=None):
@@ -2333,30 +2263,15 @@ def audit_exercise_exposure(report, package, requirements, definition_by_referen
             actual=error['actual'], maximum=error['maximum'])
 
 
-def _native_calibration_work_seconds(exercise, sets, rep_seconds, sides, first_work_reps=None):
-    supports_calibration = (exercise.get('exerciseType') == 'WEIGHT' or
-        (exercise.get('exerciseType') == 'BODY_WEIGHT' and exercise.get('equipmentId') is not None))
-    if (exercise.get('requiresLoadCalibration') is not True or not supports_calibration or
-            any(item.get('subCategory') == 'CalibrationSet' for item in sets)):
-        return 0
-    first_work_set = next((item for item in sets
-        if item.get('type') in ('WeightSet', 'BodyWeightSet') and
-        item.get('subCategory', 'WorkSet') in ('WorkSet', 'CalibrationPendingSet')), None)
-    if first_work_set is None:
-        return 0
-    reps = first_work_set.get('reps', 0) if first_work_reps is None else first_work_reps
-    if not isinstance(reps, (int, float)) or isinstance(reps, bool):
-        return 0
-    return reps * rep_seconds * sides
-
-
-def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, coverage_by_exercise=None,
-                          rep_duration_seconds_by_exercise=None, timing_reps_by_exercise=None,
+def audit_workout_package(package, targets, *, coverage_by_exercise=None,
                           family_set_requirements=None, family_by_reference=None,
-                          exercise_exposure_requirements=None, exercise_definition_by_reference=None):
+                          exercise_exposure_requirements=None, exercise_definition_by_reference=None,
+                          general_warmup_by_workout=None):
+    from .domain_ops import general_warmup_matches
+    general_warmups = (general_warmup_by_workout if general_warmup_by_workout is not None
+        else package.get('generalWarmupByWorkout', {}))
     validate_audit_targets(targets)
-    if (coverage_by_exercise is not None or rep_duration_seconds_by_exercise is not None
-            or timing_reps_by_exercise is not None):
+    if coverage_by_exercise is not None:
         identifiers = {exercise['id'] for workout in package.get('workouts', []) for component in workout.get('workoutComponents', [])
                        for exercise in (component.get('exercises', []) if component.get('type') == 'Superset' else [component])
                        if exercise.get('type') == 'Exercise'}
@@ -2367,36 +2282,12 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
             raise ValueError('Coverage metadata must map exercise IDs to lists of coverage keys.')
         if set(coverage_by_exercise) - identifiers:
             raise ValueError('Coverage metadata references unknown exercise IDs.')
-    if rep_duration_seconds_by_exercise is not None:
-        if not isinstance(rep_duration_seconds_by_exercise, dict) or any(
-                type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0
-                for seconds in rep_duration_seconds_by_exercise.values()):
-            raise ValueError('Per-rep duration metadata must map exercise IDs to positive finite seconds.')
-        if set(rep_duration_seconds_by_exercise) - identifiers:
-            raise ValueError('Per-rep duration metadata references unknown exercise IDs.')
-    if timing_reps_by_exercise is not None:
-        if not isinstance(timing_reps_by_exercise, dict):
-            raise ValueError('Timing reps metadata must map exercise IDs to work-set rep lists.')
-        rep_set_counts = {}
-        for workout in package.get('workouts', []):
-            for component in workout.get('workoutComponents', []):
-                exercises = (component.get('exercises', []) if component.get('type') == 'Superset'
-                             else [component] if component.get('type') == 'Exercise' else [])
-                for exercise in exercises:
-                    count = sum(_is_work_set(item) for item in exercise.get('sets', []))
-                    if count and any(item.get('type') in VOLUME_SET_TYPES.values()
-                                     for item in exercise.get('sets', []) if _is_work_set(item)):
-                        rep_set_counts[exercise['id']] = count
-        if set(timing_reps_by_exercise) != set(rep_set_counts):
-            raise ValueError('Timing reps metadata must cover exactly the rep-based exercise IDs in the audited package.')
-        for identifier, reps in timing_reps_by_exercise.items():
-            if (not isinstance(reps, list) or len(reps) != rep_set_counts[identifier]
-                    or any(type(value) is not int or value < 1 for value in reps)):
-                raise ValueError(f'Timing reps for {identifier} must contain one positive integer per emitted work set.')
     weekly = _empty_volume()
-    report = {"assumptions": ASSUMPTIONS, "targets": copy.deepcopy(targets), "workouts": [], "weeklyVolume": weekly,
+    report = {"assumptions": ASSUMPTIONS,
+              "targets": {key: copy.deepcopy(value) for key, value in targets.items()
+                          if key != "maximumSessionSeconds"},
+              "workouts": [], "weeklyVolume": weekly,
               "weeklyWorkingSets": 0, "issues": [], "errors": []}
-    report['calibrationTiming'] = CALIBRATION_TIMING
     regional_targets = ({muscle for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets')
         for muscle in targets.get(field, {})} & REGIONAL_MUSCLE_LABELS.keys())
     regional_unknowns = {region: [] for region in regional_targets}
@@ -2406,48 +2297,32 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
         report['weeklyCoverageSets'] = dict.fromkeys(coverage_keys, 0)
         report['coverageAccounting'] = ('Working sets counted by source-backed coverage assignments; independent execution review verifies mapping completeness and movement suitability. '
             'One physical set may satisfy multiple roles. Coverage rows overlap and must not be summed as distinct sets.')
-    if rep_duration_seconds_by_exercise is not None:
-        report['repDurationSecondsByExercise'] = copy.deepcopy(rep_duration_seconds_by_exercise)
-    timing_rep_basis = package.get('timingRepBasis')
-    if timing_reps_by_exercise is not None or timing_rep_basis:
-        report['timingRepBasis'] = CONSERVATIVE_REP_TIMING_BASIS
     for workout_index, workout in enumerate(package.get("workouts", [])):
         if workout.get("enabled") is False:
             continue
         volume = _empty_volume()
-        timing = {"workSeconds": 0, "restSeconds": 0, "generalWarmupSeconds": ASSUMPTIONS["generalWarmupSeconds"], "rampUpSeconds": 0, "transitionSeconds": 0, "calibrationSeconds": 0}
+        # Internal block audits have no workout identity or session preparation.
+        warmup = general_warmups.get(workout.get('id'))
+        if warmup and warmup['seconds']:
+            components = workout.get('workoutComponents', [])
+            if (not components or not general_warmup_matches(components[0], warmup['exerciseId'], warmup['seconds'], warmup['definition'])
+                    or len(components) > 1 and components[1].get('type') == 'Rest'):
+                add_audit_issue(report, 'general_warmup_mismatch',
+                    f"{workout['name']}: the prescribed general warm-up must be the first timer with no following rest.",
+                    'Restore the code-owned general warm-up duration and immediate transition to the first exercise.',
+                    path=f'/workouts/{workout_index}/workoutComponents/0')
         contributions = []
         logical_sets = 0
         coverage = dict.fromkeys(coverage_keys, 0)
-        exercises_seen = 0
-        setup_estimates = []
 
-        def add_exercise(exercise, selected_sets=None, standalone=True, cadence_bounded=False):
-            nonlocal logical_sets, exercises_seen
+        def add_exercise(exercise, selected_sets=None):
+            nonlocal logical_sets
             sets = exercise.get("sets", []) if selected_sets is None else selected_sets
-            rep_seconds = (rep_duration_seconds_by_exercise or {}).get(exercise['id'], exercise.get('repDurationSeconds', ASSUMPTIONS['secondsPerRep']))
-            if type(rep_seconds) not in (int, float) or not math.isfinite(rep_seconds) or rep_seconds <= 0:
-                raise ValueError('Per-rep duration must be positive finite seconds.')
-            rep_seconds = Fraction(str(rep_seconds))
             work_sets = [item for item in sets if _is_work_set(item)]
             count = len(work_sets)
-            timing_reps = (timing_reps_by_exercise or {}).get(exercise['id'])
-            if timing_reps is not None and len(timing_reps) < count:
-                raise ValueError(f'Timing reps for {exercise["id"]} do not cover the selected workout sets.')
             logical_sets += count
             for key in set((coverage_by_exercise or {}).get(exercise['id'], [])):
                 coverage[key] += count
-            exercises_seen += 1
-            seconds = (setup_seconds_by_exercise or {}).get(exercise['id'], exercise.get('setupSeconds'))
-            if seconds is not None and (type(seconds) is not int or not 0 <= seconds <= 1800):
-                add_audit_issue(report, 'invalid_setup_time', 'Setup time must be an integer from 0 to 1800 seconds.',
-                    'Correct the declared setup estimate and re-audit; negative or invalid values cannot reduce session duration.',
-                    path=f'/workouts/{workout_index}/exercises/{exercises_seen - 1}/setupSeconds', exerciseId=exercise['id'])
-                seconds = None
-            setup_estimates.append({'exerciseId': exercise['id'],
-                'seconds': ASSUMPTIONS['transitionSeconds'] if seconds is None else seconds,
-                'scope': 'one_time_before_exercise',
-                'basis': 'default_allowance' if seconds is None else 'declared_estimate'})
             credits = {}
             per_set_credits = muscle_credits_per_set(exercise)
             if regional_targets:
@@ -2468,56 +2343,14 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                 if direct or indirect:
                     credits[muscle] = {"direct": direct, "indirect": indirect}
             contributions.append({"exerciseId": exercise["id"], "exercise": exercise["name"], "workingSets": count, "credits": credits})
-            sides = 2 if exercise.get("intraSetRestInSeconds") is not None else 1
-            calibration_work_seconds = _native_calibration_work_seconds(exercise, sets, rep_seconds, sides,
-                timing_reps[0] if timing_reps else None)
-            timing['calibrationSeconds'] += calibration_work_seconds
-            if calibration_work_seconds and sides == 2:
-                timing['restSeconds'] += Fraction(str(exercise['intraSetRestInSeconds']))
-            work_set_index = 0
-            for item in sets:
-                kind = item.get("type")
-                if sides == 2 and kind in ("WeightSet", "BodyWeightSet", "EnduranceSet", "TimedDurationSet"):
-                    timing["restSeconds"] += Fraction(str(exercise["intraSetRestInSeconds"]))
-                if kind == "RestSet":
-                    if standalone:
-                        timing["restSeconds"] += Fraction(str(item["timeInSeconds"]))
-                elif kind in ("WeightSet", "BodyWeightSet"):
-                    field = "calibrationSeconds" if item.get("subCategory") == "CalibrationSet" else "workSeconds"
-                    reps = item['reps']
-                    if _is_work_set(item) and timing_reps is not None:
-                        reps = timing_reps[work_set_index]
-                    timing[field] += reps * rep_seconds * sides
-                elif kind in ("EnduranceSet", "TimedDurationSet"):
-                    duration = Fraction(str(item.get("timeInMillis", 0))) / 1000
-                    field = "calibrationSeconds" if item.get("subCategory") == "CalibrationSet" else "workSeconds"
-                    timing[field] += duration * sides
-                    if duration <= 0 and targets.get("maximumSessionSeconds") and not cadence_bounded:
-                        add_audit_issue(report, "unknown_duration", f"{workout['name']}: {exercise['name']} has no fixed duration; session duration cannot be validated.",
-                                        "Supply a fixed duration if compatible with the requested exercise; otherwise ask the user how to resolve the time constraint.",
-                                        path=f"/workouts/{workout_index}", exerciseId=exercise["id"])
-                elif kind == "WeightedEffortSet":
-                    # The goal is distance/time; a cadence-bounded slot owns the clock.
-                    if targets.get("maximumSessionSeconds") and not cadence_bounded:
-                        add_audit_issue(report, "unknown_weighted_duration", f"{workout['name']}: {exercise['name']} has no fixed duration; session duration cannot be validated.",
-                                        "Supply a fixed duration alongside the distance goal, or ask the user how to resolve the time constraint.",
-                                        path=f"/workouts/{workout_index}", exerciseId=exercise["id"])
-                elif kind == "RunningSet" and targets.get("maximumSessionSeconds") and not cadence_bounded:
-                    add_audit_issue(report, "unknown_running_duration", f"{workout['name']}: running duration cannot be inferred from distance alone.",
-                                    "Distance alone cannot satisfy a hard duration check. Ask the user for an appropriate fixed-duration prescription or an agreed constraint change.",
-                                    path=f"/workouts/{workout_index}", exerciseId=exercise["id"])
-                if _is_work_set(item):
-                    work_set_index += 1
-            if exercise.get("generateWarmUpSets") and not any(s.get("subCategory") == "WarmupSet" for s in sets):
-                timing["rampUpSeconds"] += Fraction(str(ASSUMPTIONS["generatedRampUpSecondsPerExercise"]))
         for component in workout.get("workoutComponents", []):
             if component.get("enabled") is False:
+                continue
+            if warmup and warmup['exerciseId'] is not None and component.get('id') == warmup['exerciseId']:
                 continue
             kind = component.get("type")
             if kind == "Exercise":
                 add_exercise(component)
-            elif kind == "Rest":
-                timing["restSeconds"] += Fraction(str(component["timeInSeconds"]))
             elif kind == "Superset":
                 members = [e for e in component.get("exercises", []) if e.get("enabled") is not False]
                 member_sets = [[s for s in e.get("sets", []) if s.get("type") != "RestSet"] for e in members]
@@ -2526,43 +2359,23 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                     continue
                 if len(set(counts)) != 1:
                     add_audit_issue(report, "superset_set_count_mismatch", f"{workout['name']}: superset work-set counts {counts} differ; the app runs only the shortest member.",
-                                    "Give all members equal working-set counts, or separate them into straight sets or different groups. Recheck all volume and duration targets.",
+                                    "Give all members equal working-set counts, or separate them into straight sets or different groups. Recheck all volume targets.",
                                     path=f"/workouts/{workout_index}", exerciseIds=[e["id"] for e in members], actual=counts)
                 rounds = min(counts)
                 if rounds == 0:
                     add_audit_issue(report, "empty_superset", f"{workout['name']}: superset has no executable work rounds.",
                                     "Provide executable working sets for every superset member or remove the empty group.", path=f"/workouts/{workout_index}")
                     continue
-                before_work, before_rest = timing["workSeconds"], timing["restSeconds"]
-                before = before_work + before_rest
-                cadence_bounded = component.get("roundDurationSeconds") is not None
                 for exercise, sets in zip(members, member_sets):
                     warmups = [s for s in sets if s.get("subCategory") in EXCLUDED_VOLUME_CATEGORIES]
                     work = [s for s in sets if s.get("subCategory") not in EXCLUDED_VOLUME_CATEGORIES][:rounds]
-                    add_exercise(exercise, warmups + work, standalone=False, cadence_bounded=cadence_bounded)
-                rests = component.get("restSecondsByExercise", {})
-                timing["restSeconds"] += rounds * sum(Fraction(str(rests.get(e["id"], 0))) for e in members) - Fraction(str(rests.get(members[-1]["id"], 0)))
+                    add_exercise(exercise, warmups + work)
                 if component.get("timeCapSeconds") or component.get("amrap"):
                     if targets.get("weeklyEffectiveSets") or targets.get("perSessionEffectiveSets"):
                         add_audit_issue(report, "unbounded_volume", f"{workout['name']}: time-capped/AMRAP volume is not an exact prescribed set count.",
                                         "Exact set-volume targets require finite prescribed rounds. If AMRAP is required, ask the user to resolve that conflict.", path=f"/workouts/{workout_index}")
-                    if component.get("timeCapSeconds"):
-                        timing["workSeconds"] = before_work + Fraction(str(component["timeCapSeconds"]))
-                        timing["restSeconds"] = before_rest
-                if component.get("roundDurationSeconds"):
-                    # MEMBER cadence slots one set of one member per slot; ROUND
-                    # cadence slots one set of every member.
-                    slot_count = rounds * len(members) if component.get("cadenceMode") == "MEMBER" else rounds
-                    elapsed = timing["workSeconds"] + timing["restSeconds"] - before
-                    timing["restSeconds"] += max(0, slot_count * Fraction(str(component["roundDurationSeconds"])) - elapsed)
-        timing["transitionSeconds"] = sum(item['seconds'] for item in setup_estimates)
-        # Preserve decimal input arithmetic until the public JSON boundary.
-        seconds = sum(Fraction(str(value)) for value in timing.values())
-        timing = {key: int(value) if value.denominator == 1 else float(value)
-            for key, raw in timing.items() for value in (Fraction(str(raw)),)}
-        seconds = int(seconds) if seconds.denominator == 1 else float(seconds)
-        result = {"name": workout["name"], "workingSets": logical_sets, "volume": volume, "contributions": contributions, "timing": timing, "estimatedSeconds": seconds}
-        result['setupEstimates'] = setup_estimates
+        result = {"name": workout["name"], "workingSets": logical_sets, "volume": volume,
+            "contributions": contributions}
         report["workouts"].append(result)
         # shortcut: each enabled workout runs once weekly unless frequency is supplied; audit phases separately for periodized packages.
         frequency = workout.get("timesCompletedInAWeek") or 1
@@ -2575,11 +2388,6 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
         for muscle in MUSCLES:
             for field in weekly[muscle]:
                 weekly[muscle][field] += volume[muscle][field] * frequency
-        limit = targets.get("maximumSessionSeconds")
-        if limit and seconds > limit:
-            add_audit_issue(report, "duration_exceeded", f"{workout['name']}: estimated duration {seconds:.0f}s exceeds {limit}s by {seconds-limit:.0f}s; breakdown={timing}.",
-                            "Use the timing breakdown to reduce work, rests or setup costs within the user's agreed constraints. Preserve all volume targets and re-audit. If no feasible draft is found, ask the user for a tradeoff instead of relaxing requirements.",
-                            path=f"/workouts/{workout_index}", actual=seconds, maximum=limit, excessSeconds=seconds-limit)
     if regional_targets:
         report['regionalTargetEvidence'] = {}
         for region in sorted(regional_targets):
@@ -2715,7 +2523,7 @@ def _check_volume(volume, targets, label, report, workout_index=None):
             difference = minimum - actual if below else actual - maximum
             add_audit_issue(report, "volume_below_target" if below else "volume_above_target",
                             f"{label} {muscle}: {actual:g} effective sets (direct={volume[muscle]['direct']:g}, indirect={volume[muscle]['indirect']:g}); required {volume_target_text(bounds)}.",
-                            f"{'Increase' if below else 'Reduce'} effective {muscle} volume by adjusting working-set counts or exercise selection. Use the report's per-exercise contributions; preserve library muscle roles and agreed targets, and re-audit volume and duration together.",
+                            f"{'Increase' if below else 'Reduce'} effective {muscle} volume by adjusting working-set counts or exercise selection. Use the report's per-exercise contributions; preserve library muscle roles and agreed targets, and re-audit volume.",
                             path="/workouts" if workout_index is None else f"/workouts/{workout_index}/exercises",
                             scope="weekly" if workout_index is None else "per_session", muscle=muscle,
                             actual=actual, minimum=minimum,
@@ -2851,7 +2659,9 @@ def muscle_credit_reliance_sensitivity(package, report):
 
 
 def plan_audit_package(plan, allow_educated_load_guesses=True):
-    """Use upper rep targets before emission; actual emitted reps can only take less time."""
+    """Materialize prescribed sets and grouping for deterministic volume auditing."""
+    from .domain_ops import general_warmup_exercises, general_warmup_audit_options
+    general_warmups = general_warmup_exercises(plan)
     by_id = {}
     for entry in plan["exercises"]:
         exercise = copy.deepcopy(entry)
@@ -2884,7 +2694,8 @@ def plan_audit_package(plan, allow_educated_load_guesses=True):
     workouts = []
     for workout in plan["workouts"]:
         structure = build_workout_structure(workout)
-        components = []
+        warmup = general_warmups.get(workout['id'])
+        components = [copy.deepcopy(warmup)] if warmup else []
         for component in structure["workoutComponents"]:
             kind = component["componentType"]
             if kind == "Exercise":
@@ -2894,23 +2705,8 @@ def plan_audit_package(plan, allow_educated_load_guesses=True):
             else:
                 components.append({"type": kind, "timeInSeconds": component["timeInSeconds"]})
         workouts.append({**workout, "workoutComponents": components})
-    return {"workouts": workouts, 'timingRepBasis': CONSERVATIVE_REP_TIMING_BASIS}
-
-
-def plan_timing_reps_by_exercise(plan, allow_educated_load_guesses=True):
-    """Return the same rep counts used by the planned timing audit, keyed by exercise ID."""
-    package = plan_audit_package(plan, allow_educated_load_guesses)
-    result = {}
-    for workout in package.get('workouts', []):
-        for component in workout.get('workoutComponents', []):
-            exercises = (component.get('exercises', []) if component.get('type') == 'Superset'
-                         else [component] if component.get('type') == 'Exercise' else [])
-            for exercise in exercises:
-                reps = [item['reps'] for item in exercise.get('sets', [])
-                        if _is_work_set(item) and item.get('type') in VOLUME_SET_TYPES.values()]
-                if reps:
-                    result[exercise['id']] = reps
-    return result
+    return {"workouts": workouts,
+        'generalWarmupByWorkout': general_warmup_audit_options(plan)}
 
 
 def audit_and_repair_plan(client, plan, provided_equipment, logger=None, max_repairs=2, allow_educated_load_guesses=True):

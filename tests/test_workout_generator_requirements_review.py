@@ -646,7 +646,6 @@ def test_cancelled_source_review_propagates(monkeypatch):
 
 
 def test_source_review_is_bound_to_the_actual_extracted_fields(monkeypatch):
-    from workout_generator_pkg import generation_audit
     equipment, arguments, _, _ = planning_case()
     messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
     monkeypatch.setattr(review, 'chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
@@ -654,9 +653,6 @@ def test_source_review_is_bound_to_the_actual_extracted_fields(monkeypatch):
     _record(messages, result)
     messages.append({'role': 'user', 'content': 'CONFIRM REQUIREMENTS'})
     assert requirements_approved(messages)
-    monkeypatch.setattr(generation_audit, 'CALIBRATION_TIMING', 'Updated workout execution timing explanation.')
-    assert generation_audit.audit_workout_package({'workouts': []}, {})['calibrationTiming'] == generation_audit.CALIBRATION_TIMING
-    assert requirements_approved(messages)  # Execution-report metadata does not change approved requirements.
     changed = copy.deepcopy(result)
     changed['requirements']['auditTargets']['weeklyEffectiveSets']['calves'] = {'minimum': 0, 'maximum': 0}
     assert not requirements_approved(messages, changed)

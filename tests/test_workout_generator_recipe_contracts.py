@@ -215,6 +215,22 @@ def test_coverage_qualification_has_no_progression_contract_or_model_context(mon
     assert 'capabilities' not in result
 
 
+def test_qualification_recomputes_redundant_code_owned_labels(monkeypatch):
+    equipment, _, _, stored, prepared = recipe_case([
+        {'key': key, 'description': key, 'scope': 'weekly'} for key in ('push', 'calves', 'chest')])
+
+    def qualify(_, request, **kwargs):
+        from jsonschema import validate
+        result = {'contracts': [{'definition_id': ref, 'satisfiesCoverage': ['push', 'calves']}
+            for ref in prepared['definition_ids']]}
+        validate(result, kwargs['output_schema'])
+        return json.dumps(result), None, None
+
+    monkeypatch.setattr(recipe_contracts, 'chat_call', qualify)
+    result = recipe_contracts.qualify_recipe_contracts(None, prepared, stored, equipment, [], {})
+    assert all(item['satisfiesCoverage'] == ['chest', 'push'] for item in result['contracts'])
+
+
 def test_coverage_qualification_bounds_large_menus_and_checkpoints_each_batch(monkeypatch):
     equipment, _, _, stored, prepared = recipe_case(
         [{'key': 'push', 'description': 'A pushing movement', 'scope': 'eachSession'}])
@@ -865,10 +881,47 @@ def test_reviewed_execution_properties_are_definition_scoped_and_unknown_stays_u
     assert execution_by_id['0c3ae710-bc65-5991-81b7-4b263d81f7a1']['limbMode'] == 'unilateral'
 
 
+@pytest.mark.parametrize(('first', 'second', 'status'), [
+    ('bilateral', 'unilateral', 'documented_complementary'),
+    ('unilateral', 'bilateral', 'documented_complementary'),
+    ('bilateral', 'bilateral', 'documented_repeated_form'),
+    ('unilateral', 'unilateral', 'documented_repeated_form'),
+    ('alternating', 'alternating', 'documented_repeated_form'),
+    ('bilateral', 'alternating', 'unknown'),
+    ('unilateral', None, 'unknown'),
+    (None, None, 'unknown'),
+    ('unreviewed', 'unreviewed', 'unknown'),
+])
+def test_reviewed_limb_form_pair_evidence_preserves_unknown(first, second, status):
+    assert recipe_contracts.reviewed_limb_form_pair_evidence(
+        {'limbMode': first} if first is not None else None,
+        {'limbMode': second} if second is not None else None) == {
+            'status': status, 'limbModes': [first, second]}
+
+
+def test_lateral_lunge_reviewed_limb_form_preserves_partial_setup_and_unknowns():
+    identifier = 'b9a5c835-5d6b-5f1f-8ced-bf2d917e1243'
+    original = {'exerciseDefinitions': [{'id': identifier, 'name': 'Renamed definition',
+        'requiredAccessoryEquipmentIds': ['a247d19d-e625-4c84-af6a-f643bb1d076c']}]}
+    annotated = recipe_contracts.apply_reviewed_exercise_annotations(original)
+    execution = annotated['exerciseDefinitions'][0]['reviewedExecution']
+    assert execution['limbMode'] == 'unilateral'
+    assert execution['source'] == 'https://www.dvidshub.net/video/549286/barbell-lateral-lunge'
+    assert execution['setupConfiguration'][0]['state'] == {'preparationSupport': 'rack'}
+    assert set(execution) == {'limbMode', 'source', 'basis', 'setupConfiguration'}
+    assert 'reviewedExecution' not in original['exerciseDefinitions'][0]
+    evidence = recipe_contracts.reviewed_execution_properties(original)
+    assert evidence['propertiesByReference']['LIBRARY_0'] == {
+        'limbMode': 'unilateral', 'setupConfiguration': execution['setupConfiguration']}
+    assert evidence['sourcesByReference']['LIBRARY_0'] == {
+        'source': execution['source'], 'basis': execution['basis']}
+
+
 def test_reviewed_execution_support_preserves_sources_and_muscle_volume():
     from workout_generator_pkg.exercise_contracts import execution_supporting_muscles
     from workout_generator_pkg.exercise_library_tools import _selection_entry
     from workout_generator_pkg.generation_audit import muscle_credits_per_set
+    from workout_generator_pkg.muscle_roles import project_training_muscles
 
     definitions = [
         {'id': '683216a5-72dd-5200-9fb9-8e0ece4b969d',
@@ -883,9 +936,19 @@ def test_reviewed_execution_support_preserves_sources_and_muscle_volume():
          'muscleGroups': ['BACK_UPPER_BACK'], 'secondaryMuscleGroups': ['FRONT_BICEPS']},
         {'id': 'f81fe880-37cb-59bd-ad8e-42130833e0a4',
          'muscleGroups': ['BACK_HAMSTRING', 'BACK_GLUTEAL'], 'secondaryMuscleGroups': []},
+        {'id': 'f0861ff6-c6c8-589a-beaf-4f5336f4befb',
+         'equipmentId': 'a247d19d-e625-4c84-af6a-f643bb1d076c',
+         'muscleGroups': ['FRONT_QUADRICEPS', 'BACK_GLUTEAL'], 'secondaryMuscleGroups': ['BACK_ADDUCTORS']},
+        {'id': '81b9bf9f-ba5c-5a56-b5cf-ace2c5b61664',
+         'equipmentId': 'a247d19d-e625-4c84-af6a-f643bb1d076c',
+         'requiredAccessoryEquipmentIds': ['e3f0e0ee-3433-4435-bed9-c926e23a8468'],
+         'muscleGroups': ['FRONT_CHEST'], 'secondaryMuscleGroups': ['BACK_TRICEPS']},
+        {'id': '8b6b9813-39b1-5c86-89bf-22ab6828556e',
+         'equipmentId': 'a247d19d-e625-4c84-af6a-f643bb1d076c',
+         'muscleGroups': ['FRONT_DELTOIDS'], 'secondaryMuscleGroups': ['BACK_TRICEPS']},
     ]
     expected = [['lowerBack', 'abs'], ['lowerBack', 'abs'], ['lowerBack', 'abs'],
-        ['lowerBack', 'glutes', 'hamstrings'], ['lowerBack']]
+        ['lowerBack', 'glutes', 'hamstrings'], ['lowerBack'], ['lowerBack', 'abs'], ['abs'], ['abs']]
     original = copy.deepcopy(definitions)
     annotated = recipe_contracts.apply_reviewed_exercise_annotations({'exerciseDefinitions': definitions})
     assert definitions == original
@@ -902,9 +965,17 @@ def test_reviewed_execution_support_preserves_sources_and_muscle_volume():
         evidence['propertiesByReference']['LIBRARY_0']['supportingMuscles'].clear()
         assert recipe_contracts.reviewed_execution_properties({'exerciseDefinitions': [before]})[
             'propertiesByReference']['LIBRARY_0']['supportingMuscles'] == muscles
-        assert after['muscleGroups'] == before['muscleGroups']
-        assert after['secondaryMuscleGroups'] == before['secondaryMuscleGroups']
+        projected = project_training_muscles(copy.deepcopy(before))
+        assert after['muscleGroups'] == projected['muscleGroups']
+        assert after['secondaryMuscleGroups'] == projected['secondaryMuscleGroups']
         assert muscle_credits_per_set(after) == muscle_credits_per_set(before)
+
+    from workout_generator_pkg.programming_guidelines import execution_interference_profile, execution_interference_score
+    row, squat = [annotated['exerciseDefinitions'][index] for index in (1, 5)]
+    profiles = [execution_interference_profile([{**definition, 'exerciseCategory': 'HEAVY_COMPOUND'}],
+        [count], [], {}) for definition, count in ((row, 2), (squat, 3))]
+    assert execution_interference_score([0, 1], profiles)[3] == 4
+    assert execution_interference_score([1, 0], profiles)[3] == 6
     assert execution_supporting_muscles({'name': 'Barbell Romanian Deadlift'}) is None
     for muscles in ([], ['lowerBack', 'lowerBack'], ['BACK_LOWER_BACK'], ['unrecognized']):
         assert execution_supporting_muscles({'reviewedExecution': {
@@ -1076,6 +1147,7 @@ def test_coverage_source_projection_retains_unrecognized_or_invalid_structured_t
     from workout_generator_pkg.requirement_accounting import STRUCTURED_REQUIREMENTS_MARKER
 
     for text in ('Use a two-day schedule.', STRUCTURED_REQUIREMENTS_MARKER + '\n{broken json',
-            STRUCTURED_REQUIREMENTS_MARKER + '\n{"sessionsPerWeek": "two"}'):
+            STRUCTURED_REQUIREMENTS_MARKER + '\n{"sessionsPerWeek":3,"sessionsPerWeek":4}',
+            STRUCTURED_REQUIREMENTS_MARKER + '\n{"preferredSessionSeconds":NaN}'):
         sources = {'SOURCE_0': {'role': 'user', 'content': text}}
         assert recipe_contracts._coverage_source_context(sources) == sources

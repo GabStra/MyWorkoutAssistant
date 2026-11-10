@@ -540,6 +540,22 @@ def test_required_native_warmup_rejects_unweighted_replacement_before_patch():
     assert error.value.code == 'replacement_not_eligible'
 
 
+def test_capability_scoped_preparation_keeps_unweighted_replacement_without_native_flag():
+    from workout_generator_pkg.planning_tools import _normalize_replacement_exercise
+
+    _, _, draft, task = _loaded_replacement_case()
+    task['requirements']['executionRules'] = [{'kind': 'warmup', 'coverageKey': None,
+        'exerciseCategory': 'MODERATE_COMPOUND', 'whenSupported': True}]
+    task['recipeDefinitions']['LIBRARY_3'].update(exerciseType='BODY_WEIGHT', equipmentId=None,
+                                                bodyWeightPercentage=65)
+    source = draft['workouts'][0]['exercises'][0]
+    replacement = copy.deepcopy(source)
+    replacement['definition_id'] = 'LIBRARY_3'
+    _normalize_replacement_exercise(replacement, source, 'EXERCISE_0', task)
+    assert replacement['generateWarmUpSets'] is False
+    assert replacement['numWorkSets'] == draft['workouts'][0]['exercises'][0]['numWorkSets']
+
+
 def test_feasible_solver_menu_does_not_remove_semantic_choice_without_a_blocker():
     draft, task = menu_case()
     task['solverMenu'] = {'feasible': True, 'sessions': copy.deepcopy(draft['workouts'])}

@@ -26,17 +26,14 @@ def test_intake_seeds_values_and_exposes_only_unspecified_policy_choices():
     tool = planning_tools.workout_requirements_tool(equipment, messages)['function']['parameters']
     assert 'auditTargets' not in tool['properties']
     assert 'sessionsPerWeek' not in tool['properties']
-    kinds = {rule['properties']['kind']['const']
-             for rule in tool['properties']['executionRules']['items']['oneOf']}
-    assert 'workSets' not in kinds and 'exerciseExposure' in kinds
-    proposed = {'executionRules': [{'kind': 'exerciseExposure',
-        'maximumSessionsPerWeek': 1, 'maximumWeeklySets': 6}]}
+    assert 'executionRules' not in tool['properties']
+    proposed = {'workingSetRIR': {'minimum': 1, 'maximum': 2}}
     validate(proposed, tool)
     result = planning_tools.set_workout_requirements(proposed, messages, equipment)
     assert result['requirements']['auditTargets'] == expected['auditTargets']
     assert result['requirements']['sessionsPerWeek'] == expected['sessionsPerWeek']
     assert expected['executionRules'][0] in result['requirements']['executionRules']
-    assert proposed['executionRules'][0] in result['requirements']['executionRules']
+    assert proposed['workingSetRIR'] == result['requirements']['workingSetRIR']
     assert not planning_tools.requirements_approved(messages, result)
 
 
@@ -45,6 +42,40 @@ def test_mismatched_model_copy_does_not_override_user_values():
     with pytest.raises(planning_tools.PlanningInputError) as error:
         planning_tools.set_workout_requirements({'sessionsPerWeek': 2}, messages, equipment)
     assert error.value.code == 'structured_requirement_mismatch'
+
+
+def test_general_warmup_choices_use_a_native_strict_scalar_enum():
+    from jsonschema import ValidationError
+    from workout_generator_pkg.api_client import _strict_schema_compatible, _strict_wire_schema
+
+    equipment = {'equipments': [{'id': 'bike', 'type': 'CARDIO_MACHINE'}], 'exerciseDefinitions': [
+        {'id': 'ride', 'name': 'Spin Bike Ride', 'exerciseType': 'COUNTDOWN', 'equipmentId': 'bike'},
+        {'id': 'unavailable', 'name': 'Missing Bike', 'exerciseType': 'COUNTDOWN', 'equipmentId': 'missing'}]}
+    schema = planning_tools._general_warmup_selection_schema(equipment)
+    assert schema['enum'] == ['ride']
+    assert 'Spin Bike Ride' in schema['description']
+    wire = _strict_wire_schema(schema)
+    assert _strict_schema_compatible(wire)
+    validate('ride', wire)
+    with pytest.raises(ValidationError):
+        validate('unavailable', wire)
+
+
+def test_requirement_updates_bound_exercise_preferences_to_supported_roles():
+    from jsonschema import ValidationError
+    from workout_generator_pkg.api_client import _strict_parameters_compatible, _strict_wire_schema
+
+    equipment, _, messages = intake_case()
+    candidate = planning_tools.set_workout_requirements({}, messages, equipment)
+    update = planning_tools.workout_requirements_tool(equipment, requirement_messages(candidate))
+    schema = update['function']['parameters']
+    preferences = schema['properties']['updates']['properties']['exerciseSelection']['properties']['preferredByCoverage']
+    assert preferences['additionalProperties'] is False
+    assert 'horizontal_push' in preferences['properties']
+    assert _strict_parameters_compatible(_strict_wire_schema(schema))
+    validate({'updates': {'exerciseSelection': {'preferredByCoverage': {'horizontal_push': ['Press']}}}}, schema)
+    with pytest.raises(ValidationError):
+        validate({'updates': {'exerciseSelection': {'preferredByCoverage': {'invented_role': ['Press']}}}}, schema)
 
 
 def test_existing_balance_default_does_not_look_like_an_unauthorized_change():
@@ -79,17 +110,43 @@ def test_invalid_marked_input_fails_closed(payload):
     assert error.value.code == 'invalid_structured_requirements'
 
 
+def test_historical_coverage_projection_does_not_revalidate_retired_optimization_goals():
+    from jsonschema import ValidationError
+    from workout_generator_pkg.recipe_contracts import _coverage_source_context
+
+    payload = {'sessionsPerWeek': 3, 'trainingDays': [0, 2, 4],
+        'auditTargets': {'maximumSessionSeconds': 5400},
+        'requiredCoverage': [{'key': 'horizontal_push', 'scope': 'weekly', 'intent': 'development'}],
+        'objectiveTiers': [[{'metric': 'relative_distribution', 'target': 0, 'scale': 1}]]}
+    content = STRUCTURED_REQUIREMENTS_MARKER + '\n' + json.dumps(payload)
+    source = {'messageIndex': 0, 'role': 'user', 'content': content}
+    parsed = structured_requirement_source([source], None)
+    assert parsed['requirements'] == payload
+    expected = copy.deepcopy(payload)
+    expected.pop('sessionsPerWeek')
+    expected.pop('trainingDays')
+    expected['auditTargets'].pop('maximumSessionSeconds')
+    projected = _coverage_source_context({'SOURCE_0': source})
+    assert projected['SOURCE_0']['content'] == STRUCTURED_REQUIREMENTS_MARKER + '\n' + json.dumps(expected, sort_keys=True)
+    with pytest.raises(ValidationError):
+        structured_requirement_source([source], planning_tools._REQUIREMENTS)
+    for malformed in ('{"sessionsPerWeek":3,"sessionsPerWeek":4}',
+            '{"preferredSessionSeconds":NaN}', '{}\n' + STRUCTURED_REQUIREMENTS_MARKER + '\n{}'):
+        with pytest.raises(ValueError):
+            structured_requirement_source([{**source, 'content': STRUCTURED_REQUIREMENTS_MARKER + '\n' + malformed}], None)
+
+
 def test_new_structured_amendment_is_seeded_without_recopying_old_requirements():
     equipment, _, messages = intake_case()
     base = planning_tools.set_workout_requirements({}, messages, equipment)
     messages = requirement_messages(base)
     messages.append({'role': 'user', 'content': STRUCTURED_REQUIREMENTS_MARKER
-                     + '\n{"auditTargets":{"weeklyEffectiveSets":{},"perSessionEffectiveSets":{},"maximumSessionSeconds":4200}}'})
+                         + '\n{"auditTargets":{"weeklyEffectiveSets":{"chest":{"minimum":4,"maximum":6}},"perSessionEffectiveSets":{}}}'})
     update = {'baseRequirementsId': base['requirementsId'], 'updates': {}}
     schema = planning_tools.workout_requirements_tool(equipment, messages)['function']['parameters']
     assert 'auditTargets' not in schema['properties']['updates']['properties']
     result = planning_tools.set_workout_requirements(update, messages, equipment)
-    assert result['requirements']['auditTargets']['maximumSessionSeconds'] == 4200
+    assert result['requirements']['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] == 4
     assert result['requirements']['executionRules'] == base['requirements']['executionRules']
     assert not planning_tools.requirements_approved(messages, result)
 

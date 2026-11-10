@@ -157,8 +157,10 @@ def endpoint_status() -> dict:
 
     config = resolve_llm_endpoint()
     require_api_key(config)
-    if not config.is_deepseek:
-        raise RuntimeError("This retained E2E is pinned to the configured DeepSeek-compatible endpoint")
+    # Retained baselines were produced against a hosted DeepSeek-compatible API
+    # (DeepSeek itself or the OpenCode Go gateway fronting the same models).
+    if not config.base_url.startswith("https://"):
+        raise RuntimeError("This retained E2E is pinned to a hosted DeepSeek-compatible endpoint")
     return {"provider": "DeepSeek-compatible", "baseURL": config.base_url, "model": config.model}
 
 

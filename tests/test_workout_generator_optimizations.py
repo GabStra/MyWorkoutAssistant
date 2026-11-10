@@ -11,6 +11,13 @@ from workout_generator_pkg.cancellation import run_cancellable
 from workout_generator_pkg.generation_audit import muscle_credits_per_set
 
 
+@pytest.fixture(autouse=True)
+def _deepseek_endpoint(monkeypatch):
+    """These assertions describe the DeepSeek wire profile, which is no longer the default endpoint."""
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-flash")
+
+
 def equipment():
     return {"exerciseDefinitions": [{"id": "definition", "name": "Bench Press", "exerciseCategory": "HEAVY_COMPOUND",
         "muscleGroups": ["FRONT_CHEST"], "secondaryMuscleGroups": ["FRONT_DELTOIDS", "FRONT_TRICEPS", "BACK_TRICEPS"]}],

@@ -30,7 +30,7 @@ from .programming_guidelines import (GUIDELINE_POLICY, audit_execution_rules, au
 _SESSION = _DRAFT_SCHEMA['properties']['workouts']['items']
 DRAFTING_VERSION = 29
 _GROUP_REPAIR_FIELDS = {'superset', 'restBetweenSetsSeconds', 'restAfterExerciseSeconds',
-                        'restAfterSupersetExerciseSeconds', 'setupSeconds'}
+                        'restAfterSupersetExerciseSeconds'}
 _RETAINED_WORK_FIELDS = ('workerResults', 'workerFailures', 'workerInputHashes',
                         'recipeQualification', 'guidelineVersion', 'draftingVersion', 'prescriptionResults')
 
@@ -79,7 +79,7 @@ def _worker_response_schema(requirements):
         schema['properties'].pop(field, None)
         schema['required'] = [key for key in schema['required'] if key != field]
     exercise = schema['properties']['exercises']['items']
-    for field in ('numWorkSets', 'allocationBounds', 'satisfiesCoverage', 'setupSeconds',
+    for field in ('numWorkSets', 'allocationBounds', 'satisfiesCoverage',
                   'intraSetRestInSeconds', 'generateWarmUpSets'):
         exercise['properties'].pop(field, None)
         exercise['required'] = [key for key in exercise['required'] if key != field]
@@ -144,12 +144,13 @@ def _bind_worker_recipe_subset(selection, session, *, preserve_group_fields=Fals
 
         source = sources[occurrence]
         if reset_worker_defaults:
-            for key in ('setupSeconds', 'intraSetRestInSeconds', 'generateWarmUpSets'):
+            for key in ('intraSetRestInSeconds', 'generateWarmUpSets'):
                 item.pop(key, None)
         item.update({key: copy.deepcopy(value) for key, value in source.items()
                      if not preserve_group_fields or key not in _GROUP_REPAIR_FIELDS or key not in item})
         if reset_worker_defaults:
             item.setdefault('generateWarmUpSets', False)
+        item.pop('setupSeconds', None)
     return session
 
 
@@ -357,10 +358,16 @@ _STRUCTURE_EXERCISE = {'type': 'object', 'properties': {
 _STRUCTURE_EXERCISE['properties']['allocationBounds'] = {
     'anyOf': [_STRUCTURE_EXERCISE['properties']['allocationBounds'], {'type': 'null'}],
     'description': 'Source-authorized flexibility for Python allocation. Omit or use null to lock this occurrence to numWorkSets. Never widen a user-fixed count.'}
+_SEMANTIC_SELECTION_SCHEMA = {'type': 'object', 'properties': {
+    'mode': {'const': 'selected_menu'},
+    'definitionIds': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
+        'items': {'type': 'string', 'minLength': 1}}},
+    'required': ['mode', 'definitionIds'], 'additionalProperties': False}
 _CANONICAL_PREPARATION_SCHEMA = {'type': 'object', 'properties': {
         'requirementsId': {'type': 'string'},
         'baseDraftId': {'type': ['string', 'null'], 'pattern': '^REVISION_[0-9]+$'},
         'name': _DRAFT_SCHEMA['properties']['name'],
+        'semanticSelection': copy.deepcopy(_SEMANTIC_SELECTION_SCHEMA),
         'sessions': {'type': 'array', 'minItems': 1, 'maxItems': 21, 'items': {
             'type': 'object', 'properties': {
                 **{key: copy.deepcopy(_SESSION['properties'][key]) for key in
@@ -390,20 +397,31 @@ _movement_block['required'] = ['exercises']
 _movement_block['description'] = 'Propose movement candidates and preferred grouping. Python chooses session placement, retained movements and counts.'
 PREPARE_WORKOUT_SESSIONS_TOOL = {'type': 'function', 'function': {
     'name': 'prepare_workout_sessions', 'parameters': {'type': 'object', 'properties': {
-        'requirementsId': copy.deepcopy(_CANONICAL_PREPARATION_SCHEMA['properties']['requirementsId']),
-        'baseDraftId': copy.deepcopy(_CANONICAL_PREPARATION_SCHEMA['properties']['baseDraftId']),
+        'selectionMode': {'const': 'selected_menu'},
         'definition_ids': {'type': 'array', 'minItems': 1, 'maxItems': 100, 'uniqueItems': True,
             'items': copy.deepcopy(_STRUCTURE_EXERCISE['properties']['definition_id'])},
-    }, 'required': ['requirementsId', 'baseDraftId', 'definition_ids'], 'additionalProperties': False},
-    'description': ('Select one weekly shortlist of eligible exercise definitions for all remaining approved sessions. '
-        'These are candidate recipes, not committed exercises or a session plan. Python owns the session slots, '
+    }, 'required': ['selectionMode', 'definition_ids'], 'additionalProperties': False},
+    'description': ('Select the complete weekly exercise menu for all remaining approved sessions. '
+        'Every selected movement must appear in the solved week; Python cannot add or drop movements. '
+        'Use the existing selector judgment for suitability, complementary stimulus and supported execution; '
+        'ask about material unresolved safety or equipment facts. Python owns the session slots, '
         'calendar, placement, sets, prescriptions, ordering and compatible grouping under the approved requirements. '
-        'No approval or export occurs.')}}
+        'If this menu is infeasible, revise the menu without changing approved requirements. '
+        'When a meaningful exercise-selection tradeoff remains, supply one complete alternative_definition_ids menu. '
+        'Python qualifies and solves each menu separately before a semantic choice. No approval or export occurs.')}}
+PREPARE_WORKOUT_SESSIONS_TOOL['function']['parameters']['properties']['alternative_definition_ids'] = copy.deepcopy(
+    PREPARE_WORKOUT_SESSIONS_TOOL['function']['parameters']['properties']['definition_ids'])
 
 
 def _preparation_schema(arguments, allowed_definition_ids=None):
     if isinstance(arguments, dict) and 'sessions' not in arguments:
         schema = copy.deepcopy(PREPARE_WORKOUT_SESSIONS_TOOL['function']['parameters'])
+        for field in ('requirementsId', 'baseDraftId'):
+            schema['properties'][field] = copy.deepcopy(_CANONICAL_PREPARATION_SCHEMA['properties'][field])
+            schema['required'].append(field)
+        if 'selectionMode' not in arguments:
+            schema['properties'].pop('selectionMode')
+            schema['required'].remove('selectionMode')
         return _apply_preparation_choice_enum(schema, allowed_definition_ids)
     sessions = arguments.get('sessions', []) if isinstance(arguments, dict) else []
     schema = _CANONICAL_PREPARATION_SCHEMA
@@ -435,7 +453,9 @@ def _apply_preparation_choice_enum(schema, allowed_definition_ids):
         return schema
     choices = sorted(set(allowed_definition_ids))
     if 'definition_ids' in schema['properties']:
-        schema['properties']['definition_ids']['items'].update({'enum': choices} if choices else {'not': {}})
+        for field in ('definition_ids', 'alternative_definition_ids'):
+            if field in schema['properties']:
+                schema['properties'][field]['items'].update({'enum': choices} if choices else {'not': {}})
         return schema
     session_items = schema['properties']['sessions']['items']
     if not isinstance(session_items, list):
@@ -496,10 +516,6 @@ def prepare_workout_sessions_tool(messages, equipment, training_history=None, *,
                preparation_selection_options(messages, equipment, training_history))
     tool = copy.deepcopy(PREPARE_WORKOUT_SESSIONS_TOOL)
     _apply_preparation_choice_enum(tool['function']['parameters'], options['admissibleDefinitionIds'])
-    _, receipt = _latest_result(messages, 'set_workout_requirements')
-    if receipt.get('requirementsId'):
-        tool['function']['parameters']['properties']['requirementsId']['const'] = receipt['requirementsId']
-    tool['function']['parameters']['properties']['baseDraftId']['const'] = latest_draft_submission(messages)[1]
     return tool
 
 
@@ -568,8 +584,19 @@ def _expand_weekly_shortlist(arguments, messages, equipment):
         'timesCompletedInAWeek': 1, 'exercises': [
             {'definition_id': reference, 'numWorkSets': 1, 'superset': None, 'satisfiesCoverage': []}
             for reference in arguments['definition_ids']]} for index in range(remaining)]
-    return {'requirementsId': arguments['requirementsId'], 'baseDraftId': arguments['baseDraftId'],
+    result = {'requirementsId': arguments['requirementsId'], 'baseDraftId': arguments['baseDraftId'],
         'name': (existing or {}).get('name') or 'Workout program', 'sessions': sessions}
+    if arguments.get('selectionMode') == 'selected_menu':
+        from .recipe_contracts import library_definitions_by_reference
+        definitions = library_definitions_by_reference(equipment)
+        unknown = set(arguments['definition_ids']) - definitions.keys()
+        if unknown:
+            raise PlanningInputError('prepared_library_reference',
+                'The selected menu contains unknown exercise definitions.', '/definition_ids',
+                'Select supplied eligible library definitions only.')
+        result['semanticSelection'] = {'mode': 'selected_menu',
+            'definitionIds': sorted(definitions[reference]['id'] for reference in arguments['definition_ids'])}
+    return result
 
 
 def _expand_preparation_blocks(arguments):
@@ -640,11 +667,16 @@ def preparation_patch_tool(task):
             'basePreparationId': {'const': task['basePreparationId']},
             'definition_ids': schema['properties']['definition_ids']}
         schema['required'] = ['basePreparationId', 'definition_ids']
+        if task['arguments'].get('selectionMode') == 'selected_menu':
+            schema['properties']['selectionMode'] = {'const': 'selected_menu'}
+            schema['required'].append('selectionMode')
         _apply_preparation_choice_enum(schema, task.get('allowedDefinitionIds'))
         tool['function']['parameters'] = schema
         tool['function']['description'] = (
             'Correct the weekly exercise shortlist using eligible definition_ids. Python preserves approved '
             'requirements and accepted workouts, and rebuilds all remaining session slots and prescriptions.')
+        if task['arguments'].get('selectionMode') == 'selected_menu':
+            tool['function']['description'] += ' Preserve selected_menu mode; all corrected choices remain binding.'
         return tool
     if not task.get('blockRepair'):
         return tool
@@ -1157,8 +1189,10 @@ def prepare_workout_sessions(arguments, messages, equipment, history_fingerprint
         history_fingerprint = training_history.fingerprint
     arguments = copy.deepcopy(arguments)
     arguments = resolve_preparation_patch(arguments, messages, equipment)
-    if isinstance(arguments, dict) and 'baseDraftId' not in arguments and latest_draft_submission(messages)[1] is None:
-        arguments = {**arguments, 'baseDraftId': None}
+    if isinstance(arguments, dict):
+        _, receipt = _latest_result(messages, 'set_workout_requirements')
+        arguments.setdefault('requirementsId', receipt.get('requirementsId'))
+        arguments.setdefault('baseDraftId', latest_draft_submission(messages, equipment)[1])
     shortlist_arguments = (copy.deepcopy(arguments)
         if isinstance(arguments, dict) and 'sessions' not in arguments else None)
     try:
@@ -1187,10 +1221,42 @@ def prepare_workout_sessions(arguments, messages, equipment, history_fingerprint
                     detail.update(textFieldContract=contract, repair=contract['repair'])
             raise PlanningInputError('invalid_preparation_arguments', 'Correct the rejected preparation fields.', '/',
                 'Apply a scoped patch; preserve all valid choices and requirements.', errors=details)
+        alternative_ids = arguments.pop('alternative_definition_ids', None)
+        if alternative_ids is not None and set(alternative_ids) == set(arguments['definition_ids']):
+            raise PlanningInputError('duplicate_menu_alternative', 'The alternative must change exercise membership.',
+                '/alternative_definition_ids', 'Omit an equivalent alternative or select a meaningfully different menu.')
+        primary_arguments = copy.deepcopy(arguments)
         arguments = (_expand_weekly_shortlist(arguments, messages, equipment) if weekly_shortlist
                      else _expand_preparation_blocks(arguments))
-        result = _prepare_week(arguments, messages, equipment, history_fingerprint, preserve_prior_menu,
-            training_history=training_history)
+        primary_failure = None
+        try:
+            result = _prepare_week(arguments, messages, equipment, history_fingerprint, preserve_prior_menu,
+                training_history=training_history)
+        except PlanningInputError as error:
+            if alternative_ids is None or error.code != 'infeasible_set_allocation':
+                raise
+            primary_failure = error
+            result = None
+        if alternative_ids is not None:
+            alternative_arguments = {**primary_arguments, 'definition_ids': alternative_ids}
+            try:
+                alternative = _prepare_week(
+                    _expand_weekly_shortlist(alternative_arguments, messages, equipment),
+                    messages, equipment, history_fingerprint, training_history=training_history)
+                alternative['preparationArguments'] = alternative_arguments
+            except PlanningInputError as error:
+                if result is None or error.code != 'infeasible_set_allocation':
+                    raise
+                result['menuPreparationErrors'] = {'candidate': planning_tool_failure(
+                    'prepare_workout_sessions', error, alternative_arguments)}
+            else:
+                if result is None:
+                    result = alternative
+                    result['menuPreparationErrors'] = {'baseline': planning_tool_failure(
+                        'prepare_workout_sessions', primary_failure, primary_arguments)}
+                else:
+                    result['alternativePreparation'] = alternative
+            result['preparationId'] = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
         if shortlist_arguments is not None:
             result['preparationArguments'] = shortlist_arguments
         return result
@@ -1219,10 +1285,12 @@ def revalidate_saved_preparation(messages, equipment, history_fingerprint=None, 
         return None
     arguments = copy.deepcopy(arguments)
     try:
-        expanded = (_expand_weekly_shortlist(arguments, messages, equipment)
-            if 'sessions' not in arguments else _expand_preparation_blocks(arguments))
-        result = _prepare_week(expanded, messages, equipment, history_fingerprint,
-            training_history=training_history)
+        if 'sessions' not in arguments:
+            result = prepare_workout_sessions(arguments, messages, equipment, history_fingerprint,
+                training_history=training_history)
+        else:
+            result = _prepare_week(_expand_preparation_blocks(arguments), messages, equipment, history_fingerprint,
+                training_history=training_history)
         if 'sessions' not in arguments:
             result['preparationArguments'] = copy.deepcopy(arguments)
     except Exception as error:
@@ -1366,6 +1434,7 @@ def _infeasible_menu_credit_diagnostic(sessions, candidates, requirements_record
 def _cached_preparation(messages, arguments, equipment, history_fingerprint=None):
     def physical_inputs(value):
         return {'requirementsId': value.get('requirementsId'), 'baseDraftId': value.get('baseDraftId'),
+            'semanticSelection': value.get('semanticSelection'),
             'sessions': [{key: day.get(key) for key in ('exercises', 'trainingDays', 'timesCompletedInAWeek')}
                          for day in value['sessions']]}
     expected = physical_inputs(arguments)
@@ -1417,6 +1486,59 @@ def _preparation_authority(messages, arguments, equipment, history_fingerprint):
         'restrictionPolicy': copy.deepcopy(receipt.get('restrictionPolicy')),
         'sourceMessages': source_message_context(requirement_sources(messages)),
     }
+
+
+def current_semantic_selection(messages, equipment, requirements_id=None, history_fingerprint=None):
+    """Keep committed membership until an admitted semantic repair replaces it."""
+    from .planning_tools import active_requirement_result
+    from .programming_policy import semantic_selection_ids
+
+    preparations = [(index, payload) for index, payload in _retained_tool_results(messages, 'prepare_workout_sessions')
+        if payload.get('semanticSelection') and payload.get('setAllocation', {}).get('feasible') is True]
+    if not preparations:
+        return None
+    index, prepared = preparations[-1]
+    _, receipt = active_requirement_result(messages)
+    selection = prepared.get('semanticSelection')
+    if (not requirements_approved(messages)
+            or not isinstance(selection, dict)
+            or not Draft7Validator(_SEMANTIC_SELECTION_SCHEMA).is_valid(selection)
+            or prepared.get('requirementsId') != (requirements_id or receipt.get('requirementsId'))
+            or prepared.get('requirementsId') != receipt.get('requirementsId')
+            or prepared.get('libraryFingerprint') != library_fingerprint(equipment)
+            or prepared.get('historyFingerprint') != history_fingerprint
+            or prepared.get('sourceMessages') != source_message_context(requirement_sources(messages[:index]))):
+        raise PlanningInputError('semantic_selection_stale',
+            'The committed exercise menu no longer matches the approved requirements, library, history or source identity.',
+            '/semanticSelection', 'Refresh semantic exercise selection against current approved inputs; do not reopen an unconstrained candidate pool.')
+    fixed, revision = latest_draft_submission(messages[:index], equipment)
+    if revision != prepared.get('baseDraftId'):
+        raise PlanningInputError('semantic_selection_stale',
+            'The committed menu lost its accepted workout scope.', '/semanticSelection',
+            'Refresh semantic exercise selection against the current accepted workouts.')
+    selection = {**copy.deepcopy(selection), 'fixedWorkouts': copy.deepcopy((fixed or {}).get('workouts', []))}
+    selected = selected_fresh_programming_artifact(messages, equipment, history_fingerprint)
+    if selected and selected.get('semanticSelection'):
+        selection = copy.deepcopy(selected['semanticSelection'])
+        decision_id = selected.get('programmingDecision', {}).get('decisionId')
+        if decision_id:
+            index = max([index, *(decision_index for decision_index, decision in
+                _retained_tool_results(messages, 'record_planning_decisions')
+                if decision.get('passed') and decision.get('decisionReview', {}).get('passed')
+                and decision_id in decision.get('decisions', {}))])
+    audits = [(audit_index, audit) for audit_index, audit in _retained_tool_results(messages, 'audit_workout_plan')
+        if audit_index > index and audit.get('semanticSelection')]
+    if audits:
+        _, audit = audits[-1]
+        if any(audit.get(key) != value for key, value in {
+                'requirementsId': prepared['requirementsId'], 'libraryFingerprint': prepared['libraryFingerprint'],
+                'historyFingerprint': history_fingerprint}.items()):
+            raise PlanningInputError('semantic_selection_stale',
+                'The repaired semantic menu does not match current approved inputs.', '/semanticSelection',
+                'Refresh semantic exercise selection; preserve the last committed menu until its replacement is admitted.')
+        selection = copy.deepcopy(audit['semanticSelection'])
+    semantic_selection_ids(selection, equipment)
+    return selection
 
 
 def _same_source_budget_authority(saved, current):
@@ -1737,6 +1859,8 @@ def retained_worker_candidate_pool(messages, baseline_submission, equipment, his
             'fixedWorkouts': fixed_workouts,
             'scope': 'retained_prepared_variable_recipe_pool_only; not a full library search',
             'preparationId': preparation_id,
+            **({'semanticSelection': copy.deepcopy(prepared['semanticSelection'])}
+                if prepared.get('semanticSelection') else {}),
             'sourceWorkingSetBudget': copy.deepcopy(budget),
             'candidateUniverseCoverage': _candidate_universe_coverage(
                 prepared, qualification, worker_results, workers.get('excludedWarmupRecipes', []),
@@ -1861,6 +1985,7 @@ def _prepare_week(arguments, messages, equipment, history_fingerprint=None, pres
     if arguments['requirementsId'] != receipt['requirementsId'] or arguments['baseDraftId'] != revision:
         raise ValueError('Week preparation is stale; use current requirementsId and currentDraftId.')
     requirements = receipt['requirements']
+    semantic_selection = arguments.get('semanticSelection')
     frequency = sum(day['timesCompletedInAWeek'] for day in (existing or {}).get('workouts', []))
     proposed_frequency = sum(day['timesCompletedInAWeek'] for day in arguments['sessions'])
     if requirements.get('sessionsPerWeek') != frequency + proposed_frequency:
@@ -1878,15 +2003,17 @@ def _prepare_week(arguments, messages, equipment, history_fingerprint=None, pres
             'Preserve explicit user-selected days and ask about a genuine scheduling conflict.',
             errors=schedule_errors)
     authority = _preparation_authority(messages, arguments, equipment, history_fingerprint)
-    prior_menu_source = _prior_preparation_for_authority(messages, authority) if preserve_prior_menu else None
+    prior_menu_source = (_prior_preparation_for_authority(messages, authority)
+        if preserve_prior_menu and not semantic_selection else None)
     recipe_input_sessions = copy.deepcopy(arguments['sessions'])
     if prior_menu_source:
         recipe_input_sessions = _union_prior_recipe_menu(recipe_input_sessions, prior_menu_source)
-    reviewed_references = _reviewed_recipe_candidate_references(equipment, receipt)
-    from .repair_execution import incumbent_candidate_references
-    reviewed_references = sorted(set(reviewed_references) | set(
-        incumbent_candidate_references(messages, equipment, history_fingerprint)))
-    recipe_input_sessions = _add_reviewed_recipe_candidates(recipe_input_sessions, reviewed_references)
+    if not semantic_selection:
+        reviewed_references = _reviewed_recipe_candidate_references(equipment, receipt)
+        from .repair_execution import incumbent_candidate_references
+        reviewed_references = sorted(set(reviewed_references) | set(
+            incumbent_candidate_references(messages, equipment, history_fingerprint)))
+        recipe_input_sessions = _add_reviewed_recipe_candidates(recipe_input_sessions, reviewed_references)
     setup_concerns = _history_configuration_concerns(recipe_input_sessions, equipment, training_history, messages)
     selection_errors = _history_configuration_selection_errors(arguments['sessions'], setup_concerns)
     if selection_errors:
@@ -1945,6 +2072,7 @@ def _prepare_week(arguments, messages, equipment, history_fingerprint=None, pres
     shared_source_budget = _prior_source_working_set_budget(messages, source_budget_authority)
     allocation = allocate_prepared_sets(arguments['sessions'], candidates, requirements, existing, equipment,
         receipt.get('restrictionPolicy'), select_movements=True,
+        semantic_selection=semantic_selection,
         source_working_set_budget=shared_source_budget,
         execution_definitions=execution_decision_definitions(messages, equipment))
     if not allocation['feasible']:
@@ -2127,9 +2255,9 @@ def _warmup_exclusion_disclosures(removed, equipment, requirements):
     definitions = {f'LIBRARY_{index}': definition for index, definition in enumerate(
         sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id']))}
     equipment_ids = {item['id'] for item in equipment.get('equipments', [])}
-    warmup_roles = {rule['coverageKey'] for rule in (requirements or {}).get('executionRules', [])
-        if rule.get('kind') == 'warmup'}
-    from .programming_guidelines import native_warmup_supported
+    warmup_rules = [rule for rule in (requirements or {}).get('executionRules', [])
+        if rule.get('kind') == 'warmup' and not rule.get('whenSupported')]
+    from .programming_guidelines import native_warmup_supported, warmup_rule_matches
     disclosures = []
     for item in removed:
         reference = item.get('definition_id')
@@ -2143,7 +2271,9 @@ def _warmup_exclusion_disclosures(removed, equipment, requirements):
         disclosures.append({
             'definitionId': reference,
             'exerciseName': definition.get('name') if definition else None,
-            'requiredWarmupCoverageKeys': sorted(warmup_roles.intersection(item.get('satisfiesCoverage', []))),
+            'requiredWarmupCoverageKeys': sorted({rule['coverageKey'] for rule in warmup_rules
+                if rule.get('coverageKey') is not None
+                and warmup_rule_matches(rule, item.get('satisfiesCoverage', []), definition)}),
             'reasonCode': 'native_warmup_unavailable',
             'nativeWarmupSupported': warmup_supported,
             'configurationFacts': facts,
@@ -2311,18 +2441,20 @@ def _one_set_development_transfers(submission, requirements, equipment, *, fixed
 
 def _same_family_consolidations(submission, requirements, equipment, *, fixed_workouts=0):
     """Offer fewer same-session family occurrences, keeping explicit prescriptions and bounds authoritative."""
-    from .recipe_contracts import library_definitions_by_reference, reviewed_exercise_family_evidence
+    from .recipe_contracts import (library_definitions_by_reference, reviewed_exercise_family_evidence,
+        reviewed_execution_properties)
     from .joint_planning import overlapping_movement_pairs, _rest_options
     from .programming_guidelines import canonical_execution_order_draft
 
     definitions = library_definitions_by_reference(equipment)
     families = reviewed_exercise_family_evidence(equipment)['familyByReference']
+    execution = reviewed_execution_properties(equipment)['propertiesByReference']
     weekly = Counter()
     for day in submission['workouts']:
         for item in day['exercises']:
             weekly[item['definition_id']] += item['numWorkSets'] * day['timesCompletedInAWeek']
     for day_index, day in enumerate(submission['workouts'][fixed_workouts:], fixed_workouts):
-        pairs = overlapping_movement_pairs(day['exercises'], families)
+        pairs = overlapping_movement_pairs(day['exercises'], families, execution)
         for first, second in pairs:
             if not families.get(first) or families.get(first) != families.get(second):
                 continue
@@ -2378,13 +2510,11 @@ def _fresh_development_tradeoff(submission, requirements_record, equipment, mess
     else:
         alternatives = chain(alternatives, _one_set_development_transfers(
             submission, requirements, equipment, fixed_workouts=fixed_workouts))
-    from .allocation import _audit_raw, _joint_candidate_comparison_context
+    from .allocation import _joint_candidate_comparison_context
     from .joint_planning import compare_audited_joint_candidates
-    from .planning_decisions import (candidate_acceptance_scope, confirmed_setup_access,
-        execution_decision_definitions)
+    from .planning_decisions import candidate_acceptance_scope, execution_decision_definitions
     from .repair_execution import apply_repair_promotion_gate
     execution_definitions = execution_decision_definitions(messages, equipment)
-    effective_requirements = confirmed_setup_access(messages, equipment, requirements)['requirements']
     restrictions = requirements_record.get('restrictionPolicy')
     context = _joint_candidate_comparison_context(submission['workouts'], submission['workouts'],
         requirements, equipment, messages, training_history, restrictions, source_working_set_budget,
@@ -2397,25 +2527,12 @@ def _fresh_development_tradeoff(submission, requirements_record, equipment, mess
     context['fixedWorkouts'] = copy.deepcopy(submission['workouts'][:fixed_workouts])
     for reference, definition in context.get('setupDefinitions', {}).items():
         context['setupDefinitions'][reference] = execution_definitions.get(definition['id'], definition)
-    validate_loads = (training_history.load_suitability_validator(messages, equipment)
-        if training_history is not None else None)
-
+    semantic_selection = current_semantic_selection(messages, equipment,
+        requirements_id=requirements_record['requirementsId'],
+        history_fingerprint=getattr(training_history, 'fingerprint', None))
     def audited(draft):
-        validate(draft, _DRAFT_SCHEMA)
-        plan, report = _audit_raw(draft, equipment, effective_requirements, restrictions,
-            allow_educated_load_guesses, execution_definitions=execution_definitions)
-        apply_native_load_calibration_policy(plan, messages, equipment,
-            getattr(training_history, 'fingerprint', None),
-            allow_educated_load_guesses=allow_educated_load_guesses)
-        audit_execution_rules(draft, effective_requirements, report, plan)
-        audit_execution_details(draft, effective_requirements, report)
-        audit_training_schedule(draft['workouts'], requirements, report)
-        if validate_loads:
-            report['errors'].extend(validate_loads(plan))
-        return {'requirementsId': requirements_record['requirementsId'],
-            'submittedDraft': copy.deepcopy(draft), 'audit': report,
-            'libraryFingerprint': library_fingerprint(equipment),
-            'historyFingerprint': getattr(training_history, 'fingerprint', None)}
+        return _audit_fresh_menu({'proposedSubmission': draft}, {'semanticSelection': semantic_selection}, requirements_record, equipment,
+            messages, training_history, allow_educated_load_guesses)
 
     baseline = audited(submission)
     baseline_scope = candidate_acceptance_scope(baseline)
@@ -2459,8 +2576,19 @@ def selected_fresh_programming_artifact(messages, equipment, history_fingerprint
     from .planning_decisions import candidate_acceptance_scope
     from .repair_execution import resolved_programming_selection
     _, requirements = _latest_result(messages, 'set_workout_requirements')
+    _, preparation = _latest_result(messages, 'prepare_workout_sessions')
     current_library = library_fingerprint(equipment)
     for _, workers in reversed(_retained_tool_results(messages, 'draft_workout_sessions')):
+        if preparation.get('preparationId') and workers.get('preparationId') != preparation['preparationId']:
+            continue
+        menu_results = workers.get('menuResults') or {}
+        valid_menus = [value for value in menu_results.values() if candidate_acceptance_scope(value) is not None]
+        if (len(valid_menus) == 1 and workers.get('submittedDraft') == valid_menus[0]['submittedDraft']
+                and candidate_acceptance_scope(workers) == candidate_acceptance_scope(valid_menus[0])
+                and workers.get('requirementsId') == requirements.get('requirementsId')
+                and workers.get('libraryFingerprint') == current_library
+                and workers.get('historyFingerprint') == history_fingerprint):
+            return copy.deepcopy(valid_menus[0])
         comparison = workers.get('jointCandidateComparison') or {}
         artifacts = comparison.get('programmingArtifacts') or {}
         if set(artifacts) != {'baseline', 'candidate'}:
@@ -2477,6 +2605,7 @@ def selected_fresh_programming_artifact(messages, equipment, history_fingerprint
         if selected is not None:
             return {**copy.deepcopy(artifacts[selected['selection']]), 'programmingDecision': selected,
                 'jointCandidateComparison': copy.deepcopy(comparison)}
+        return None
     return None
 
 
@@ -2490,7 +2619,8 @@ def accepted_fresh_programming_artifact(result, equipment, messages, history_fin
     if (selected is None or candidate_acceptance_scope(selected) != candidate_acceptance_scope(result)
             or selected['submittedDraft'] != result.get('submittedDraft')):
         return None
-    return {key: selected[key] for key in ('programmingDecision', 'jointCandidateComparison')}
+    return {key: selected[key] for key in ('programmingDecision', 'jointCandidateComparison', 'jointPlanning')
+        if key in selected}
 
 
 def _worker_source_joint_proof(workers):
@@ -2537,9 +2667,12 @@ def _resume_fresh_programming_choice(previous, preparation, requirements_record,
     result.update(submittedDraft=copy.deepcopy(chosen['submittedDraft']),
         proposedSubmission=copy.deepcopy(chosen['submittedDraft']), audit=copy.deepcopy(chosen['audit']),
         programmingDecision=selected)
+    for field in ('semanticSelection', 'jointPlanning'):
+        if field in chosen:
+            result[field] = copy.deepcopy(chosen[field])
     for field in ('userQuestion', 'passed', 'programmingDecisionChoices', 'errors', 'jointPromotionGate'):
         result.pop(field, None)
-    if selected['selection'] == 'candidate':
+    if selected['selection'] == 'candidate' and 'jointPlanning' not in chosen:
         baseline = result['jointCandidateComparison']['programmingArtifacts']['baseline']
         if result.get('jointPlanning'):
             baseline['jointPlanning'] = result.pop('jointPlanning')
@@ -2573,9 +2706,207 @@ def _prescription_payload(recipes, requirements, prepared, contracts, planning_s
         'equipmentLoadOptions': options, 'programmingGuidelines': GUIDELINE_POLICY}
 
 
+def _merge_menu_qualifications(*receipts):
+    hashes, contracts, conflicts = {}, {}, []
+    for receipt in receipts:
+        if not isinstance(receipt, dict):
+            continue
+        conflicts.extend(copy.deepcopy(receipt.get('qualificationConflicts', [])))
+        for reference, value in receipt.get('inputHashes', {}).items():
+            if reference in hashes and hashes[reference] != value:
+                conflicts.append({'definition_id': reference, 'retainedInputHash': hashes[reference],
+                    'conflictingInputHash': value})
+            else:
+                hashes[reference] = value
+        for contract in receipt.get('contracts', []):
+            reference = contract['definition_id']
+            if reference in contracts and contracts[reference] != contract:
+                conflicts.append({'definition_id': reference, 'retainedContract': contracts[reference],
+                    'conflictingContract': copy.deepcopy(contract)})
+            else:
+                contracts[reference] = copy.deepcopy(contract)
+    result = {'inputHashes': hashes, 'contracts': [contracts[key] for key in sorted(contracts)],
+        'inputHash': hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()}
+    if conflicts:
+        result['qualificationConflicts'] = conflicts
+    return result
+
+
+def _audit_fresh_menu(result, prepared, requirements, equipment, messages, training_history,
+                      allow_educated_load_guesses):
+    from .allocation import _audit_raw
+    from .generation_audit import audit_semantic_selection
+    from .planning_decisions import confirmed_setup_access, execution_decision_definitions
+
+    draft = result['proposedSubmission']
+    validate(draft, _DRAFT_SCHEMA)
+    effective = confirmed_setup_access(messages, equipment, requirements['requirements'])['requirements']
+    plan, report = _audit_raw(draft, equipment, effective, requirements.get('restrictionPolicy'),
+        allow_educated_load_guesses, execution_definitions=execution_decision_definitions(messages, equipment))
+    apply_native_load_calibration_policy(plan, messages, equipment,
+        getattr(training_history, 'fingerprint', None),
+        allow_educated_load_guesses=allow_educated_load_guesses)
+    audit_execution_rules(draft, effective, report, plan)
+    audit_execution_details(draft, effective, report)
+    audit_training_schedule(draft['workouts'], effective, report)
+    selection = None
+    if prepared.get('semanticSelection'):
+        selection = copy.deepcopy(prepared['semanticSelection'])
+        if 'fixedWorkouts' not in selection:
+            fixed, _ = latest_draft_submission(messages, equipment)
+            selection['fixedWorkouts'] = copy.deepcopy((fixed or {}).get('workouts', []))
+        audit_semantic_selection(report, draft, selection, equipment)
+    if training_history is not None:
+        report['errors'].extend(training_history.load_suitability_validator(messages, equipment)(plan))
+    return {**copy.deepcopy(result), 'submittedDraft': copy.deepcopy(draft), 'audit': report,
+        'requirementsId': requirements['requirementsId'], 'libraryFingerprint': library_fingerprint(equipment),
+        'historyFingerprint': getattr(training_history, 'fingerprint', None),
+        **({'semanticSelection': selection} if selection is not None else {})}
+
+
+def _compare_fresh_menus(baseline, candidate, prepared, requirements, equipment, messages,
+                         training_history, qualification):
+    from .allocation import _joint_candidate_comparison_context
+    from .joint_planning import compare_audited_joint_candidates
+    from .planning_decisions import candidate_acceptance_scope
+    from .repair_execution import apply_repair_promotion_gate
+
+    context = _joint_candidate_comparison_context(baseline['submittedDraft']['workouts'],
+        candidate['submittedDraft']['workouts'], requirements['requirements'], equipment, messages,
+        training_history, requirements.get('restrictionPolicy'), prepared.get('sourceWorkingSetBudget'),
+        qualification=qualification)
+    if context is None:
+        return {**baseline, 'passed': False,
+            'instruction': 'Both menus are saved. Current comparison authority is incomplete; preserve both artifacts without rerunning workers.',
+            'userQuestion': {'question': 'The two menus cannot yet be compared under one current evidence authority.', 'options': []}}
+    context['fixedWorkouts'] = copy.deepcopy(baseline['semanticSelection']['fixedWorkouts'])
+    comparison = compare_audited_joint_candidates(
+        {'workouts': baseline['submittedDraft']['workouts'], 'audit': baseline['audit'], 'searchStatus': 'feasible'},
+        {'workouts': candidate['submittedDraft']['workouts'], 'audit': candidate['audit'], 'searchStatus': 'feasible'},
+        requirements=requirements['requirements'], context=context)
+    comparison['baselineAcceptanceScope'] = candidate_acceptance_scope(baseline)
+    comparison['decision'] = 'requires_programming_decision'
+    comparison['reason'] = 'Distinct exercise menus require semantic selection; numerical objectives do not establish equivalent suitability or stimulus.'
+    comparison.setdefault('programmingTradeoff', {}).update(status='requires_programming_decision')
+    comparison['programmingArtifacts'] = {'baseline': baseline, 'candidate': candidate}
+    gated = apply_repair_promotion_gate(candidate, comparison, messages=messages)
+    return {**gated, 'jointCandidateComparison': comparison}
+
+
+def _fresh_semantic_menu_tradeoff(submission, joint, prepared, requirements, equipment, messages,
+                                 training_history, qualification, allow_educated_load_guesses):
+    """Native-audit the solver's hypothetical omission and return it to semantic selection."""
+    from .planning_decisions import candidate_acceptance_scope
+
+    alternative = joint.get('completeCandidateRefinement', {}).get('semanticMenuAlternative')
+    if not alternative:
+        return None
+    proof = copy.deepcopy({key: value for key, value in joint.items() if key not in ('sessions', 'audit')})
+    proof['completeCandidateRefinement'].pop('semanticMenuAlternative', None)
+    baseline = _audit_fresh_menu({'proposedSubmission': submission, 'jointPlanning': proof},
+        prepared, requirements, equipment, messages, training_history, allow_educated_load_guesses)
+    revised = {**prepared, 'semanticSelection': alternative['semanticSelection']}
+    candidate = _audit_fresh_menu({
+        'proposedSubmission': {**submission, 'workouts':
+            copy.deepcopy(alternative['semanticSelection']['fixedWorkouts'] + alternative['sessions'])},
+        'jointPlanning': alternative['jointPlanning']}, revised,
+        requirements, equipment, messages, training_history, allow_educated_load_guesses)
+    if candidate_acceptance_scope(baseline) is None or candidate_acceptance_scope(candidate) is None:
+        return None
+    return _compare_fresh_menus(baseline, candidate, prepared, requirements, equipment,
+        messages, training_history, qualification)
+
+
 def draft_workout_sessions(client, arguments, messages, equipment, planning_state,
                            logger=None, progress=None, checkpoint=None, training_history=None,
                            allow_educated_load_guesses=True):
+    _, prepared = _latest_result(messages, 'prepare_workout_sessions')
+    options = dict(logger=logger, progress=progress, checkpoint=checkpoint,
+        training_history=training_history, allow_educated_load_guesses=allow_educated_load_guesses)
+    if not prepared.get('alternativePreparation'):
+        return _draft_workout_sessions(client, arguments, messages, equipment, planning_state, **options)
+    require_approved_requirements(messages)
+    _, requirements = _latest_result(messages, 'set_workout_requirements')
+    _, revision = latest_draft_submission(messages, equipment)
+    history = getattr(training_history, 'fingerprint', None)
+    identity = {key: prepared.get(key) for key in ('preparationId', 'requirementsId', 'baseDraftId',
+        'libraryFingerprint', 'historyFingerprint', 'draftingVersion')}
+    if (arguments != {'preparationId': prepared.get('preparationId')}
+            or prepared.get('requirementsId') != requirements.get('requirementsId')
+            or prepared.get('baseDraftId') != revision
+            or prepared.get('libraryFingerprint') != library_fingerprint(equipment)
+            or prepared.get('historyFingerprint') != history
+            or prepared.get('draftingVersion') != DRAFTING_VERSION):
+        raise ValueError('Parallel preparation is stale. Prepare the remaining sessions against current authority.')
+    _, previous = _latest_result(messages, 'draft_workout_sessions')
+    if any(previous.get(key) != value for key, value in identity.items()):
+        # Recipe caches validate their own input hashes; prior solved artifacts do not carry forward.
+        previous = {key: copy.deepcopy(previous[key]) for key in
+            ('prescriptionResults', 'recipeQualification') if key in previous}
+    resumed = _resume_fresh_programming_choice(previous, prepared, requirements, messages)
+    if resumed is not None:
+        return resumed
+    if prepared.get('sourceMessages') != source_message_context(requirement_sources(messages)):
+        raise ValueError('Parallel preparation is stale. Prepare the remaining sessions against current authority.')
+    results = copy.deepcopy(previous.get('menuResults', {}))
+    preparations = {'baseline': prepared, 'candidate': prepared['alternativePreparation']}
+    shared_prescriptions = copy.deepcopy(previous.get('prescriptionResults', {}))
+    for result in results.values():
+        shared_prescriptions.update(result.get('prescriptionResults', {}))
+    shared_qualification = _merge_menu_qualifications(previous.get('recipeQualification'),
+        *(item.get('recipeQualification') for item in results.values()))
+    for name, menu in preparations.items():
+        if any(menu.get(key) != prepared.get(key) for key in ('requirementsId', 'baseDraftId',
+                'libraryFingerprint', 'historyFingerprint', 'draftingVersion', 'sourceMessages')):
+            raise ValueError('Alternative preparation is stale. Prepare both menus against current authority.')
+        saved = results.get(name, {})
+        if saved.get('submittedDraft') and saved.get('jointPlanning', {}).get('feasible'):
+            continue
+        seed = {**saved, 'prescriptionResults': {**shared_prescriptions,
+            **saved.get('prescriptionResults', {})}}
+        seed['recipeQualification'] = _merge_menu_qualifications(shared_qualification,
+            seed.get('recipeQualification'))
+        def save_branch(payload):
+            results[name] = copy.deepcopy(payload)
+            if checkpoint:
+                checkpoint({**identity, 'menuResults': copy.deepcopy(results), 'inProgress': True})
+        result = _draft_workout_sessions(client, {'preparationId': menu['preparationId']}, messages,
+            equipment, planning_state, **{**options, 'checkpoint': save_branch},
+            prepared_override=menu, previous_override=seed, compare_counts=False)
+        if result.get('proposedSubmission') and result.get('jointPlanning', {}).get('feasible'):
+            result = _audit_fresh_menu(result, menu, requirements, equipment, messages,
+                training_history, allow_educated_load_guesses)
+        results[name] = result
+        shared_prescriptions.update(result.get('prescriptionResults', {}))
+        shared_qualification = _merge_menu_qualifications(shared_qualification, result.get('recipeQualification'))
+        if checkpoint:
+            checkpoint({**identity, 'menuResults': copy.deepcopy(results), 'inProgress': True})
+    from .planning_decisions import candidate_acceptance_scope
+    valid = {name: result for name, result in results.items() if candidate_acceptance_scope(result) is not None}
+    envelope = {**identity, 'menuResults': results, 'prescriptionResults': shared_prescriptions,
+        'recipeQualification': shared_qualification}
+    if shared_qualification.get('qualificationConflicts'):
+        return {**envelope, 'passed': False, 'errors': [{'code': 'menu_qualification_conflict',
+            'details': shared_qualification['qualificationConflicts']}],
+            'instruction': 'The two menus have conflicting qualification evidence. Preserve both saved branches and resolve the evidence before selection.'}
+    if len(valid) < 2:
+        # One executable menu can proceed while the other branch retains its precise failure evidence.
+        if len(valid) == 1:
+            chosen = next(iter(valid.values()))
+            return {**chosen, **envelope, 'instruction': 'Only this menu has a clean native audit. Continue normal semantic review and confirmation; the other menu remains unverified.'}
+        failed = next((item for item in results.values() if item.get('userQuestion')), results['baseline'])
+        return {**failed, **envelope, 'passed': False}
+    baseline, candidate = valid['baseline'], valid['candidate']
+    result = {**_compare_fresh_menus(baseline, candidate, prepared, requirements, equipment,
+        messages, training_history, shared_qualification), **envelope}
+    resumed = _resume_fresh_programming_choice(result, prepared, requirements, messages)
+    return resumed if resumed is not None else result
+
+
+def _draft_workout_sessions(client, arguments, messages, equipment, planning_state,
+                           logger=None, progress=None, checkpoint=None, training_history=None,
+                           allow_educated_load_guesses=True, *, prepared_override=None, previous_override=None,
+                           compare_counts=True):
     require_approved_requirements(messages)
     _, requirements = _latest_result(messages, 'set_workout_requirements')
     existing, revision = latest_draft_submission(messages, equipment)
@@ -2585,7 +2916,10 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
     accepted_menu = accepted_menu_preparation(messages, requirements['requirementsId'], revision,
         library_fingerprint(equipment), history_fingerprint, DRAFTING_VERSION,
         requirements.get('restrictionPolicy'), resolved_decisions(messages))
-    if accepted_menu:
+    if prepared_override is not None:
+        prepared = prepared_override
+        accepted_menu = None
+    elif accepted_menu:
         prepared = accepted_menu['preparation']
     else:
         _, prepared = _latest_result(messages, 'prepare_workout_sessions')
@@ -2597,6 +2931,8 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
             or prepared.get('historyFingerprint') != history_fingerprint):
         raise ValueError('Parallel preparation is stale. Prepare the remaining sessions against current authority.')
     _, previous = _latest_result(messages, 'draft_workout_sessions')
+    if previous_override is not None:
+        previous = previous_override
     resumed_choice = _resume_fresh_programming_choice(previous, prepared, requirements, messages)
     if resumed_choice is not None:
         return resumed_choice
@@ -2606,6 +2942,8 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         requirements['requirements'], (existing or {}).get('workouts', []))
     if schedule_errors:
         _, previous = _latest_result(messages, 'draft_workout_sessions')
+        if previous_override is not None:
+            previous = previous_override
         reusable = (previous if previous.get('preparationId') == prepared['preparationId'] else {})
         return {**{key: copy.deepcopy(reusable[key]) for key in _RETAINED_WORK_FIELDS
                 if key in reusable},
@@ -2616,7 +2954,8 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
     choice_domain = _preparation_choice_domain(messages, equipment)
     selection_errors = _preparation_selection_errors(
         {'sessions': prepared.get('recipeSessions', [])}, choice_domain)
-    setup_concerns = _history_configuration_concerns(prepared.get('recipeSessions', []), equipment, training_history)
+    setup_concerns = _history_configuration_concerns(
+        prepared.get('recipeSessions', []), equipment, training_history, messages)
     selection_errors.extend(_history_configuration_selection_errors(
         prepared.get('recipeSessions', []), setup_concerns))
     if selection_errors:
@@ -2626,11 +2965,15 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
             'instruction': 'The saved preparation contains unresolved exercise choices. Reconsider only the flagged configurations before prescription workers start; ask the user if an original requirement prevents a supported choice.'}
     fingerprint = planning_state.get('historyFingerprint')
     _, previous = _latest_result(messages, 'draft_workout_sessions')
+    if previous_override is not None:
+        previous = previous_override
     selections = canonicalize_generated_session_descriptions(
         [_strip_legacy_calibration_fields(copy.deepcopy(day)) for day in prepared['recipeSessions']],
         requirements['requirements'])
     preparation_identity = {key: prepared.get(key) for key in ('preparationId', 'requirementsId',
         'baseDraftId', 'libraryFingerprint', 'historyFingerprint', 'draftingVersion')}
+    if prepared.get('semanticSelection'):
+        preparation_identity['semanticSelection'] = copy.deepcopy(prepared['semanticSelection'])
     retained_work = {key: copy.deepcopy(previous[key]) for key in _RETAINED_WORK_FIELDS if key in previous}
     from .recipe_contracts import qualify_recipe_contracts
     latest_qualification = copy.deepcopy(previous.get('recipeQualification'))
@@ -2670,6 +3013,12 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         selections, equipment, requirements['requirements'])
     excluded_warmup_recipes = _warmup_exclusion_disclosures(
         removed_warmup_candidates, equipment, requirements['requirements'])
+    if prepared.get('semanticSelection') and excluded_warmup_recipes:
+        errors = [{'code': 'infeasible_set_allocation', 'path': '/sessions',
+            'message': 'A selected movement cannot provide its required native warm-up; the committed menu was not changed.'}]
+        return {**preparation_identity, 'passed': False, 'recipeQualification': qualified,
+            'excludedWarmupRecipes': excluded_warmup_recipes, 'preparationErrors': errors, 'errors': errors,
+            'instruction': 'Revise the selected menu or resolve its execution capability; preserve approved requirements.'}
     unresolved_execution = _execution_recipe_issues(selections, equipment, execution_definitions)
     resolved_items = [item for day in selections for item in day['exercises']
         if item['definition_id'] not in unresolved_execution]
@@ -2678,7 +3027,7 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         for item in day.get('exercises', []) for role in item.get('satisfiesCoverage', []))
     missing_roles = {rule['key'] for rule in requirements['requirements'].get('requiredCoverage', [])} - available_roles
     blocked_execution = [issue for issue in unresolved_execution.values()
-        if not resolved_items or missing_roles.intersection(issue['roles'])]
+        if prepared.get('semanticSelection') or not resolved_items or missing_roles.intersection(issue['roles'])]
     if blocked_execution:
         definition_names = {definition['id']: definition['name']
             for definition in equipment.get('exerciseDefinitions', [])}
@@ -2714,7 +3063,7 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         menu_review.setdefault('evidence', {})['excludedWarmupRecipes'] = copy.deepcopy(excluded_warmup_recipes)
     if menu_review and menu_review['evidence']['status'] == 'infeasible_relaxation':
         errors = [{'code': 'infeasible_set_allocation', 'path': '/sessions',
-            'message': 'This qualified menu cannot meet approved volume, coverage and source-budget constraints, even before timing and integer selection.'}]
+            'message': 'This qualified menu cannot meet approved volume, coverage and source-budget constraints, even before integer selection.'}]
         return {**preparation_identity, 'passed': False, 'recipeQualification': qualified,
             'excludedWarmupRecipes': excluded_warmup_recipes,
             'menuReview': menu_review, 'errors': errors, 'preparationErrors': errors,
@@ -2741,7 +3090,8 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
     # Hash the original worker input so saved proposals remain locally reusable;
     # derive the approved warm-up flag only after that cache match.
     from .planning_tools import _normalize_required_warmup_flags
-    _normalize_required_warmup_flags({'workouts': selections}, equipment, requirements['requirements'])
+    _normalize_required_warmup_flags({'workouts': selections}, equipment, requirements['requirements'],
+                                     execution_definitions=execution_definitions)
     for key, session in completed.items():
         if not key.isdigit() or int(key) >= len(selections):
             raise ValueError('Cached session reference is outside the prepared week.')
@@ -2755,6 +3105,8 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                     'prescriptionResults': copy.deepcopy(previous.get('prescriptionResults', {})),
                     'recipeQualification': qualified, 'menuReview': menu_review,
                     'excludedWarmupRecipes': excluded_warmup_recipes}
+    if prepared.get('semanticSelection'):
+        base_receipt['semanticSelection'] = copy.deepcopy(prepared['semanticSelection'])
     base_receipt['candidateUniverseCoverage'] = _candidate_universe_coverage(
         prepared, qualified, completed, excluded_warmup_recipes, existing,
         workers_finished=len(completed) + len(failed_proposals) == len(selections))
@@ -3108,11 +3460,16 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                     'workerFailures': copy.deepcopy(failed_proposals), 'inProgress': True,
                     'proposedSubmission': copy.deepcopy(proposed_submission), 'jointPlanning': payload})
 
-        joint = solve_prescribed_week(initial_sessions, requirements['requirements'], equipment,
+        joint = solve_prescribed_week(recipes if prepared.get('semanticSelection') else initial_sessions,
+            requirements['requirements'], equipment,
             requirements.get('restrictionPolicy'), training_history=training_history, messages=messages,
             allow_educated_load_guesses=allow_educated_load_guesses,
             preserve_source_selection=False,
-            source_working_set_budget=source_working_set_budget, progress=checkpoint_joint)
+            semantic_selection=({**prepared['semanticSelection'],
+                'fixedWorkouts': copy.deepcopy((existing or {}).get('workouts', []))}
+                if prepared.get('semanticSelection') else None),
+            source_working_set_budget=source_working_set_budget, progress=checkpoint_joint,
+            **({'existing': existing} if prepared.get('semanticSelection') else {}))
     except Exception as error:
         failure = {**base_receipt, 'workerResults': completed, 'workerFailures': failed_proposals,
             'passed': False, 'executionFailure': True,
@@ -3125,6 +3482,8 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         if checkpoint:
             checkpoint({**failure, 'inProgress': False})
         return failure
+    if prepared.get('semanticSelection') and joint.get('feasible'):
+        joint['sessions'] = copy.deepcopy((existing or {}).get('workouts', [])) + joint['sessions']
     if menu_review and joint.get('priorityExecution', {}).get('developmentEmphasis'):
         evidence = menu_review['evidence']
         joint['priorityExecution']['developmentEmphasis']['menuLimits'] = {
@@ -3158,10 +3517,16 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                 'Joint feasibility remains unresolved. The complete unsolved candidate and receipt are saved; do not claim impossibility or rerun recipe qualification or session workers unchanged.')}
     sessions = joint['sessions']
     submission = {**proposed_submission, 'workouts': sessions}
-    tradeoff = _fresh_development_tradeoff(submission, requirements, equipment, messages,
+    menu_tradeoff = (_fresh_semantic_menu_tradeoff(submission, joint, prepared, requirements,
+        equipment, messages, training_history, qualified, allow_educated_load_guesses)
+        if compare_counts else None)
+    if menu_tradeoff is not None:
+        return {**base_receipt, 'workerResults': completed, **menu_tradeoff,
+            'proposedSubmission': copy.deepcopy(menu_tradeoff.get('proposedSubmission', submission))}
+    tradeoff = (_fresh_development_tradeoff(submission, requirements, equipment, messages,
         training_history, source_working_set_budget, qualified,
         fixed_workouts=len((existing or {}).get('workouts', [])),
-        allow_educated_load_guesses=allow_educated_load_guesses)
+        allow_educated_load_guesses=allow_educated_load_guesses) if compare_counts else None)
     if tradeoff is not None:
         return {**base_receipt, 'workerResults': completed, **tradeoff,
             'proposedSubmission': copy.deepcopy(tradeoff.get('proposedSubmission', submission))}

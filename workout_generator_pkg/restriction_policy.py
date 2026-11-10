@@ -8,6 +8,31 @@ from .api_client import chat_call
 
 RESTRICTION_POLICY_VERSION = 2
 
+
+def _restriction_catalog(equipment):
+    gear = {item['id']: item.get('name', '') for key in ('equipments', 'accessoryEquipments')
+        for item in equipment.get(key, [])}
+    return [{'id': definition['id'], 'name': definition['name'],
+        'equipment': gear.get(definition.get('equipmentId')),
+        'accessories': [gear.get(key) for key in definition.get('requiredAccessoryEquipmentIds', [])]}
+        for definition in sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id'])]
+
+
+def restriction_library_fingerprint(equipment):
+    """Bind alias meanings to the catalog fields the resolver actually reads."""
+    from .planning_tools import _fingerprint
+
+    return _fingerprint(_restriction_catalog(equipment))
+
+
+def restriction_policy_matches_library(policy, equipment):
+    from .planning_tools import library_fingerprint
+
+    return (isinstance(policy, dict) and policy.get('resolutionVersion') == RESTRICTION_POLICY_VERSION
+        and policy.get('libraryFingerprint') in (
+            restriction_library_fingerprint(equipment), library_fingerprint(equipment)))
+
+
 def _phrase_matches(phrase, text):
     def words(value):
         return re.findall(r'[^\W_]+', value.casefold())
@@ -27,16 +52,13 @@ def _phrase_matches(phrase, text):
 
 def resolve_restrictions(restrictions, equipment, client=None, progress=None, *, source_messages=None,
                          retained_policy=None):
-    from .planning_tools import (PlanningInputError, library_fingerprint,
+    from .planning_tools import (PlanningInputError,
                                  source_message_context, _structured_requirement_source)
-    definitions = sorted(equipment.get('exerciseDefinitions', []), key=lambda d: d['id'])
+    definitions = _restriction_catalog(equipment)
     by_ref = {f'LIBRARY_{i}': d for i, d in enumerate(definitions)}
-    gear = {g['id']: g.get('name', '') for key in ('equipments', 'accessoryEquipments') for g in equipment.get(key, [])}
     matches, pending = [], []
     retained = retained_policy or {}
-    retained_matches = (retained.get('matches', []) if
-        retained.get('resolutionVersion') == RESTRICTION_POLICY_VERSION
-        and retained.get('libraryFingerprint') == library_fingerprint(equipment) else [])
+    retained_matches = retained.get('matches', []) if restriction_policy_matches_library(retained, equipment) else []
     available_ids = {definition['id'] for definition in definitions}
     for kind, field in (('exclude', 'excludeNameTerms'), ('exception', 'exceptNameTerms')):
         for term in dict.fromkeys(restrictions.get(field, [])):
@@ -44,8 +66,8 @@ def resolve_restrictions(restrictions, equipment, client=None, progress=None, *,
             for definition in definitions:
                 names = [definition['name']]
                 if kind == 'exclude':
-                    names += [gear.get(definition.get('equipmentId'), '')]
-                    names += [gear.get(key, '') for key in definition.get('requiredAccessoryEquipmentIds', [])]
+                    names += [definition['equipment'] or '']
+                    names += [name or '' for name in definition['accessories']]
                 if any(_phrase_matches(term, name) for name in names):
                     ids.append(definition['id'])
             if not ids:
@@ -60,9 +82,8 @@ def resolve_restrictions(restrictions, equipment, client=None, progress=None, *,
     if pending and client is not None and definitions:
         if progress:
             progress('Resolving restriction aliases against the exercise library')
-        catalog = [{'reference': ref, 'name': d['name'], 'equipment': gear.get(d.get('equipmentId')),
-                    'accessories': [gear.get(key) for key in d.get('requiredAccessoryEquipmentIds', [])]}
-                   for ref, d in by_ref.items()]
+        catalog = [{'reference': ref, **{key: definition[key] for key in ('name', 'equipment', 'accessories')}}
+                   for ref, definition in by_ref.items()]
         sources = source_message_context(source_messages or [])
         authority = _structured_requirement_source(source_messages or [])
         if authority:
@@ -123,19 +144,19 @@ def resolve_restrictions(restrictions, equipment, client=None, progress=None, *,
                 'Do not choose a candidate, drop a source-backed exception, broaden its scope, or silently change approved restrictions. '
                 'Use a separate source-backed specific name for each permitted movement.')
     exceptions = {key for item in matches if item['kind'] == 'exception' for key in item['definitionIds']}
-    return {'resolutionVersion': RESTRICTION_POLICY_VERSION, 'libraryFingerprint': library_fingerprint(equipment), 'matches': matches,
+    return {'resolutionVersion': RESTRICTION_POLICY_VERSION, 'libraryFingerprint': restriction_library_fingerprint(equipment), 'matches': matches,
             'excludedDefinitionIds': sorted(excluded - exceptions), 'exceptDefinitionIds': sorted(exceptions),
             'excludedExerciseNames': [names[key] for key in sorted(excluded - exceptions)],
             'exceptExerciseNames': [names[key] for key in sorted(exceptions)]}
 
 
 def effective_restrictions(stored_requirements, equipment):
-    from .planning_tools import PlanningInputError, library_fingerprint
+    from .planning_tools import PlanningInputError
     terms = stored_requirements.get('requirements', {}).get('exerciseRestrictions', {})
     if not any(terms.values()):
         return {}
     policy = stored_requirements.get('restrictionPolicy')
-    if not policy or policy.get('resolutionVersion') != RESTRICTION_POLICY_VERSION or policy.get('libraryFingerprint') != library_fingerprint(equipment):
+    if not restriction_policy_matches_library(policy, equipment):
         raise PlanningInputError('restriction_policy_unresolved', 'Exercise restrictions need resolution against the current library.',
             '/exerciseRestrictions', 'Call set_workout_requirements with the unchanged requirements to resolve concrete library IDs, '
             'show the resolved exclusions/exceptions and wait for CONFIRM REQUIREMENTS. Do not change restrictions or work around this by substituting exercises.')

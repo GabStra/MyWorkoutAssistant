@@ -63,6 +63,24 @@ def test_native_primary_setup_cost_matches_shared_tracker_with_unknown_loads():
     assert audit['unknownPhysicalPreparationCount'] > 0
 
 
+def test_moving_exercises_preserves_their_own_setup_evidence_across_sessions():
+    definitions = {'row': {'id': 'row', 'exerciseType': 'WEIGHT', 'equipmentId': 'db',
+        'requiredAccessoryEquipmentIds': ['bench'], 'reviewedExecution': {'setupConfiguration': [
+            {'resourceId': 'bench', 'state': {'backrest': 'inclined'},
+                'source': 'https://example.test/row', 'basis': 'Required incline for the fixture row.'}]}},
+        'pull': {'id': 'pull', 'exerciseType': 'BODY_WEIGHT', 'equipmentId': None,
+            'requiredAccessoryEquipmentIds': ['station']},
+        'floor': {'id': 'floor', 'exerciseType': 'BODY_WEIGHT', 'equipmentId': None}}
+    rows = [{'definition_id': ref, 'numWorkSets': 2} for ref in ('row', 'pull', 'floor')]
+    baseline = [executable_setup_evidence({'exercises': [row]}, definitions) for row in rows]
+    assert joint._setup_evidence_losses(baseline, list(reversed(baseline))) == []
+    incomplete = copy.deepcopy(definitions)
+    incomplete['row'].pop('reviewedExecution')
+    changed = [baseline[1], executable_setup_evidence({'exercises': [rows[0]]}, incomplete), baseline[2]]
+    losses = joint._setup_evidence_losses(baseline, changed)
+    assert [(row['definitionId'], row['resourceId']) for row in losses] == [('row', 'bench')]
+
+
 def test_undescribed_replacement_cannot_win_by_hiding_known_setup_conflict():
     from workout_generator_pkg.allocation import _audit_raw
 
@@ -164,3 +182,15 @@ def test_known_setup_configuration_uses_coupled_search_without_approximate_prefi
         {'workouts': result['sessions'], 'audit': result['audit']}, requirements, context)
     stage = next(stage for stage in result['objectiveProgress'] if stage['goal'] == 'setup_economy')
     assert stage['value'] == costs['setup_economy'] == 2
+
+
+def test_added_unknown_setup_does_not_erase_retained_exercises_evidence():
+    known = {'resourceId': 'bench', 'role': 'accessory', 'implementQuantity': None,
+        'definitionId': 'press', 'knownStateDimensions': ['backrest'], 'loadKnown': False}
+    unknown = {**known, 'definitionId': 'split_squat', 'knownStateDimensions': []}
+    baseline = [{'setupEvidenceCoverage': [known]}]
+    added = [{'setupEvidenceCoverage': [known, unknown]}]
+    assert joint._setup_evidence_losses(baseline, added) == []
+    replaced = [{'setupEvidenceCoverage': [unknown]}]
+    assert joint._setup_evidence_losses(baseline, replaced) == [
+        {'workoutIndex': 0, 'definitionId': 'split_squat', 'resourceId': 'bench', 'role': 'accessory'}]

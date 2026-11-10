@@ -30,7 +30,7 @@ def _stable_refs(draft):
 def _recipe(exercise):
     recipe = copy.deepcopy(exercise)
     for field in ('numWorkSets', 'targetSetPrescriptions', 'allocationBounds',
-                  'name', 'nameOverride', 'placementNotes', 'setupSeconds', 'reference', 'generateWarmUpSets',
+                  'name', 'nameOverride', 'placementNotes', 'reference', 'generateWarmUpSets',
                   'superset', 'restBetweenSetsSeconds', 'restAfterSupersetExerciseSeconds',
                   'restAfterExerciseSeconds'):
         recipe.pop(field, None)
@@ -372,10 +372,10 @@ def expand_redistributions(edits, current_draft, *, requirements=None, definitio
         if len(exact_target_modes) > 1:
             _fail('Redistributing mixed exact-per-set and uniform prescriptions is unsupported; preserve the source prescriptions and report the capability gap.',
                   'redistribution_mixed_target_modes_unsupported')
-        metadata = {(item.get('name'), item.get('nameOverride'), item.get('setupSeconds'))
+        metadata = {(item.get('name'), item.get('nameOverride'))
                     for _, item in source_items}
         if len(target_refs) < len(source_items) and len(metadata) > 1:
-            _fail('Consolidating these source occurrences would discard session-specific cues or setup values; keep enough destinations or repair those fields separately.',
+            _fail('Consolidating these source occurrences would discard session-specific labels; keep enough destinations or repair those fields separately.',
                   'redistribution_source_metadata_conflict')
 
         if len(source_refs) != len(set(source_refs)) or len(target_refs) < 2 or len(target_refs) > total_sets:

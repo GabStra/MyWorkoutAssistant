@@ -149,14 +149,91 @@ def _unresolved_worker_result(equipment, stored, candidate):
         'passed': False, 'executionFailure': True}
 
 
-def test_movement_selection_only_prefers_progression_when_approved():
-    unapproved = {'requirements': {'objectiveOrder': []}}
-    _movement_selection_context(unapproved)
-    assert 'Do not prefer a movement' in unapproved['progressionSelectionPolicy']
+@pytest.mark.parametrize('objective_order', [[], ['time_budget', 'volume_target'], ['progression']])
+def test_movement_selection_semantic_progression_is_independent_of_numeric_objectives(objective_order):
+    state = {'requirements': {'objectiveOrder': objective_order}}
+    _movement_selection_context(state)
+    policy = state['progressionSelectionPolicy']
+    assert 'independent of numeric objectiveOrder' in policy
+    assert 'comparable and related performance, resistance ceilings and increments' in policy
+    assert 'approved requirements and preferences' in policy
+    assert 'app owns calibration and double progression' in policy
+    assert state['requirements']['objectiveOrder'] == objective_order
 
-    approved = {'requirements': {'objectiveOrder': ['progression']}}
-    _movement_selection_context(approved)
-    assert 'not training quality or a working-set target' in approved['progressionSelectionPolicy']
+
+def test_compact_selection_retains_peak_comparable_performance_and_load_meaning():
+    headroom = {'latestSessionHeaviestLoadKg': 5, 'highestObservedComparableLoad': {
+        'loadKg': 15, 'reps': 8, 'date': '2026-07-01', 'endReason': 'COMPLETED'}, 'loadMeaning': 'vest_added_load'}
+    state = {'requirements': {}, 'exerciseCandidates': {'LIBRARY_0': {'trainingEvidence': {
+        'status': 'comparable_records', 'loadHeadroom': headroom, 'sessions': [{'bulky': 'raw records'}]}}}}
+    _movement_selection_context(state)
+    compact = state['exerciseCandidates']['LIBRARY_0']['trainingEvidence']
+    assert compact['loadHeadroom']['highestObservedComparableLoad'] == headroom['highestObservedComparableLoad']
+    assert compact['loadHeadroom']['loadMeaning'] == 'vest_added_load'
+    assert 'sessions' not in compact
+
+
+def test_selection_collections_share_related_history_projection():
+    from workout_generator_pkg.training_history import selection_training_evidence
+
+    history = {'status': 'no_comparable_records', 'candidateContext': {'loadMeaning': 'additional_bodyweight_load'},
+        'relatedMovementHistory': [{'reference': 'HISTORY_0', 'matchType': 'same_movement_different_setup',
+            'differences': {'equipment': {'candidate': 'Vest', 'historical': 'Unloaded'}}}]}
+    catalog = {'HISTORY_0': {'reference': 'HISTORY_0', 'name': 'Unloaded variation',
+        'totalSessions': 1, 'sessions': [{'date': '2026-11-01', 'endReason': 'COMPLETED',
+            'performances': [{'record': {'actualReps': 8, 'loadKg': 0}}]}]}}
+    state = {'requirements': {'objectiveOrder': ['time_budget']}, 'trainingEvidence': catalog}
+    for collection in ('exerciseCandidates', 'cachedCandidateIndex', 'candidateAlternatives'):
+        state[collection] = {'LIBRARY_0': {'trainingEvidence': copy.deepcopy(history)}}
+
+    _movement_selection_context(state)
+
+    expected = selection_training_evidence(history, catalog)
+    assert expected['relatedMovementHistory'][0]['reference'] == 'HISTORY_0'
+    assert expected['relatedMovementHistory'][0]['totalSessions'] == 1
+    assert expected['candidateContext']['loadMeaning'] == 'additional_bodyweight_load'
+    for collection in ('exerciseCandidates', 'cachedCandidateIndex', 'candidateAlternatives'):
+        assert state[collection]['LIBRARY_0']['trainingEvidence'] == expected
+    assert state['trainingEvidence'] == catalog
+
+
+def test_initial_selection_uses_fresh_current_domain_with_history_and_unresolved_questions(monkeypatch):
+    from workout_generator_pkg.planner_context import _preparation_selection_context
+
+    equipment, _, stored, _ = planning_case()
+    messages = requirement_messages(stored)
+    required_coverage = [{'key': 'upper_pull', 'description': 'Upper-body pulling work',
+        'scope': 'weekly', 'intent': 'development'}]
+    state = {'requirementsApproved': True, 'requirements': {'requiredCoverage': required_coverage},
+        'constructionTask': {'stage': 'discover_movements'},
+        'exerciseCandidates': {'LIBRARY_0': {'id': 'LIBRARY_0', 'name': 'Old cached name'}},
+        'cachedCandidateIndex': {'LIBRARY_99': {'name': 'Stale unavailable option'}}}
+    options = {'admissibleDefinitionIds': ['LIBRARY_0', 'LIBRARY_1'],
+        'unresolvedConfigurations': {'LIBRARY_2': [{'code': 'bodyweight_capability_unresolved'}]},
+        'unresolvedConfigurationNames': {'LIBRARY_2': 'Unassisted pull-up'}}
+    catalog = [{'id': 'LIBRARY_0', 'name': 'Current option'},
+        {'id': 'LIBRARY_1', 'name': 'New available option'},
+        {'id': 'LIBRARY_2', 'name': 'Unassisted pull-up'}]
+    monkeypatch.setattr('workout_generator_pkg.session_drafting.preparation_selection_options',
+        lambda *args: copy.deepcopy(options))
+    monkeypatch.setattr('workout_generator_pkg.exercise_library_tools.search_catalog',
+        lambda *args: (copy.deepcopy(catalog), {}))
+
+    class History:
+        def annotate_search(self, payload, equipment):
+            for entry in payload['results'][0]['exercises']:
+                entry['trainingEvidence'] = {'status': 'no_comparable_records', 'totalSessions': 0}
+
+    _preparation_selection_context(state, messages, equipment, History())
+
+    assert set(state['exerciseCandidates']) == {'LIBRARY_0', 'LIBRARY_1'}
+    assert state['exerciseCandidates']['LIBRARY_0']['name'] == 'Current option'
+    assert state['exerciseCandidates']['LIBRARY_1']['trainingEvidence']['status'] == 'no_comparable_records'
+    assert state['cachedCandidateIndex'] == {}
+    assert state['preparationSelectionOptions'] == options
+    assert state['candidateRetrieval']['semanticCoverage'] == 'unqualified'
+    assert state['constructionTask']['stage'] == 'choose_movements'
+    assert state['requirements']['requiredCoverage'] == required_coverage
 
 
 def test_selection_exposes_conditional_credit_floor_before_prescribing_sets():
@@ -1553,11 +1630,12 @@ def test_generator_owned_proof_failure_pauses_without_creating_model_repair():
     assert 'joint_candidate_comparison_unresolved' in _repair_capability_pause(state)
 
 
-def test_continue_reaudits_only_native_clean_candidate_blocked_by_generator_comparison():
+@pytest.mark.parametrize('code', ['joint_candidate_comparison_unresolved', 'tool_execution_failed'])
+def test_continue_reaudits_only_native_clean_candidate_blocked_by_generator_proof(code):
     from workout_generator_pkg.interactive_shell import _repair_capability_pause
     from workout_generator_pkg.planner_context import pending_reaudit
 
-    proof_error = {'code': 'joint_candidate_comparison_unresolved', 'owner': 'generator',
+    proof_error = {'code': code, 'owner': 'generator',
                    'message': 'The shared candidate comparison proof was not completed.'}
     state = {
         'requirementsApproved': True,

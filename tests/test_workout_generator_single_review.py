@@ -112,7 +112,15 @@ def test_real_unconfirmed_superset_access_still_blocks_and_split_group_invalidat
     review.validate_review_subjects(corrected, context)
 
 
-def test_unknown_reason_gets_one_scoped_choice_correction_without_rewriting_judgments(monkeypatch):
+@pytest.mark.parametrize('original_disposition, basis, allows_advisory', [
+    ('advisory', 'uncertainty', True),
+    ('unresolved_capability', 'material_uncertainty', True),
+    ('repair', 'material_uncertainty', True),
+    ('unresolved_capability', 'established_violation', False),
+    ('repair', 'established_violation', False),
+])
+def test_unknown_reason_gets_one_scoped_choice_correction_without_rewriting_judgments(
+        monkeypatch, original_disposition, basis, allows_advisory):
     _, messages, audited, context = setup_case()
     calls = []
 
@@ -123,7 +131,14 @@ def test_unknown_reason_gets_one_scoped_choice_correction_without_rewriting_judg
             entry = schema['properties']['findingCorrections']['properties']
             assert set(entry) == {'FINDING_0'}
             assert set(entry['FINDING_0']['properties']) == {'reason'}
-            diagnostics = json.loads(request[-1]['content'])['validationError']
+            payload = json.loads(request[-1]['content'])
+            allowed = entry['FINDING_0']['properties']['reason']['enum']
+            assert set(payload['judgmentChoices']['FINDING_0']) == set(allowed)
+            assert ('setup_changeover_time_uncertainty' in allowed) == allows_advisory
+            assert 'unsupported_requirement' not in allowed
+            if basis == 'material_uncertainty':
+                assert 'source_conflict' not in allowed
+            diagnostics = payload['validationError']
             assert diagnostics['path'] == ['findings', 0, 'reason']
             assert 'setup_changeover_time_uncertain' in diagnostics['error']
             return json.dumps({'findingCorrections': {'FINDING_0': {
@@ -132,8 +147,9 @@ def test_unknown_reason_gets_one_scoped_choice_correction_without_rewriting_judg
         payload = response_for(data, options['output_schema'], [
             {'message': 'equipment_setup', 'reason': 'setup_changeover_time_uncertainty',
              'qualitativeRationale': 'Actual transition time is unmeasured.', 'subjectRefs': ['EXERCISE_0'],
-             'evidenceRefs': [data['finalArtifact']['_reviewRef']], 'basis': 'uncertainty',
-             'disposition': 'advisory', 'concernGroup': 'NEW', 'decisionId': 'none'},
+             'evidenceRefs': [data['finalArtifact']['_reviewRef']], 'basis': basis,
+             'disposition': original_disposition, 'concernGroup': 'NEW', 'decisionId': 'none',
+             'repairDimensions': ['prescription']},
             {'message': 'load_suitability', 'reason': 'capacity_uncertainty',
              'qualitativeRationale': 'Comparable performance is not established.', 'subjectRefs': ['EXERCISE_0'],
              'evidenceRefs': [data['finalArtifact']['_reviewRef']], 'basis': 'material_uncertainty',
@@ -143,6 +159,11 @@ def test_unknown_reason_gets_one_scoped_choice_correction_without_rewriting_judg
         return json.dumps(payload), None, None
 
     monkeypatch.setattr(review, '_review_call', respond)
+    if not allows_advisory:
+        with pytest.raises(review.ValidationError, match='setup_changeover_time_uncertainty'):
+            review._review_complete_draft(None, context, audited, messages, len(messages) - 1, None)
+        assert len(calls) == 2
+        return
     result = review._review_complete_draft(None, context, audited, messages, len(messages) - 1, None)
     assert len(calls) == 2
     assert [finding['qualitativeRationale'] for finding in result['findings']] == [
@@ -153,7 +174,7 @@ def test_unknown_reason_gets_one_scoped_choice_correction_without_rewriting_judg
 
 
 @pytest.mark.parametrize('judgment', ['setup_changeover_time_uncertainty', 'recovery_uncertainty'])
-def test_carried_timing_review_error_closes_under_code_owned_estimate_policy(monkeypatch, judgment):
+def test_carried_unmeasured_time_review_error_closes_under_advisory_policy(monkeypatch, judgment):
     _, messages, audited, context = setup_case()
     context['reviewChecklist'] = {'findings': {'CONCERN_TIMING': {
         'finding': {'message': 'Prior setup objection.', 'reviewJudgment': judgment,
@@ -188,7 +209,8 @@ def test_same_concern_withdrawals_merge_without_requiring_identical_prose_or_err
 
     def respond(client, request, **options):
         data = request_data(request)
-        proof = [data['finalArtifact']['_reviewRef'], data['repairCapabilityContract']['_reviewRef']]
+        proof = [data['finalArtifact']['_reviewRef'], data['repairCapabilityContract']['_reviewRef'],
+            data['sourceMessages']['SOURCE_0']['_reviewRef']]
         findings = [{'message': 'review_error', 'reason': kind, 'qualitativeRationale': rationale,
             'subjectRefs': ['EXERCISE_0'], 'evidenceRefs': proof,
             'basis': 'uncertainty', 'disposition': 'withdrawn_review_error', 'errorKind': kind,
@@ -207,6 +229,7 @@ def test_same_concern_withdrawals_merge_without_requiring_identical_prose_or_err
     assert all(finding['qualitativeRationale'] not in group['reason'] for finding in result['findings'])
     assert all(finding['reviewJudgment'] for finding in result['findings'])
     assert result['scopeResults']['execution']['blockerResolutions']['CONCERN_SAVED']['status'] == 'withdrawn_review_error'
+    assert 'requirementAssessments' not in result
 
 
 @pytest.mark.parametrize('calibrated', [False, True])
@@ -317,8 +340,7 @@ def response_for(data, schema, findings=()):
             wire.pop('repairObjectives', None)
             wire.pop('repairObjectiveChoiceIds', None)
         wire_findings.append(wire)
-    result = {'findings': wire_findings,
-        'sourceCoverage': {key: True for key in schema['properties']['sourceCoverage']['properties']}}
+    result = {'findings': wire_findings}
     if 'blockerResolutions' in schema['properties']:
         result['blockerResolutions'] = {key: {'reason': 'source_conflict', 'evidenceRefs': []}
             for key in schema['properties']['blockerResolutions']['properties']}
@@ -375,7 +397,9 @@ def test_production_review_is_one_strict_call_over_the_exact_final_artifact(monk
         assert options['output_schema']['additionalProperties'] is False
         assert 'blockerResolutions' not in options['output_schema']['properties']
         assert_provider_supported_schema(options['output_schema'])
-        return json.dumps(response_for(data, options['output_schema'])), None, None
+        payload = response_for(data, options['output_schema'])
+        payload['sourceCoverage'] = {'SOURCE_0': False}  # Retained wire attestations have no authority.
+        return json.dumps(payload), None, None
 
     monkeypatch.setattr(review, '_review_call', respond)
 
@@ -384,13 +408,15 @@ def test_production_review_is_one_strict_call_over_the_exact_final_artifact(monk
     assert result['passed'], result.get('review', {}).get('failure')
     assert len(calls) == 1
     assert result['review']['reviewedArtifact'] == context['finalArtifact']
-    assert result['review']['sourceCoverage'] == {'SOURCE_0': True}
-    assert result['review']['requirementAssessments']['SOURCE_0']['status'] == 'supported'
+    assert 'sourceCoverage' not in calls[0][1]['output_schema']['properties']
+    assert 'sourceCoverage' not in result['review']
+    assert 'requirementAssessments' not in result['review']
     assert 'reviewerConfirmation' not in json.dumps(result['review']['assessment'])
     review._require_review_receipt(result, messages, equipment)
-    result['review'].pop('sourceCoverage')
-    with pytest.raises(ValueError, match='every original user source block'):
-        review._require_review_receipt(result, messages, equipment)
+    changed_messages = copy.deepcopy(messages)
+    changed_messages[0]['content'] += ' Changed approved source.'
+    with pytest.raises(ValueError, match='missing or stale'):
+        review._require_review_receipt(result, changed_messages, equipment)
 
 
 def test_carried_issue_schema_has_a_populated_resolution_object(monkeypatch):
@@ -585,7 +611,7 @@ def test_unchanged_accepted_tradeoff_echo_does_not_reopen_the_ledger(monkeypatch
     assert result['findings'] == []
 
 
-def test_one_review_derives_source_correction_status_from_its_final_finding(monkeypatch):
+def test_one_review_preserves_explicit_source_conflict_without_derived_source_verdicts(monkeypatch):
     equipment, messages, audited, _ = setup_case()
     calls = []
 
@@ -610,9 +636,10 @@ def test_one_review_derives_source_correction_status_from_its_final_finding(monk
 
     assert len(calls) == 1
     assert not result['passed']
-    assert result['review']['requirementAssessments']['SOURCE_0']['status'] == 'needs_correction'
-    assert result['review']['assessment']['groups'][0]['disposition'] == 'repair'
-    assert result['errors'][0]['code'] == 'independent_review_finding'
+    assert 'requirementAssessments' not in result['review']
+    assert result['review']['findings'][0]['basis'] == 'established_violation'
+    assert result['review']['assessment']['groups'][0]['disposition'] == 'unresolved_capability'
+    assert result['errors'][0]['code'] == 'unresolved_review_capability'
 
 
 @pytest.mark.parametrize('legacy_reason', [False, True])
@@ -794,7 +821,7 @@ def test_correction_objectives_reuse_catalog_ids_while_final_evidence_scopes_the
               'repairDimensions': {'type': 'array', 'items': {'type': 'string'}},
               'repairObjectiveChoiceIds': review.provider_repair_objective_selection_schema(choices)}
     output_schema = {'properties': {'findings': {'items': {'properties': {
-        'disposition': {'enum': ['repair']}, **fields}}}}}
+        'disposition': {'enum': ['repair']}, 'basis': {'enum': ['uncertainty']}, **fields}}}}}
     original = {'findings': [{'disposition': 'repair', 'basis': 'uncertainty', 'evidenceRefs': ['CITED']}]}
     schema = review._review_correction_schema(original, output_schema, context,
         {'CITED': '/requirements'}, choices)
@@ -807,15 +834,67 @@ def test_correction_objectives_reuse_catalog_ids_while_final_evidence_scopes_the
         {'evidencePaths': ['/requirements']}, context) == []
 
 
+def test_invalid_review_basis_has_a_bounded_correction_without_changing_disposition():
+    from jsonschema import validate, ValidationError
+
+    variants = [{'type': 'object', 'properties': {
+        'disposition': {'enum': ['unresolved_capability']},
+        'basis': {'type': 'string', 'enum': [basis]},
+        'reason': {'enum': ['capacity_uncertainty']}},
+        'required': ['disposition', 'basis', 'reason'], 'additionalProperties': False}
+        for basis in ('established_violation', 'material_uncertainty')]
+    schema = {'type': 'object', 'properties': {'findings': {'type': 'array',
+        'items': {'anyOf': variants}}}, 'required': ['findings']}
+    original = {'findings': [{'disposition': 'unresolved_capability',
+        'basis': 'uncertainty', 'reason': 'capacity_uncertainty'}]}
+    validate(original, review._review_schema_for_choice_salvage(schema))
+    correction_schema = review._review_correction_schema(original, schema, {}, {}, [], choice_only=True)
+    fields = correction_schema['properties']['findingCorrections']['properties']['FINDING_0']['properties']
+    assert set(fields) == {'basis'}
+    correction = {'findingCorrections': {'FINDING_0': {'basis': 'material_uncertainty'}}}
+    corrected = review._merge_review_correction(original, correction, correction_schema)
+    validate(corrected, schema)
+    assert corrected['findings'][0]['disposition'] == original['findings'][0]['disposition']
+    correction['findingCorrections']['FINDING_0']['disposition'] = 'advisory'
+    with pytest.raises(ValidationError):
+        review._merge_review_correction(original, correction, correction_schema)
+
+
+def test_carried_advisory_can_explicitly_correct_the_prior_review_without_changing_the_plan():
+    available = {'disposition': {'enum': ['advisory']},
+        'basis': {'enum': ['uncertainty', 'soft_tradeoff']},
+        'reason': {'enum': ['emphasis_tradeoff']},
+        'evidenceRefs': {'type': 'array', 'items': {'enum': ['SOURCE', 'PLAN']}}}
+    output_schema = {'properties': {'findings': {'items': {'anyOf': [{'properties': available}]}},
+        'blockerResolutions': {'properties': {'ISSUE_0': {'properties': {
+            'reason': {'type': 'string'}, 'evidenceRefs': available['evidenceRefs']}}}}}}
+    original = {'findings': [{'concernGroup': 'ISSUE_0', 'disposition': 'advisory',
+        'basis': 'uncertainty', 'reason': 'emphasis_tradeoff', 'evidenceRefs': ['SOURCE', 'PLAN'],
+        'qualitativeRationale': 'This is a soft preference miss, not an approved hard-rule violation.'}],
+        'blockerResolutions': {'ISSUE_0': {'reason': 'emphasis_tradeoff', 'evidenceRefs': ['SOURCE', 'PLAN']}}}
+    facts = {'SOURCE': '/requirements', 'PLAN': '/finalArtifact'}
+    schema = review._review_correction_schema(original, output_schema, {}, facts, [])
+    correction = {'findingCorrections': {'FINDING_0': {'status': 'withdrawn_review_error',
+        'errorKind': 'unsupported_requirement', 'evidenceRefs': ['SOURCE', 'PLAN']}},
+        'blockerResolutions': original['blockerResolutions']}
+    result = review._merge_review_correction(original, correction, schema, facts)
+    assert result['findings'][0]['disposition'] == 'withdrawn_review_error'
+    assert result['blockerResolutions']['ISSUE_0']['reason'] == 'unsupported_requirement'
+    assert result['findings'][0]['qualitativeRationale'] == original['findings'][0]['qualitativeRationale']
+    correction['findingCorrections']['FINDING_0']['errorKind'] = 'none'
+    with pytest.raises(ValueError, match='explicit review-error'):
+        review._merge_review_correction(original, correction, schema, facts)
+
+
 def test_review_with_no_correctable_support_stops_locally_instead_of_building_empty_schema():
     original = {'findings': [
         {'disposition': 'unresolved_capability', 'basis': 'material_uncertainty', 'evidenceRefs': ['FACT_0']},
         {'disposition': 'withdrawn_review_error', 'basis': 'established_violation', 'evidenceRefs': ['FACT_1']},
     ], 'blockerResolutions': {}}
     output_schema = {'properties': {'findings': {'items': {'anyOf': [
-        {'properties': {'disposition': {'enum': ['repair']}}},
-        {'properties': {'disposition': {'enum': ['unresolved_capability']}}},
-        {'properties': {'disposition': {'enum': ['withdrawn_review_error']}}},
+        {'properties': {'disposition': {'enum': ['repair']}, 'basis': {'enum': ['established_violation']}}},
+        {'properties': {'disposition': {'enum': ['unresolved_capability']}, 'basis': {'enum': ['material_uncertainty']}}},
+        {'properties': {'disposition': {'enum': ['withdrawn_review_error']}, 'basis': {'enum': ['established_violation']}}},
     ]}}}}
     with pytest.raises(ValueError, match='no correctable support fields; stop locally'):
         review._review_correction_schema(original, output_schema, {}, {}, [])
@@ -828,7 +907,7 @@ def test_legacy_full_review_correction_is_narrowed_and_only_valid_selected_refs_
         'FACT_682': '/programmingSummary/coverageBalanceEvidence/0',
         'FACT_683': '/programmingSummary/coverageBalanceEvidence/1',
         'FACT_658': '/programmingSummary/coverageRequirements/11',
-        'FACT_806': '/audit/workouts/0/setupEstimates/6',
+        'FACT_806': '/programmingSummary/sessions/0/setupEvidence',
         'FACT_304': '/finalArtifact/workouts/0/components/3',
         'FACT_351': '/finalArtifact/workouts/1/components/0',
     }
@@ -1017,7 +1096,7 @@ def test_live_advisory_material_uncertainty_is_canonicalized_before_narrow_corre
         assert canonical_payload['findings'][2]['basis'] == 'uncertainty'
         assert [finding['disposition'] for finding in canonical_payload['findings']] == [
             finding['disposition'] for finding in payload['findings']]
-        assert canonical_payload['sourceCoverage'] == payload['sourceCoverage']
+        assert 'sourceCoverage' not in canonical_payload
         return canonical, None, None
 
     monkeypatch.setattr(review, '_review_call', respond)
@@ -1032,7 +1111,7 @@ def test_live_advisory_material_uncertainty_is_canonicalized_before_narrow_corre
         'uncertainty', 'soft_tradeoff', 'uncertainty']
     assert [group['disposition'] for group in result['review']['assessment']['groups']] == [
         'advisory', 'advisory', 'advisory']
-    assert result['review']['sourceCoverage'] == raw_reviews[0]['sourceCoverage']
+    assert 'sourceCoverage' not in result['review']
 
 
 @pytest.mark.parametrize('missing_category', ['authorityRef', 'currentPlanRef'])
@@ -1098,7 +1177,7 @@ def test_code_owned_advisory_judgment_binds_its_whole_classification_before_vali
     assert (finding['basis'], finding['severity'], finding['action']) == ('uncertainty', 'warning', 'advisory')
     assert result['assessment']['groups'][0]['disposition'] == 'advisory'
     assert result['assessment']['groups'][0]['repairDimensions'] == []
-    assert result['requirementAssessments']['SOURCE_0']['status'] == 'insufficient_evidence'
+    assert 'requirementAssessments' not in result
 
 
 def test_material_uncertainty_advisory_cannot_be_silently_downgraded(monkeypatch):

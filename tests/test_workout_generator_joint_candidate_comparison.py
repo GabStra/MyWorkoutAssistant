@@ -9,6 +9,8 @@ from workout_generator_pkg.joint_planning import (
 
 def _candidate(session_sets, *, errors=None, search_status='not_searched', durations=None,
                definition_id='LIBRARY_1', definition_ids=None):
+    from workout_generator_pkg.muscle_roles import MUSCLE_LABELS
+
     workouts = []
     audit_days = []
     for index, count in enumerate(session_sets):
@@ -24,7 +26,8 @@ def _candidate(session_sets, *, errors=None, search_status='not_searched', durat
         })
         audit_days.append({
             'estimatedSeconds': (durations or [300] * len(session_sets))[index],
-            'volume': {'CHEST': {'effective': count}},
+            'volume': {**{muscle: {'effective': 0} for muscle in MUSCLE_LABELS},
+                'CHEST': {'effective': count}},
             'coverageSets': {},
         })
     audit = {
@@ -63,6 +66,59 @@ def _requirements(order):
         'requiredCoverage': [],
         'executionRules': [],
     }
+
+
+def test_session_exercise_balance_prefers_even_counts_and_counts_superset_members():
+    import copy
+    from workout_generator_pkg.joint_planning import _joint_candidate_objective_costs
+
+    requirements = _requirements(['session_exercise_balance'])
+    requirements['generalWarmupSeconds'] = 300
+    baseline = _candidate([6, 2])
+    baseline['workouts'][0]['exercises'] = [
+        {**baseline['workouts'][0]['exercises'][0], 'definition_id': f'LIBRARY_{i}',
+            'numWorkSets': 2, 'superset': 'PAIR' if i < 2 else None}
+        for i in range(3)]
+    candidate = copy.deepcopy(baseline)
+    candidate['workouts'][1]['exercises'].append(candidate['workouts'][0]['exercises'].pop())
+    for day in candidate['audit']['workouts']:
+        day['volume']['CHEST']['effective'] = 4
+    context = _context()
+    context['qualifiedRoleEvidence']['LIBRARY_0'] = []
+    compared = compare_audited_joint_candidates(
+        baseline, candidate, requirements=requirements, context=context)
+    assert compared['decision'] == 'promote_candidate'
+    assert compared['firstDifferingObjective'] == 'session_exercise_balance'
+    assert compared['objectiveCosts']['baseline']['session_exercise_balance'] == 2
+    assert compared['objectiveCosts']['candidate']['session_exercise_balance'] == 0
+    baseline['workouts'][0]['timesCompletedInAWeek'] = 2
+    assert _joint_candidate_objective_costs(baseline, requirements, context)['session_exercise_balance'] == 2
+
+
+def test_session_set_balance_counts_physical_work_per_session_and_preserves_duration_priority():
+    import copy
+    from workout_generator_pkg.joint_planning import _joint_candidate_objective_costs
+
+    requirements = _requirements(['duration_balance', 'session_set_balance'])
+    baseline = _candidate([6, 2])
+    baseline['workouts'][0]['exercises'] = [
+        {**baseline['workouts'][0]['exercises'][0], 'numWorkSets': 3, 'superset': 'PAIR'},
+        {**baseline['workouts'][0]['exercises'][0], 'numWorkSets': 3, 'superset': 'PAIR'},
+    ]
+    candidate = _candidate([4, 4])
+    context = _context()
+    compared = compare_audited_joint_candidates(baseline, candidate, requirements=requirements, context=context)
+    assert compared['decision'] == 'promote_candidate'
+    assert compared['firstDifferingObjective'] == 'session_set_balance'
+    assert compared['objectiveCosts']['baseline']['session_set_balance'] == 4
+    assert compared['objectiveCosts']['candidate']['session_set_balance'] == 0
+    baseline['workouts'][0]['timesCompletedInAWeek'] = 2
+    assert _joint_candidate_objective_costs(baseline, requirements, context)['session_set_balance'] == 4
+    slower = copy.deepcopy(candidate)
+    slower['audit']['workouts'][0]['estimatedSeconds'] += 60
+    compared = compare_audited_joint_candidates(candidate, slower, requirements=requirements, context=context)
+    assert compared['decision'] == 'retain_baseline'
+    assert compared['firstDifferingObjective'] == 'duration_balance'
 
 
 def test_distribution_cost_matches_joint_solver_formula_and_promotes_a_better_audited_plan():
@@ -207,6 +263,61 @@ def test_public_comparison_distinguishes_time_switch_tradeoff_from_strict_priori
         assert tradeoff['status'] == 'requires_programming_decision'
         assert [item['objective'] for item in tradeoff['improved']] == ['duration_economy']
         assert [item['objective'] for item in tradeoff['worsened']] == ['setup_economy_resource_switches']
+
+
+@pytest.mark.parametrize('mode, changed_work, decision', [
+    ('explicit_tradeoffs', None, 'incomparable'),
+    ('strict_lexicographic', None, 'promote_candidate'),
+    ('explicit_tradeoffs', 'exercise_dose', 'retain_baseline'),
+    ('strict_lexicographic', 'exercise_dose', 'incomparable'),
+    ('explicit_tradeoffs', 'unknown_weekly_dose', 'retain_baseline'),
+    ('strict_lexicographic', 'unknown_weekly_dose', 'incomparable'),
+])
+def test_relocated_same_weekly_work_exposes_overlap_and_duration_tradeoff(mode, changed_work, decision):
+    import copy
+
+    requirements = _requirements(['execution_order', 'duration_balance'])
+    requirements['preferenceResolution'] = mode
+    requirements['orderingPreferences'] = {'protectionOrder': ['main_direct']}
+    baseline = _candidate([2, 1])
+    baseline['workouts'][0]['exercises'] = [
+        {'definition_id': reference, 'numWorkSets': 1, 'superset': None, 'satisfiesCoverage': []}
+        for reference in ('A', 'B')]
+    baseline['workouts'][1]['exercises'] = [
+        {'definition_id': 'C', 'numWorkSets': 1, 'superset': None, 'satisfiesCoverage': []}]
+    candidate = copy.deepcopy(baseline)
+    candidate['workouts'][1]['exercises'].append(candidate['workouts'][0]['exercises'].pop())
+    candidate['audit']['workouts'][0]['estimatedSeconds'] = 200
+    candidate['audit']['workouts'][1]['estimatedSeconds'] = 400
+    if changed_work == 'exercise_dose':
+        candidate['workouts'][1]['exercises'][1]['definition_id'] = 'C'
+    elif changed_work == 'unknown_weekly_dose':
+        candidate['audit']['regionalTargetEvidence'] = {
+            'CHEST': {'status': 'unknown_selected_aggregate_contributions'}}
+    context = _context()
+    context['qualifiedRoleEvidence'] = {reference: [] for reference in ('A', 'B', 'C')}
+    context['setupDefinitions'] = {reference: {
+        'id': reference, 'exerciseCategory': 'MODERATE_COMPOUND',
+        'muscleGroups': ['FRONT_QUADRICEPS' if reference == 'C' else 'FRONT_CHEST'],
+    } for reference in ('A', 'B', 'C')}
+
+    result = compare_audited_joint_candidates(baseline, candidate,
+        requirements=requirements, context=context)
+
+    assert result['decision'] == decision
+    assert result['objectiveCosts']['baseline']['ordering_main_direct_total'] == 1
+    if mode == 'explicit_tradeoffs':
+        tradeoff = result['programmingTradeoff']
+        assert [row['objective'] for row in tradeoff['worsened']] == ['duration_balance']
+        if changed_work:
+            assert not tradeoff['improved']
+            assert all(not row['objective'].startswith('ordering_')
+                for relation in ('improved', 'worsened', 'unchanged') for row in tradeoff[relation])
+        else:
+            assert tradeoff['status'] == 'requires_programming_decision'
+            assert {row['objective'] for row in tradeoff['improved']} == {
+                'ordering_main_direct', 'ordering_main_direct_total'}
+            assert all(row['candidate'] == 0 for row in tradeoff['improved'])
 
 
 def test_candidate_cannot_drop_a_role_from_its_pinned_qualification():
@@ -952,3 +1063,18 @@ def test_role_peak_sum_counts_distinct_role_memberships_even_when_candidate_expo
     }
 
     costs = _joint_candidate_objective_costs(candidate, requirements, context)
+
+
+def test_heavy_workload_economy_counts_frequency_and_unknown_categories():
+    from workout_generator_pkg.joint_planning import _joint_candidate_objective_costs
+
+    requirements = _requirements(['heavy_workload_economy'])
+    candidate = _candidate([2, 3], definition_ids=['LIBRARY_1', 'LIBRARY_2'])
+    candidate['workouts'][0]['timesCompletedInAWeek'] = 2
+    context = _context()
+    context['setupDefinitions'] = {'LIBRARY_1': {'exerciseCategory': 'HEAVY_COMPOUND'},
+        'LIBRARY_2': {'exerciseCategory': 'MODERATE_COMPOUND'}}
+    costs = _joint_candidate_objective_costs(candidate, requirements, context)
+    assert costs['heavy_workload_economy'] == 4
+    del context['setupDefinitions']['LIBRARY_2']
+    assert _joint_candidate_objective_costs(candidate, requirements, context)['heavy_workload_economy'] is None

@@ -1,10 +1,21 @@
 import copy
+import json
 import time
 
 import pytest
 
 from workout_generator_pkg import candidate_refinement, joint_planning as joint
 from workout_generator_pkg.planning_tools import library_fingerprint
+
+
+@pytest.mark.parametrize('seconds', ['0', '-1', 'nan', 'inf', '240'])
+def test_configured_search_budget_is_positive_and_finite(monkeypatch, seconds):
+    monkeypatch.setenv('MYWORKOUT_SOLVER_SEARCH_SECONDS', seconds)
+    if seconds == '240':
+        assert joint.solver_search_seconds() == 240
+    else:
+        with pytest.raises(ValueError, match='positive finite'):
+            joint.solver_search_seconds()
 
 
 def _case():
@@ -85,7 +96,8 @@ def test_complete_feedback_retains_incumbent_when_candidate_cannot_be_promoted(m
 
     assert result['sessions'] == seed['sessions'] and result['audit'] == seed['audit']
     assert result['completeCandidateRefinement']['promotedCandidateCount'] == 0
-    assert len(attempted) == 1 and attempted[0]['search_deadline'] == deadline
+    assert len(attempted) == 2
+    assert attempted[0]['search_deadline'] < attempted[1]['search_deadline'] == deadline
     assert attempted[0]['_prescription_seed'] == seed['sessions']
     assert attempted[0]['redistribution_constraints'] == [{'fixture': 'preserve'}]
     assert '_fixed_session_work' not in attempted[0] and '_selection_prefix_bounds' not in attempted[0]
@@ -129,10 +141,10 @@ def test_neighborhood_keeps_related_alternatives_and_original_occurrence_indexes
 
     evidence = result['completeCandidateRefinement']
     assert evidence['status'] == 'promoted_complete_candidate', evidence
-    assert evidence['neighborhood']['attempts'][0]['addedDefinitionIds'] == ['row', 'unused_a', 'unused_b']
-    assert evidence['neighborhood']['attempts'][0]['eligibleDefinitionCount'] == 4
+    assert evidence['neighborhood']['attempts'][-1]['addedDefinitionIds'] == ['row', 'unused_a', 'unused_b']
+    assert evidence['neighborhood']['attempts'][-1]['eligibleDefinitionCount'] == 4
     assert evidence['neighborhood']['fullMenuDefinitionCount'] == 4
-    assert evidence['neighborhood']['attempts'][0]['omittedDefinitionCount'] == 0
+    assert evidence['neighborhood']['attempts'][-1]['omittedDefinitionCount'] == 0
     assert evidence['candidateModel']['physicalBlockCount'] == full['physicalBlockCount'] == 4
     assert result['occurrenceLineage'] == [[[0, 3]]]
     assert result['sessions'][0]['exercises'][0]['definition_id'] == sessions[0]['exercises'][3]['definition_id']
@@ -159,9 +171,9 @@ def test_neighborhood_does_not_truncate_related_alternatives_by_id_or_individual
         source_working_set_budget={'source': 'user_fixed', 'variableWeeklyWorkingSets': 5})
 
     evidence = result['completeCandidateRefinement']
-    assert evidence['neighborhood']['attempts'][0]['addedDefinitionIds'] == [
+    assert evidence['neighborhood']['attempts'][-1]['addedDefinitionIds'] == [
         'row', 'unused_a', 'zzz_best', 'zzzz_unqualified']
-    assert evidence['attemptedCandidateCount'] == 1
+    assert evidence['attemptedCandidateCount'] == 2
     assert any(item['definition_id'] == 'LIBRARY_3' for item in result['sessions'][0]['exercises'])
     assert all(item['satisfiesCoverage'] == context['qualifiedRoleEvidence'][item['definition_id']]
         for item in result['sessions'][0]['exercises'])
@@ -187,7 +199,7 @@ def test_neighborhood_retains_seed_when_related_alternatives_cannot_improve_it(e
         search_deadline=time.monotonic() + 10, context=context)
 
     evidence = result['completeCandidateRefinement']
-    assert evidence['neighborhood']['attempts'][0]['addedDefinitionIds'] == ['row']
+    assert evidence['neighborhood']['attempts'][-1]['addedDefinitionIds'] == ['row']
     if exact_prescriptions:
         assert evidence['promotedCandidateCount'] == 1
         selected = next(item for item in result['sessions'][0]['exercises'] if item['definition_id'] == 'LIBRARY_1')
@@ -221,16 +233,22 @@ def test_unknown_neighborhood_recipe_retains_the_audited_seed(monkeypatch):
     assert result['completeCandidateRefinement']['unsupportedDefinitionReferences'] == ['UNAVAILABLE_RECIPE']
 
 
-def test_public_solver_can_reconsider_seed_selection_within_the_same_deadline(monkeypatch):
+@pytest.mark.parametrize('coupled', [False, True])
+def test_public_solver_can_reconsider_seed_selection_within_the_same_deadline(monkeypatch, coupled):
     from workout_generator_pkg import allocation
 
     equipment, requirements, sessions, context, seed = _case()
+    if coupled:
+        requirements['orderingPreferences'] = {'protectionOrder': ['adjacent_direct']}
+        requirements['objectiveTiers'][0].append({
+            'metric': 'ordering_adjacent_direct', 'target': 0, 'scale': 10})
     core = joint._solve_prescribed_week
     deadlines = []
 
     def seed_then_coupled(*args, **kwargs):
         deadlines.append(kwargs['search_deadline'])
-        if kwargs.get('_selection_only') or kwargs.get('_fixed_session_work') is not None:
+        if ((coupled and len(deadlines) == 1) or kwargs.get('_selection_only')
+                or kwargs.get('_fixed_session_work') is not None):
             return copy.deepcopy(seed)
         return core(*args, **kwargs)
 
@@ -239,7 +257,10 @@ def test_public_solver_can_reconsider_seed_selection_within_the_same_deadline(mo
     deadline = time.monotonic() + 15
     result = joint.solve_prescribed_week(sessions, requirements, equipment, search_deadline=deadline)
 
-    assert len(deadlines) == 3 and deadlines[0] < deadlines[1] < deadlines[2] == deadline
+    assert len(deadlines) == (4 if coupled else 5)
+    assert deadlines[0] < deadline
+    assert deadlines[-3] < deadlines[-2] < deadlines[-1] == deadline
+    assert result['finalOrdering']['attempted']
     assert result['completeCandidateRefinement']['status'] == 'promoted_complete_candidate'
     assert result['sessions'][0]['exercises'][0]['definition_id'] == 'LIBRARY_1'
     assert result['audit']['weeklyWorkingSets'] == seed['audit']['weeklyWorkingSets'] == 5
@@ -273,3 +294,89 @@ def test_related_alternatives_can_jointly_replace_a_count_neither_can_supply_alo
     assert result['audit']['workouts'][0]['estimatedSeconds'] < seed['audit']['workouts'][0]['estimatedSeconds']
     assert not result['audit']['errors']
     assert (requirements, sessions, seed) == before
+
+
+def test_selected_menu_omission_feedback_retains_seed_until_semantic_selection(monkeypatch):
+    from test_workout_generator_session_repetition import repetition_case
+
+    equipment, record, draft, context = repetition_case(monkeypatch)
+    requirements = record['requirements']
+    requirements.pop('objectiveTiers')
+    requirements['objectiveOrder'] = ['workload_economy', 'movement_overlap']
+    requirements['auditTargets']['weeklyEffectiveSets']['calves'].update(
+        minimum=5, maximum=6, preferredMaximum=6)
+    requirements['executionRules'][0]['maximumSets'] = 6
+    sessions = draft['workouts']
+    for item in sessions[0]['exercises']:
+        item['allocationBounds']['maximum'] = 6
+    selection = {'mode': 'selected_menu',
+        'definitionIds': [item['id'] for item in equipment['exerciseDefinitions']]}
+    stale_messages = [
+        {'role': 'assistant', 'tool_calls': [{'id': 'stale-preparation', 'function': {
+            'name': 'prepare_workout_sessions', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'stale-preparation', 'content': json.dumps({
+            'requirementsId': 'OLD_REQUIREMENTS', 'semanticSelection': selection,
+            'setAllocation': {'feasible': True}})}]
+    from workout_generator_pkg.session_drafting import current_semantic_selection
+    from workout_generator_pkg.planning_tools import PlanningInputError
+    with pytest.raises(PlanningInputError, match='committed exercise menu'):
+        current_semantic_selection(stale_messages, equipment)
+    seed = joint._solve_prescribed_week(sessions, requirements, equipment,
+        semantic_selection=selection, messages=stale_messages, search_deadline=time.monotonic() + 10)
+    assert seed['feasible'] and not seed['audit']['errors'], seed
+    before = copy.deepcopy((sessions, seed, selection))
+
+    result = candidate_refinement.refine_complete_candidate(seed, sessions, requirements, equipment,
+        semantic_selection=selection, context=context, messages=stale_messages,
+        search_deadline=time.monotonic() + 10)
+
+    feedback = result['completeCandidateRefinement']
+    assert feedback['status'] == 'semantic_menu_alternative_requires_selection', feedback
+    assert feedback['attemptedCandidateCount'] == feedback['completedCandidateCount'] == 1
+    assert feedback['promotedCandidateCount'] == 0
+    assert result['sessions'] == seed['sessions'] and result['audit'] == seed['audit']
+    alternative = feedback['semanticMenuAlternative']
+    assert len(alternative['semanticSelection']['definitionIds']) == 1
+    assert alternative['semanticSelection']['fixedWorkouts'] == []
+    assert set(alternative['omittedDefinitionIds']) == set(selection['definitionIds']) - set(
+        alternative['semanticSelection']['definitionIds'])
+    assert alternative['audit']['weeklyWorkingSets'] == seed['audit']['weeklyWorkingSets']
+    assert alternative['audit']['weeklyVolume'] == seed['audit']['weeklyVolume']
+    assert not alternative['audit']['errors']
+    assert 'objectiveInputFingerprint' not in alternative['jointPlanning']
+    assert 'problemFingerprint' not in alternative['jointPlanning']
+    assert (sessions, seed, selection) == before
+
+
+def test_public_solver_retains_audited_seed_when_optional_refinement_input_is_stale(monkeypatch):
+    from test_workout_generator_session_repetition import repetition_case
+    from workout_generator_pkg.planning_tools import PlanningInputError
+
+    equipment, record, draft, _ = repetition_case(monkeypatch)
+    requirements = record['requirements']
+    requirements.pop('objectiveTiers')
+    requirements['objectiveOrder'] = ['workload_economy']
+    primary = []
+    core = joint._solve_prescribed_week
+
+    def save_primary(*args, **kwargs):
+        result = core(*args, **kwargs)
+        primary.append(copy.deepcopy(result))
+        return result
+
+    def reject_optional(*args, **kwargs):
+        raise PlanningInputError('semantic_selection_stale', 'Saved optional menu is stale.',
+            '/semanticSelection', 'Refresh the optional menu.')
+
+    monkeypatch.setattr(joint, '_solve_prescribed_week', save_primary)
+    monkeypatch.setattr(candidate_refinement, 'refine_complete_candidate', reject_optional)
+    result = joint.solve_prescribed_week(draft['workouts'], requirements, equipment,
+        search_deadline=time.monotonic() + 10)
+
+    assert result['feasible'] and not result['audit']['errors']
+    assert result['sessions'] == primary[0]['sessions']
+    assert result['audit'] == primary[0]['audit']
+    feedback = result['completeCandidateRefinement']
+    assert feedback['status'] == 'retained_audited_seed_after_refinement_input_error'
+    assert feedback['error']['code'] == 'semantic_selection_stale'
+    assert feedback['error']['path'] == '/semanticSelection'

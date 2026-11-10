@@ -9,7 +9,6 @@ REPAIR_DIMENSIONS = {
     'ordering': 'Reorder exercises and workouts.',
     'superset': 'Edit supported superset membership and rest structure.',
     'coverage': 'Edit assignments to approved coverage requirements.',
-    'session_timing': 'Edit setup and timing estimates; Python recalculates total duration.',
 }
 
 # Keep this inventory aligned with the existing typed repair-path classifier.
@@ -17,29 +16,28 @@ FIELD_REPAIR_DIMENSIONS = {
     'name': {'session_labels'},
     'description': {'session_labels'},
     'definition_id': {'exercise_selection'},
-    'numWorkSets': {'prescription', 'session_timing'},
-    'minReps': {'prescription', 'session_timing'},
-    'maxReps': {'prescription', 'session_timing'},
-    'workSetTemplate': {'prescription', 'session_timing'},
-    'targetSetPrescriptions': {'prescription', 'session_timing'},
-    'generateWarmUpSets': {'session_timing'},
+    'numWorkSets': {'prescription'},
+    'minReps': {'prescription'},
+    'maxReps': {'prescription'},
+    'workSetTemplate': {'prescription'},
+    'targetSetPrescriptions': {'prescription'},
+    'generateWarmUpSets': {'prescription'},
     'effortAcceptance': {'prescription'},
     'satisfiesCoverage': {'coverage'},
-    'setupSeconds': {'session_timing', 'prescription'},
-    'restBetweenSetsSeconds': {'session_timing', 'prescription'},
-    'restAfterExerciseSeconds': {'session_timing', 'prescription'},
-    'durationSeconds': {'session_timing', 'prescription'},
-    'repDurationSeconds': {'session_timing', 'prescription'},
-    'intraSetRestInSeconds': {'session_timing', 'prescription'},
-    'timesCompletedInAWeek': {'session_timing', 'prescription'},
-    'superset': {'superset', 'session_timing'},
-    'restAfterSupersetExerciseSeconds': {'superset', 'session_timing'},
-    'trainingDays': {'ordering', 'session_timing'},
+    'restBetweenSetsSeconds': {'prescription'},
+    'restAfterExerciseSeconds': {'prescription'},
+    'durationSeconds': {'prescription'},
+    'repDurationSeconds': {'prescription'},
+    'intraSetRestInSeconds': {'prescription'},
+    'timesCompletedInAWeek': {'prescription'},
+    'superset': {'superset'},
+    'restAfterSupersetExerciseSeconds': {'superset'},
+    'trainingDays': {'ordering'},
 }
 
 REPAIR_OBJECTIVE_DIMENSIONS = {
     # This objective preserves the selected recipes and their set prescriptions;
-    # only exercise placement and order are editable. The solver recalculates timing.
+    # only exercise placement and order are editable.
     'redistribute_work': {'exercise_selection', 'ordering'},
 }
 
@@ -119,7 +117,7 @@ CODE_OWNED_BEHAVIORS = {
     'app_native_rep_load_progression': (
         'finalArtifact.progressionMode is authoritative: DOUBLE_PROGRESSION and AUTO_REGULATION use app double progression; AUTO_REGULATION adds per-set RIR except the last work set; OFF has none. Do not require a generator method or prose.'),
     'execution_instructions': (
-        'Python renders setup time estimates, straight-set and superset order/rest instructions, and warm-up '
+        'Python renders straight-set and superset order/rest instructions, and warm-up '
         'generation availability from the final prescription. Exact app-generated ramp-ups depend on runtime '
         'load/equipment; unweighted configurations do not supply a lighter loaded ramp-up protocol.'),
     'recovery_adjustment': RECOVERY_ADJUSTMENT_GUIDANCE,

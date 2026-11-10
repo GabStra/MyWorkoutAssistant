@@ -116,7 +116,6 @@ def _feature_values(report):
     for index, workout in enumerate(report.get("workouts", [])):
         for muscle, values in workout["volume"].items():
             features[("session", index, muscle)] = float(values["effective"])
-        features[("duration", index)] = float(workout["estimatedSeconds"])
     for muscle, values in report.get("weeklyVolume", {}).items():
         features[("weekly", muscle)] = float(values["effective"])
     for family, sets in report.get('weeklyFamilyWorkingSets', {}).items():
@@ -140,6 +139,9 @@ def _audit_raw(draft, equipment, requirements, restriction_policy, allow_educate
                                   **family_options)
     from .generation_audit import audit_programming_preferences
     audit_programming_preferences(report, plan, requirements)
+    if apply_family_bounds:
+        from .generation_audit import audit_required_exercises
+        audit_required_exercises(report, plan, requirements, equipment)
     _audit_coverage(draft, requirements, report)
     return plan, report
 
@@ -223,8 +225,6 @@ def _constraints(report, requirements, frequency_complete, draft_frequency):
         for muscle, bounds in targets.get("perSessionEffectiveSets", {}).items():
             minimum, maximum = volume_target_bounds(bounds)
             rows.append((("session", index, muscle), float(minimum), float(maximum)))
-        if targets.get("maximumSessionSeconds") is not None:
-            rows.append((("duration", index), -math.inf, float(targets["maximumSessionSeconds"])))
     sessions_per_week = requirements.get("sessionsPerWeek")
     if sessions_per_week is not None and frequency_complete and draft_frequency != sessions_per_week:
         raise ValueError(f"Draft frequency is {draft_frequency}; requirements specify {sessions_per_week} sessions per week.")
@@ -888,10 +888,6 @@ def _check_solution(candidate, plan, report, requirements, frequency_complete):
             minimum, maximum = volume_target_bounds(bounds)
             if not minimum - _TOLERANCE <= value <= maximum + _TOLERANCE:
                 return f"Exact audit found {workout['name']} {muscle} at {value:g} effective sets outside the requested range."
-        limit = targets.get("maximumSessionSeconds")
-        if limit is not None and feature_values[("duration", index)] > limit + _TOLERANCE:
-            seconds = feature_values[("duration", index)]
-            return f"Exact audit estimates {workout['name']} at {seconds:g}s, above the {limit}s limit."
     for muscle, bounds in targets.get("weeklyEffectiveSets", {}).items():
         value = feature_values[("weekly", muscle)]
         minimum, maximum = volume_target_bounds(bounds)
@@ -1199,7 +1195,8 @@ def selection_volume_conflicts(sessions, candidates, targets):
 
 
 def allocate_prepared_sets(sessions, candidates, requirements, existing=None, equipment=None, restriction_policy=None,
-                           select_movements=False, source_working_set_budget=None, execution_definitions=None):
+                           select_movements=False, source_working_set_budget=None, execution_definitions=None,
+                           semantic_selection=None):
     """Allocate variable-session counts under a shared cap before prescriptions are locked."""
     from .joint_planning import _source_working_set_budget_identity
     try:
@@ -1325,6 +1322,26 @@ def allocate_prepared_sets(sessions, candidates, requirements, existing=None, eq
         for day_index in range(len(sessions)):
             features.append((('session_nonempty', day_index), 1, math.inf, 0,
                 [int(v['members'][0]['day'] == day_index) for v in variables]))
+    from .programming_policy import semantic_selection_ids, resolve_exercise_choices
+    selected_ids = semantic_selection_ids(semantic_selection, equipment or {})
+    required_ids = resolve_exercise_choices(requirements, equipment or {})['required']
+    if selected_ids is not None or required_ids:
+        from .recipe_contracts import library_definitions_by_reference
+        definitions = library_definitions_by_reference(equipment or {})
+        fixed_ids = {definitions[item['definition_id']]['id']
+            for day in (existing or {}).get('workouts', []) for item in day['exercises']}
+        for identifier in sorted(required_ids - fixed_ids):
+            features.append((('required_exercise', identifier), 1, math.inf, 0,
+                [sum(definitions[slot['reference']]['id'] == identifier for slot in variable['members'])
+                    for variable in variables]))
+    if selected_ids is not None:
+        for identifier in sorted(selected_ids):
+            features.append((('semantic_menu_member', identifier), 1, math.inf, 0,
+                [sum(definitions[slot['reference']]['id'] == identifier for slot in variable['members'])
+                    for variable in variables]))
+        for variable in variables:
+            if any(definitions[slot['reference']]['id'] not in selected_ids for slot in variable['members']):
+                variable['upper'] = 0
     hard_variables, hard_features = copy.deepcopy(variables), copy.deepcopy(features)
     candidate_variables = copy.deepcopy(variables)
     preference_details = (_prepared_selection_objectives(sessions, candidates, requirements, existing,
@@ -1444,11 +1461,11 @@ def allocate_prepared_sets(sessions, candidates, requirements, existing=None, eq
             'sourceWorkingSetBudget': copy.deepcopy(normalized_source_budget),
             **({'selectionPreview': preview} if preview else {}),
             'scope': ('Pre-prescription muscle-credit count-domain comparison only; proposed role labels are unqualified and do not constrain this result. '
-                'Detailed prescriptions, timing, effort, setup and qualified-role coverage remain for later stages.')}
+                'Detailed prescriptions, effort, setup and qualified-role coverage remain for later stages.')}
 
 
 def _blocking_audit_errors(report, frequency_complete, requirements):
-    supported = {"volume_below_target", "volume_above_target", "duration_exceeded",
+    supported = {"volume_below_target", "volume_above_target",
                  "superset_set_count_mismatch", "empty_superset",
                  'family_weekly_sets_below_minimum', 'family_weekly_sets_above_maximum',
                  'exercise_sessions_above_maximum', 'exercise_weekly_sets_above_maximum'}
@@ -1592,8 +1609,7 @@ def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_g
             continue
         effect = effects[variable_index]
         relevant = any(
-            (feature[0] == "duration" and effect["workout"] == feature[1])
-            or (feature[0] == "session" and effect["workout"] == feature[1] and feature[2] in effect["muscles"])
+            (feature[0] == "session" and effect["workout"] == feature[1] and feature[2] in effect["muscles"])
             or (feature[0] == "weekly" and feature[1] in effect["muscles"])
             or (feature[0] == 'family' and feature[1] in effect['families'])
             or (feature[0] == 'exercise_weekly_sets' and feature[1] in effect['definitions'])
@@ -1633,9 +1649,6 @@ def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_g
                 coefficients.append(0.0)
                 continue
             effect = effects[variable_index]
-            if feature[0] == "duration" and effect["workout"] != feature[1]:
-                coefficients.append(0.0)
-                continue
             if feature[0] == "session" and (effect["workout"] != feature[1] or feature[2] not in effect["muscles"]):
                 coefficients.append(0.0)
                 continue
@@ -1710,7 +1723,7 @@ def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_g
             "preferenceDifferences": differences,
             "weeklyEffectiveSets": {muscle: values["effective"] for muscle, values in exact_report["weeklyVolume"].items()
                                      if muscle in requirements["auditTargets"].get("weeklyEffectiveSets", {})},
-            "sessions": [{"name": item["name"], "estimatedSeconds": item["estimatedSeconds"],
+            "sessions": [{"name": item["name"],
                           "effectiveSets": {muscle: item["volume"][muscle]["effective"] for muscle in requirements["auditTargets"].get("perSessionEffectiveSets", {})}}
                          for item in exact_report["workouts"]],
             "completeWeek": frequency_complete,
@@ -2412,7 +2425,7 @@ def auto_allocate_workout(result, equipment, messages, allow_educated_load_guess
     already_solved = reused_joint_receipt is not None
     needs_balance = needs_balance and not already_solved
     needs_distribution = False
-    if automatic and not already_solved and 'distribution' in objective_order:
+    if automatic and not already_solved and {'distribution', 'relative_distribution'} & objective_order:
         frequency = sum(day['timesCompletedInAWeek'] for day in draft['workouts'])
         targets = requirements['auditTargets']
         muscles = set(targets.get('weeklyEffectiveSets', {})) | set(targets.get('perSessionEffectiveSets', {}))
@@ -2420,17 +2433,17 @@ def auto_allocate_workout(result, equipment, messages, allow_educated_load_guess
             abs(day.get('volume', {}).get(muscle, {}).get('effective', 0)
                 - report.get('weeklyVolume', {}).get(muscle, {}).get('effective', 0) / frequency) > _TOLERANCE
             for day in report.get('workouts', []) for muscle in muscles)
-    durations = [day['estimatedSeconds'] for day in report.get('workouts', [])]
-    needs_duration_balance = (automatic and not already_solved and 'duration_balance' in objective_order
-        and len(durations) > 1 and max(durations) - min(durations)
-            > requirements.get('durationBalanceToleranceSeconds', 0) + _TOLERANCE)
     needs_practical_optimization = (automatic and not already_solved
-        and bool({'setup_economy', 'duration_economy', 'time_budget', 'exercise_count', 'execution_order'} & objective_order))
-    needs_volume_target = (automatic and not already_solved and 'volume_target' in objective_order
+        and bool({'setup_economy', 'exercise_count', 'exercise_preference', 'session_exercise_balance', 'session_set_balance', 'execution_order',
+            'relative_role_concentration'} & objective_order))
+    needs_volume_target = (automatic and not already_solved
+        and ('volume_target' in objective_order
+            or any(goal['metric'].startswith(('weekly_volume:', 'weekly_effective_sets:'))
+                for tier in requirements.get('objectiveTiers', []) for goal in tier))
         and any('preferredMinimum' in bounds for key in ('weeklyEffectiveSets', 'perSessionEffectiveSets')
                 for bounds in requirements.get('auditTargets', {}).get(key, {}).values()))
     if not any((needs_numbers, needs_balance, needs_distribution,
-                needs_duration_balance, needs_practical_optimization, needs_volume_target)):
+                needs_practical_optimization, needs_volume_target)):
         if reused_joint_receipt:
             return {**result, 'coordinatedJointPlanning': {**reused_joint_receipt,
                 'reusedForValidatedCandidate': True,
@@ -2477,7 +2490,7 @@ def auto_allocate_workout(result, equipment, messages, allow_educated_load_guess
                     'jointPlanningStopped', 'passed', 'errors', 'instruction')
                 return {**result, **{key: owner[key] for key in keys if key in owner}}
     if progress:
-        progress('Solving prescriptions, placement, volume and duration together')
+        progress('Solving prescriptions, placement and volume together')
     joint = solve_prescribed_week(draft['workouts'], stored['requirements'], equipment,
         restrictions, allow_educated_load_guesses=allow_educated_load_guesses,
         training_history=training_history, messages=messages,

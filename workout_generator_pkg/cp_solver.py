@@ -5,18 +5,16 @@ import time
 from fractions import Fraction
 from functools import lru_cache
 
-_AUXILIARY_KINDS = frozenset({'duration_balance_bound', 'duration_balance_excess',
-    'volume_target_deviation', 'fixed_volume_target_deviation', 'time_budget_excess',
+_AUXILIARY_KINDS = frozenset({'volume_target_deviation', 'fixed_volume_target_deviation',
     'reviewed_dose_deviation', 'exercise_distribution_peak', 'role_concentration_peak',
     'role_concentration_profile_peak', 'demand_distribution_peak', 'demand_colocation_peak',
     'goal_target_miss', 'goal_tier_peak'})
-_DERIVED_INTEGER_KINDS = frozenset({'coverage_balance_deviation', 'distribution_deviation',
-    'distribution_peak', 'exercise_count_deviation', 'execution_exposure_peak',
-    'redistribution_peak', 'development_exposure_deficit'})
 
 
 @lru_cache(maxsize=8192, typed=True)
 def _rational(value):
+    if isinstance(value, Fraction):
+        return value
     if type(value) not in (int, float) or not math.isfinite(value):
         raise ValueError(f'Unsupported finite solver quantity: {value!r}')
     result = Fraction(value).limit_denominator(1_000_000)
@@ -88,9 +86,8 @@ class SolverSession:
             for value in (item['lower'], item['upper'])))
         base_lattice = self._row_lattice(features[len(self._features):] if prefix else features, base_lattice)
         objective_values = [_rational(item.get('objectiveCost', 0)) for item in variables]
-        lattice = math.lcm(base_lattice, *(value.denominator for value in objective_values))
-        if lattice > 1_000_000:
-            raise ValueError(f'Exact auxiliary lattice exceeds supported denominator: {lattice}')
+        # Objective weights are independently integer-scaled and do not refine feasible values.
+        lattice = base_lattice
         reuse = prefix and lattice == self._lattice
         appended = len(features) - len(self._features) if reuse else len(features)
         if not reuse:
@@ -133,10 +130,37 @@ class SolverSession:
             if ((math.isfinite(lower) and activity < _rational(lower))
                     or (math.isfinite(upper) and activity > _rational(upper))):
                 return False
+        circuits = {}
+        for value, variable in zip(exact, variables):
+            identity = variable.get('domainIdentity') or {}
+            if identity.get('kind') == 'execution_arc':
+                circuits.setdefault(identity['workoutIndex'], []).append(
+                    (identity['tail'], identity['head'], value))
+        for arcs in circuits.values():
+            vertices, outgoing, incoming = set(), {}, {}
+            for tail, head, selected in arcs:
+                vertices.update((tail, head))
+                if selected not in (0, 1):
+                    return False
+                if selected:
+                    if tail in outgoing or head in incoming:
+                        return False
+                    outgoing[tail], incoming[head] = head, tail
+            if outgoing.keys() != vertices or incoming.keys() != vertices:
+                return False
+            active = {tail for tail, head in outgoing.items() if tail != head}
+            if active:
+                start = current = next(iter(active))
+                visited = set()
+                while current not in visited:
+                    visited.add(current)
+                    current = outgoing[current]
+                if current != start or visited != active:
+                    return False
         return True
 
     def _candidate(self, solver):
-        return [solver.value(variable) / scale if scale != 1 else solver.value(variable)
+        return [Fraction(solver.value(variable), scale) if scale != 1 else solver.value(variable)
             for variable, scale in zip(self._variables, self._scales)]
 
     def solve(self, variables, features, timeout_seconds=60, preserve_current=False,
@@ -180,12 +204,6 @@ class SolverSession:
         fallback_source = None
         fallback_exact = None
         if (not isinstance(incumbent, dict) and incumbent is not None
-                and self._validated_candidate is not None
-                and len(incumbent) == len(variables)
-                and all(value == previous or
-                    (variable.get('domainIdentity') or {}).get('kind') in
-                        (_AUXILIARY_KINDS | _DERIVED_INTEGER_KINDS)
-                    for value, previous, variable in zip(incumbent, self._validated_candidate, variables))
                 and self._validate_candidate(incumbent, variables, features)):
             fallback = list(incumbent)
             fallback_source = 'validated_session_incumbent'
@@ -220,7 +238,7 @@ class SolverSession:
                 exact = [Fraction(completion.value(variable), scale)
                     for variable, scale in zip(self._variables, self._scales)]
                 if not self._validate_candidate(fallback, variables, features, exact):
-                    raise RuntimeError('CP-SAT hint completion violates an exact source row or domain.')
+                    raise RuntimeError('CP-SAT hint completion violates an exact source constraint or domain.')
                 fallback_source = 'cp_verified_hint_completion'
                 fallback_exact = exact
                 self._model.clear_hints()
@@ -254,7 +272,7 @@ class SolverSession:
             exact = [Fraction(solver.value(variable), scale)
                 for variable, scale in zip(self._variables, self._scales)]
             if not self._validate_candidate(candidate, variables, features, exact):
-                raise RuntimeError('CP-SAT candidate violates an exact source row or variable domain.')
+                raise RuntimeError('CP-SAT candidate violates an exact source constraint or variable domain.')
         elif fallback is not None and status == cp_model.UNKNOWN:
             candidate = fallback
         if candidate is not None:

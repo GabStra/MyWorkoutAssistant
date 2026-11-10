@@ -67,7 +67,7 @@ def prescribe_block_recovery(day, requirements, definitions, *, complete_session
                 block[-1].get('restAfterExerciseSeconds', 0)))
 EXECUTION_ORDER_POLICY = 'approved_ordering_preferences_and_execution_rules'
 EXECUTION_ORDER_DESCRIPTION = ('Only approved executionRules and orderingPreferences establish execution precedence. '
-    'phaseOrder groups categories that may interleave; explicit order rules take precedence. '
+    'phaseOrder groups categories that may interleave; explicit order rules must respect these phases. '
     'protectionOrder ranks separate cumulative direct/supporting exposure proxies only when execution_order is approved. '
     'Supporting exposure includes explicitly reviewed execution support without granting hypertrophy set credit. '
     'These are organizational and exposure facts, not measured fatigue, recovery or personal capacity. '
@@ -76,7 +76,11 @@ EXECUTION_ORDER_DESCRIPTION = ('Only approved executionRules and orderingPrefere
 _CORE_MUSCLES = frozenset({'FRONT_ABS', 'FRONT_OBLIQUES'})
 
 
-def execution_block_priority(definitions):
+def execution_block_priority(definitions, requirements=None):
+    explosive_ids = set((requirements or {}).get('orderingPreferences', {}).get('explosiveDefinitionIds', []))
+    if any((definition.get('libraryDefinitionId') or definition.get('id')) in explosive_ids
+            for definition in definitions):
+        return -1  # Generator-only phase; exercise categories remain unchanged.
     priorities = []
     for definition in definitions:
         muscles = set(definition.get('muscleGroups', []))
@@ -88,18 +92,18 @@ def execution_block_priority(definitions):
 
 def execution_member_order(definitions, requirements=None):
     return sorted(range(len(definitions)), key=lambda index: (
-        execution_order_phase(execution_block_priority([definitions[index]]), requirements)
+        execution_order_phase(execution_block_priority([definitions[index]], requirements), requirements)
         if requirements is not None else execution_block_priority([definitions[index]])))
 
 
-def execution_block_order_key(definitions, counts=None):
+def execution_block_order_key(definitions, counts=None, requirements=None):
     """Stable block identity for producer and audit tie-breaking after reordering."""
     counts = counts or [None] * len(definitions)
     identities = tuple(sorted((str(definition.get('libraryDefinitionId')
         or definition.get('exerciseDefinitionId') or definition.get('definition_id')
         or definition.get('id') or ''), count)
         for definition, count in zip(definitions, counts, strict=True)))
-    return execution_block_priority(definitions), identities
+    return execution_block_priority(definitions, requirements), identities
 
 
 def execution_order_predecessors(block_roles, requirements):
@@ -124,6 +128,8 @@ def execution_order_is_admissible(order, block_roles, order_keys, requirements):
         return False
     dependencies = execution_order_predecessors(block_roles, requirements)
     phases = [execution_order_phase(key[0], requirements) for key in order_keys]
+    if [phases[index] for index in order] != sorted(phases):
+        return False
     for index in order:
         ready = [candidate for candidate, predecessors in dependencies.items() if not predecessors]
         if index not in ready or phases[index] != min(phases[candidate] for candidate in ready):
@@ -196,6 +202,10 @@ def shared_superset_station_group(first, second, requirements, first_coverage=No
 
 def superset_setup_compatibility(first, second, requirements, first_coverage=None, second_coverage=None):
     """A resource conflict overrides access confirmation; equipment types never confirm access."""
+    phases = {execution_order_phase(execution_block_priority([definition], requirements), requirements)
+        for definition in (first, second)}
+    if len(phases) > 1:
+        return {'status': 'incompatible', 'reason': 'different_approved_execution_phases'}
     shared = shared_superset_station_group(first, second, requirements, first_coverage, second_coverage)
     if shared:
         return {'status': 'incompatible', 'sharedResourceGroup': sorted(shared)}
@@ -273,6 +283,35 @@ def movement_overlap_roles(roles):
     return set(roles) & {'knee_dominant', 'hip_dominant', 'knee_flexion_hamstring',
         'horizontal_push', 'horizontal_pull', 'vertical_push', 'vertical_pull',
         'lateral_movement', 'rotational_core'}
+
+
+def movement_pair_evidence(items, family_by_reference=None, execution_by_reference=None):
+    """Classify documented form overlap without inferring equivalent stimulus or fatigue."""
+    from .recipe_contracts import reviewed_limb_form_pair_evidence
+
+    family_by_reference = family_by_reference or {}
+    execution_by_reference = execution_by_reference or {}
+    roles = {}
+    for item in items:
+        roles.setdefault(item['definition_id'], set()).update(
+            movement_overlap_roles(item.get('satisfiesCoverage', [])))
+    evidence = []
+    for first, second in combinations(sorted(roles), 2):
+        shared_roles = roles[first] & roles[second]
+        families = [family_by_reference.get(reference) for reference in (first, second)]
+        same_family = bool(families[0]) and families[0] == families[1]
+        if not shared_roles and not same_family:
+            continue
+        limb_form = reviewed_limb_form_pair_evidence(
+            execution_by_reference.get(first), execution_by_reference.get(second))
+        status = 'unknown'
+        if limb_form['status'] == 'documented_complementary':
+            status = 'documented_complementary'
+        elif same_family and limb_form['status'] == 'documented_repeated_form':
+            status = 'documented_overlap'
+        evidence.append({'definitionReferences': [first, second], 'roleKeys': sorted(shared_roles),
+            'exerciseFamilies': families, 'limbModes': limb_form['limbModes'], 'status': status})
+    return evidence
 
 
 def execution_priority_rank(roles, requirements):
@@ -406,6 +445,11 @@ def execution_order_indices(block_roles, order_keys, requirements, setup_resourc
         ready = [index for index, predecessors in dependencies.items() if not predecessors]
         if not ready:
             raise ValueError('Selected recipe ordering is cyclic.')
+        first_phase = min(execution_order_phase(order_keys[index][0], requirements) for index in dependencies)
+        ready = [index for index in ready
+            if execution_order_phase(order_keys[index][0], requirements) == first_phase]
+        if not ready:
+            raise ValueError('Approved exercise precedence conflicts with the allowed execution phases.')
         if ordered and (overlap or resource_only_setup):
             previous = ordered[-1]
             index = min(ready, key=lambda index: (
@@ -520,7 +564,7 @@ def canonical_execution_order_draft(draft, requirements, equipment):
             reordered_blocks.append(ordered_members)
             block_roles.append(set().union(*(set(item.get('satisfiesCoverage', [])) for item in members)))
             order_keys.append(execution_block_order_key(member_definitions,
-                [source_exercises[index]['numWorkSets'] for index in block]))
+                [source_exercises[index]['numWorkSets'] for index in block], requirements))
             profiles.append(execution_interference_profile(member_definitions,
                 [item['numWorkSets'] for item in members], block_roles[-1], requirements))
 
@@ -562,7 +606,7 @@ EXECUTION_RULES_SCHEMA = {'type': 'array', 'maxItems': 30,
         _rule({'kind': {'const': 'coverageBalance'}, 'first': _COVERAGE, 'second': _COVERAGE,
                'scope': {'enum': ['weekly', 'eachSession']},
                'relationship': {'enum': ['balanced', 'first_not_less_than_second'],
-                   'description': 'Use balanced only for a source-backed balance request. Use first_not_less_than_second only when the source explicitly prioritizes the first role at least as much as the second; this is a soft comparison, never a ratio or quota.'}},
+                   'description': 'Use balanced only for a source-backed balance request; qualitative balance does not require equal set counts. Use first_not_less_than_second only when the source explicitly prioritizes the first role at least as much as the second. These remain qualitative comparisons unless source_balance is explicitly ranked to minimize their numerical set-count deviation; neither creates a hard ratio or quota.'}},
               ['kind', 'first', 'second', 'scope']),
         # Disjoint object shapes support either/both caps under strict provider delivery.
         *[_rule({'kind': {'const': 'exerciseExposure'},
@@ -570,7 +614,9 @@ EXECUTION_RULES_SCHEMA = {'type': 'array', 'maxItems': 30,
           for fields in (('maximumSessionsPerWeek',), ('maximumWeeklySets',),
                          ('maximumSessionsPerWeek', 'maximumWeeklySets'))],
         _rule({'kind': {'const': 'straightSets'}, 'coverageKey': _COVERAGE}, ['kind', 'coverageKey']),
-        _rule({'kind': {'const': 'warmup'}, 'coverageKey': _COVERAGE}, ['kind', 'coverageKey']),
+        _rule({'kind': {'const': 'warmup'}, 'coverageKey': _SELECTOR,
+               'exerciseCategory': {'enum': ['HEAVY_COMPOUND', 'MODERATE_COMPOUND', 'ISOLATION']},
+               'whenSupported': {'type': 'boolean'}}, ['kind', 'coverageKey']),
         _rule({'kind': {'const': 'workSets'}, 'coverageKey': _SELECTOR,
                'exerciseCategory': {'enum': ['HEAVY_COMPOUND', 'MODERATE_COMPOUND', 'ISOLATION']},
                'minimumSets': {'type': 'integer', 'minimum': 1, 'maximum': 20},
@@ -596,17 +642,19 @@ EXECUTION_RULES_SCHEMA = {'type': 'array', 'maxItems': 30,
 # Shared by planner and independent reviewer; no additional model call.
 GUIDELINE_POLICY = {
     'version': 12,
-    'goalAuthority': 'Apply programming preferences to the approved structured requirements and original source instructions. Training goals are not interchangeable. A weekly muscle target creates no direct-work or each-session coverage requirement. Only explicit requiredCoverage scopes and qualified roles establish coverage. Direct and substantial secondary credits contribute to effective volume; incidental stabilization receives no credit. Balance the settled weekly doses by reducing the worst per-muscle session imbalance before aggregate imbalance, while preserving weekly ranges and higher-ranked priorities. If explicit approved coverage is infeasible, report the conflict rather than silently dropping it. Distinguish requested inclusion from development emphasis: `requiredCoverage.intent=inclusion` establishes presence only; `development` marks a source-backed purpose for semantic assessment. Development intent does not create an extra-set bonus or a numeric floor: only explicit `minimumWeeklySets` and `minimumSessions` fields establish floors, and additional development-emphasis/exposure objectives run only when explicitly listed in the authoritative `objectiveOrder`. `workload_economy` is a soft preference to minimize total physical weekly working sets after higher-ranked preferences; it cannot change user-owned numbers or hard constraints. A source-backed coverageBalance relationship may express balanced exposure or that the first role should not receive less exposure than the second; neither defines a ratio or hard minimum. Compare direct and weighted secondary contributions; regional stimulus needs supported execution evidence. The app owns progression and load calibration. Clarify only material source ambiguity; do not invent user requirements or numeric thresholds for qualitative goals. Apply code-owned defaults only when shown in the approved requirements. Recommendations never authorize compromise; `objectiveOrder` is authoritative and omitted preferences do not run.',
-    'deterministic': 'New requirements candidates include the application policy of at least two working sets per selected exercise occurrence, at most 15 exercise occurrences per session including every superset member, and at most three exercises per superset. These session limits apply to the selected plan, not the candidate pool. Aggregate muscle roles are derived from each library definition’s primary muscleGroups; eachSession requirements for aggregate muscle roles require primary contributions, not secondary credit. Only minimum/maximum fields establish hard effective-set bounds; preferredMinimum/preferredMaximum are soft ranges and missed preferences are disclosed tradeoffs. preferredSessionSeconds is a soft budget separate from the hard maximum. exerciseSelection counts distinct qualified definitions across the week using direct or substantial secondary credit and does not prove complementarity. If these floors cannot fit the approved exercise library and other hard requirements, expose the infeasibility for a scoped decision. The existing working-set cap of 20 is a numeric domain limit, not a training recommendation. The approved rules are shown for approval and shared by selection and audit. Existing approved requirements are not retroactively changed. Other executionRules enforce explicit working-set limits, exercise-block order, straight sets, generated ramp-ups and rest ranges. Selectors use requiredCoverage assignments; code derives aggregate muscle roles from primary tags and the independent reviewer verifies semantic movement roles. Volume, time, load suitability and required coverage use the existing audits.',
+    'goalAuthority': 'Apply programming preferences to the approved structured requirements and original source instructions. Training goals are not interchangeable. A weekly muscle target creates no direct-work or each-session coverage requirement. Muscle tracking is independent of numeric targeting: only explicitly supplied volume bounds, preferences or source-approved movement goals establish a dose target. Report supported muscle credits, including zero aggregate exposure, without inventing quotas or adequacy claims for reporting-only groups. Account for compound contributions before adding direct isolation for a source-backed priority or supported gap. Only explicit requiredCoverage scopes and qualified roles establish coverage. Direct and substantial secondary credits contribute to effective volume; incidental stabilization receives no credit. Use the explicitly approved exposure metrics: relative_role_concentration and relative_distribution compare the distribution of each actual weekly dose without rewarding proportional dose reduction; legacy raw metrics retain their units. Joint tiers choose dose, selection and placement together; preserve their attained result during later tie-breakers. Zero distribution cost establishes no dose or adequacy. If explicit approved coverage is infeasible, report the conflict rather than silently dropping it. Distinguish requested inclusion from development emphasis: `requiredCoverage.intent=inclusion` establishes presence only; `development` marks a source-backed purpose for semantic assessment. Development intent does not create an extra-set bonus or a numeric floor: only explicit `minimumWeeklySets` and `minimumSessions` fields establish floors, and additional development-emphasis/exposure objectives run only when explicitly listed in the authoritative `objectiveOrder`. `workload_economy` is a soft preference to minimize total physical weekly working sets after higher-ranked preferences; it cannot change user-owned numbers or hard constraints. A source-backed coverageBalance relationship supports comparing actual exposures and training purpose; qualitative balance does not require equal set counts. Numerical set-difference minimization or one-sided undershoot runs only when source_balance is explicitly ranked. Neither defines a hard ratio or minimum. Compare direct and weighted secondary contributions; regional stimulus needs supported execution evidence. The app owns progression and load calibration. Clarify only material source ambiguity; do not invent user requirements or numeric thresholds for qualitative goals. Apply code-owned defaults only when shown in the approved requirements. Recommendations never authorize compromise; `objectiveOrder` is authoritative and omitted preferences do not run.',
+    'deterministic': 'New requirements candidates include the application policy of at least two working sets per selected exercise occurrence, at most 15 exercise occurrences per session including every superset member, and at most three exercises per superset. These session limits apply to the selected plan, not the candidate pool. Aggregate muscle roles are derived from each library definition’s primary muscleGroups; eachSession requirements for aggregate muscle roles require primary contributions, not secondary credit. Only minimum/maximum fields establish hard effective-set bounds; preferredMinimum/preferredMaximum are soft ranges and missed preferences are disclosed tradeoffs. exerciseSelection counts distinct qualified definitions across the week using direct or substantial secondary credit and does not prove complementarity. If these floors cannot fit the approved exercise library and other hard requirements, expose the infeasibility for a scoped decision. The existing working-set cap of 20 is a numeric domain limit, not a training recommendation. The approved rules are shown for approval and shared by selection and audit. Existing approved requirements are not retroactively changed. Other executionRules enforce explicit working-set limits, exercise-block order, straight sets, generated ramp-ups and rest ranges. Selectors use requiredCoverage assignments; code derives aggregate muscle roles from primary tags and the independent reviewer verifies semantic movement roles. Volume, load suitability and required coverage use the existing audits.',
     'review': [
+        'Selection quality: assess the intended movement development separately from aggregate muscle credits. Credited assistance does not establish pressing practice or development. Exercise counts do not establish complementarity; use supported movement roles, ROM, muscle lengths, joint angles, resistance suitability and practical advantages to judge an added variation. Do not invent a count quota, pressing-set minimum or change muscle credits. Unless explicitly required, direct isolation for every muscle or both variations in every session is unnecessary. Apply the approved weekly dose and practical tradeoffs, not a universal minimal-volume prescription.',
+        'Solo execution: when the user trains alone, qualify loading, starting position, execution, finishing and handling an unsuccessful repetition against confirmed equipment, accessories, space and available help. Prefer suitably protected independent execution where relevant. Safety-support presence is a reusable fact, not proof of load rating, suitable height/reach, clearance or every exercise configuration. Do not infer a spotter or safety supports from a resource name, and do not ask again for already confirmed presence. Clarify material missing exercise-specific facts through the existing question gate; do not prescribe an unverified assisted or protected setup as established.',
         'Prescription authority: structured fields own rep ranges, rest intervals and loading configuration. Python renders the standard working-set underperformance stop/re-audit rule; it is fixed behavior, not a local-note repair. Preserve source-backed movement-specific technique and safety cues. Assess only rests the app executes: a straightSets restBetweenSetsSeconds field does not represent an executed rest when numWorkSets is 1, and a superset-round rest is likewise inactive for one round. Do not repair an inactive between-set/round rest field; check actual prescribed recovery during every executed interval. In notes, refer to the prescribed range/rest instead of repeating those numbers. Explain only execution and acceptance details not already represented. A note contradicting a structured prescription is an established violation, not uncertainty. New loading configurations or exercise variants require selection and re-audit before use.',
         'Execution capabilities: every working, warm-up, calibration, assistance, progression and fallback action must use confirmed equipment and available help. Describe bodyweight assistance operationally; an unspecified assistance setting does not establish a usable method. A re-audit instruction does not authorize using new gear, help or a different movement before confirmation and validation. Unavailable alternatives may be proposed for confirmation, never prescribed as executable fallbacks. The app owns native load calibration; generator notes must not add a second calibration procedure. Conflicting instructions are blocking, not merely uncertain load suitability.',
         'Sequencing compliance: the shared deterministic audit owns only approved orderingPreferences and explicit executionRules, for whole blocks and superset members. Do not raise a sequencing-rule finding after that audit passes. Use the audited sequence only when assessing fatigue or whether earlier work materially undermines a stated priority. Core-only status uses primary muscle groups, not secondary credits.',
         'Fatigue and recovery: assess the complete week, not just each muscle total. Trace repeated demands on prime movers, grip, trunk bracing and spinal loading through exercise order, working-set counts, effort, rest and actual scheduled recovery. Include eccentric/unfamiliar work and how earlier fatigue may limit later technical or priority lifts. Ground each concern in supplied movement definitions, prescriptions and comparable history; do not infer spinal loading or recovery from muscle credits alone. No universal ban on consecutive compounds, fixed exercise count, fatigue score or invented recovery threshold. Do not infer actual weekday spacing from frequency alone.',
     'Fatigue management: prefer distributing demanding exposures, reducing redundant work, using a supported less fatiguing variant, or changing order/pairing before changing approved targets. Sequence support counts include sourced execution-support facts without adding muscle-volume credit or estimating fatigue/recovery; missing facts remain unknown. Preserve the approved training goal, practical progression, equipment feasibility and numerical constraints. Do not claim a token rest day, different exercise name or a generic recovery note resolves repeated loading. When evidence makes feasibility materially uncertain, repair the exercise selection or supported prescription conservatively; never silently count reduced fallback volume toward the original target.',
-    'Supersets and rest: assess each pairing in its full session and repeated interleaved rounds, using the code-computed prior primary/supporting exposure before each member; do not judge pair compatibility in isolation. Verify physical setup and recovery between successive sets of each member, including partner work. Use supported equipment transitions, unilateral execution and timing assumptions to assess practicality; similar duration does not establish similar fatigue. Recurring setup transitions are counted as occurrences but have no measured physical duration unless explicitly estimated. Do not double-count setup time, prohibit all supersets or impose antagonist-only pairings. Enforce source-backed setup/rest constraints.',
+    'Supersets and rest: assess each pairing in its full session and repeated interleaved rounds, using the code-computed prior primary/supporting exposure before each member; do not judge pair compatibility in isolation. Verify physical setup and recovery between successive sets of each member, including partner work. Use supported equipment transitions and unilateral execution to assess practicality. Recurring setup transitions are counted as occurrences. Do not prohibit all supersets or impose antagonist-only pairings. Enforce source-backed setup/rest constraints.',
         'Progression: use comparable history and selectable resistance. Do not transfer loads across variants as proven equivalents. The app owns progression; use native requiresLoadCalibration for unknown starting loads; neither mandatory rep drop-off nor increasing load every week proves adequate effort.',
-        'Warm-ups and effort: match preparation to the planned demand and account for stated tempo, setup and prescribed warm-ups in timing; native calibration mode is not an additional generator-prescribed activity. A warm-up flag cannot prove preparation is sufficient, and prescribed sets cannot prove actual effort.',
+        'Warm-ups and effort: match preparation to the planned demand and preserve stated tempo, setup and prescribed warm-ups. Native calibration mode is not an additional generator-prescribed activity. A warm-up flag cannot prove preparation is sufficient, and prescribed sets cannot prove actual effort.',
         'For supported exercises without usable comparable load history, enable the existing app requiresLoadCalibration mode. The app owns load selection and calibration behavior. Do not require numeric starting loads, trial counts, search strategies, separate trial sets, calibration notes or invented recovery overhead. Missing comparable history alone is not an exercise-selection defect or proof of infeasibility. Native calibration does not prove future measured effort; continue checking actual equipment eligibility and explicit source requirements.',
     ],
     'severity': 'Established requirement violations, contradictions and unsupported material claims block. Material uncertainty also blocks when cited plan/evidence leaves a required outcome unverifiable and no adequate mitigation exists; identify the affected requirement, interacting exposures or missing evidence, consequence and smallest permitted resolution. Mere possibility of fatigue, absent historical RIR, individual response variation or a preferred alternative alone is an advisory warning, not a veto. Native load calibration handles unknown starting loads without a generator-authored protocol; it cannot prove actual stimulus in advance. Ask only about genuine user ambiguity; do not invent targets, universal fatigue limits or silently rewrite requirements.',
@@ -622,6 +670,14 @@ def execution_rule_errors(requirements, equipment=None):
     """Validate links and bounds before a rule can be presented for approval."""
     coverage = {item['key'] for item in requirements.get('requiredCoverage', [])}
     errors = []
+    explosive_ids = requirements.get('orderingPreferences', {}).get('explosiveDefinitionIds', [])
+    if equipment is not None:
+        missing = set(explosive_ids) - {definition['id'] for definition in equipment.get('exerciseDefinitions', [])}
+        if missing:
+            errors.append({'code': 'unknown_explosive_definition',
+                'path': '/orderingPreferences/explosiveDefinitionIds',
+                'message': f'Explosive ordering references unknown library definitions: {sorted(missing)}.',
+                'repair': 'Use explicit existing library definition IDs; do not infer explosive intent from exercise names.'})
     effort = requirements.get('workingSetRIR')
     if effort and effort['minimum'] > effort['maximum']:
         errors.append({'code': 'invalid_effort_range', 'path': '/workingSetRIR', 'message': 'Minimum RIR exceeds maximum RIR.',
@@ -721,7 +777,7 @@ def render_execution_rule(rule):
         if rule.get('relationship', 'balanced') == 'first_not_less_than_second':
             return (f"Prefer `{rule['first']}` to receive at least as much exposure as `{rule['second']}` {scope}; "
                     'this is a source-backed comparison, not a fixed ratio or hard minimum.')
-        return f"Balance `{rule['first']}` with `{rule['second']}` {scope}. Assess comparable exposure under the approved priority policy; no numerical tolerance was specified."
+        return f"Balance `{rule['first']}` with `{rule['second']}` {scope}. Assess comparable exposure and training purpose; unequal counts alone do not establish a violation. Numerical set-count minimization runs only when source_balance is explicitly ranked."
     if kind == 'order':
         return f"`{rule['before']}` blocks before `{rule['after']}` blocks (when both occur in a session)."
     selector = f"`{rule['coverageKey']}`" if rule['coverageKey'] else 'All applicable exercises'
@@ -749,7 +805,12 @@ def render_execution_rule(rule):
         if rule['context'] in ('supersetTransition', 'exerciseTransition'):
             text += ' Physical changeover and setup time are separate from prescribed recovery.'
         return text
-    return f"{selector}: " + ('straight sets.' if kind == 'straightSets' else 'generated ramp-up sets before working sets.')
+    if kind == 'warmup':
+        category = f" ({rule['exerciseCategory']})" if rule.get('exerciseCategory') else ''
+        capability = (' when the native app path supports this configuration; unsupported configurations retain '
+            'unverified exercise-specific preparation' if rule.get('whenSupported') else '')
+        return f"{selector}{category}: enable app-generated ramp-up sets before working sets{capability}. Runtime loads and available resistance determine the actual ramp-ups."
+    return f"{selector}: straight sets."
 
 
 def native_warmup_supported(definition, equipment_ids):
@@ -761,15 +822,21 @@ def native_warmup_supported(definition, equipment_ids):
              or definition.get('bodyWeightPercentage') is not None))
 
 
-def replacement_supports_required_warmup(source_coverage, definition, equipment_ids, requirements):
+def warmup_rule_matches(rule, coverage, definition):
+    """Match approved preparation selectors against an occurrence's library facts."""
+    return (rule.get('kind') == 'warmup'
+        and (rule.get('coverageKey') is None or coverage is None or rule['coverageKey'] in coverage)
+        and (not rule.get('exerciseCategory')
+             or (definition or {}).get('exerciseCategory') == rule['exerciseCategory']))
+
+
+def replacement_supports_required_warmup(source_coverage, definition, equipment_ids, requirements,
+                                        source_definition=None):
     """Keep source-required generated warm-ups when replacing an occurrence."""
-    required_roles = {rule.get('coverageKey') for rule in (requirements or {}).get('executionRules', [])
-        if rule.get('kind') == 'warmup'}
-    if not required_roles:
-        return True
-    if not isinstance(source_coverage, list) or required_roles.intersection(source_coverage):
-        return native_warmup_supported(definition, equipment_ids)
-    return True
+    required = any(not rule.get('whenSupported')
+        and warmup_rule_matches(rule, source_coverage, source_definition)
+        for rule in (requirements or {}).get('executionRules', []))
+    return not required or native_warmup_supported(definition, equipment_ids)
 
 
 def exercise_exposure_counts(draft, plan=None, *, definition_id_by_reference=None,
@@ -889,7 +956,7 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                         findings += 1
                         add_audit_issue(report, 'execution_sessionStructure',
                             f"{day['name']}: {key} is {actual}; approved maximum is {rule[key]}.",
-                            'Reselect or regroup exercises within the approved session limits, preserving required coverage, volume and timing; re-audit.',
+                            'Reselect or regroup exercises within the approved session limits, preserving required coverage and volume; re-audit.',
                             path=f'/workouts/{day_index}/exercises', rulePath=f'/executionRules/{rule_index}',
                             limit=key, actual=actual, maximum=rule[key])
                 continue
@@ -918,7 +985,7 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                         if not bounds[0] <= actual <= bounds[1]:
                             issue(indices[-1], 'restAfterExerciseSeconds',
                                 f'{actual}s violates {render_execution_rule(rule)}',
-                                'Prescribe recovery after the complete block, separately from setup, and re-audit duration.',
+                                'Prescribe recovery after the complete block, separately from setup, and re-audit execution.',
                                 actual=actual, minimum=bounds[0], maximum=bounds[1])
                 continue
 
@@ -950,7 +1017,7 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                         continue
                     if setup['status'] == 'unknown' and setup['confirmationRequired']:
                         issue(second, 'superset', 'Independent simultaneous access is not confirmed for this pair.',
-                            'Separate the exercises or obtain explicit confirmation for this exact pair; different equipment types do not establish access. Re-audit timing without inventing physical facts.',
+                            'Separate the exercises or obtain explicit confirmation for this exact pair; different equipment types do not establish access. Re-audit execution without inventing physical facts.',
                             partnerIndex=first, setupCompatibility='unknown')
                         continue
                     if relation in {'different_family_types', 'no_primary_equipment'}:
@@ -984,7 +1051,7 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                         else:
                             message = 'A common usable configuration is unverified for equipment records that may share physical inventory.'
                         issue(second, 'superset', message,
-                            'Use a common prescribed load justified for both movements, or separate/change the pairing. Native per-exercise calibration does not guarantee a shared load. Do not transfer historical loads or invent extra equipment. Re-audit timing and volume.',
+                            'Use a common prescribed load justified for both movements, or separate/change the pairing. Native per-exercise calibration does not guarantee a shared load. Do not transfer historical loads or invent extra equipment. Re-audit execution and volume.',
                             partnerIndex=first, equipmentResourceRelation=relation)
                 continue
             if kind == 'order':
@@ -1003,25 +1070,27 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                     identifier = plan['workouts'][day_index]['exerciseIds'][index]
                     if definitions[identifier].get('exerciseCategory') != rule['exerciseCategory']:
                         continue
+                if kind == 'warmup':
+                    definition = day_definitions.get(item.get('definition_id'))
+                    if not warmup_rule_matches(rule, item.get('satisfiesCoverage', []), definition):
+                        continue
+                    equipment_ids = {gear.get('id') for gear in (plan or {}).get('equipments', [])}
+                    if rule.get('whenSupported') and plan and not native_warmup_supported(definition, equipment_ids):
+                        continue
                 if kind == 'workSets' and not rule['minimumSets'] <= item['numWorkSets'] <= rule['maximumSets']:
                     issue(index, 'numWorkSets', render_execution_rule(rule),
-                        'Restore a working-set count within the approved requirement; re-audit volume and duration.')
+                        'Restore a working-set count within the approved requirement; re-audit volume and execution.')
                 elif kind == 'straightSets' and item['superset'] is not None:
                     issue(index, 'superset', render_execution_rule(rule),
-                        'Remove this occurrence from the superset and restore its approved between-set rest. Repair remaining group members and re-audit timing; do not delete required work.')
-                elif kind == 'warmup' and not item['generateWarmUpSets']:
-                    identifiers = (plan or {}).get('workouts', [{}])[day_index].get('exerciseIds', []) \
-                        if plan and day_index < len(plan.get('workouts', [])) else []
-                    identifier = identifiers[index] if index < len(identifiers) else None
-                    definition = definitions.get(identifier)
-                    equipment_ids = {gear.get('id') for gear in (plan or {}).get('equipments', [])}
+                        'Remove this occurrence from the superset and restore its approved between-set rest. Repair remaining group members and re-audit execution; do not delete required work.')
+                elif kind == 'warmup':
                     if plan and not native_warmup_supported(definition, equipment_ids):
                         issue(index, '', 'The approved generated-ramp-up rule applies, but this exercise configuration cannot produce native ramp-up sets.',
                             'Replace this occurrence with a library configuration supported by the app warm-up generator while preserving required coverage. If no such option is available, ask the user to resolve the conflict; do not toggle the flag or change the requirement.',
                             warmupCapability='unsupported')
-                    else:
+                    elif not item['generateWarmUpSets']:
                         issue(index, 'generateWarmUpSets', render_execution_rule(rule),
-                            'Set generateWarmUpSets=true for this supported occurrence; preserve working sets and re-audit the added preparation time.')
+                            'Set generateWarmUpSets=true for this supported occurrence; preserve working sets and re-audit preparation.')
                 elif kind == 'rest':
                     grouped = item['superset'] is not None
                     last = grouped and (index == len(exercises) - 1 or exercises[index + 1]['superset'] != item['superset'])
@@ -1032,7 +1101,7 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                     actual = item[field]
                     if not rule['minimumSeconds'] <= actual <= rule['maximumSeconds']:
                         issue(index, field, f"{actual}s violates {render_execution_rule(rule)}",
-                            f"Patch {field} within the approved range and re-audit duration. Do not shorten another required recovery or relax the time/volume targets.",
+                            f"Patch {field} within the approved range and re-audit execution. Do not shorten another required recovery or relax the volume targets.",
                             actual=actual, minimum=rule['minimumSeconds'], maximum=rule['maximumSeconds'])
         if plan and not invalid_explicit_order:
             identifiers = plan['workouts'][day_index]['exerciseIds']
@@ -1041,12 +1110,11 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                 members.setdefault(start, []).append(index)
             groups = list(members.values())
             for group in groups:
-                phases = [execution_block_priority([definitions[identifiers[i]]]) for i in group]
-                if (3 in phases and min(phases) < 2
-                        and execution_order_phase(3, requirements) > execution_order_phase(min(phases), requirements)):
+                phases = [execution_block_priority([definitions[identifiers[i]]], requirements) for i in group]
+                if len({execution_order_phase(phase, requirements) for phase in phases}) > 1:
                     findings += 1
                     add_audit_issue(report, 'execution_superset_order_conflict',
-                        f"{day['name']}: this superset combines main compound work with core-late work.",
+                        f"{day['name']}: this superset combines different approved execution phases.",
                         'Split this group using the existing straight-set alternatives; preserve doses and recovery.',
                         path=f'/workouts/{day_index}/exercises/{group[0]}/superset')
                 member_order = execution_member_order([definitions[identifiers[i]] for i in group], requirements)
@@ -1055,20 +1123,20 @@ def audit_execution_rules(draft, requirements, report, plan=None):
                     add_audit_issue(report, 'execution_order',
                         f"{day['name']}: superset members violate the default execution order.",
                         'Reorder members with the shared category policy while retaining transition and round-rest '
-                        'positions, then re-audit timing and setup.',
+                        'positions, then re-audit execution and setup.',
                         path=f'/workouts/{day_index}/exercises/{group[0]}/superset',
                         orderingPolicy=EXECUTION_ORDER_POLICY,
                         beforeIndices=[group[i] for i in member_order], afterIndices=group)
             roles = [set().union(*(set(exercises[i].get('satisfiesCoverage', [])) for i in group))
                      for group in groups]
             keys = [execution_block_order_key([definitions[identifiers[i]] for i in group],
-                [exercises[i]['numWorkSets'] for i in group]) for group in groups]
+                [exercises[i]['numWorkSets'] for i in group], requirements) for group in groups]
             if not execution_order_is_admissible(list(range(len(groups))), roles, keys, requirements):
                 findings += 1
                 add_audit_issue(report, 'execution_order',
                     f"{day['name']}: exercise blocks violate the allowed execution phases or approved precedence.",
                     'Reorder complete blocks with the shared execution-order policy; preserve supersets, prescriptions '
-                    'and approved order rules, then re-audit timing. ' + EXECUTION_ORDER_DESCRIPTION,
+                    'and approved order rules, then re-audit execution. ' + EXECUTION_ORDER_DESCRIPTION,
                     path=f'/workouts/{day_index}/exercises', orderingPolicy=EXECUTION_ORDER_POLICY)
     report['executionGuidelines'] = {'checkedRules': len(rules), 'findings': findings,
         'defaultOrderPolicy': EXECUTION_ORDER_POLICY,
@@ -1204,13 +1272,5 @@ def complete_training_schedule(workouts, requirements, fixed_workouts=()):
 
 
 def audit_execution_details(draft, requirements, report):
-    """Use the shared calendar check and require explicit execution-time assumptions."""
+    """Check the shared training calendar independently of session estimates."""
     audit_training_schedule(draft['workouts'], requirements, report)
-    for day_index, day in enumerate(draft['workouts']):
-        path = f'/workouts/{day_index}'
-        if requirements['auditTargets'].get('maximumSessionSeconds'):
-            for index, item in enumerate(day['exercises']):
-                if 'setupSeconds' not in item:
-                    add_audit_issue(report, 'setup_time_required', f"{day['name']}: setup estimate missing before exercise {index + 1}.",
-                        'Add setupSeconds for this transition, including implement, plate, rack, bench and attachment changes. Use an explicit estimate or ask for missing setup information; do not assert measured precision. It replaces the default allowance and does not replace prescribed rest.',
-                        path=f'{path}/exercises/{index}/setupSeconds')

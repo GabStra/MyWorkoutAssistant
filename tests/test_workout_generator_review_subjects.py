@@ -120,8 +120,7 @@ def test_unknown_subject_recovery_changes_only_reference_fields(monkeypatch, cor
                 'evidenceRefs': [data['sourceMessages']['SOURCE_0']['_reviewRef']],
                 'basis': 'uncertainty', 'disposition': 'advisory', 'errorKind': 'none',
                 'concernGroup': 'NEW', 'decisionId': 'none'}
-            payload = {'findings': [original], 'sourceCoverage': {
-                key: True for key in schema['properties']['sourceCoverage']['properties']}}
+            payload = {'findings': [original]}
             calls.append(known)
             return json.dumps(payload), None, None
         entry = schema['properties']['findingCorrections']['properties']['FINDING_0']
@@ -281,6 +280,7 @@ def test_review_rationale_survives_review_and_scoped_correction(monkeypatch, jud
     audited = audit_workout_plan(draft, equipment, messages)
     # This test isolates review serialization from the unrelated fixture capability gate.
     audited['passed'] = True
+    audited['preview'] = 'Reviewed candidate.'
     boundary = next(i for i in range(len(messages) - 1, -1, -1) if messages[i].get('role') == 'user')
     context = plan_review._context(audited, messages, equipment, None, boundary)
     calls = []
@@ -305,8 +305,7 @@ def test_review_rationale_survives_review_and_scoped_correction(monkeypatch, jud
             retained = {**finding, 'reason': 'role_mismatch', 'concernGroup': 'NEW',
                 'qualitativeRationale': 'This selected movement does not support its intended role.'}
             calls.append('initial')
-            proposal = {'findings': [finding, retained], 'sourceCoverage': {
-                key: True for key in schema['properties']['sourceCoverage']['properties']}}
+            proposal = {'findings': [finding, retained]}
             return json.dumps(proposal), None, None
         assert schema['required'] == ['findingCorrections']
         correction = schema['properties']['findingCorrections']['properties']['FINDING_0']
@@ -319,21 +318,29 @@ def test_review_rationale_survives_review_and_scoped_correction(monkeypatch, jud
     result = plan_review.review_draft(None, audited, messages, equipment)
     assert result['passed'] and calls == ['initial', 'correction'], (calls, result.get('review', {}).get('failure'))
     finding, retained = result['review']['findings']
+    assert 'raises a ' in finding['message'] and 'raises a ' in retained['message']
+    assert 'conflicts with the cited requirement' not in result['preview']
+    assert 'do not support the cited role' not in result['preview']
+    assert 'Qualitative source assessments:' not in result['preview']
     assert finding['qualitativeRationale'] == rationale
     assert rationale not in finding['message'] and rationale not in finding['repair']
     assert 'Code-owned exposure:' in finding['repair']
     assert retained['qualitativeRationale'] == 'This selected movement does not support its intended role.'
     validate_review_subjects(result['review'], context)
-    assert _prior_rationale(finding) == finding['qualitativeRationale']
+    promoted = copy.deepcopy(result['review'])
+    promoted['assessment']['groups'][0]['disposition'] = 'unresolved_capability'
+    with pytest.raises(ValueError, match='established violation'):
+        validate_review_subjects(promoted, context)
+    carried = plan_review._prior_finding_summary(finding)
+    assert 'qualitativeRationale' not in carried
+    assert carried['reviewJudgment'] == judgment
+    assert carried['subjectFacts'] == finding['subjectFacts']
+    assert carried['executionFacts'] == finding['executionFacts']
     cached = copy.deepcopy(result['review'])
     cached['findings'][0].pop('qualitativeRationale')
     assert not plan_review._review_cache_matches(cached, context)
     with pytest.raises(ValueError, match='preserve its reviewer rationale'):
         validate_review_subjects(cached, context)
-
-
-def _prior_rationale(finding):
-    return plan_review._prior_finding_summary(finding).get('qualitativeRationale')
 
 
 def test_legacy_text_only_finding_cannot_supply_cached_factual_premises():
@@ -342,16 +349,21 @@ def test_legacy_text_only_finding_cannot_supply_cached_factual_premises():
         validate_review_subjects({'findings': [{'message': 'Front Squat has 13 sets.'}]}, context)
 
 
-def test_withdrawal_judgments_cannot_authorize_repairs_and_qualitative_edits_need_an_outcome(monkeypatch):
+@pytest.mark.parametrize('concern,judgment,basis', [
+    ('fatigue_recovery', 'concentration_tradeoff', 'material_uncertainty'),
+    ('source_compliance', 'source_conflict', 'established_violation'),
+])
+def test_withdrawal_judgments_cannot_authorize_repairs_and_qualitative_edits_need_an_outcome(
+        monkeypatch, concern, judgment, basis):
     equipment, messages, audited, context = setup_case()
 
     def respond(client, request, **options):
         data = json.loads(request[-1]['content'])
         schema = options['output_schema']
         subject = next(iter(data['reviewSubjects']))
-        payload = response_for(data, schema, [{'message': 'fatigue_recovery', 'reason': 'concentration_tradeoff',
+        payload = response_for(data, schema, [{'message': concern, 'reason': judgment,
             'subjectRefs': [subject], 'evidenceRefs': [data['sourceMessages']['SOURCE_0']['_reviewRef']],
-            'basis': 'material_uncertainty', 'disposition': 'repair', 'errorKind': 'none',
+            'basis': basis, 'disposition': 'repair', 'errorKind': 'none',
             'concernGroup': 'NEW', 'decisionId': 'none', 'repairDimensions': ['prescription']}])
         invalid = copy.deepcopy(payload)
         invalid['findings'][0]['reason'] = 'contradicted_by_current_data'
@@ -383,7 +395,7 @@ def test_setup_findings_identify_missing_fact_without_expanding_exact_pair():
     message, reason = render_review_judgment('equipment_setup', 'setup_floor_clearance_uncertainty', facts,
         execution_facts)
     assert 'clear floor space' in message and 'Hack Squat' in message
-    assert 'Back Squat' not in message
+    assert 'Back Squat' not in message.split('Code-owned whole-session execution:', 1)[0]
     finding = {'subjectRefs': ['EXERCISE_2', 'WORKOUT_2'], 'subjectExerciseRefs': refs,
         'subjectWorkoutRefs': ['WORKOUT_2'], 'subjectFacts': facts,
         'reviewConcern': 'equipment_setup', 'reviewJudgment': 'setup_floor_clearance_uncertainty',
@@ -391,4 +403,94 @@ def test_setup_findings_identify_missing_fact_without_expanding_exact_pair():
     validate_review_subjects({'findings': [finding], 'assessment': {'groups': [
         {'findingIndexes': [0], 'disposition': 'unresolved_capability'}]}}, context)
     _, timing = render_review_judgment('equipment_setup', 'setup_changeover_time_uncertainty', facts)
-    assert 'unmeasured estimate, not a user-confirmed time' in timing
+    assert 'audit allowance' not in timing
+    assert 'Physical changeover time is unmeasured and separate from prescribed recovery' in timing
+
+
+def test_execution_premises_use_only_working_identities_and_shared_order_categories():
+    context, _ = subject_case()
+    context['draft']['libraryDefinitions']['HACK'].update(
+        exerciseCategory='MODERATE_COMPOUND', muscleGroups=['BACK_LOWER', 'LEGS_HAMSTRINGS'])
+    context['draft']['libraryDefinitions']['BACK'].update(
+        exerciseCategory='HEAVY_COMPOUND', muscleGroups=['LEGS_QUADS'])
+    day = context['finalArtifact']['workouts'][2]
+    day['components'].insert(0, {'type': 'Exercise', 'id': 'preparation_bike', 'name': 'Bike'})
+    refs, subjects = compile_review_subjects(['WORKOUT_2'], review_subject_catalog(context), context)
+    facts = compile_review_execution_facts(refs, context)
+    assert facts[0]['exerciseOccurrences'] == facts[0]['straightSetExercises'] == 2
+    assert facts[0]['supersetGroups'] == 0
+    assert facts[0]['workingOrder'] == [[{'name': 'Hack Squat', 'executionCategory': 'MODERATE_COMPOUND'}],
+        [{'name': 'Back Squat', 'executionCategory': 'HEAVY_COMPOUND'}]]
+    message, reason = render_review_judgment('practical_execution', 'execution_conflict', subjects, facts)
+    assert 'Hack Squat (MODERATE_COMPOUND) > Back Squat (HEAVY_COMPOUND)' in message
+    assert 'Bike' not in message and 'CORE' not in message
+    assert 'Hack Squat: 2 weekly sets' in reason and 'Back Squat: 3 weekly sets' in reason
+    finding = {'message': message, 'repair': reason, 'subjectFacts': subjects, 'executionFacts': facts,
+        'reviewJudgment': 'execution_conflict', 'qualitativeRationale':
+            'The draft puts Hack Squat in the core phase and both lifts have three weekly sets.'}
+    carried = plan_review._prior_finding_summary(finding)
+    assert finding['qualitativeRationale'] not in json.dumps(carried)
+    assert 'MODERATE_COMPOUND' in json.dumps(carried) and '2 weekly sets' in carried['repair']
+
+
+def test_review_projection_distinguishes_library_classification_from_effective_execution(monkeypatch):
+    _, messages, audited, context = setup_case()
+    reference = context['draft']['exercises'][0]['libraryDefinitionId']
+    definition = context['draft']['libraryDefinitions'][reference]
+    definition.update(exerciseCategory='MODERATE_COMPOUND', muscleGroups=['FRONT_OBLIQUES'])
+    context['programmingSummary']['exposures'][reference]['occurrences'][0]['category'] = 'MODERATE_COMPOUND'
+
+    def respond(client, request, **options):
+        data = json.loads(request[-1]['content'])
+        projected = data['draft']['libraryDefinitions'][reference]
+        assert projected['libraryExerciseCategory'] == 'MODERATE_COMPOUND'
+        assert projected['executionCategory'] == 'CORE'
+        assert 'exerciseCategory' not in projected
+        occurrence = data['programmingSummary']['exposures'][reference]['occurrences'][0]
+        assert occurrence['libraryExerciseCategory'] == 'MODERATE_COMPOUND'
+        assert occurrence['executionCategory'] == 'CORE' and 'category' not in occurrence
+        assert data['reviewExecutionFacts'][0]['workingOrder'][0][0]['executionCategory'] == 'CORE'
+        return json.dumps(response_for(data, options['output_schema'])), None, None
+
+    monkeypatch.setattr(plan_review, '_review_call', respond)
+    result = plan_review._review_complete_draft(None, context, audited, messages, len(messages) - 1, None)
+    assert not result['findings']
+    assert definition['exerciseCategory'] == 'MODERATE_COMPOUND'
+    assert context['programmingSummary']['exposures'][reference]['occurrences'][0]['category'] == 'MODERATE_COMPOUND'
+
+
+def test_established_conflict_requires_an_explicit_approved_requirement_association(monkeypatch):
+    from workout_generator_pkg.review_assessment import assessment_hash, validate_assessment
+
+    _, messages, audited, context = setup_case()
+
+    def respond(client, request, **options):
+        data = json.loads(request[-1]['content'])
+        for variant in options['output_schema']['properties']['findings']['items']['anyOf']:
+            properties = variant['properties']
+            if (properties['disposition']['enum'][0] in ('repair', 'unresolved_capability')
+                    and 'established_violation' not in properties['basis']['enum']):
+                assert not {'source_conflict', 'role_mismatch', 'execution_conflict'}.intersection(
+                    properties['reason']['enum'])
+        return json.dumps(response_for(data, options['output_schema'], [{
+            'message': 'source_compliance', 'reason': 'source_conflict',
+            'subjectRefs': ['EXERCISE_0'],
+            'evidenceRefs': [data['sourceMessages']['SOURCE_0']['_reviewRef']],
+            'basis': 'established_violation', 'disposition': 'unresolved_capability',
+            'errorKind': 'none', 'concernGroup': 'NEW', 'decisionId': 'none'}])), None, None
+
+    monkeypatch.setattr(plan_review, '_review_call', respond)
+    result = plan_review._review_complete_draft(None, context, audited, messages, len(messages) - 1, None)
+    assert result['findings'][0]['severity'] == 'blocking'
+    assert 'conflict with the cited requirement' in result['findings'][0]['message']
+    validate_assessment(result, context)
+    for paths in (['/reviewAuthority'], ['/requirements'], ['/draft/exercises/0']):
+        changed = copy.deepcopy(result)
+        changed['findings'][0]['evidencePaths'] = paths
+        changed['assessment']['inputHash'] = assessment_hash(changed)
+        with pytest.raises(ValueError, match='explicit approved requirement'):
+            validate_assessment(changed, context)
+    changed['findings'][0]['evidencePaths'] = ['/requirements/invented_requirement']
+    changed['assessment']['inputHash'] = assessment_hash(changed)
+    with pytest.raises(ValueError, match='existing approved requirement'):
+        validate_assessment(changed, context)

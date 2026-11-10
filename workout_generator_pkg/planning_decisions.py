@@ -186,7 +186,17 @@ def record_planning_decisions_tool(messages, equipment=None):
             'description': 'Explicitly accept this concern for this candidate; acceptance does not verify unknowns or waive hard requirements.'
                 + (' Programming choices: ' + json.dumps({key: value['label'] for key, value in programming_choices.items()})
                    if programming_choices else '')}
-    capability_references = pending_capability_references(messages)
+    pending_capabilities = pending_capability_references(messages)
+    capability_references = pending_capabilities
+    if equipment:
+        from .recipe_contracts import library_definitions_by_reference
+        from .training_history import confirmed_capability_references
+
+        confirmed = confirmed_capability_references(messages, equipment)
+        pending_capabilities = [reference for reference in pending_capabilities if reference not in confirmed]
+        capability_references = sorted({*pending_capabilities, *(
+            reference for reference, definition in library_definitions_by_reference(equipment).items()
+            if definition.get('exerciseType') == 'BODY_WEIGHT')})
     if capability_references:
         tool['function']['parameters']['properties']['decisions']['items']['properties']['confirmedCapabilityReference'] = {
             'type': 'string', 'enum': capability_references,
@@ -214,6 +224,27 @@ def record_planning_decisions_tool(messages, equipment=None):
                 'setMode': {'type': 'string', 'enum': ['single_sequence', 'paired_sides']}},
                 'required': ['exercise', 'setMode'], 'additionalProperties': False,
                 'description': 'Choose prescribed reps/time as one total sequence or repeated per side/direction. This programming choice may be delegated; it does not establish personal ability.'}
+        _, pending = max((_latest_result(messages, name) for name in (
+            'prepare_workout_sessions', 'draft_workout_sessions', 'audit_workout_plan')), key=lambda item: item[0])
+        by_reference = {f'LIBRARY_{index}': definition for index, definition in enumerate(
+            sorted(equipment.get('exerciseDefinitions', []), key=lambda definition: definition['id']))}
+        bound = execution_decision_definitions(messages, equipment)
+        counting_names = sorted({by_reference[error['definition_id']]['name']
+            for error in pending.get('errors', [])
+            if error.get('code') == 'execution_semantics_unresolved'
+            and error.get('definition_id') in by_reference
+            and error.get('canonicalDefinitionId', by_reference[error['definition_id']]['id'])
+                == by_reference[error['definition_id']]['id']
+            and not bound.get(by_reference[error['definition_id']]['id'], {}).get('reviewedExecution', {}).get('setMode')})
+        bindings = []
+        if pending_capabilities:
+            bindings.append('confirmedCapabilityReference')
+        if counting_names:
+            properties['executionPrescription']['properties']['exercise']['enum'] = counting_names
+            bindings.append('executionPrescription')
+        if bindings:
+            tool['function']['parameters']['properties']['decisions']['items']['anyOf'] = [
+                {'required': [field]} for field in bindings]
     return tool
 
 
@@ -236,14 +267,12 @@ def confirmed_setup_access(messages, equipment, requirements):
 
 
 def execution_decision_definitions(messages, equipment):
-    """Copy only current reviewed prescription choices into compile-time definitions."""
-    from .planning_tools import library_fingerprint
+    """Apply reviewed counting intent to its exercise identity, independently of other library entries."""
     definitions = {item['id']: item for item in equipment.get('exerciseDefinitions', [])}
-    fingerprint = library_fingerprint(equipment)
     result = {}
     for decision in resolved_decisions(messages).values():
         prescription = decision.get('executionPrescription')
-        if not prescription or decision.get('factualContextLibraryFingerprint') != fingerprint:
+        if not prescription:
             continue
         identifier = prescription['definitionId']
         if identifier not in definitions:
@@ -677,7 +706,17 @@ def propose_decisions(arguments, messages, equipment=None):
         if (same and previous != same) or (previous and (previous not in active or not item.get('reason'))):
             raise PlanningInputError('settled_decision', 'The existing choice cannot be silently replaced.', '/decisions',
                 'Reuse the settled choice. To replace it, copy its DECISION_n into supersedes and explain the new instruction or concrete conflict in reason.')
-        if previous and active[previous].get('authorizationSourceHash') == source_hash:
+        binding_fields = ('confirmedCapabilityReference', 'confirmedSetupAccess',
+            'confirmedSharedStation', 'executionPrescription')
+        adds_binding = previous and any(item.get(field) is not None
+            and active[previous].get(field) is None for field in binding_fields)
+        preserves_choice = (previous
+            and normalize(item['choice']) == normalize(active[previous]['choice'])
+            and refs == active[previous].get('sourceReferences')
+            and all(active[previous].get(field) is None or item.get(field) == active[previous][field]
+                for field in binding_fields))
+        if (previous and active[previous].get('authorizationSourceHash') == source_hash
+                and not (adds_binding and preserves_choice)):
             decision_index, _ = latest_decision_receipt(messages)
             audit_index, audit = _latest_result(messages, 'audit_workout_plan')
             conflict = audit_index > decision_index and any(

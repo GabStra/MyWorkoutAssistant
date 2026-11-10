@@ -666,7 +666,7 @@ def display_timing_summary(timing_data, is_resume=False, logger=None):
             5: "Assemble placeholder workout plan package",
             6: "Validate package schema",
             7: "Convert placeholders to UUIDs",
-            8: "Audit actual volume and duration",
+            8: "Audit actual volume",
         }
         # Sort keys (should be integers after normalization, but handle both for safety)
         sorted_keys = sorted(step_times.keys(), key=lambda k: int(k) if isinstance(k, str) and k.isdigit() else (k if isinstance(k, int) else 0))

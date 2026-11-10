@@ -18,10 +18,10 @@ from .domain_ops import (
     assemble_placeholder_workout_store, build_workout_structure,
     convert_placeholders_to_uuids, create_placeholder_schema,
     ensure_requiresLoadCalibration, finalize_and_validate_exercise_definition,
-    reviewable_workout_artifact, EquipmentItem,
+    reviewable_workout_artifact, general_warmup_audit_options, EquipmentItem,
 )
 from .generation_audit import (
-    audit_workout_package, plan_audit_package, plan_timing_reps_by_exercise,
+    audit_workout_package, plan_audit_package,
     validate_audit_targets, audit_coverage_minimums, family_set_audit_options,
     audit_programming_preferences,
 )
@@ -103,6 +103,8 @@ def execute_workout_generation(
             for definition in review_equipment.get('exerciseDefinitions', [])]
         supplied_exercise_movements = copy.deepcopy(review_equipment.get('exerciseMovements', []))
         selected_ids = {item['libraryDefinitionId'] for item in plan_index['exercises']}
+        selected_ids.update(day['generalWarmupDefinition']['id'] for day in plan_index['workouts']
+            if day.get('generalWarmupSeconds'))
         if selected_ids - {item['id'] for item in supplied_exercise_definitions}:
             raise ContractValidationError("Selected exercises are absent from the currently loaded library. Select available entries and confirm the preview again.")
         provided_equipment = copy.deepcopy(review_equipment)
@@ -167,36 +169,22 @@ def execute_workout_generation(
         Draft7Validator(JSON_SCHEMA).validate(data)
         data = apply_exercise_library_schema_v2(data, supplied_exercise_definitions, supplied_exercise_movements)
         checkpoint(7, step_7_final_workout_store=data)
-        _gen_print("Step 8: Auditing actual generated volume and duration...")
+        _gen_print("Step 8: Auditing actual generated volume...")
         audit_start = time.time()
-        with LoadingIndicator("Auditing generated volume and duration"):
-            setup_seconds = {id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['setupSeconds']
-                             for e in plan_index['exercises'] if 'setupSeconds' in e}
+        with LoadingIndicator("Auditing generated volume"):
             coverage = {id_manager.placeholder_to_uuid.get(identifier, identifier): keys for identifier, keys in
                         draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')).items()}
-            timing_reps = {id_manager.placeholder_to_uuid.get(identifier, identifier): reps
-                           for identifier, reps in plan_timing_reps_by_exercise(
-                               plan_index, allow_educated_load_guesses).items()}
             final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {},
-                setup_seconds_by_exercise=setup_seconds,
-                coverage_by_exercise=coverage, rep_duration_seconds_by_exercise={
-                    id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['repDurationSeconds']
-                    for e in plan_index['exercises'] if 'repDurationSeconds' in e},
-                timing_reps_by_exercise=timing_reps,
+                general_warmup_by_workout=general_warmup_audit_options(plan_index, id_manager.placeholder_to_uuid),
+                coverage_by_exercise=coverage,
                 **family_set_audit_options(audit_requirements or plan_index, review_equipment),
                 )
             audit_coverage_minimums(final_audit, coverage_rules)
             audit_programming_preferences(final_audit, canonical_snapshot['planIndex'], audit_requirements)
-            emitted_audit = audit_workout_package(data, plan_index.get("auditTargets") or {},
-                setup_seconds_by_exercise=setup_seconds,
-                rep_duration_seconds_by_exercise={
-                    id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['repDurationSeconds']
-                    for e in plan_index['exercises'] if 'repDurationSeconds' in e},
-                **family_set_audit_options(audit_requirements or plan_index, review_equipment),
-                )
-            for conservative, emitted in zip(final_audit['workouts'], emitted_audit['workouts'], strict=True):
-                conservative['emittedPrescriptionEstimatedSeconds'] = emitted['estimatedSeconds']
-                conservative['emittedPrescriptionTiming'] = copy.deepcopy(emitted['timing'])
+            from .generation_audit import audit_required_exercises
+            audit_required_exercises(final_audit, data, audit_requirements, review_equipment)
+            from .generation_audit import audit_semantic_selection
+            audit_semantic_selection(final_audit, data, canonical_snapshot.get('semanticSelection'), review_equipment)
         final_audit["prescriptionChanges"] = step_data.get("step_1_programming_audit", {}).get("prescriptionChanges", [])
         priority_receipt = canonical_snapshot.get('coordinatedJointPlanning') or canonical_snapshot.get('automaticAllocation') or {}
         for field in ('priorityExecution', 'priorityTradeoffs'):
@@ -205,7 +193,7 @@ def execute_workout_generation(
         step_data["step_8_programming_audit"] = final_audit
         timing_data["step_times"][8] = time.time() - audit_start
         for workout_audit in final_audit["workouts"]:
-            _gen_print(f"  {workout_audit['name']}: {workout_audit['workingSets']} working sets, estimated {workout_audit['estimatedSeconds']/60:.1f} min")
+            _gen_print(f"  {workout_audit['name']}: {workout_audit['workingSets']} working sets")
         for muscle, volume in final_audit["weeklyVolume"].items():
             _gen_print(f"  Weekly {muscle}: {volume['direct']:g} direct + {volume['indirect']:g} indirect = {volume['effective']:g} effective sets")
         if final_audit["issues"]:
@@ -213,7 +201,7 @@ def execute_workout_generation(
             save_validation_error(ValueError(" | ".join(final_audit["issues"])), data, script_dir)
             return {"success": False, "filepath": None, "error": "Final programming audit failed: " + " | ".join(final_audit["issues"]),
                     "requires_plan_revision": True, "programming_audit": final_audit}
-        _gen_print("✓ Actual volume and duration audit passed (duration is an estimate under stated assumptions)")
+        _gen_print("✓ Actual volume audit passed")
         _, save_time = save_generation_progress(session_id, 8, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data)
 
         # Update final total time (including save times)

@@ -18,7 +18,7 @@ JUDGMENTS = {
     'setup_uncertainty': 'Execution with the selected setup requires clarification.',
     'setup_floor_clearance_uncertainty': 'Missing setup fact: can the selected exercises use clear floor space while the other equipment remains positioned?',
     'setup_simultaneous_access_uncertainty': 'Missing setup fact: can the selected equipment be accessed safely without moving the other equipment between superset members?',
-    'setup_changeover_time_uncertainty': 'Missing setup fact: what is the actual changeover time between the selected exercises? The audit allowance is an unmeasured estimate, not a user-confirmed time.',
+    'setup_changeover_time_uncertainty': 'Physical changeover time is unmeasured and separate from prescribed recovery.',
     'capacity_uncertainty': 'Personal capacity for the selected prescription is not established.',
     'recovery_uncertainty': 'Recovery tolerance for the selected exposure is not established.',
     'concentration_tradeoff': 'The reviewer identifies a concentration tradeoff in the selected exposure.',
@@ -30,12 +30,17 @@ JUDGMENTS = {
     'contradicted_by_current_data': 'The current code-owned facts contradict the prior objection.',
 }
 WITHDRAWAL_JUDGMENTS = {'unsupported_requirement', 'contradicted_by_current_data'}
+CONFLICT_JUDGMENTS = {
+    'source_conflict': 'The reviewer raises a source-compliance concern for consideration.',
+    'role_mismatch': 'The reviewer raises a movement-role suitability concern for consideration.',
+    'execution_conflict': 'The reviewer raises a practical-execution concern for consideration.',
+}
 # Missing timing or recovery measurements alone do not establish execution violations.
 ADVISORY_JUDGMENTS = {'setup_changeover_time_uncertainty', 'recovery_uncertainty'}
 ACCESS_JUDGMENTS = {'setup_floor_clearance_uncertainty', 'setup_simultaneous_access_uncertainty'}
 # Retain the old category for reading receipts; new findings must identify the missing fact.
 LIVE_JUDGMENTS = {key: value for key, value in JUDGMENTS.items() if key != 'setup_uncertainty'}
-QUALITATIVE_JUDGMENTS = {'setup_uncertainty', 'setup_floor_clearance_uncertainty',
+QUALITATIVE_JUDGMENTS = {'source_conflict', 'setup_uncertainty', 'setup_floor_clearance_uncertainty',
     'setup_simultaneous_access_uncertainty', 'setup_changeover_time_uncertainty', 'capacity_uncertainty', 'recovery_uncertainty',
     'concentration_tradeoff', 'overlap_tradeoff', 'emphasis_tradeoff', 'execution_conflict'}
 
@@ -203,23 +208,49 @@ def compile_review_execution_facts(exercise_refs, context):
     for index, day in enumerate(context.get('finalArtifact', {}).get('workouts', [])):
         blocks = [block for block in day.get('components', []) if block.get('type') in ('Exercise', 'Superset')]
         members = [item for block in blocks for item in
-            (block.get('exercises', []) if block['type'] == 'Superset' else [block])]
+            (block.get('exercises', []) if block['type'] == 'Superset' else [block])
+            if item.get('id') in by_id]
         if not any(item.get('id') in selected for item in members):
             continue
         equipment_ids = sorted({by_id[item['id']].get('equipmentId') for item in members
             if item.get('id') in by_id} - {None})
+        working_order = []
+        for block in blocks:
+            ordered_members = []
+            for item in block.get('exercises', []) if block['type'] == 'Superset' else [block]:
+                if item.get('id') not in by_id:
+                    continue
+                exercise = by_id[item['id']]
+                ordered_members.append({'name': exercise.get('name', item['id']),
+                    'executionCategory': review_execution_category(exercise, context.get('requirements'))})
+            if ordered_members:
+                working_order.append(ordered_members)
         facts.append({'session': day.get('name', context['draft']['workouts'][index]['name']),
             'exerciseOccurrences': len(members),
-            'straightSetExercises': sum(block['type'] == 'Exercise' for block in blocks),
-            'supersetGroups': sum(block['type'] == 'Superset' for block in blocks),
+            'straightSetExercises': sum(block['type'] == 'Exercise' and block.get('id') in by_id for block in blocks),
+            'supersetGroups': sum(block['type'] == 'Superset' and any(item.get('id') in by_id
+                for item in block.get('exercises', [])) for block in blocks),
+            'workingOrder': working_order,
             'primaryEquipment': [{'id': identifier, 'name': equipment.get(identifier, {}).get('name', identifier),
                 'type': equipment.get(identifier, {}).get('type')} for identifier in equipment_ids]})
     return facts
 
 
-def render_review_judgment(concern, judgment, subjects, execution_facts=None):
+def review_execution_category(exercise, requirements=None):
+    """Use the audited sequence policy, including core and explosive phases."""
+    from .programming_guidelines import execution_block_priority
+    from .programming_policy import EXECUTION_CATEGORIES
+
+    priority = execution_block_priority([exercise], requirements)
+    return 'EXPLOSIVE' if priority == -1 else EXECUTION_CATEGORIES[priority]
+
+
+def render_review_judgment(concern, judgment, subjects, execution_facts=None, *, basis=None,
+                          legacy_working_order=False):
     """Only code renders identities and quantities entering a repair obligation."""
     label, assessment = CONCERNS[concern], JUDGMENTS[judgment]
+    if basis != 'established_violation':
+        assessment = CONFLICT_JUDGMENTS.get(judgment, assessment)
     rows = [f"{item['name']}: {item['weeklyWorkingSets']} weekly sets; "
         + ', '.join(f"{day['session']} {day['sets']}" for day in item['sessionWorkingSets'])
         for item in subjects[:3]]
@@ -234,6 +265,11 @@ def render_review_judgment(concern, judgment, subjects, execution_facts=None):
             + 'primary equipment: ' + (', '.join(item['name'] + ' (' + (item['type'] or 'unknown type') + ')'
                 for item in day['primaryEquipment']) or 'none declared') for day in execution_facts]
         message += ' Code-owned whole-session execution: ' + '; '.join(rows_execution) + '.'
+        message += (' Code-owned working order: ' if legacy_working_order else ' Working order. ')
+        message += ('; ' if legacy_working_order else '. ').join(
+            day['session'] + (': ' if legacy_working_order else ' follows ') + ' > '.join(
+            ' + '.join(item['name'] + ' (' + item['executionCategory'] + ')' for item in block)
+            for block in day['workingOrder']) for day in execution_facts) + '.'
     return message, message + ' Code-owned exposure: ' + '; '.join(rows)
 
 
@@ -246,6 +282,9 @@ def validate_review_judgments(review):
         judgment = finding.get('reviewJudgment')
         if judgment in ADVISORY_JUDGMENTS and disposition != 'advisory':
             raise ValueError('Timing and recovery uncertainty are advisory; a blocker needs a distinct demonstrated conflict.')
+        if (judgment in CONFLICT_JUDGMENTS and disposition in ('repair', 'unresolved_capability')
+                and finding.get('basis') != 'established_violation'):
+            raise ValueError('A conflict judgment can block only an established violation of an approved requirement.')
         if judgment and disposition and ((judgment in WITHDRAWAL_JUDGMENTS)
                 != (disposition == 'withdrawn_review_error')):
             raise ValueError('Withdrawal judgments cannot authorize candidate repairs or approval.')
@@ -280,6 +319,15 @@ def validate_review_subjects(review, context):
         if finding.get('executionFacts') != execution_facts:
             raise ValueError('Review execution facts do not match the current artifact.')
         message, reason = render_review_judgment(
-            finding['reviewConcern'], finding['reviewJudgment'], subjects, execution_facts)
-        if finding.get('message') != message or not finding.get('repair', '').endswith(reason):
+            finding['reviewConcern'], finding['reviewJudgment'], subjects, execution_facts,
+            basis=finding.get('basis'))
+        rendered = [(message, reason)]
+        rendered.append(render_review_judgment(finding['reviewConcern'], finding['reviewJudgment'],
+            subjects, execution_facts, basis=finding.get('basis'), legacy_working_order=True))
+        if finding.get('action') == 'advisory' and finding['reviewJudgment'] in CONFLICT_JUDGMENTS:
+            # Keep retained receipts readable; preview rendering always uses the current neutral wording.
+            rendered.append(render_review_judgment(finding['reviewConcern'], finding['reviewJudgment'],
+                subjects, execution_facts, basis='established_violation', legacy_working_order=True))
+        if not any(finding.get('message') == message and finding.get('repair', '').endswith(reason)
+                for message, reason in rendered):
             raise ValueError('Review factual premises must be rendered from code-owned subjects.')

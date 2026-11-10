@@ -153,3 +153,127 @@ def test_planner_example_contains_only_referenced_numeric_exercises():
     references = {reference for workout in PLAN_INDEX_EXAMPLE["workouts"] for reference in workout["exerciseIds"]}
     assert {exercise["id"] for exercise in PLAN_INDEX_EXAMPLE["exercises"]} == references
     assert "EXERCISE_WARMUP" not in references
+
+
+def _warmup_library():
+    return {'id': 'warmup-bike', 'name': 'Timed ride', 'exerciseType': 'COUNTDOWN',
+        'equipmentId': '11111111-1111-4111-8111-111111111111', 'bodyWeightPercentage': None, 'requiredAccessoryEquipmentIds': [],
+        'muscleGroups': ['FRONT_QUADRICEPS'], 'secondaryMuscleGroups': ['BACK_GLUTEAL'], 'exerciseCategory': None}
+
+
+@pytest.mark.parametrize('seconds', [None, 0, 300, 600])
+def test_code_owned_general_warmup_preserves_review_export_and_audit(seconds):
+    import copy
+    from jsonschema import Draft7Validator
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg.constants import JSON_SCHEMA
+    from workout_generator_pkg.domain_ops import (
+        _materialize_exercise_definition, assemble_placeholder_workout_store,
+        apply_exercise_library_schema_v2, convert_placeholders_to_uuids,
+        general_warmup_audit_options, general_warmup_exercises, reviewable_workout_artifact,
+    )
+    from workout_generator_pkg.generation_audit import (
+        audit_workout_package, plan_audit_package,
+    )
+    from workout_generator_pkg.plan_contract import validate_assembled_workout_contract
+    from workout_generator_pkg.planning_tools import build_draft_plan
+
+    equipment, requirements, _, draft = planning_case()
+    warmup_definition = _warmup_library()
+    equipment['equipments'] = [{'id': warmup_definition['equipmentId'], 'name': 'Bike', 'type': 'CARDIO_MACHINE'}]
+    equipment['exerciseDefinitions'].append(warmup_definition)
+    draft['workouts'] *= 3
+    requirements['auditTargets'] = {}
+    if seconds is not None:
+        requirements['generalWarmupSeconds'] = seconds
+    if seconds:
+        requirements['generalWarmupDefinitionId'] = warmup_definition['id']
+    plan = build_draft_plan(draft, equipment, requirements)
+    definitions = {entry['id']: _materialize_exercise_definition(entry) for entry in plan['exercises']}
+    structures = {day['id']: build_workout_structure(day) for day in plan['workouts']}
+    actual = assemble_placeholder_workout_store({item['id']: item for item in equipment['equipments']}, {}, definitions, structures, plan)
+    validate_assembled_workout_contract(plan, actual)
+    warmups = general_warmup_exercises(plan)
+    if seconds:
+        assert len({component['id'] for component in warmups.values()}) == 3
+        assert len({component['sets'][0]['id'] for component in warmups.values()}) == 3
+    for day in actual['workouts']:
+        first = day['workoutComponents'][0]
+        if seconds:
+            assert first['exerciseType'] == 'COUNTDOWN'
+            assert len(first['sets']) == 1 and first['sets'][0]['timeInMillis'] == seconds * 1000
+            assert day['workoutComponents'][1]['type'] == 'Exercise'
+        else:
+            assert first['exerciseType'] == 'BODY_WEIGHT'
+    reviewed = reviewable_workout_artifact(plan, 'Guidance')
+    manager = cli.PlaceholderIdManager()
+    exported = convert_placeholders_to_uuids(actual, manager, validate_final=False)
+    exported = apply_exercise_library_schema_v2(exported, equipment['exerciseDefinitions'])
+    assert reviewable_workout_artifact(plan, 'Guidance', exported, manager.placeholder_to_uuid) == reviewed
+    legacy = copy.deepcopy(exported)
+    for key in ('schemaVersion', 'exerciseDefinitions', 'exerciseMovements'):
+        legacy.pop(key)
+    for day in legacy['workouts']:
+        for exercise in day['workoutComponents']:
+            exercise.pop('exerciseDefinitionId')
+    Draft7Validator(JSON_SCHEMA).validate(legacy)
+    if seconds:
+        assert {day['workoutComponents'][0]['exerciseDefinitionId'] for day in exported['workouts']} == {warmup_definition['id']}
+        report_placeholder = actual['workouts'][0]['workoutComponents'][0]
+        assert report_placeholder['name'] == warmup_definition['name']
+        assert report_placeholder['equipmentId'] == warmup_definition['equipmentId']
+    mapping = manager.placeholder_to_uuid
+    report = audit_workout_package(exported, {},
+        general_warmup_by_workout=general_warmup_audit_options(plan, mapping))
+    planned = audit_workout_package(plan_audit_package(plan), {})
+    assert not report['errors']
+    assert report['weeklyWorkingSets'] == planned['weeklyWorkingSets'] == 15
+    assert report['weeklyVolume'] == planned['weeklyVolume']
+
+
+
+@pytest.mark.parametrize('change', ['duration', 'rest'])
+def test_explicit_general_warmup_rejects_timer_or_following_rest_changes(change):
+    from test_workout_generator_programming_audit import _plan
+    from workout_generator_pkg.generation_audit import audit_workout_package, plan_audit_package
+    from workout_generator_pkg.plan_contract import validate_assembled_workout_contract, ContractValidationError
+
+    plan = _plan()
+    plan['workouts'][0]['generalWarmupSeconds'] = 300
+    plan['workouts'][0]['generalWarmupDefinition'] = _warmup_library()
+    package = plan_audit_package(plan)
+    if change == 'duration':
+        package['workouts'][0]['workoutComponents'][0]['sets'][0]['timeInMillis'] = 299000
+    else:
+        package['workouts'][0]['workoutComponents'].insert(1, {'type': 'Rest', 'timeInSeconds': 60})
+    report = audit_workout_package(package, {})
+    assert any(error['code'] == 'general_warmup_mismatch' for error in report['errors'])
+    with pytest.raises(ContractValidationError, match='General warm-up'):
+        validate_assembled_workout_contract(plan, package)
+
+
+@pytest.mark.parametrize('failure', ['missing', 'unknown', 'type', 'equipment', 'accessory'])
+def test_explicit_general_warmup_requires_available_library_binding(failure):
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg.planning_tools import build_draft_plan, PlanningInputError, workout_requirements_tool
+
+    equipment, requirements, _, draft = planning_case()
+    definition = _warmup_library()
+    equipment['equipments'] = [{'id': definition['equipmentId'], 'name': 'Bike', 'type': 'CARDIO_MACHINE'}]
+    equipment['exerciseDefinitions'].append(definition)
+    selection = workout_requirements_tool(equipment)['function']['parameters']['properties']['generalWarmupDefinitionId']
+    assert selection['oneOf'] == [{'const': definition['id'], 'title': definition['name']}]
+    requirements.update(generalWarmupSeconds=300, generalWarmupDefinitionId=definition['id'])
+    if failure == 'missing':
+        requirements.pop('generalWarmupDefinitionId')
+    elif failure == 'unknown':
+        requirements['generalWarmupDefinitionId'] = 'absent'
+    elif failure == 'type':
+        definition['exerciseType'] = 'COUNTUP'
+    elif failure == 'equipment':
+        equipment['equipments'] = []
+    else:
+        definition['requiredAccessoryEquipmentIds'] = ['missing-accessory']
+    with pytest.raises(PlanningInputError) as error:
+        build_draft_plan(draft, equipment, requirements)
+    assert error.value.code == 'general_warmup_definition_required'

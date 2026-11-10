@@ -34,9 +34,9 @@ def mixed_task():
         'currentDraft': draft,
         'requirements': {'requiredCoverage': []},
         'recipeDefinitions': {
-            'LIBRARY_0': {'exerciseType': 'BODY_WEIGHT'},
-            'LIBRARY_1': {'exerciseType': 'BODY_WEIGHT'},
-            'LIBRARY_2': {'exerciseType': 'BODY_WEIGHT'},
+            'LIBRARY_0': {'id': 'definition_0', 'name': 'Source', 'exerciseType': 'BODY_WEIGHT'},
+            'LIBRARY_1': {'id': 'definition_1', 'name': 'Replacement', 'exerciseType': 'BODY_WEIGHT'},
+            'LIBRARY_2': {'id': 'definition_2', 'name': 'Other', 'exerciseType': 'BODY_WEIGHT'},
         },
         'replacementDefinitionReferences': ['LIBRARY_1'],
         'findingsAssessment': {'groups': [{

@@ -814,18 +814,21 @@ def test_compact_audit_context_preserves_coordinated_repair_receipt():
         'libraryFingerprint': 'library', 'historyFingerprint': 'history',
         'resolvedDecisions': {'D1': 'yes'}, 'submittedEdits': {'exerciseMoves': []}}
     findings = [{'draftPath': '/workouts/0/exercises/0', 'message': 'Repair this occurrence.'}]
+    review = {'version': 71, 'inputHash': 'current-review', 'findings': findings,
+        'assessment': {'inputHash': 'complete-assessment', 'groups': []}}
     messages = [
         {'role': 'assistant', 'tool_calls': [{'id': 'audit', 'function': {
             'name': 'audit_workout_plan', 'arguments': '{}'}}]},
         {'role': 'tool', 'tool_call_id': 'audit', 'content': json.dumps({
             'passed': False, 'currentDraftId': 'REVISION_3', 'audit': {},
-            'coordinatedRepairReceipt': receipt, 'review': {'findings': findings},
+            'coordinatedRepairReceipt': receipt, 'review': review,
             'submittedDraft': {'workouts': []}})},
     ]
     outgoing = _messages_for_api(messages)
     compact = json.loads(outgoing[-1]['content'])
     assert compact['coordinatedRepairReceipt'] == receipt
     assert compact['reviewFindings'] == findings
+    assert compact['review'] == review
     assert 'submittedDraft' not in compact
 
     marked = [{'role': 'assistant', '_internalAuditActions': {'reaudit': 'deterministic_metadata_correction'},

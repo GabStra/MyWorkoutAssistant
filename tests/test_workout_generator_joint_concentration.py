@@ -112,7 +112,7 @@ def test_role_peak_tiebreak_spreads_other_roles_after_an_immovable_peak_without_
         timeout_seconds=2, preserve_current=False)
     assert status == 'optimal'
     primary_value = primary[worst_peak]
-    rows.append((('objective', 'role_concentration'), -float('inf'), primary_value + 1e-7,
+    rows.append((('objective', 'role_concentration'), -float('inf'), primary_value,
         0, primary_costs))
 
     secondary_variables = [{**value, 'objectiveCost': profile_peak_costs.get(index, 0)}

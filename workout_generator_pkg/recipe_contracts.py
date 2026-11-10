@@ -14,7 +14,8 @@ from .api_client import chat_call
 from .api_metrics import api_metrics_scope, record_submission_rejection
 from .domain_ops import get_selectable_weights_for_exercise
 from .exercise_contracts import execution_supporting_muscles, validate_setup_configuration
-from .muscle_roles import MUSCLE_LABELS, REGIONAL_MUSCLE_LABELS
+from .muscle_roles import (MUSCLE_LABELS, REGIONAL_MUSCLE_LABELS,
+    muscle_credits_per_set, project_training_muscles)
 from .programming_demands import DEMAND_GROUPS
 from .parallel_work import parallel_proposals
 
@@ -141,12 +142,12 @@ def canonical_qualified_roles(definition, proposed_roles, supported_roles):
     """Keep supported semantic claims and derive regional roles from reviewed primary anatomy."""
     supported_roles = set(supported_roles or ())
     roles = set(proposed_roles or ()) & supported_roles
-    from .generation_audit import MUSCLES
+    credits = muscle_credits_per_set(definition)
     muscle_role_keys = {name.replace('lowerBack', 'lower_back'): name for name in MUSCLE_LABELS
                         if name not in REGIONAL_MUSCLE_LABELS}
     for role, muscle in muscle_role_keys.items():
         roles.discard(role)
-        if role in supported_roles and set(definition.get('muscleGroups') or ()) & MUSCLES[muscle]:
+        if role in supported_roles and credits.get(muscle, {}).get('direct'):
             roles.add(role)
     for role, region in CODE_OWNED_REGIONAL_COVERAGE_ROLES.items():
         roles.discard(role)
@@ -204,6 +205,8 @@ def apply_reviewed_exercise_annotations(payload):
                 'source': annotation['source'],
                 'basis': annotation['basis'],
             }
+    for definition in definitions:
+        project_training_muscles(definition)
     return result
 
 
@@ -230,6 +233,18 @@ def reviewed_execution_properties(equipment, references=None):
             'unclassifiedReferences': unclassified}
 
 
+def reviewed_limb_form_pair_evidence(first_properties, second_properties):
+    """Classify reviewed limb form only; equal forms do not establish equal stimulus."""
+    modes = [(properties or {}).get('limbMode') for properties in (first_properties, second_properties)]
+    if set(modes) == {'bilateral', 'unilateral'}:
+        status = 'documented_complementary'
+    elif modes[0] in {'bilateral', 'unilateral', 'alternating'} and modes[0] == modes[1]:
+        status = 'documented_repeated_form'
+    else:
+        status = 'unknown'
+    return {'status': status, 'limbModes': modes}
+
+
 def _regional_anatomy_for_definition(definition):
     anatomy = definition.get('anatomy')
     if anatomy is None:
@@ -241,7 +256,7 @@ def _regional_anatomy_for_definition(definition):
 
 
 def regional_muscle_credit_roles(definition, working_sets=1):
-    """Return sourced regional direct/indirect credits without changing aggregate accounting."""
+    """Return sourced regional direct/indirect roles; omitted regions stay unknown."""
     if (not isinstance(working_sets, (int, float)) or isinstance(working_sets, bool)
             or not math.isfinite(working_sets) or working_sets < 0):
         raise ValueError('working_sets must be a finite nonnegative number.')
@@ -269,7 +284,7 @@ def regional_muscle_credit_roles(definition, working_sets=1):
 
 
 def regional_muscle_credits(definition, working_sets=1):
-    """Return total sourced regional credits; aggregate muscleGroups accounting is unchanged."""
+    """Return total sourced regional credits without summing them into parent credits."""
     return {region: roles['direct'] + roles['indirect']
             for region, roles in regional_muscle_credit_roles(definition, working_sets).items()}
 
@@ -359,13 +374,12 @@ def progression_margin(item, capability):
 
 
 def _coverage_source_context(sources):
-    from .planning_tools import _REQUIREMENTS
     from .requirement_accounting import structured_requirement_source
 
     result = copy.deepcopy(sources)
     for source in result.values():
         try:
-            authority = structured_requirement_source([{**source, 'messageIndex': 0}], _REQUIREMENTS)
+            authority = structured_requirement_source([{**source, 'messageIndex': 0}], None)
         except (ValueError, ValidationError):
             continue
         if authority is None:
@@ -520,7 +534,7 @@ def qualify_recipe_contracts(client, prepared, requirements, equipment, messages
             item_required = ['definition_id']
             if model_roles:
                 item_properties['satisfiesCoverage'] = {'type': 'array',
-                    'items': {'type': 'string', 'enum': sorted(model_roles)}}
+                    'items': {'type': 'string', 'enum': sorted(roles)}}
                 item_required.append('satisfiesCoverage')
             item_schema = {'type': 'object', 'properties': item_properties,
                 'required': item_required, 'additionalProperties': False}
@@ -556,7 +570,7 @@ def qualify_recipe_contracts(client, prepared, requirements, equipment, messages
                 for item in batch_result['contracts']:
                     assigned_roles = item['satisfiesCoverage'] if model_roles else []
                     if (not isinstance(assigned_roles, list) or len(assigned_roles) != len(set(assigned_roles))
-                            or set(assigned_roles) - model_roles):
+                            or set(assigned_roles) - roles):
                         raise ValueError(f"{item['definition_id']}.satisfiesCoverage contains unsupported roles.")
                     item['satisfiesCoverage'] = canonical_qualified_roles(
                         definitions[item['definition_id']], assigned_roles, roles)

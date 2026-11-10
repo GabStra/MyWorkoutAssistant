@@ -83,6 +83,32 @@ def test_setup_evidence_reports_resource_reuse_returns_and_unknown_physical_setu
     assert 'not proven station returns' in evidence['interpretation']
 
 
+@pytest.mark.parametrize('grouped, expected_blocks', [(False, 3), (True, 2)])
+def test_working_block_count_matches_draft_and_emitted_artifact(grouped, expected_blocks):
+    definitions = {reference: {'id': reference, 'equipmentId': resource, 'exerciseType': 'WEIGHT'}
+        for reference, resource in [('press', 'bar'), ('raise', 'db'), ('calf', 'bar')]}
+    exercises = [{'id': reference, 'definition_id': reference, 'numWorkSets': 2,
+        'superset': 'accessories' if grouped and reference != 'press' else None,
+        'generateWarmUpSets': reference == 'press'} for reference in definitions]
+    sources = {exercise['id']: (exercise, {}, {}, {'libraryDefinitionId': exercise['definition_id']})
+        for exercise in exercises}
+    members = [{'type': 'Exercise', 'id': exercise['id']} for exercise in exercises]
+    accessory_blocks = ([{'type': 'Superset', 'exercises': members[1:]}] if grouped else members[1:])
+    artifact = {'components': [
+        {'type': 'Exercise', 'id': 'general_warmup', 'exerciseType': 'COUNTDOWN'},
+        members[0], {'type': 'Rest', 'timeInSeconds': 120}, *accessory_blocks]}
+
+    draft = executable_setup_evidence({'exercises': exercises}, definitions)
+    emitted = session_setup_evidence(artifact, sources, definitions)
+
+    assert draft['workingBlockCount'] == emitted['workingBlockCount'] == expected_blocks
+    assert draft['blockCount'] == expected_blocks
+    assert emitted['blockCount'] == expected_blocks + 1
+    assert draft['supersetGroupCount'] == emitted['supersetGroupCount'] == int(grouped)
+    assert draft['physicalPrimaryInventorySwitchCount'] == (4 if grouped else 2)
+    assert emitted['physicalPrimaryInventorySwitchCount'] is None
+
+
 @pytest.mark.parametrize('second_load, relation', [(40, 'known_same'), (60, 'known_changed')])
 def test_known_load_transition_is_reported_across_distinct_exercises_sharing_equipment(second_load, relation):
     first = setup_resource_profile({'id': 'row', 'equipmentId': 'bar', 'exerciseType': 'WEIGHT'}, {
@@ -486,6 +512,24 @@ def test_physical_inventory_switches_ignore_loads_and_share_confirmed_dumbbells(
         {'bodyweight': {'id': 'bodyweight', 'exerciseType': 'BODY_WEIGHT'}})
     assert bodyweight['physicalPrimaryInventorySwitchCount'] == 0
     assert bodyweight['unknownPrimaryInventoryCount'] == 0
+
+
+@pytest.mark.parametrize('exercise_type', ['BODY_WEIGHT', 'COUNTDOWN', 'COUNTUP'])
+def test_no_primary_implement_is_known_for_rep_or_time_tracked_accessory_work(exercise_type):
+    definitions = {'bar': {'id': 'bar', 'exerciseType': 'WEIGHT', 'equipmentId': 'bar'},
+        'unloaded': {'id': 'unloaded', 'exerciseType': exercise_type, 'equipmentId': None,
+            'requiredAccessoryEquipmentIds': ['station']}}
+    sources = [{'definition_id': ref, 'numWorkSets': 2} for ref in ('bar', 'unloaded', 'bar')]
+    evidence = executable_setup_evidence({'exercises': sources}, definitions)
+    assert evidence['physicalPrimaryInventorySwitchCount'] == 2
+    assert evidence['unknownPrimaryInventoryCount'] == 0
+    assert 'station' in evidence['distinctAccessoryIds']
+    assert evidence['unknownPhysicalPreparationCount'] > 0
+    # A load-tracked definition without its primary implement remains incomplete.
+    definitions['unloaded']['exerciseType'] = 'WEIGHT'
+    unknown = executable_setup_evidence({'exercises': sources}, definitions)
+    assert unknown['physicalPrimaryInventorySwitchCount'] is None
+    assert unknown['unknownPrimaryInventoryCount'] == 1
 
 
 def test_native_inventory_switch_cost_matches_scheduled_audit_and_local_order():

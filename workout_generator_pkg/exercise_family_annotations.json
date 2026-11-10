@@ -1,5 +1,22 @@
 {
   "byDefinitionId": {
+    "336e1e9f-e6fd-5ec2-b9cf-afe06b7957b0": {
+      "exerciseFamilyId": "6984c8fd-d5b1-5dad-9761-b89620f36209",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/36026487/",
+      "basis": "The study directly compares flat, incline and decline dumbbell and barbell bench presses. Grouped as bench-press variations at movement-family level only; setup, load, stimulus and personal suitability remain distinct.",
+      "execution": {
+        "setupConfiguration": [
+          {
+            "resourceId": "e3f0e0ee-3433-4435-bed9-c926e23a8468",
+            "state": {
+              "backrestMode": "flat"
+            },
+            "source": "https://www.navyfitness.org/modules/media/?do=download&id=c47986ca-7dc5-4ece-8e33-d30d4e43b89d",
+            "basis": "The Navy Fitness Pre-Season Flag Football Manual describes dumbbell bench press on a flat bench (PDF page 23). This records only flat backrest mode. Bench placement, retained configuration, personal load and changeover time remain unknown."
+          }
+        ]
+      }
+    },
     "fe87940d-089b-522a-a1a7-f79adea03b9c": {
       "exerciseFamilyId": "38f2bea2-b63d-531a-8ece-9c3c239bb433",
       "source": "https://www.acefitness.org/resources/everyone/exercise-library/331/standing-crunch/",
@@ -25,8 +42,22 @@
       "basis": "The study directly compares barbell back and front squats. Shared squat-family identity does not establish equal loads, stimulus or personal capacity.",
       "execution": {
         "limbMode": "bilateral",
-        "source": "https://www.acefitness.org/resources/everyone/exercise-library/11/back-squat/",
-        "basis": "ACE's barbell back-squat instructions place both feet on the floor for the squat and return to standing. This supports bilateral execution; it does not establish suitability or loadability for a particular trainee."
+        "supportingMuscles": [
+          "lowerBack",
+          "abs"
+        ],
+        "source": "https://cscca.org/content.aspx?club_id=408309&module_id=731826&page_id=22",
+        "basis": "CSCCa describes the bilateral barbell back squat, identifies erector spinae involvement and instructs abdominal bracing. These are positive execution-support facts only. They do not quantify fatigue, establish exhaustive support, add hypertrophy credit or establish personal suitability.",
+        "setupConfiguration": [
+          {
+            "resourceId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+            "state": {
+              "preparationSupport": "rack"
+            },
+            "source": "https://www.acefitness.org/resources/everyone/exercise-library/11/back-squat/",
+            "basis": "ACE starts back squats with the barbell in a rack and describes lifting it off the rack. This records only the barbell preparation support category for the documented rack-based technique and the library-declared rack. Exact hook and safety settings, retained setup, personal load and changeover time remain unknown."
+          }
+        ]
       }
     },
     "2692280b-4775-5d6e-abf9-fec2a637f023": {
@@ -64,7 +95,10 @@
       "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
       "basis": "The study directly compares inverted and standing bent-over rows. The library-named dumbbell row variants share the horizontal-row action but remain mechanically distinct variants. Family grouping supports exercise-variation counting only; it does not assert equal trunk demand.",
       "execution": {
-        "supportingMuscles": ["lowerBack", "abs"],
+        "supportingMuscles": [
+          "lowerBack",
+          "abs"
+        ],
         "source": "https://www.cscca.org/content.aspx?club_id=408309&module_id=732310&page_id=22",
         "basis": "CSCCa identifies erector spinae involvement and abdominal bracing while maintaining a neutral spine in the barbell bent-over row. These are documented trunk-support roles, not quantified fatigue, hypertrophy credit, or personal capacity."
       },
@@ -135,7 +169,10 @@
       "source": "https://cscca.org/content.aspx?club_id=408309&module_id=732309&page_id=22",
       "basis": "The CSCCa identifies the barbell Romanian deadlift as a standing hip hinge. It is kept distinct from a floor deadlift and from knee-flexion Nordics.",
       "execution": {
-        "supportingMuscles": ["lowerBack", "abs"],
+        "supportingMuscles": [
+          "lowerBack",
+          "abs"
+        ],
         "source": "https://cscca.clubexpress.com/content.aspx?club_id=408309&module_id=732309&page_id=22",
         "basis": "CSCCa identifies erector spinae involvement and abdominal bracing while maintaining a neutral spine in the barbell Romanian deadlift. These are documented trunk-support roles, not quantified fatigue, hypertrophy credit, or personal capacity."
       },
@@ -170,6 +207,11 @@
     },
     "81b9bf9f-ba5c-5a56-b5cf-ace2c5b61664": {
       "execution": {
+        "supportingMuscles": [
+          "abs"
+        ],
+        "source": "https://www.cscca.org/content.aspx?club_id=408309&module_id=732259&page_id=22",
+        "basis": "CSCCa instructs abdominal bracing during the barbell bench-press setup. This records positive support involvement only, without equating bench-supported and unsupported trunk demands, quantifying fatigue, adding hypertrophy credit or establishing personal suitability.",
         "setupConfiguration": [
           {
             "resourceId": "e3f0e0ee-3433-4435-bed9-c926e23a8468",
@@ -178,6 +220,14 @@
             },
             "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bench-press",
             "basis": "NASM describes the barbell bench press on a flat bench. Only the required flat backrest mode is recorded; rack height, bench location, load, actual retained setup and changeover time remain unknown."
+          },
+          {
+            "resourceId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+            "state": {
+              "preparationSupport": "rack"
+            },
+            "source": "https://www.cscca.org/content.aspx?club_id=408309&module_id=732259&page_id=22",
+            "basis": "CSCCa describes hooks and unracking/re-racking the barbell for bench press. This records only the barbell preparation support category for the documented rack-based technique and the library-declared rack. Exact hook and safety settings, retained setup, personal load and changeover time remain unknown."
           }
         ]
       },
@@ -236,6 +286,18 @@
           "present": false,
           "source": "https://doi.org/10.1519/SSC.0b013e31822fa09d"
         }
+      },
+      "execution": {
+        "setupConfiguration": [
+          {
+            "resourceId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+            "state": {
+              "preparationSupport": "floor"
+            },
+            "source": "https://bretcontreras.com/wp-content/uploads/Barbell-Hip-Thrust.pdf",
+            "basis": "The original NSCA hip-thrust technique article describes a barbell raised from and returned to the ground with the upper back against a secured bench (printed pages 59-60). This records the documented ground-supported barbell preparation only. Plate diameter, entry clearance, bench adjustment or placement, personal load and retained setup remain unknown."
+          }
+        ]
       }
     },
     "a782884c-2643-50fb-a29a-700854c9befd": {
@@ -243,7 +305,11 @@
       "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
       "basis": "The study directly compares inverted and standing bent-over rows. The library-named dumbbell row variants share the horizontal-row action but remain mechanically distinct variants. Family grouping supports exercise-variation counting only; it does not assert equal trunk demand.",
       "execution": {
-        "supportingMuscles": ["lowerBack", "glutes", "hamstrings"],
+        "supportingMuscles": [
+          "lowerBack",
+          "glutes",
+          "hamstrings"
+        ],
         "source": "https://www.puregym.com/exercises/back/rows/dumbbell-bent-over-row/",
         "basis": "The trainer's two-dumbbell bent-over-row guide identifies lower-back, gluteal and hamstring engagement while holding the hinged posture, and distinguishes chest-supported rows. These are positive execution-support facts only, not an exhaustive muscle list, quantified fatigue, volume credits or evidence of personal capacity."
       },
@@ -382,7 +448,10 @@
       "basis": "The study directly examines barbell front squat mechanics alongside back squat; grouped with the barbell hack squat as squat-pattern variants, without asserting equal mechanics.",
       "execution": {
         "limbMode": "bilateral",
-        "supportingMuscles": ["lowerBack", "abs"],
+        "supportingMuscles": [
+          "lowerBack",
+          "abs"
+        ],
         "source": "https://www.sussex.ac.uk/sport/documents/front-squat-barbell.pdf",
         "basis": "The university's barbell front-squat guide describes both feet on the floor and lists erector spinae, rectus abdominis and transverse abdominis as secondary muscles while keeping the spine straight. This establishes bilateral execution and documented trunk support only, not quantified fatigue, additional hypertrophy credit, load suitability or personal capacity."
       },
@@ -429,6 +498,18 @@
           "present": true,
           "source": "https://www.acefitness.org/resources/everyone/exercise-library/51/calf-raises/"
         }
+      },
+      "execution": {
+        "setupConfiguration": [
+          {
+            "resourceId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+            "state": {
+              "preparationSupport": "rack"
+            },
+            "source": "https://www.acefitness.org/resources/everyone/exercise-library/51/calf-raises/",
+            "basis": "ACE starts barbell calf raises with a barbell in a rack and describes lifting it off the rack. This records only the barbell preparation support category for the documented rack-based technique and the library-declared rack. Exact hook and safety settings, retained setup, personal load and changeover time remain unknown."
+          }
+        ]
       }
     },
     "6a4d7a08-e919-57fb-b667-142e53796c7b": {
@@ -455,6 +536,23 @@
         ],
         "source": "https://pubmed.ncbi.nlm.nih.gov/35936912/",
         "basis": "The study compares shoulder-press variations and measures anterior and medial deltoid activation. These are positive regional attributions for the press pattern, not a numerical dose or claim of equal activation across variants."
+      },
+      "execution": {
+        "supportingMuscles": [
+          "abs"
+        ],
+        "source": "https://www.cscca.org/content.aspx?club_id=408309&module_id=732261&page_id=22",
+        "basis": "CSCCa instructs abdominal bracing and a rigid body during the standing barbell overhead press. This records positive support involvement only, without an exhaustive support list, quantitative fatigue, additional hypertrophy credit or inferred personal capacity.",
+        "setupConfiguration": [
+          {
+            "resourceId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+            "state": {
+              "preparationSupport": "rack"
+            },
+            "source": "https://www.cscca.org/content.aspx?club_id=408309&module_id=732261&page_id=22",
+            "basis": "CSCCa lists a rack, barbell and rack hooks for the standing overhead press. This records only the barbell preparation support category for the documented rack-based technique and the library-declared rack. Exact hook and safety settings, retained setup, personal load and changeover time remain unknown."
+          }
+        ]
       }
     },
     "43876a73-3e7e-5455-babe-3067ae11ca86": {
@@ -807,6 +905,23 @@
           "present": false,
           "source": "https://www.acefitness.org/resources/everyone/exercise-library/45/seated-overhead-press/"
         }
+      }
+    },
+    "b9a5c835-5d6b-5f1f-8ced-bf2d917e1243": {
+      "execution": {
+        "limbMode": "unilateral",
+        "source": "https://www.dvidshub.net/video/549286/barbell-lateral-lunge",
+        "basis": "The US Marine Corps Training and Education Command demonstration describes stepping to one side and lowering the hips over that foot while the opposite leg stays extended. This supports unilateral, side-biased limb form. Both feet remain on the ground. Balance-control demands, side-count prescription, ROM and muscle-length or joint-angle complementarity remain unknown.",
+        "setupConfiguration": [
+          {
+            "resourceId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+            "state": {
+              "preparationSupport": "rack"
+            },
+            "source": "https://www.tbs.marines.mil/Portals/230/Force%20Fitness%20Exercise%20Guidebook.pdf?ver=eGNb828lVw2cF1Ji_XVUsg%3D%3D",
+            "basis": "The US Marine Corps Force Fitness Exercise Guidebook lateral-lunge preparation explicitly describes unracking the barbell (printed page 55). This records only the barbell preparation support category for the documented rack-based technique and the library-declared rack. Exact hook and safety settings, retained setup, personal load and changeover time remain unknown."
+          }
+        ]
       }
     }
   }

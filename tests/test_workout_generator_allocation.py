@@ -55,7 +55,7 @@ def test_milp_normalizes_continuous_auxiliary_epsilon_at_exact_bound(monkeypatch
         {'lower': 1, 'upper': 1, 'current': [], 'members': [], 'objectiveCost': 0, 'integer': True},
         {'lower': 0, 'upper': 1000, 'current': [], 'members': [], 'objectiveCost': 1, 'integer': False},
     ]
-    features = [(('duration_balance', 0, 'maximum'), -float('inf'), 0, 300,
+    features = [(('volume_target_deviation', 0, 'maximum'), -float('inf'), 0, 300,
         {0: 1, 1: -1})]
     diagnostics = {}
 
@@ -78,7 +78,7 @@ def test_milp_still_rejects_a_real_integer_solution_breach(monkeypatch):
         {'lower': 0, 'upper': 2, 'current': [], 'members': [], 'objectiveCost': 0, 'integer': True},
         {'lower': 0, 'upper': 1000, 'current': [], 'members': [], 'objectiveCost': 1, 'integer': False},
     ]
-    features = [(('duration_balance', 0, 'maximum'), -float('inf'), 0, 300,
+    features = [(('volume_target_deviation', 0, 'maximum'), -float('inf'), 0, 300,
         {0: 1, 1: -1})]
     diagnostics = {}
 
@@ -189,7 +189,7 @@ def test_allocation_problem_identity_ignores_soft_counts_and_presentation_only_e
     exercise.update(numWorkSets=2, placementNotes='Different cue')
     assert identity(cosmetic) == original
     changed = copy.deepcopy(cosmetic)
-    changed['workouts'][0]['exercises'][0]['setupSeconds'] += 10
+    changed['workouts'][0]['exercises'][0]['restBetweenSetsSeconds'] += 10
     assert identity(changed) != original
     changed = copy.deepcopy(draft)
     changed['workouts'][0]['exercises'][0]['definition_id'] = 'LIBRARY_1'
@@ -199,7 +199,7 @@ def test_allocation_problem_identity_ignores_soft_counts_and_presentation_only_e
 def test_infeasible_count_problem_blocks_repeat_with_different_soft_preferences(monkeypatch):
     from workout_generator_pkg import allocation
     equipment, requirements, _, draft = planning_case()
-    requirements['auditTargets']['maximumSessionSeconds'] = 500
+    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 7, 'maximum': 8}
     from workout_generator_pkg.planning_tools import set_workout_requirements
     stored = set_workout_requirements(requirements, [])
     draft['requirementsId'] = stored['requirementsId']
@@ -255,7 +255,7 @@ def test_allocation_returns_minimal_patch_and_exact_numeric_summary():
     assert allocated["feasible"]
     assert allocated["patch"] == [{"op": "replace", "path": "/workouts/0/exercises/0/numWorkSets", "value": 5}]
     assert allocated["summary"]["weeklyEffectiveSets"]["chest"] == 5
-    assert allocated["summary"]["sessions"][0]["estimatedSeconds"] == 810
+    assert set(allocated["summary"]["sessions"][0]) == {"name", "effectiveSets"}
     assert result["submittedDraft"]["workouts"][0]["exercises"][0]["numWorkSets"] == 3
 
 
@@ -442,7 +442,7 @@ def test_cached_joint_allocation_is_recomputed_when_solver_policy_changes(monkey
     assert repaired['automaticAllocation']['problemFingerprint'] == 'fresh'
 
 
-def test_automatic_allocation_repairs_numeric_counts_with_code_owned_setup_estimate():
+def test_automatic_allocation_repairs_numeric_counts_without_mutating_source():
     from workout_generator_pkg.allocation import auto_allocate_workout
     equipment, _, stored, draft = planning_case()
     first = draft['workouts'][0]['exercises'][0]
@@ -450,16 +450,13 @@ def test_automatic_allocation_repairs_numeric_counts_with_code_owned_setup_estim
     second = copy.deepcopy(first)
     second.update(numWorkSets=2)
     second.pop('allocationBounds')
-    second.pop('setupSeconds')
     draft['workouts'][0]['exercises'].append(second)
     messages, result = _audited_messages(equipment, stored, draft)
     assert {error['code'] for error in result['errors']} >= {'volume_below_target'}
-    assert result['submittedDraft']['workouts'][0]['exercises'][1]['setupSeconds'] == 60
     repaired = auto_allocate_workout(result, equipment, messages)
     assert repaired['automaticAllocation']['feasible']
     assert repaired['audit']['weeklyVolume']['chest']['effective'] == 5
     assert repaired['passed']
-    assert all('setupSeconds' in item for item in repaired['submittedDraft']['workouts'][0]['exercises'][1:])
     assert [item['numWorkSets'] for item in result['submittedDraft']['workouts'][0]['exercises']] == [2, 2]
 
 
@@ -491,7 +488,7 @@ def test_automatic_allocation_runs_joint_solver_for_only_coverage_floor_error(mo
     assert calls
 
 
-@pytest.mark.parametrize('objective', ['setup_economy', 'duration_economy'])
+@pytest.mark.parametrize('objective', ['setup_economy', 'relative_role_concentration', 'weekly_volume:chest'])
 def test_valid_plan_still_runs_approved_practical_optimization(monkeypatch, objective):
     from workout_generator_pkg import allocation, joint_planning
     from workout_generator_pkg.planning_tools import set_workout_requirements
@@ -501,7 +498,12 @@ def test_valid_plan_still_runs_approved_practical_optimization(monkeypatch, obje
         'barWeight': 20, 'sleeveLength': 100, 'availablePlates': []}]
     equipment['exerciseDefinitions'][0].update(exerciseType='WEIGHT', equipmentId='EQUIPMENT_0',
         bodyWeightPercentage=None)
-    requirements['objectiveOrder'] = [objective]
+    requirements['objectiveOrder'] = ['workload_economy', objective]
+    if objective == 'weekly_volume:chest':
+        requirements['objectiveOrder'] = ['goal_tier_0', 'workload_economy']
+        requirements['auditTargets']['weeklyEffectiveSets']['chest'].update(
+            preferredMinimum=5, preferredMaximum=6)
+        requirements['objectiveTiers'] = [[{'metric': objective, 'target': 0, 'scale': 1}]]
     stored = set_workout_requirements(requirements,
         [{'role': 'user', 'content': 'Optimize practical execution within these requirements.'}], equipment)
     draft['requirementsId'] = stored['requirementsId']
@@ -528,8 +530,7 @@ def test_automatic_solver_preserves_and_rejects_carried_redistribution(monkeypat
     equipment, requirements, _, draft = planning_case()
     requirements.update(sessionsPerWeek=3,
         auditTargets={'weeklyEffectiveSets': {'chest': {'minimum': 15, 'maximum': 18}},
-            'perSessionEffectiveSets': {'chest': {'minimum': 4, 'maximum': 6}},
-            'maximumSessionSeconds': 1000})
+            'perSessionEffectiveSets': {'chest': {'minimum': 4, 'maximum': 6}}})
     stored = set_workout_requirements(requirements,
         [{'role': 'user', 'content': 'Plan three full-body sessions with similar work.'}], equipment)
     draft['requirementsId'] = stored['requirementsId']
@@ -628,24 +629,6 @@ def test_uniform_template_allows_bounded_count_allocation_and_exact_materializat
     assert result['submittedDraft'] == draft
 
 
-def test_infeasible_volume_and_duration_reports_conflict_without_patch():
-    equipment, requirements, _, draft = planning_case()
-    requirements["auditTargets"]["maximumSessionSeconds"] = 500
-    from workout_generator_pkg.planning_tools import set_workout_requirements
-    stored = set_workout_requirements(requirements, [])
-    draft["requirementsId"] = stored["requirementsId"]
-    draft["workouts"][0]["exercises"][0]["numWorkSets"] = 3
-    messages, result = _audited_messages(equipment, stored, draft)
-
-    allocated = allocate_workout_sets({
-        "requirementsId": stored["requirementsId"],
-        "baseDraftId": result["currentDraftId"],
-        "boundsBySlot": {"SLOT_0": {"minimum": 5, "maximum": 6}},
-    }, equipment, messages)
-
-    assert not allocated["feasible"]
-    assert "approved count constraints" in allocated["reason"]
-    assert "patch" not in allocated
 
 
 def test_coupled_infeasibility_identifies_conflicting_targets_without_relaxing_them():
@@ -653,7 +636,7 @@ def test_coupled_infeasibility_identifies_conflicting_targets_without_relaxing_t
     equipment, requirements, _, draft = planning_case()
     requirements['auditTargets'] = {'weeklyEffectiveSets': {
         muscle: {'minimum': 5, 'maximum': 6} for muscle in ('quads', 'hamstrings', 'glutes')},
-        'perSessionEffectiveSets': {}, 'maximumSessionSeconds': None}
+        'perSessionEffectiveSets': {}}
     stored = set_workout_requirements(requirements, [])
     draft['requirementsId'] = stored['requirementsId']
     equipment['exerciseDefinitions'][0].update(name='Quad movement', muscleGroups=['FRONT_QUADRICEPS', 'BACK_GLUTEAL'], secondaryMuscleGroups=[])
@@ -713,16 +696,14 @@ def test_conflicts_report_all_unreachable_bounds_and_remaining_coupled_targets()
     assert (variables, features) == before
 
 
-@pytest.mark.parametrize('duration_limit', [None, 500])
 @pytest.mark.parametrize('omitted_sets', [1, 2])
-def test_legacy_omitted_slots_do_not_create_false_locks(duration_limit, omitted_sets):
+def test_legacy_omitted_slots_do_not_create_false_locks(omitted_sets):
     equipment, requirements, stored, draft = planning_case()
     requirements["auditTargets"]["weeklyEffectiveSets"] = {
         "glutes": {"minimum": 0, "maximum": 1},
         "shoulders": {"minimum": 0, "maximum": 1},
     }
     requirements["auditTargets"]["perSessionEffectiveSets"] = {}
-    requirements["auditTargets"]["maximumSessionSeconds"] = duration_limit
     from workout_generator_pkg.planning_tools import set_workout_requirements
     stored = set_workout_requirements(requirements, [])
     draft["requirementsId"] = stored["requirementsId"]

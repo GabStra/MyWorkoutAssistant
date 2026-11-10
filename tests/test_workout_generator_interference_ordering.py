@@ -3,7 +3,7 @@ import pytest
 from workout_generator_pkg import joint_planning, programming_guidelines as rules
 
 
-def test_request_policy_separates_overlapping_compounds_without_changing_selected_work():
+def test_strict_request_phases_preserve_compound_order_when_interleaving_would_reduce_overlap():
     import copy
     import json
     from pathlib import Path
@@ -33,21 +33,26 @@ def test_request_policy_separates_overlapping_compounds_without_changing_selecte
     strict = copy.deepcopy(requirements)
     strict['orderingPreferences']['phaseOrder'] = [
         ['HEAVY_COMPOUND'], ['MODERATE_COMPOUND'], ['ISOLATION'], ['CORE']]
+    permissive = copy.deepcopy(requirements)
+    permissive['orderingPreferences']['phaseOrder'] = [
+        ['HEAVY_COMPOUND', 'MODERATE_COMPOUND'], ['ISOLATION'], ['CORE']]
     blocked = rules.canonical_execution_order_draft(draft, strict, equipment)
-    ordered = rules.canonical_execution_order_draft(draft, requirements, equipment)
+    ordered = rules.canonical_execution_order_draft(draft, permissive, equipment)
     indexes = lambda value: [int(item['definition_id'].removeprefix('LIBRARY_'))
         for item in value['workouts'][0]['exercises']]
     before, after = indexes(blocked), indexes(ordered)
     assert abs(before.index(2) - before.index(3)) == 1
     assert abs(after.index(2) - after.index(3)) > 1
-    assert rules.execution_order_is_admissible(after, roles, keys, requirements)
+    assert rules.execution_order_is_admissible(after, roles, keys, permissive)
     assert not rules.execution_order_is_admissible(after, roles, keys, strict)
     assert max(after.index(index) for index in range(4)) < after.index(4) < after.index(5)
     before_score = rules.execution_interference_score(before, profiles)
     after_score = rules.execution_interference_score(after, profiles)
     assert after_score[:6] == before_score[:6]
     assert after_score[6] < before_score[6]
-    assert sorted(ordered['workouts'][0]['exercises'], key=lambda item: item['definition_id']) == items
+    # Source-owned recovery rules may update the completed-block boundary.
+    assert sorted([{**item, 'restAfterExerciseSeconds': 0}
+        for item in ordered['workouts'][0]['exercises']], key=lambda item: item['definition_id']) == items
     assert draft['workouts'][0]['exercises'] == items
 
 
@@ -71,6 +76,10 @@ def test_order_search_can_change_opener_to_protect_heavy_work_but_preserves_expl
     assert rules.execution_order_is_admissible(order, roles, keys, requirements)
     requirements['executionRules'] = [{'kind': 'order', 'before': 'technique', 'after': 'main'},
                                       {'kind': 'order', 'before': 'technique', 'after': 'squat'}]
+    if len(phases) > 1:
+        with pytest.raises(ValueError, match='conflicts'):
+            rules.execution_order_indices(roles, keys, requirements, interference_profiles=profiles)
+        return
     ordered_priority = rules.execution_order_indices(roles, keys, requirements, interference_profiles=profiles)
     assert ordered_priority[0] == 0
     assert rules.execution_order_is_admissible(ordered_priority, roles, keys, requirements)
@@ -294,7 +303,11 @@ def test_shared_muscle_does_not_make_distinct_movements_redundant():
              {'definition_id': 'HINGE', 'satisfiesCoverage': ['glutes', 'hamstrings', 'hip_dominant']}]
     assert joint_planning.overlapping_movement_pairs(items) == []
     items.append({'definition_id': 'SECOND_SQUAT', 'satisfiesCoverage': ['glutes', 'knee_dominant']})
-    assert joint_planning.overlapping_movement_pairs(items) == [('SECOND_SQUAT', 'SQUAT')]
+    assert joint_planning.overlapping_movement_pairs(items) == []
+    assert joint_planning.overlapping_movement_pairs(items,
+        {'SQUAT': 'squat', 'SECOND_SQUAT': 'squat'},
+        {'SQUAT': {'limbMode': 'bilateral'}, 'SECOND_SQUAT': {'limbMode': 'bilateral'}}) == [
+            ('SECOND_SQUAT', 'SQUAT')]
 
 
 def test_interference_counts_supporting_work_beyond_the_previous_exercise():

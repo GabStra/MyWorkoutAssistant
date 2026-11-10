@@ -244,16 +244,21 @@ def test_complete_approved_snapshot_uses_code_validation_but_new_prose_still_get
 
     equipment, targets, _, _ = planning_case()
     requirements = json.loads(Path('docs/workout_generator_initial_requirements.json').read_text(encoding='utf-8'))
-    requirements.update(auditTargets=targets['auditTargets'], sessionsPerWeek=1, preferredSessionSeconds=900, familySetBounds=[],
+    requirements.update(auditTargets=targets['auditTargets'], sessionsPerWeek=1, familySetBounds=[],
+        generalWarmupSeconds=0, objectiveOrder=['goal_tier_0', 'session_exercise_balance'],
+        exerciseSelection={**requirements['exerciseSelection'], 'muscles': ['chest'],
+            'requiredNames': [], 'preferredByCoverage': {}},
         requiredCoverage=[], exerciseRestrictions={'excludeNameTerms': [], 'exceptNameTerms': []}, executionRules=[
             {'kind': 'workSets', 'coverageKey': None, 'minimumSets': 2, 'maximumSets': 3}])
-    requirements.pop('objectiveTiers', None)  # This fixture replaces the goals' muscles and coverage roles.
+    requirements['objectiveTiers'] = [[{'metric': 'session_exercise_balance', 'target': 0, 'scale': 1}]]
     if family_bounds == 'omitted':
         requirements.pop('familySetBounds')
     messages = [{'role': 'user', 'content': STRUCTURED_REQUIREMENTS_MARKER + '\n' + json.dumps(requirements)}]
     schema = planning_tools.workout_requirements_tool(equipment, messages)['function']['parameters']
-    decision_schema = schema['properties']['planningDecisions']['properties']['decisions']['items']
-    assert decision_schema['anyOf'] == [{'required': ['executionPrescription']}]
+    assert schema['properties'] == {}
+    validate({}, schema)
+    with pytest.raises(ValidationError):
+        validate({'planningDecisions': {'decisions': []}}, schema)
     if new_instruction:
         messages.append({'role': 'user', 'content': 'Also prioritize upper-body work.'})
     candidate = planning_tools.set_workout_requirements({}, messages, equipment)

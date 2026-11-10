@@ -58,10 +58,6 @@ def _lowered(requirements, paths, ratio):
     changes = []
     for path in paths:
         current = pointer(requirements, path)
-        if path.endswith('/maximumSessionSeconds'):
-            _set_pointer(result, path, None)
-            changes.append({'path': path, 'from': current, 'temporarilyRemoved': True})
-            continue
         if path.endswith('/maximum'):
             # Volume-bound maxima are supported through 100 by the requirements schema.
             value = 100
@@ -107,8 +103,7 @@ def _conflict_details(receipt, requirements):
     ranks = relaxation_rank_by_path(requirements)
     permissions = []
     for path in relaxation_paths(requirements):
-        direction = ('increase_duration' if path.endswith('/maximumSessionSeconds')
-                     else 'lower_minimum' if path.endswith('/minimum') else 'raise_maximum')
+        direction = 'lower_minimum' if path.endswith('/minimum') else 'raise_maximum'
         permissions.append({'path': path, 'direction': direction,
             'currentValue': copy.deepcopy(pointer(requirements, path)),
             **({'rank': ranks[path]} if path in ranks else {})})
@@ -123,14 +118,6 @@ def _tighten_to_audited_volume(requirements, paths, receipt, original_requiremen
     result = copy.deepcopy(requirements)
     changes = []
     for path in paths:
-        if path.endswith('/maximumSessionSeconds'):
-            actual = max((row.get('estimatedSeconds', 0) for row in receipt.get('audit', {}).get('workouts', [])), default=0)
-            original = pointer(original_requirements, path)
-            target = max(original, actual)
-            _set_pointer(result, path, target)
-            if actual > original:
-                changes.append({'path': path, 'from': original, 'to': target, 'basis': 'audited candidate duration'})
-            continue
         parts = path.split('/')
         if path.startswith('/auditTargets/weeklyEffectiveSets/'):
             muscle = parts[3]
@@ -222,10 +209,7 @@ def _shortfalls_against_original_requirements(audit, requirements, changes):
         path = change['path']
         actual, required, unit = None, change['from'], 'effective sets'
         parts = path.split('/')
-        if path == '/auditTargets/maximumSessionSeconds':
-            actual = max((row.get('estimatedSeconds', 0) for row in sessions), default=0)
-            unit = 'seconds'
-        elif path.startswith('/auditTargets/weeklyEffectiveSets/'):
+        if path.startswith('/auditTargets/weeklyEffectiveSets/'):
             muscle = parts[3]
             actual = weekly.get(muscle, {}).get('effective', 0)
         elif path.startswith('/auditTargets/perSessionEffectiveSets/'):
@@ -237,7 +221,7 @@ def _shortfalls_against_original_requirements(audit, requirements, changes):
             unit = 'effective sets per session'
         if actual is None:
             continue
-        is_maximum = path.endswith('/maximum') or path.endswith('/maximumSessionSeconds')
+        is_maximum = path.endswith('/maximum')
         amount = max(0, actual - required) if is_maximum else max(0, required - actual)
         if amount <= 0:
             continue
@@ -304,16 +288,10 @@ def _audit_comparison(baseline, candidate):
         for index, row in enumerate(baseline_audit.get('workouts', []))}
     candidate_sessions = {row.get('sessionId', row.get('name', str(index))): row
         for index, row in enumerate(candidate_audit.get('workouts', []))}
-    durations, per_session_volume = {}, {}
+    per_session_volume = {}
     for session in sorted(set(baseline_sessions) | set(candidate_sessions)):
         before = baseline_sessions.get(session, {})
         after = candidate_sessions.get(session, {})
-        left = before.get('estimatedSeconds')
-        right = after.get('estimatedSeconds')
-        if (isinstance(left, (int, float)) and not isinstance(left, bool)
-                and isinstance(right, (int, float)) and not isinstance(right, bool)
-                and left != right):
-            durations[session] = {'baseline': left, 'candidate': right, 'delta': right - left}
         changed_muscles = {}
         before_volume, after_volume = before.get('volume') or {}, after.get('volume') or {}
         for muscle in sorted(set(before_volume) | set(after_volume)):
@@ -331,7 +309,6 @@ def _audit_comparison(baseline, candidate):
         'weeklyWorkingSetsByDefinition': definition_deltas,
         'weeklyCoverageSets': coverage,
         'weeklyEffectiveSets': weekly, 'perSessionEffectiveSets': per_session_volume,
-        'sessionDurationsSeconds': durations,
         'baselineWorkoutCount': len(baseline.get('workouts', [])),
         'candidateWorkoutCount': len(candidate.get('workouts', []))}
 
@@ -408,14 +385,11 @@ def render_alternative_preview(proposal):
         for session, muscles in deltas.get('perSessionEffectiveSets', {}).items():
             for muscle, delta in muscles.items():
                 lines.append(f"- {session} {muscle} effective sets: {delta['baseline']} → {delta['candidate']} (Δ {delta['delta']})")
-        for session, delta in deltas.get('sessionDurationsSeconds', {}).items():
-            lines.append(f"- {session} estimated seconds: {delta['baseline']} → {delta['candidate']} (Δ {delta['delta']})")
         if comparison.get('baselinePreview'):
             lines.extend(['', 'Baseline reviewed plan:', comparison['baselinePreview'].strip()])
     lines.extend(['', preview.strip(), '', proposal.get('claim',
         'Validated against the proposed requirements; original-target shortfalls are shown above. No global optimum is claimed.')])
-    lines.extend(['Estimated session duration is a planning estimate.',
-        'Approve only this alternative: APPROVE ALTERNATIVE ' + proposal['proposalId']])
+    lines.append('Approve only this alternative: APPROVE ALTERNATIVE ' + proposal['proposalId'])
     return '\n'.join(lines)
 
 
@@ -821,13 +795,12 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         volume_minima = [path for path in paths if path.startswith(
             ('/auditTargets/weeklyEffectiveSets/', '/auditTargets/perSessionEffectiveSets/'))
             and path.endswith('/minimum')]
-        duration_paths = [path for path in paths if path.endswith('/maximumSessionSeconds')]
         volume_maxima = [path for path in paths if path.endswith('/maximum')]
         # When volume minima are the only negotiable dimensions, find the
         # highest common feasible floor instead of asking a feasibility solver
         # to choose arbitrarily after dropping every minimum to zero.
         rank_by_path = relaxation_rank_by_path(original)
-        if (not unresolved_preferences and not rank_by_path and volume_minima and not duration_paths and not volume_maxima
+        if (not unresolved_preferences and not rank_by_path and volume_minima and not volume_maxima
                 and len(volume_minima) == len(paths)):
             low, high = 0.0, 1.0
             best_requirements = _scaled_volume_minima(original, volume_minima, low)
@@ -864,7 +837,6 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                                    'rounds': sum(1 for attempt in attempts
                                        if attempt['scenario'].startswith('relax:all_volume_minima:common_floor_'))}})
         scenarios = []
-        volume_paths = [path for path in paths if path not in duration_paths]
 
         # Explicit source ranks form ordered tiers. A higher tier stays fixed
         # until every lower tier is proven infeasible. Unranked paths remain
@@ -881,7 +853,6 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                     for path in rank_paths)
             unranked_paths = [path for path in paths if path not in rank_by_path]
             scenario_groups.extend([
-                ('relax:unranked:session_duration', [p for p in unranked_paths if p in duration_paths]),
                 ('relax:unranked:volume_minima', [p for p in unranked_paths if p in volume_minima]),
                 ('relax:unranked:volume_maxima', [p for p in unranked_paths if p in volume_maxima]),
             ])
@@ -892,7 +863,6 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
             # Exercise materially different trade-off dimensions before spending
             # the bounded solver-attempt allowance on individual field variants.
             scenario_groups = [
-                ('relax:session_duration', duration_paths),
                 ('relax:all_volume_minima', volume_minima),
                 ('relax:all_volume_maxima', volume_maxima),
                 ('relax:all_negotiable_constraints', paths),

@@ -52,7 +52,11 @@ def test_shared_planes_parent_roles_and_limb_modes_do_not_make_complementary_pat
     knee_flexion = {'definition_id': 'FLEXION', 'satisfiesCoverage': common + ['knee_flexion_hamstring']}
     other_hinge = {'definition_id': 'HINGE_B', 'satisfiesCoverage': common + ['hip_dominant']}
     assert movement_overlap_roles(common) == set()
-    assert joint_planning.overlapping_movement_pairs([hinge, knee_flexion, other_hinge]) == [
+    items = [hinge, knee_flexion, other_hinge]
+    assert joint_planning.overlapping_movement_pairs(items) == []
+    assert joint_planning.overlapping_movement_pairs(items,
+        {'HINGE_A': 'hinge', 'HINGE_B': 'hinge'},
+        {'HINGE_A': {'limbMode': 'unilateral'}, 'HINGE_B': {'limbMode': 'unilateral'}}) == [
         ('HINGE_A', 'HINGE_B')]
 
 

@@ -7,7 +7,7 @@ from workout_generator_pkg.generation_audit import (available_muscle_targets, mu
     muscle_credit_coupling_evidence, muscle_metadata_policy, render_optimization_disclosure)
 from workout_generator_pkg.planning_tools import workout_requirements_tool, set_workout_requirements, audit_workout_plan, PlanningInputError
 from workout_generator_pkg.plan_contract import hydrate_plan_index_from_exercise_library
-from test_workout_generator_planning_tools import planning_case, requirement_messages
+from test_workout_generator_planning_tools import planning_case, capability_requirement_messages
 
 
 @pytest.mark.parametrize('category', ['ISOLATION', 'HEAVY_COMPOUND', None])
@@ -37,7 +37,7 @@ def test_discovery_and_supported_targets_ignore_alternative_muscle_annotations()
     assert 'lateralDelts' not in _entry_text(definition)
     policy = muscle_metadata_policy(available_muscle_targets(gear))
     assert 'muscleGroups' in policy['interpretation']
-    assert 'without explicit agreement' in policy['interpretation']
+    assert 'derived view' in policy['interpretation']
 
 
 def test_alternative_annotations_cannot_enable_unrepresented_targets():
@@ -51,12 +51,12 @@ def test_alternative_annotations_cannot_enable_unrepresented_targets():
     assert 'lats' not in schema['properties']['weeklyEffectiveSets']['properties']
 
 
-def test_final_audit_uses_same_fields_while_preserving_legacy_export_data():
+def test_final_audit_and_export_project_the_same_authoritative_roles():
     from workout_generator_pkg.domain_ops import apply_exercise_library_schema_v2
     gear, _, stored, draft = planning_case()
     definition = gear['exerciseDefinitions'][0]
     definition['trainingMuscles'] = {'primary': ['lateralDelts'], 'secondary': []}
-    result = audit_workout_plan(draft, gear, requirement_messages(stored))
+    result = audit_workout_plan(draft, gear, capability_requirement_messages(stored, gear))
     assert result['passed']
     assert result['audit']['weeklyVolume']['chest']['effective'] == 5
     assert 'lateralDelts' not in result['audit']['weeklyVolume']
@@ -65,7 +65,11 @@ def test_final_audit_uses_same_fields_while_preserving_legacy_export_data():
     hydrate_plan_index_from_exercise_library(plan, gear['exerciseDefinitions'])
     package = {'workouts': [{'workoutComponents': [dict(plan['exercises'][0], type='Exercise', sets=[])]}]}
     apply_exercise_library_schema_v2(package, gear['exerciseDefinitions'])
-    assert package['exerciseDefinitions'][0]['trainingMuscles'] == definition['trainingMuscles']
+    expected = {'primary': ['chest'], 'secondary': ['triceps']}
+    assert plan['exercises'][0]['trainingMuscles'] == expected
+    assert package['exerciseDefinitions'][0]['trainingMuscles'] == expected
+    assert package['workouts'][0]['workoutComponents'][0]['trainingMuscles'] == expected
+    assert definition['trainingMuscles'] == {'primary': ['lateralDelts'], 'secondary': []}
 
 
 def test_library_loader_does_not_validate_unused_annotations(tmp_path):
@@ -77,6 +81,64 @@ def test_library_loader_does_not_validate_unused_annotations(tmp_path):
     loaded = _load_exercise_library_payload(str(path))
     assert muscle_credits_per_set(loaded['exerciseDefinitions'][0]) == {
         'chest': {'direct': 1, 'indirect': 0}, 'triceps': {'direct': 0, 'indirect': 0.5}}
+
+
+def test_reviewed_positive_regions_upgrade_the_parent_once_without_erasing_legacy_roles():
+    from copy import deepcopy
+    from workout_generator_pkg.muscle_roles import project_training_muscles
+
+    definition = {'id': 'unreviewed', 'exerciseType': 'WEIGHT',
+        'muscleGroups': ['FRONT_CHEST'], 'secondaryMuscleGroups': ['BACK_UPPER_BACK', 'FRONT_BICEPS'],
+        'anatomy': {'primarySubregions': ['latissimus_dorsi', 'upper_back'],
+            'secondarySubregions': ['deltoid_posterior'],
+            'source': 'https://example.org/reviewed', 'basis': 'Controlled reviewed role fixture.'},
+        'trainingMuscles': {'primary': ['lateralDelts'], 'secondary': ['lats']}}
+    credits = muscle_credits_per_set(definition)
+    assert credits['back'] == {'direct': 1, 'indirect': 0}
+    assert credits['chest'] == {'direct': 1, 'indirect': 0}
+    assert credits['biceps'] == {'direct': 0, 'indirect': 0.5}
+    assert credits['shoulders'] == {'direct': 0, 'indirect': 0.5}
+    projected = project_training_muscles(deepcopy(definition))
+    assert 'BACK_UPPER_BACK' in projected['muscleGroups']
+    assert 'BACK_UPPER_BACK' not in projected['secondaryMuscleGroups']
+    assert muscle_credits_per_set(projected) == credits
+    assert projected['trainingMuscles'] == {
+        'primary': ['back', 'chest', 'latissimus_dorsi', 'upper_back'],
+        'secondary': ['biceps', 'deltoid_posterior', 'shoulders']}
+    assert project_training_muscles(deepcopy(projected)) == projected
+
+
+def test_overhead_press_materialization_retains_chest_assistance_and_reviewed_lateral_role():
+    from copy import deepcopy
+    from workout_generator_pkg.domain_ops import _materialize_exercise_definition, apply_exercise_library_schema_v2
+
+    definition = {'id': '8b6b9813-39b1-5c86-89bf-22ab6828556e', 'name': 'Barbell Overhead Press',
+        'exerciseType': 'WEIGHT', 'equipmentId': None, 'bodyWeightPercentage': None,
+        'requiredAccessoryEquipmentIds': [], 'muscleGroups': ['FRONT_DELTOIDS'],
+        'secondaryMuscleGroups': ['BACK_TRICEPS', 'BACK_TRAPEZIUS', 'FRONT_CHEST'],
+        'exerciseCategory': 'HEAVY_COMPOUND',
+        'trainingMuscles': {'primary': ['anteriorDelts', 'lateralDelts'], 'secondary': ['upperBack']}}
+    original = deepcopy(definition)
+    plan = {'exercises': [{'id': 'EXERCISE_0', 'libraryDefinitionId': definition['id'],
+        'numWorkSets': 2, 'minReps': 5, 'maxReps': 10, 'restBetweenSetsSeconds': 60,
+        'generateWarmUpSets': False, 'intraSetRestInSeconds': None}], 'workouts': []}
+    hydrate_plan_index_from_exercise_library(plan, [definition])
+    entry = plan['exercises'][0]
+    expected = {'primary': ['deltoid_anterior', 'shoulders'],
+        'secondary': ['chest', 'deltoid_lateral', 'traps', 'triceps']}
+    assert entry['trainingMuscles'] == expected
+    assert entry['muscleGroups'] == definition['muscleGroups']
+    assert entry['secondaryMuscleGroups'] == definition['secondaryMuscleGroups']
+    component = _materialize_exercise_definition(entry)
+    assert component['trainingMuscles'] == expected
+    package = {'workouts': [{'workoutComponents': [component]}]}
+    apply_exercise_library_schema_v2(package, [definition])
+    exported = package['exerciseDefinitions'][0]
+    assert exported['trainingMuscles'] == component['trainingMuscles'] == expected
+    assert exported['id'] == definition['id']
+    assert muscle_credits_per_set(exported)['chest'] == {'direct': 0, 'indirect': 0.5}
+    assert muscle_credits_per_set(exported)['deltoid_lateral'] == {'direct': 0, 'indirect': 0.5}
+    assert definition == original
 
 
 def test_credit_coupling_reports_menu_conditioned_hamstring_only_floor():

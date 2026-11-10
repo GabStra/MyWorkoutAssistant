@@ -120,6 +120,57 @@ def test_unresolved_or_stale_policy_cannot_silently_allow_or_substitute_exercise
     assert renewed['restrictionPolicy'] and not renewed.get('cached')
 
 
+@pytest.mark.parametrize('change', ['annotations', 'exercise_name', 'equipment_name',
+    'accessory_name', 'definition_id', 'new_definition'])
+def test_retained_alias_depends_on_the_consumed_catalog_and_legacy_requires_exact_library(monkeypatch, change):
+    from workout_generator_pkg.planning_tools import library_fingerprint
+
+    equipment, requirements, _ = restriction_case()
+    equipment['exerciseDefinitions'][0].update(equipmentId='catalog_gear',
+        requiredAccessoryEquipmentIds=['catalog_accessory'])
+    equipment['equipments'].append({'id': 'catalog_gear', 'name': 'Primary implement'})
+    equipment.setdefault('accessoryEquipments', []).append({'id': 'catalog_accessory', 'name': 'Support stand'})
+    restrictions = requirements['exerciseRestrictions']
+    restrictions['excludeNameTerms'].append('pushdown machine')
+    monkeypatch.setattr(policy, 'chat_call', lambda *a, **k:
+        (json.dumps({'WORDING_0': ['LIBRARY_0']}), None, None))
+    resolved = policy.resolve_restrictions(restrictions, equipment, client=object())
+    legacy = {**resolved, 'libraryFingerprint': library_fingerprint(equipment)}
+    monkeypatch.setattr(policy, 'chat_call', lambda *a, **k: pytest.fail('Retained alias needs no provider'))
+    assert policy.restriction_policy_matches_library(legacy, equipment)
+    migrated = policy.resolve_restrictions(restrictions, equipment, retained_policy=legacy)
+    assert {key: value for key, value in migrated.items() if key != 'matches'} == {
+        key: value for key, value in resolved.items() if key != 'matches'}
+    assert sorted(migrated['matches'], key=lambda item: (item['kind'], item['term'])) == sorted(
+        resolved['matches'], key=lambda item: (item['kind'], item['term']))
+    resolved = migrated
+    changed = copy.deepcopy(equipment)
+    if change == 'annotations':
+        changed['exerciseDefinitions'][0]['reviewedExecution'] = {'supportingMuscles': ['lowerBack']}
+    elif change == 'exercise_name':
+        changed['exerciseDefinitions'][0]['name'] += ' variation'
+    elif change == 'equipment_name':
+        changed['equipments'][-1]['name'] += ' variation'
+    elif change == 'accessory_name':
+        changed['accessoryEquipments'][-1]['name'] += ' variation'
+    elif change == 'definition_id':
+        changed['exerciseDefinitions'][0]['id'] = 'changed-definition'
+    else:
+        changed['exerciseDefinitions'].append({**changed['exerciseDefinitions'][0], 'id': 'new-definition'})
+
+    assert not policy.restriction_policy_matches_library(legacy, changed)
+    assert policy.restriction_policy_matches_library(resolved, changed) == (change == 'annotations')
+    stored = {'requirements': requirements, 'restrictionPolicy': resolved}
+    if change == 'annotations':
+        assert policy.effective_restrictions(stored, changed) == resolved
+        assert policy.resolve_restrictions(restrictions, changed, client=object(), retained_policy=resolved) == resolved
+    else:
+        with pytest.raises(PlanningInputError, match='current library'):
+            policy.effective_restrictions(stored, changed)
+        with pytest.raises(PlanningInputError, match='Cannot resolve restriction'):
+            policy.resolve_restrictions(restrictions, changed, retained_policy=resolved)
+
+
 @pytest.mark.parametrize('response', [
     {'WORDING_0': ['LIBRARY_999']},
     {},

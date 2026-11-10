@@ -19,7 +19,7 @@ def test_preference_comparison_uses_current_reviewed_baseline_and_priority_recei
     artifact = {'workouts': [{'name': 'A', 'exercises': []}], 'programGuidance': ''}
     review = {'version': plan_review.REVIEW_VERSION, 'instructionBoundary': 0,
         'inputHash': 'input', 'reviewBaseHash': 'base', 'reviewLedgerOutputFingerprint': 'ledger',
-        'reviewedArtifact': artifact, 'sourceCoverage': {'SOURCE_0': True},
+        'reviewedArtifact': artifact,
         'findings': [], 'assessment': {'groups': []}}
     audit_result = {'requirementsId': 'REQ', 'currentDraftId': 'DRAFT', 'draftId': 'DRAFT',
         'libraryFingerprint': 'LIB', 'historyFingerprint': None, 'resolvedDecisions': {},

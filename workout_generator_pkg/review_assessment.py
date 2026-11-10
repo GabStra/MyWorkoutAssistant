@@ -7,7 +7,7 @@ import re
 from jsonschema import validate, ValidationError
 
 from .repair_capabilities import REPAIR_DIMENSIONS, has_unresolved_capabilities, repair_capability_contract
-from .review_subjects import ADVISORY_JUDGMENTS
+from .review_subjects import ADVISORY_JUDGMENTS, CONFLICT_JUDGMENTS, validate_review_judgments
 
 VERSION = 12
 
@@ -338,125 +338,15 @@ def provider_repair_objective_selection_schema(choices):
     return {'type': 'array', 'items': {'type': 'string', 'enum': choice_ids}, 'uniqueItems': True}
 
 
-def _provisional_timing_repair_available(finding, context):
-    if not _is_provisional_material_uncertainty(finding) or not context:
-        return False
-    paths = _provisional_advisory_current_paths(finding, context)
-    if not paths:
-        return False
-    from .plan_review import _pointer
-    paths = [path for path in paths
-        if 'supersetRoundSetup' in (_pointer(context, path) or {})]
-    if not paths:
-        return False
-    contract = context.get('repairCapabilityContract') or {}
-    dimensions = contract.get('editableDimensions', {})
-    session_indexes = [parts[3] for path in paths
-        if len(parts := path.split('/')) == 5 and parts[3].isdigit() and parts[4] == 'timingComponents']
-    return (isinstance(dimensions, dict) and {'superset', 'session_timing'} <= dimensions.keys()
-            and any(_session_has_mixed_equipment_superset(context, int(index))
-                for index in session_indexes))
-
-
-def _session_has_mixed_equipment_superset(context, session_index):
-    draft = context.get('draft', {})
-    if not isinstance(draft, dict):
-        return False
-    workouts = draft.get('workouts', [])
-    if not isinstance(workouts, list) or not 0 <= session_index < len(workouts):
-        return False
-    workout = workouts[session_index]
-    if not isinstance(workout, dict):
-        return False
-    exercise_list = draft.get('exercises', [])
-    if not isinstance(exercise_list, list):
-        return False
-    exercises = {item.get('id'): item for item in exercise_list
-        if isinstance(item, dict) and isinstance(item.get('id'), str)}
-    definitions = draft.get('libraryDefinitions', {})
-    equipment = context.get('equipment', {})
-    if not isinstance(definitions, dict) or not isinstance(equipment, dict):
-        return False
-    equipment_items = equipment.get('equipments', [])
-    accessories = equipment.get('accessoryEquipments', [])
-    if not isinstance(equipment_items, list) or not isinstance(accessories, list):
-        return False
-    known_equipment = {item.get('id') for item in equipment_items
-        if isinstance(item, dict) and isinstance(item.get('id'), str)}
-    known_equipment.update(item.get('id') for item in accessories
-        if isinstance(item, dict) and isinstance(item.get('id'), str))
-    workout_exercise_ids = workout.get('exerciseIds', [])
-    groups = workout.get('supersetGroups', [])
-    if (not isinstance(workout_exercise_ids, list)
-            or any(not isinstance(item, str) for item in workout_exercise_ids)
-            or not isinstance(groups, list)):
-        return False
-    workout_exercise_ids = set(workout_exercise_ids)
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        member_ids = group.get('exerciseIds', [])
-        if (not isinstance(member_ids, list) or any(not isinstance(item, str) for item in member_ids)
-                or len(member_ids) < 2 or len(member_ids) != len(set(member_ids))
-                or not set(member_ids) <= workout_exercise_ids):
-            continue
-        member_equipment = []
-        for exercise_id in member_ids:
-            exercise = exercises.get(exercise_id)
-            definition = definitions.get(exercise.get('libraryDefinitionId')) if exercise else None
-            if not isinstance(definition, dict):
-                break
-            resources = definition.get('requiredAccessoryEquipmentIds', [])
-            if not isinstance(resources, list):
-                break
-            resources = list(resources)
-            primary = definition.get('equipmentId')
-            if primary is not None:
-                resources.append(primary)
-            if (not resources or any(not isinstance(resource, str) or resource not in known_equipment
-                    for resource in resources)):
-                break
-            member_equipment.append(frozenset(resources))
-        else:
-            if len(set(member_equipment)) > 1:
-                return True
-    return False
-
-
 def _allowed_dispositions(finding, context=None):
     if finding.get('reviewJudgment') in ADVISORY_JUDGMENTS:
         return {'advisory'}
     allowed = {'repair', 'advisory', 'withdrawn_review_error', 'unresolved_capability'}
-    if finding.get('severity') == 'blocking' and not _is_provisional_material_uncertainty(finding):
+    if finding.get('severity') == 'blocking':
         allowed.discard('advisory')
-    if _provisional_timing_repair_available(finding, context):
-        allowed.discard('unresolved_capability')
     if finding.get('action') == 'advisory':
         allowed.intersection_update(('advisory', 'withdrawn_review_error'))
     return allowed
-
-
-def _is_provisional_material_uncertainty(finding):
-    """Only a newly discovered estimate concern may be adjudicated as advisory."""
-    return (finding.get('basis') == 'material_uncertainty'
-            and finding.get('action') == 'repair'
-            and finding.get('concernGroup', '').startswith('NEW_'))
-
-
-def _provisional_advisory_current_paths(finding, context=None):
-    cited = finding.get('evidencePaths', [])
-    if isinstance(finding.get('path'), str):
-        cited = [finding['path'], *cited]
-    paths = sorted({path for path in cited if isinstance(path, str)
-                    and path.startswith('/programmingSummary/sessions/')
-                    and path.endswith('/timingComponents')})
-    if context is None:
-        return paths
-    from .plan_review import _pointer
-    summary = context.get('programmingSummary', {})
-    if not isinstance(summary, dict) or summary.get('executionTimeVerified') is not False:
-        return []
-    return [path for path in paths if isinstance(_pointer(context, path), dict)]
 
 
 def _finding_assessment_schema(schema, findings, *, single_attempt=False, facts=None, context=None):
@@ -494,11 +384,6 @@ def _finding_assessment_schema(schema, findings, *, single_attempt=False, facts=
                     provider_repair_objective_selection_schema(objective_choices))
                 variant['required'].append('repairObjectiveChoiceIds')
         allowed = _allowed_dispositions(finding, context)
-        cited_paths = set(_provisional_advisory_current_paths(finding, context))
-        advisory_data_refs = sorted(reference for reference, path in facts.items()
-            if path in cited_paths and _under_root(path, _CURRENT_DATA_ROOTS))
-        authority_refs = sorted(reference for reference, path in facts.items()
-            if path == '/reviewAuthority')
         carried_paths = [finding.get('path'), *finding.get('evidencePaths', [])]
         carried_source_authority = False
         source_keys = []
@@ -512,9 +397,6 @@ def _finding_assessment_schema(schema, findings, *, single_attempt=False, facts=
                     and _soft_tradeoff_authority(context, [f'/sourceMessages/{key}']))
                 if not source_keys:
                     allowed.discard('advisory')
-        if (_is_provisional_material_uncertainty(finding)
-                and (not advisory_data_refs or not authority_refs)):
-            allowed.discard('advisory')
         if 'anyOf' in item:
             item['anyOf'] = [variant for variant in item['anyOf']
                             if variant['properties']['disposition']['enum'][0] in allowed]
@@ -689,6 +571,7 @@ def validate_assessment(review, context=None, *, require_confirmation=False):
     assessment = review.get('assessment', {})
     if assessment.get('inputHash') != assessment_hash(review):
         raise ValueError('The complete findings assessment is missing or stale.')
+    validate_review_judgments(review)
     covered = []
     for group in assessment['groups']:
         if not group['findingIndexes'] or group['disposition'] not in (
@@ -700,6 +583,18 @@ def validate_assessment(review, context=None, *, require_confirmation=False):
             if type(index) is not int or not 0 <= index < len(review['findings']):
                 raise ValueError('Assessment references an unknown finding.')
             finding = review['findings'][index]
+            if (context is not None and finding.get('reviewJudgment') in CONFLICT_JUDGMENTS
+                    and group['disposition'] in ('repair', 'unresolved_capability')):
+                from .plan_review import _pointer, _soft_tradeoff_authority
+                authority_paths = [path for path in finding.get('evidencePaths', [])
+                    if path.startswith(('/requirements/', '/sourceMessages/', '/resolvedDecisions/'))]
+                try:
+                    for path in authority_paths:
+                        _pointer(context, path)
+                except (KeyError, IndexError, TypeError, ValueError) as error:
+                    raise ValueError('An established conflict needs existing approved requirement evidence.') from error
+                if not _soft_tradeoff_authority(context, authority_paths):
+                    raise ValueError('An established conflict needs an explicit approved requirement or user source association.')
             if finding.get('action') == 'advisory':
                 advisory_indexes.append(index)
             else:
@@ -713,19 +608,6 @@ def validate_assessment(review, context=None, *, require_confirmation=False):
                 from .plan_review import _soft_tradeoff_evidence
                 if not _soft_tradeoff_evidence(context, group.get('evidencePaths', [])):
                     raise ValueError('A soft tradeoff needs approved source authority and current-plan evidence.')
-            if (_is_provisional_material_uncertainty(finding)
-                    and group['disposition'] == 'advisory'):
-                evidence_paths = group.get('evidencePaths', [])
-                current_paths = set(_provisional_advisory_current_paths(finding, context))
-                if ('/reviewAuthority' not in evidence_paths
-                        or not current_paths.intersection(evidence_paths)):
-                    raise ValueError('A provisional material-uncertainty advisory needs the code-owned review authority and matching structured timing evidence.')
-                if context is not None:
-                    from .plan_review import _pointer
-                    if not _pointer(context, '/reviewAuthority'):
-                        raise ValueError('The code-owned review authority is missing.')
-                    for path in evidence_paths:
-                        _pointer(context, path)
         if advisory_indexes:
             if other_indexes:
                 raise ValueError('Split advisory findings from repairable findings; grouping cannot change a finding action.')
@@ -774,36 +656,6 @@ def validate_assessment(review, context=None, *, require_confirmation=False):
     if context is not None and context.get('redistributionObjectiveChoices') is not None:
         validate_redistribution_objective_associations(review, context)
     return assessment
-
-
-def canonicalize_provisional_advisories(review, context=None, *, require_confirmation=False):
-    """Commit evidence-backed fresh estimate advisories to the warning vocabulary."""
-    validate_assessment(review, context, require_confirmation=require_confirmation)
-    canonical = copy.deepcopy(review)
-    changed = False
-    for group in canonical['assessment']['groups']:
-        if group['disposition'] != 'advisory':
-            continue
-        for index in group['findingIndexes']:
-            finding = canonical['findings'][index]
-            if not _is_provisional_material_uncertainty(finding):
-                continue
-            finding['basis'] = 'uncertainty'
-            finding['severity'] = 'warning'
-            finding['action'] = 'advisory'
-            changed = True
-    if not changed:
-        return review
-    execution = canonical.get('scopeResults', {}).get('execution')
-    if isinstance(execution, dict) and isinstance(execution.get('findings'), list):
-        execution['findings'] = copy.deepcopy(canonical['findings'])
-    canonical['assessment']['inputHash'] = assessment_hash(canonical)
-    validate_assessment(canonical, context, require_confirmation=require_confirmation)
-    review['findings'] = canonical['findings']
-    review['assessment'] = canonical['assessment']
-    if isinstance(execution, dict):
-        review.setdefault('scopeResults', {}).setdefault('execution', {})['findings'] = execution['findings']
-    return review
 
 
 def reviewed_candidate_matches(owner, draft, requirements_id, context=None):

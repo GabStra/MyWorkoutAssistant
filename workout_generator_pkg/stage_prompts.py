@@ -399,7 +399,7 @@ WORKOUT_STRUCTURE_SYSTEM_PROMPT = (
 
 PLAN_INDEX_EXAMPLE = {
     "planName": "Example Strength Plan",
-    "auditTargets": {"weeklyEffectiveSets": {}, "perSessionEffectiveSets": {}, "maximumSessionSeconds": None},
+    "auditTargets": {"weeklyEffectiveSets": {}, "perSessionEffectiveSets": {}},
     "equipments": [
         {
             "id": "EQUIPMENT_0",
@@ -545,12 +545,11 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- For BODY_WEIGHT exercises with a fixed added load, each item must be {workSetIndex, reps, additionalWeight}; with native calibration, use {workSetIndex, reps}.\n"
     "- Preserve exact load targets when they are provided.\n\n"
     "Workout plan constraints:\n"
-    "- Include auditTargets: {weeklyEffectiveSets: {muscle: {minimum: number, maximum: number|null}}, perSessionEffectiveSets: {muscle: {minimum: number, maximum: number|null}}, maximumSessionSeconds: integer|null}. A null volume maximum means the source specified no upper limit.\n"
+    "- Include auditTargets: {weeklyEffectiveSets: {muscle: {minimum: number, maximum: number|null}}, perSessionEffectiveSets: {muscle: {minimum: number, maximum: number|null}}}. A null volume maximum means the source specified no upper limit.\n"
     "- Preserve the approved audit target keys exactly; do not introduce, split or merge target groups.\n"
-    "- Copy the user's AGREED numeric targets, including explicitly accepted tradeoffs, into auditTargets. Never replace targets with the model's claimed achieved totals or lower them to fit a failing plan. Use empty maps/null for unspecified goals. Do not assign weekly targets across unrelated periodized phases.\n"
+    "- Copy the user's AGREED numeric targets, including explicitly accepted tradeoffs, into auditTargets. Never replace targets with the model's claimed achieved totals or lower them to fit a failing plan. Use empty maps for unspecified volume goals. Do not assign weekly targets across unrelated periodized phases.\n"
     "- For the programming audit, encode numWorkSets and generateWarmUpSets explicitly for every exercise, and maxReps for strength exercises.\n"
     "- Use only library muscleGroups (primary) and secondaryMuscleGroups (secondary). The deterministic audit credits each primary muscle group once per logical working set and each secondary group at 0.5, regardless of exercise category, with no primary/secondary double-counting. Do not infer additional muscles or require extra annotations.\n"
-    "- Duration audit assumptions: 3 seconds per rep (both sides for unilateral sets), all executed rests, 5 minutes general warm-up, 2 minutes per exercise with generated warm-ups, and 60 seconds per exercise/setup transition. Fit the agreed time limit under these assumptions.\n"
     "- Preserve exact workout names from user plan (including day labels/prefixes such as 'A -', 'Day A:', etc.).\n"
     "- workout.exerciseIds defines exact order.\n"
     "- If provided, restToNextSeconds must match exerciseIds length and values exactly.\n"

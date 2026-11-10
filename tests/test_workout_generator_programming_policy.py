@@ -22,57 +22,75 @@ def initial_requirements():
     return json.loads(Path('docs/workout_generator_initial_requirements.json').read_text(encoding='utf-8'))
 
 
-def test_approved_policy_preserves_soft_time_count_and_volume_authority():
+def test_approved_policy_jointly_ranks_quality_before_workload_without_weakening_hard_limits():
+    from workout_generator_pkg.programming_policy import (
+        INTERFERENCE_METRICS, expand_goal_tiers, selection_precedes_execution,
+        settled_dose_goal_stages,
+    )
+
     requirements = initial_requirements()
     validate(requirements, _REQUIREMENTS)
     assert not programming_policy_errors(requirements)
-    assert requirements['objectiveOrder'][:3] == ['time_budget', 'volume_target', 'source_balance']
-    goals = {goal['metric']: goal for tier in requirements['objectiveTiers'] for goal in tier}
     assert len(requirements['objectiveTiers']) == 1
-    assert len(goals) == 30
-    expected_scales = {'role_concentration': 6, 'distribution': 180, 'movement_overlap': 2,
-        'exercise_count': 5, 'setup_economy': 40, 'duration_balance': 300}
+    goals = {goal['metric']: goal for goal in requirements['objectiveTiers'][0]}
+    assert {goal['group'] for goal in goals.values()} == {
+        'muscle_volume', 'movement_development', 'selection', 'interference', 'session_balance',
+        'setup', 'exposure_distribution'}
+    expected_scales = {'movement_overlap': 2, 'exercise_count': 5,
+        'setup_economy': 40, 'execution_blocks': 40,
+        'session_exercise_balance': 1, 'relative_distribution': 1, 'relative_distribution_worst': 1,
+        'superset_lower_body_overlap': 3,
+        **{'ordering_' + metric: 64 for metric in INTERFERENCE_METRICS}}
     assert all(goals[metric]['target'] == 0 and goals[metric]['scale'] == scale
         for metric, scale in expected_scales.items())
-    assert {goal['group'] for goal in goals.values()} == {'muscle_volume', 'movement_development',
-        'selection', 'practical_execution', 'exposure_distribution'}
-    assert {'source_balance', 'weekly_effective_sets:chest', 'role_concentration',
-        'distribution', 'movement_overlap', 'exercise_count', 'setup_economy'} <= goals.keys()
-    assert 'demand_distribution' not in goals
-    assert not any(name.startswith('ordering_') for name in goals)
+    assert requirements['goalAggregation'] == 'total_then_worst'
+    assert not {'source_balance', 'role_concentration', 'distribution',
+        'session_set_balance', 'setup_economy_resource_switches',
+        'execution_complementarity', 'balance_control'} & goals.keys()
     assert goals['coverage:lateral_delt']['target'] == goals['coverage:vertical_pull']['target'] == -4
+    assert not any(metric.startswith('weekly_effective_sets:') for metric in goals)
     order = requirements['objectiveOrder']
-    assert order.index('balance_control') < order.index('workload_economy')
-    assert order.index('source_balance') < order.index('duration_economy')
-    assert order.index('execution_complementarity') < order.index('exercise_count')
-    assert order.index('balance_control') < order.index('exercise_count')
-    assert order.index('distribution') < order.index('exercise_count')
-    assert order.index('role_concentration') < order.index('movement_overlap') < order.index('execution_order')
+    expanded = expand_goal_tiers(requirements, order)
+    assert expanded[:3] == ['goal_tier_0_total', 'goal_tier_0_worst', 'workload_economy']
+    assert expanded.index('workload_economy') < expanded.index('session_set_balance')
+    assert order.index('workload_economy') < order.index('setup_economy')
+    assert 'relative_distribution' not in expanded
+    assert not settled_dose_goal_stages(requirements)
+    assert not selection_precedes_execution(requirements)
+    assert not {'volume_target', 'source_balance', 'demand_distribution',
+        'execution_complementarity', 'balance_control'} & set(order)
+    assert requirements['exerciseSelection']['preferredMinimum'] == 0
+    assert requirements['exerciseSelection']['requiredNames'] == ['Cable Crunch']
+    assert requirements['orderingPreferences']['phaseOrder'] == [
+        ['HEAVY_COMPOUND'], ['MODERATE_COMPOUND'], ['ISOLATION', 'CORE']]
     roles = {rule['key']: rule for rule in requirements['requiredCoverage']}
-    for key in ('hip_dominant', 'horizontal_push', 'horizontal_pull',
-                'vertical_push', 'vertical_pull', 'lateral_delt'):
-        assert roles[key]['intent'] == 'development'
-        assert 'minimumWeeklySets' not in roles[key] and 'minimumSessions' not in roles[key]
-    assert roles['knee_flexion_hamstring']['intent'] == 'inclusion'
-    assert roles['calves']['intent'] == 'inclusion'
-    assert 'development_emphasis' not in order and 'development_exposure' not in order
+    assert all('minimumWeeklySets' not in role and 'minimumSessions' not in role
+        for role in roles.values())
+    assert roles['calves']['intent'] == roles['knee_flexion_hamstring']['intent'] == 'inclusion'
     policy = normalize_programming_policy(requirements)
-    assert policy['preferredSessionSeconds'] == 4500
-    assert policy['auditTargets']['maximumSessionSeconds'] == 5400
     assert all(bounds['minimum'] == 0 and bounds['maximum'] is None
         for bounds in policy['auditTargets']['weeklyEffectiveSets'].values())
     assert all(bounds['preferredMinimum'] == 10 and bounds['preferredMaximum'] == 15
-        for bounds in policy['auditTargets']['weeklyEffectiveSets'].values())
-    rendered = render_requirements(requirements)
-    assert '75 minutes' in rendered and 'soft excess' in rendered
-    assert 'Direct or substantial secondary credit qualifies' in rendered
-    assert 'group practical_execution' in rendered
+        for muscle, bounds in policy['auditTargets']['weeklyEffectiveSets'].items() if muscle != 'abs')
+    assert policy['auditTargets']['weeklyEffectiveSets']['abs']['preferredMinimum'] == 9
+    assert not {'maximumSessionSeconds'} & policy['auditTargets'].keys()
+    assert not {'preferredSessionSeconds', 'durationBalanceToleranceSeconds'} & policy.keys()
+    assert requirements['generalWarmupSeconds'] == 300
+    warmup_rules = [rule for rule in requirements['executionRules'] if rule['kind'] == 'warmup']
+    assert {rule['exerciseCategory'] for rule in warmup_rules} == {'HEAVY_COMPOUND', 'MODERATE_COMPOUND'}
+    assert all(rule['coverageKey'] is None and rule['whenSupported'] for rule in warmup_rules)
+    bounds = next(rule for rule in requirements['executionRules'] if rule['kind'] == 'workSets')
+    assert (bounds['minimumSets'], bounds['maximumSets']) == (2, 3)
+    structure = next(rule for rule in requirements['executionRules'] if rule['kind'] == 'sessionStructure')
+    assert (structure['maximumExercises'], structure['maximumSupersets'], structure['maximumSupersetSize']) == (15, 3, 3)
     rests = {rule['context']: rule for rule in requirements['executionRules']
         if rule.get('context') in ('supersetTransition', 'supersetRound')}
     assert (rests['supersetTransition']['minimumSeconds'], rests['supersetTransition']['maximumSeconds']) == (0, 0)
     assert (rests['supersetRound']['minimumSeconds'], rests['supersetRound']['maximumSeconds']) == (60, 120)
-    assert 'require direct primary-muscle work in every session' not in GUIDELINE_POLICY['goalAuthority']
-    assert 'Existing weekly effective-set ranges remain hard bounds' not in GUIDELINE_POLICY['deterministic']
+    rendered = render_requirements(requirements)
+    assert 'Required weekly exercise choices: Cable Crunch' in rendered
+    assert 'unequal counts alone do not establish a violation' in rendered
+    assert sum(rule['kind'] == 'coverageBalance' for rule in requirements['executionRules']) == 3
 
 
 @pytest.mark.parametrize('group', ['', 'Bad group', None, 1])
@@ -105,6 +123,27 @@ def test_weekly_count_uses_substantial_credit_and_deduplicates_exact_definitions
     assert region['status'] == 'insufficient_evidence'
     assert region['count'] is None and region['shortfall'] is None
     assert region['unknownExerciseIds'] == ['PRESS']
+
+
+def test_initial_policy_has_no_bonus_for_filling_volume_or_exercise_counts():
+    from workout_generator_pkg.programming_policy import goal_programming_costs
+
+    requirements = initial_requirements()
+    costs = {goal['metric']: 0 for tier in requirements['objectiveTiers'] for goal in tier}
+    # Actual within-range totals must not introduce an unapproved aspiration.
+    lower = goal_programming_costs(requirements,
+        {**costs, 'weekly_effective_sets:chest': -10}, {'lateral_delt': 4, 'vertical_pull': 4})
+    upper = goal_programming_costs(requirements,
+        {**costs, 'weekly_effective_sets:chest': -15}, {'lateral_delt': 4, 'vertical_pull': 4})
+    assert lower == upper == {'goal_tier_0_worst': 0, 'goal_tier_0_total': 0,
+        'goal_tier_1_worst': 0, 'goal_tier_1_total': 0}
+    press = {'id': 'PRESS', 'exerciseType': 'WEIGHT', 'muscleGroups': ['FRONT_CHEST'],
+        'secondaryMuscleGroups': ['BACK_TRICEPS']}
+    one = exercise_count_preference_facts([press], requirements)['chest']
+    assert one['shortfall'] == one['excess'] == 0
+    four = exercise_count_preference_facts(
+        [{**press, 'id': str(index)} for index in range(4)], requirements)['chest']
+    assert four['shortfall'] == 0 and four['excess'] == 1
 
 
 def test_order_categories_and_protection_are_explicit_and_independently_ranked():
@@ -170,6 +209,60 @@ def test_faster_execution_with_more_physical_inventory_switches_requires_tradeof
     assert result['status'] == 'requires_programming_decision'
     assert result['improved'] == [{'objective': 'duration_economy', 'baseline': 9294, 'candidate': 9264}]
     assert result['worsened'] == [{'objective': 'setup_economy_resource_switches', 'baseline': 19, 'candidate': 21}]
+
+
+@pytest.mark.parametrize('candidate_dose,arrangement_cost,status', [
+    (10, .2, 'candidate_dominates'), (10, None, 'candidate_dominates'),
+    (12, .2, 'baseline_dominates'), (12, None, 'unknown')])
+def test_arrangement_tradeoff_only_compares_matching_weekly_doses(candidate_dose, arrangement_cost, status):
+    requirements = {'objectiveOrder': ['workload_economy', 'relative_distribution'],
+        'requiredCoverage': [{'key': 'upper_push', 'intent': 'inclusion'}],
+        'auditTargets': {'weeklyEffectiveSets': {'chest': {'preferredMinimum': 10, 'preferredMaximum': 15}}}}
+    def plan(dose):
+        return {'workouts': [{'timesCompletedInAWeek': 1}] * 3, 'audit': {'errors': [],
+            'weeklyVolume': {'chest': {'effective': dose}}, 'weeklyCoverageSets': {'upper_push': dose}}}
+    result = assess_tradeoff({'workload_economy': 12, 'relative_distribution': .1},
+        {'workload_economy': candidate_dose, 'relative_distribution': arrangement_cost},
+        requirements=requirements, baseline=plan(12), candidate=plan(candidate_dose))
+    assert result['status'] == status
+    if candidate_dose != 12:
+        assert not result['unknownObjectives']
+        assert result['inapplicableObjectives'] == [{'objective': 'relative_distribution',
+            'baseline': .1, 'candidate': arrangement_cost,
+            'reason': 'weekly_training_doses_differ'}]
+        assert all(row['objective'] != 'relative_distribution' for relation in ('improved', 'worsened', 'unchanged')
+            for row in result[relation])
+    else:
+        assert 'inapplicableObjectives' not in result
+    unknown_dose = plan(12)
+    unknown_dose['audit']['weeklyCoverageSets'] = {}
+    unknown = assess_tradeoff({'workload_economy': 12, 'relative_distribution': .1},
+        {'workload_economy': 12, 'relative_distribution': .2},
+        requirements=requirements, baseline=plan(12), candidate=unknown_dose)
+    assert unknown['status'] == 'unknown'
+    assert unknown['unknownObjectives'] == ['relative_distribution']
+    assert 'inapplicableObjectives' not in unknown
+
+
+@pytest.mark.parametrize('seconds,status', [(100, 'baseline_preferred'), (200, 'candidate_preferred')])
+def test_explicit_shared_goal_ranking_precedes_overlap_volume_tradeoff(seconds, status):
+    from workout_generator_pkg.programming_policy import goal_programming_costs
+
+    requirements = {'objectiveOrder': ['volume_target', 'movement_overlap', 'time_budget'],
+        'objectiveTiers': [[{'metric': 'movement_overlap', 'target': 0, 'scale': 2},
+            {'metric': 'time_budget', 'target': 0, 'scale': 100}]],
+        'auditTargets': {'weeklyEffectiveSets': {'chest': {
+            'minimum': 0, 'maximum': None, 'preferredMinimum': 10, 'preferredMaximum': 15}}}}
+    before = {'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 12}}}}
+    after = {'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 10}}}}
+    left = {'volume_target': 0, 'movement_overlap': 2, 'time_budget': seconds}
+    right = {'volume_target': 0, 'movement_overlap': 1, 'time_budget': 150}
+    result = assess_tradeoff({**left, **goal_programming_costs(requirements, left, {})},
+        {**right, **goal_programming_costs(requirements, right, {})},
+        requirements=requirements, baseline=before, candidate=after)
+    assert result['status'] == status
+    assert result['volumeChanges'][0]['baselineEffectiveSets'] == 12
+    assert result['volumeChanges'][0]['candidateEffectiveSets'] == 10
 
 
 @pytest.mark.parametrize('seconds,status', [(90, 'candidate_dominates'), (110, 'baseline_dominates'),
