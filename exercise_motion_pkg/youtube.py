@@ -1139,8 +1139,8 @@ class YouTubeRankingSettings:
     single_exercise_name_query: bool = False
     use_deepseek_query_planner: bool = False
     deepseek_api_key: str | None = None
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_base_url: str = "https://opencode.ai/zen/go/v1"
+    deepseek_model: str = "deepseek-v4.1-flash"
     deepseek_max_queries: int = 4
     deepseek_timeout_seconds: float = 60.0
     use_llama_cpp_query_planner: bool = False

@@ -12648,16 +12648,18 @@ def test_deepseek_query_planner_calls_chat_completion_with_json_response() -> No
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    planner = DeepSeekYouTubeQueryPlanner(
-        YouTubeRankingSettings(deepseek_api_key="test-key"),
-        client=client,
+    deepseek = YouTubeRankingSettings(
+        deepseek_api_key="test-key",
+        deepseek_base_url="https://api.deepseek.com",
+        deepseek_model="deepseek-v4-flash",
     )
+    planner = DeepSeekYouTubeQueryPlanner(deepseek, client=client)
 
     try:
         queries = planner(
             ExerciseEntry(exercise_id="squat", name="Squat", slug="squat"),
             build_youtube_queries("Squat"),
-            YouTubeRankingSettings(deepseek_api_key="test-key"),
+            deepseek,
         )
     finally:
         planner.close()

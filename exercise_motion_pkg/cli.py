@@ -399,9 +399,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     youtube_search.add_argument("--deepseek-api-key")
     youtube_search.add_argument("--deepseek-base-url",
-                                default=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"))
+                                default=os.getenv("LLM_BASE_URL", "https://opencode.ai/zen/go/v1"))
     youtube_search.add_argument("--deepseek-model",
-                                default=os.getenv("LLM_MODEL", "deepseek-v4-flash"))
+                                default=os.getenv("LLM_MODEL", "deepseek-v4.1-flash"))
     youtube_search.add_argument("--deepseek-max-queries", type=int, default=4)
     youtube_search.add_argument("--deepseek-timeout-seconds", type=float, default=60.0)
     youtube_search.add_argument("--rank-with-vision", action="store_true")

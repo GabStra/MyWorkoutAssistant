@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from .constants import EXACT_GENERATION_CONFIRMATION
-from .llm_config import require_api_key, resolve_llm_endpoint
+from .llm_config import llm_session_headers, require_api_key, resolve_llm_endpoint
 from .planning_tools import (
     SET_WORKOUT_REQUIREMENTS_TOOL, AUDIT_WORKOUT_PLAN_TOOL, REPAIR_WORKOUT_PLAN_TOOL,
     workout_requirements_tool, construction_workout_tool,
@@ -2601,14 +2601,18 @@ def main(deps=None):
         parser.error(f'Cannot select user profile: {error}')
 
     endpoint = resolve_llm_endpoint()
+    conversation_id = str(uuid.uuid4())
     timeout = httpx.Timeout(None, connect=60.0)
     http_client = httpx.Client(timeout=timeout)
-    client = OpenAI(api_key=require_api_key(endpoint), base_url=endpoint.base_url,
-                    http_client=http_client, max_retries=0)
+    client_options = dict(api_key=require_api_key(endpoint), base_url=endpoint.base_url,
+        http_client=http_client, max_retries=0)
+    headers = llm_session_headers(endpoint, conversation_id)
+    if headers:
+        client_options['default_headers'] = headers
+    client = OpenAI(**client_options)
     print(f"LLM model: {endpoint.model} @ {endpoint.base_url}")
     get_log_dir(script_dir)
 
-    conversation_id = str(uuid.uuid4())
     messages = _build_initial_messages(
         BASE_SYSTEM_PROMPT,
         provided_equipment,
@@ -2689,6 +2693,7 @@ def main(deps=None):
         *,
         announce: str,
     ) -> None:
+        nonlocal client
         persist_current()
         next_record = load_conversation_record(next_conversation_id, script_dir) or {}
         next_profile_id = (next_record.get('metadata', {}).get('userProfileId')
@@ -2704,6 +2709,9 @@ def main(deps=None):
         close_logger()
         next_messages, _ = _ensure_tool_responses(next_messages)
         _bind_planning_intent(next_messages, selected_incumbent)
+        if 'default_headers' in client_options:
+            client_options['default_headers'] = llm_session_headers(endpoint, next_conversation_id)
+            client = OpenAI(**client_options)
         state["conversation_id"] = next_conversation_id
         state["messages"] = next_messages
         state['pending_images'] = []

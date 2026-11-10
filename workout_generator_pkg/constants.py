@@ -2,7 +2,8 @@
 
 import json
 
-DEEPSEEK_MODEL = "deepseek-flash"
+# Default model on the configured endpoint (OpenCode Go model id).
+DEEPSEEK_MODEL = "deepseek-v4.1-flash"
 DEEPSEEK_PLANNING_TIMEOUT_SECONDS = None
 
 PLACEHOLDER_OR_UUID_PATTERN = (

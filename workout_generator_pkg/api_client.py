@@ -116,11 +116,15 @@ def _strict_provider(endpoint):
     if parsed.hostname == 'api.deepseek.com' and path in ('', '/beta'):
         return ('deepseek', endpoint.base_url.rstrip('/') if path == '/beta'
                 else endpoint.base_url.rstrip('/') + '/beta')
+    # OpenCode Go serves strict function schemas at its own base URL (no /beta switch).
+    if (parsed.hostname or '').endswith('opencode.ai'):
+        return ('opencode', endpoint.base_url.rstrip('/'))
     return None
 
 
 def _strict_application_tools(tools, provider):
-    if not tools or provider is None or not all(
+    # Only DeepSeek needs its tools pre-flagged strict; other providers receive them untouched.
+    if not tools or provider is None or provider[0] != 'deepseek' or not all(
             isinstance(tool, dict) and tool.get('type') == 'function'
             and isinstance(tool.get('function'), dict)
             and _strict_parameters_compatible(tool['function'].get('parameters')) for tool in tools):
@@ -500,7 +504,8 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
     if require_strict_tool_delivery and endpoint.is_deepseek and strict_provider is None:
         raise ValueError('Strict application-tool delivery requires the configured DeepSeek beta endpoint.')
     if (require_strict_tool_delivery and not endpoint.is_deepseek
-            and urlparse(endpoint.base_url).hostname != 'api.openai.com'):
+            and urlparse(endpoint.base_url).hostname != 'api.openai.com'
+            and strict_provider is None):
         raise ValueError('Strict application-tool delivery is not supported by the configured provider.')
     strict_output_schema = bool(output_schema is not None and (
         not endpoint.is_deepseek or (_strict_parameters_compatible(output_schema)
@@ -520,7 +525,8 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
     else:
         strict_application_tools = (_strict_application_tools(tools, strict_provider)
                                     if output_schema is None else None)
-    deepseek_base_url = strict_provider[1] if strict_provider else None
+    deepseek_base_url = (strict_provider[1] if strict_provider and strict_provider[0] == 'deepseek'
+                         else None)
     structured_output_mode = None
     request_messages = _request_messages(messages, response_format)
     if endpoint.is_deepseek and reasoning_effort is not None:

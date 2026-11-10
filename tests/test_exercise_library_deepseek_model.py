@@ -17,6 +17,16 @@ def recording_client(requests):
     return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
 
 
+_DEEPSEEK_MODEL = generator.DEEPSEEK_MODEL
+
+
+@pytest.fixture(autouse=True)
+def deepseek_endpoint(monkeypatch):
+    """These tests cover the DeepSeek wire profile, which the default endpoint no longer uses."""
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+
 @pytest.mark.parametrize("reasoning", [False, True])
 def test_library_calls_latest_deepseek_with_correct_thinking_mode(reasoning):
     requests = []
@@ -24,7 +34,7 @@ def test_library_calls_latest_deepseek_with_correct_thinking_mode(reasoning):
             else generator.json_call_chat_max_with_loading)
     content = call(recording_client(requests), [{"role": "user", "content": "Return JSON"}], show_loading=False)
     assert content == '{"status":"ok"}'
-    assert requests[0]["model"] == "deepseek-flash"
+    assert requests[0]["model"] == _DEEPSEEK_MODEL
     assert requests[0]["extra_body"] == {"thinking": {"type": "enabled" if reasoning else "disabled"}}
     assert requests[0]["response_format"] == {"type": "json_object"}
 
@@ -34,7 +44,7 @@ def test_library_connection_probe_uses_same_model_without_thinking():
     assert generator.test_connection(
         recording_client(requests), show_message=False, model=generator.DEEPSEEK_MODEL,
     ) == (True, None)
-    assert requests[0]["model"] == "deepseek-flash"
+    assert requests[0]["model"] == _DEEPSEEK_MODEL
     assert requests[0]["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
@@ -73,7 +83,7 @@ def test_shared_calls_use_latest_model_with_explicit_thinking_modes():
     api_client.json_call(client, [])
     api_client.json_call_reasoner_only(client, [])
     api_client.json_call_large(client, [])
-    assert [request["model"] for request in requests] == ["deepseek-flash"] * 3
+    assert [request["model"] for request in requests] == [_DEEPSEEK_MODEL] * 3
     assert [request["extra_body"]["thinking"]["type"] for request in requests] == ["disabled", "enabled", "enabled"]
 
 
@@ -95,7 +105,7 @@ def test_conversation_tool_call_enables_thinking_and_replays_reasoning():
     ]
     content, calls, reasoning = api_client.chat_call(client, messages, tools=[{"type": "function"}])
     assert (content, calls, reasoning) == ("Preview", [tool_call], "plan reasoning")
-    assert requests[0]["model"] == "deepseek-flash"
+    assert requests[0]["model"] == _DEEPSEEK_MODEL
     assert requests[0]["extra_body"] == {"thinking": {"type": "enabled"}}
     assert requests[0]["tools"] == [{"type": "function"}]
     assert requests[0]["messages"][0]["reasoning_content"] == ""
