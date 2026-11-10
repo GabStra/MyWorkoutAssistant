@@ -558,11 +558,13 @@ def save_workout_to_file(workout_json, script_dir=None):
         filename = f"workout_plan_{timestamp}.json"
         filepath = os.path.join(workouts_dir, filename)
 
-        # Write JSON to file
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(workout_json, f, indent=2, ensure_ascii=False)
-
-        return filepath
+        while True:
+            try:
+                with open(filepath, 'x', encoding='utf-8') as f:
+                    json.dump(workout_json, f, indent=2, ensure_ascii=False)
+                return filepath
+            except FileExistsError:
+                filepath = os.path.join(workouts_dir, f'workout_plan_{timestamp}_{uuid.uuid4().hex[:8]}.json')
     except Exception as e:
         print(f"Error saving workout to file: {e}", file=sys.stderr)
         return None

@@ -92,7 +92,8 @@ def _bind_planning_intent(messages, incumbent=None):
     if incumbent is not None:
         from .repair_execution import bind_incumbent_reference
         bind_incumbent_reference(messages, incumbent)
-    owner['planningIntent'] = 'edit' if owner.get('incumbentPlan') else 'fresh'
+    owner['planningIntent'] = ('edit' if owner.get('incumbentPlan')
+        or owner.get('planningIntent') == 'edit' else 'fresh')
 
 
 
@@ -1153,6 +1154,7 @@ def _show_commands(logger) -> None:
     logger.log_print("  • Type /ml (or /multiline) to enter multi-line mode, finish with a line containing /end")
     logger.log_print("  • Type /generate or /generate <prompt> to generate workout JSON")
     logger.log_print("  • Type /resume to reopen a saved conversation and show all stored turns")
+    logger.log_print('  • Type /edit [latest|conversation_id|plan.json|messages.json] to edit a separate copy of a saved plan')
     logger.log_print("  • Type /resume-progress to resume an interrupted generation directly")
     logger.log_print("  • Type /memory to inspect user facts, /memory reload, or /memory forget <fact-id>")
     logger.log_print("  • Type /list-progress to list all saved generation progress")
@@ -2503,8 +2505,11 @@ def main(deps=None):
     )
     parser.add_argument('--history-backup-file', help='AppBackup containing actual workout history; also supplies the exercise library when no --exercise-library-file is given')
     parser.add_argument('--user-profile', help='Persistent user profile UUID; otherwise use MYWORKOUT_PROFILE_ID or an explicitly bound history path')
-    parser.add_argument('--incumbent-conversation',
+    plan_source = parser.add_mutually_exclusive_group()
+    plan_source.add_argument('--incumbent-conversation',
         help='Explicitly edit/replace the reviewed plan in this saved messages.json; applies to conversations started in this invocation')
+    plan_source.add_argument('--edit-plan', nargs='?', const='latest', metavar='PLAN',
+        help='Edit a separate copy of a saved plan: latest, conversation ID, messages.json or linked exported JSON')
     parser.add_argument('--max-repair-rounds', type=int, default=3,
         help='Maximum candidate-changing repair submissions in the current attempt (default: 3)')
     parser.add_argument('--repair-attempt-start-index', type=int, default=None,
@@ -2542,6 +2547,26 @@ def main(deps=None):
     args = parser.parse_args()
     if args.max_repair_rounds < 0 or (args.repair_attempt_start_index is not None and args.repair_attempt_start_index < 0):
         parser.error('--max-repair-rounds and --repair-attempt-start-index must be nonnegative')
+    try:
+        script_dir = _default_script_dir()
+    except (NameError, AttributeError):
+        script_dir = os.getcwd()
+    from .plan_editing import select_plan_for_edit, editing_messages
+    selected_edit = None
+    if args.edit_plan:
+        try:
+            selected_edit = select_plan_for_edit(args.edit_plan, script_dir)
+            for key, value in selected_edit['metadata'].get('input_files', {}).items():
+                if key in ('exercise_library_file', 'history_backup_file', 'equipment_file') and not getattr(args, key):
+                    setattr(args, key, value)
+            source_profile = selected_edit['metadata'].get('userProfileId')
+            if args.user_profile and source_profile and args.user_profile != source_profile:
+                raise ValueError('This plan belongs to another user profile.')
+            args.user_profile = args.user_profile or source_profile
+            if not any(flag in sys.argv for flag in ('--allow-educated-load-guesses', '--require-load-calibration')):
+                args.allow_educated_load_guesses = selected_edit['snapshot'].get('allowEducatedLoadGuesses', True)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            parser.error(f'Cannot open plan for editing: {error}')
     training_history = None
     if args.history_backup_file:
         try:
@@ -2557,11 +2582,6 @@ def main(deps=None):
         if args.hybrid_fast
         else (True if args.use_reasoner else (False if args.no_reasoner else None))
     )
-
-    try:
-        script_dir = _default_script_dir()
-    except (NameError, AttributeError):
-        script_dir = os.getcwd()
 
     from .conversation_meta import save_incumbent_reference
     from .repair_execution import (bind_incumbent_reference, reviewed_incumbent_reference,
@@ -2614,6 +2634,11 @@ def main(deps=None):
     except (OSError, ValueError) as error:
         parser.error(f'Cannot select user profile: {error}')
 
+    try:
+        edit_messages = editing_messages(selected_edit, provided_equipment or {}) if selected_edit else None
+    except (ValueError, KeyError, TypeError) as error:
+        parser.error(f'Cannot open plan for editing: {error}')
+
     endpoint = resolve_llm_endpoint()
     conversation_id = str(uuid.uuid4())
     timeout = httpx.Timeout(None, connect=60.0)
@@ -2627,7 +2652,7 @@ def main(deps=None):
     print(f"LLM model: {endpoint.model} @ {endpoint.base_url}")
     get_log_dir(script_dir)
 
-    messages = _build_initial_messages(
+    messages = edit_messages if edit_messages is not None else _build_initial_messages(
         BASE_SYSTEM_PROMPT,
         provided_equipment,
         format_equipment_for_conversation,
@@ -2651,6 +2676,7 @@ def main(deps=None):
         "logger": logger,
         "log_path": log_path,
         'pending_images': [],
+        'edit_source': selected_edit['messagesPath'] if selected_edit else None,
     }
 
     def persist_current(metadata_update: Optional[Dict[str, Any]] = None) -> None:
@@ -2673,6 +2699,12 @@ def main(deps=None):
         merged_metadata = existing_metadata.copy()
         if metadata_update:
             merged_metadata.update(metadata_update)
+        if state.get('edit_source'):
+            merged_metadata['edit_source'] = state['edit_source']
+        input_files = {key: os.path.abspath(getattr(args, key))
+            for key in ('exercise_library_file', 'history_backup_file', 'equipment_file') if getattr(args, key)}
+        if input_files:
+            merged_metadata['input_files'] = {**existing_metadata.get('input_files', {}), **input_files}
         merged_metadata["planningIntent"] = next((m.get("planningIntent", "fresh") for m in state["messages"] if m.get("role") == "system"), "fresh")
         merged_metadata["log_filename"] = os.path.basename(state["log_path"])
         profile = memory_context(state['messages'])
@@ -2706,9 +2738,11 @@ def main(deps=None):
         next_messages: List[Dict[str, Any]],
         *,
         announce: str,
+        persist_previous: bool = True,
     ) -> None:
         nonlocal client
-        persist_current()
+        if persist_previous:
+            persist_current()
         next_record = load_conversation_record(next_conversation_id, script_dir) or {}
         next_profile_id = (next_record.get('metadata', {}).get('userProfileId')
                            or (memory_context(next_messages) or {}).get('profileId'))
@@ -2722,13 +2756,16 @@ def main(deps=None):
         next_logger, next_log_path = _create_logger(ConversationLogger, script_dir, next_conversation_id)
         close_logger()
         next_messages, _ = _ensure_tool_responses(next_messages)
-        _bind_planning_intent(next_messages, selected_incumbent)
+        next_owner = next((message for message in next_messages if message.get('role') == 'system'), {})
+        _bind_planning_intent(next_messages,
+            None if next_owner.get('planningIntent') == 'edit' else selected_incumbent)
         if 'default_headers' in client_options:
             client_options['default_headers'] = llm_session_headers(endpoint, next_conversation_id)
             client = OpenAI(**client_options)
         state["conversation_id"] = next_conversation_id
         state["messages"] = next_messages
         state['pending_images'] = []
+        state['edit_source'] = next_record.get('metadata', {}).get('edit_source')
         state["logger"] = next_logger
         state["log_path"] = next_log_path
         state["logger"].log_print(announce)
@@ -2839,6 +2876,21 @@ def main(deps=None):
         _render_turns(state["messages"], state["logger"])
         return True
 
+    def start_plan_edit(target):
+        current_record = load_conversation_record(state['conversation_id'], script_dir)
+        source = select_plan_for_edit(target, script_dir, current_record)
+        next_messages = editing_messages(source, provided_equipment or {})
+        current_path = os.path.join(script_dir, 'workouts', 'conversation_sessions', state['conversation_id'], 'messages.json')
+        switch_conversation(str(uuid.uuid4()), next_messages,
+            announce=f"Opened an editing copy of {source['snapshot']['planIndex']['planName']}. Describe your changes, or use /view.",
+            persist_previous=os.path.abspath(current_path) != source['messagesPath'])
+        state['edit_source'] = source['messagesPath']
+        persist_current()
+
+    if selected_edit:
+        state['logger'].log_print(f"Opened an editing copy of {selected_edit['snapshot']['planIndex']['planName']}. Describe your changes, or use /view.")
+        persist_current()
+
     def handle_image_command(text, text_offset=None):
         command = text.lower()
         if command == '/image' or command.startswith('/image '):
@@ -2891,6 +2943,13 @@ def main(deps=None):
             persist_current()
             report_usage(state['logger'])
             break
+
+        if command == '/edit' or command.startswith('/edit '):
+            try:
+                start_plan_edit(user_input.split(maxsplit=1)[1] if ' ' in user_input else 'latest')
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                logger.log_print(f'Cannot open plan for editing: {error}')
+            continue
 
         if command == '/usage':
             report_usage(state['logger'])
