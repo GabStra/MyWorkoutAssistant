@@ -59,6 +59,7 @@ pytest-cache-files-*/
 wearos/src/debug/assets/exercise_motion/
 
 # Local scratch outputs
+/.scratch/
 /.agents/
 /tmp/
 .tmp/
