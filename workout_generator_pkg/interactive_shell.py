@@ -2510,6 +2510,12 @@ def main(deps=None):
         help='Explicitly edit/replace the reviewed plan in this saved messages.json; applies to conversations started in this invocation')
     plan_source.add_argument('--edit-plan', nargs='?', const='latest', metavar='PLAN',
         help='Edit a separate copy of a saved plan: latest, conversation ID, messages.json or linked exported JSON')
+    plan_source.add_argument('--prescribed-plan-file', metavar='PATH',
+        help='Compile a structured PlanIndex JSON or source document directly, without a planning conversation')
+    parser.add_argument('--prescribed-state-dir', metavar='DIR',
+        help='Directory for prescribed source facts, editable plan, diagnostics, and metrics')
+    parser.add_argument('--output-file', metavar='PATH',
+        help='Write the compiled package to this path')
     parser.add_argument('--max-repair-rounds', type=int, default=3,
         help='Maximum candidate-changing repair submissions in the current attempt (default: 3)')
     parser.add_argument('--repair-attempt-start-index', type=int, default=None,
@@ -2547,6 +2553,8 @@ def main(deps=None):
     args = parser.parse_args()
     if args.max_repair_rounds < 0 or (args.repair_attempt_start_index is not None and args.repair_attempt_start_index < 0):
         parser.error('--max-repair-rounds and --repair-attempt-start-index must be nonnegative')
+    if (args.prescribed_state_dir or args.output_file) and not args.prescribed_plan_file:
+        parser.error('--prescribed-state-dir and --output-file require --prescribed-plan-file')
     try:
         script_dir = _default_script_dir()
     except (NameError, AttributeError):
@@ -2626,6 +2634,31 @@ def main(deps=None):
         )
         provided_equipment["exerciseDefinitions"] = exercise_definitions
         provided_equipment["exerciseMovements"] = library_payload["exerciseMovements"]
+
+    if args.prescribed_plan_file:
+        if not provided_equipment:
+            parser.error('--prescribed-plan-file requires --equipment-file and/or --exercise-library-file/--history-backup-file')
+        from .prescribed_plan import run_prescribed_plan
+        result = run_prescribed_plan(
+            args.prescribed_plan_file,
+            provided_equipment,
+            provided_equipment,
+            training_history=training_history,
+            allow_educated_load_guesses=args.allow_educated_load_guesses,
+            state_dir=args.prescribed_state_dir,
+            output_dir=script_dir,
+            output_file=args.output_file,
+            logger=None,
+        )
+        if result.get('success'):
+            print(f"Prescribed workout package saved to: {result.get('filepath')}")
+            return result
+        print(f"Prescribed plan needs attention: {result.get('error')}", file=sys.stderr)
+        if result.get('plan_file'):
+            print(f"Editable plan or source facts: {result['plan_file']}", file=sys.stderr)
+        if result.get('diagnostics_file'):
+            print(f"Diagnostics: {result['diagnostics_file']}", file=sys.stderr)
+        raise SystemExit(1)
 
     from workout_user_memory import resolve_profile
     from .user_memory_context import bind_user_memory, memory_context

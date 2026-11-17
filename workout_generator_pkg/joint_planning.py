@@ -21,7 +21,7 @@ from .generation_audit import (MUSCLES, effective_concentration_status,
                                volume_target_bounds, preferred_volume_target_bounds,
                                volume_preference_deviation, _setup_evidence_for_blocks,
                                _setup_resource_transition, _setup_profile_at_set)
-from .planning_tools import _DRAFT_SCHEMA, _strip_legacy_calibration_fields, PlanningInputError
+from .planning_tools import _DRAFT_SCHEMA, _REQUIREMENTS, _strip_legacy_calibration_fields, PlanningInputError
 from .programming_policy import (source_balance_dose_components, selection_precedes_execution,
     goal_tier_names, goal_programming_costs, goal_total_weights, expand_goal_tiers, settled_dose_goal_stages,
     add_relative_share_objective, relative_exposure_costs, role_concentration_keys,
@@ -2903,6 +2903,11 @@ def solve_prescribed_week(sessions, requirements, equipment, restriction_policy=
                           source_working_set_budget=None, reviewed_baseline_workouts=None, progress=None,
                           search_deadline=None, semantic_selection=None):
     """Settle selection before execution when the approved policy supports that split."""
+    if 'objectiveOrder' in requirements:
+        objective_errors = list(Draft7Validator(
+            _REQUIREMENTS['properties']['objectiveOrder']).iter_errors(requirements['objectiveOrder']))
+        if objective_errors:
+            raise ValueError(f"Invalid objectiveOrder: {objective_errors[0].message}")
     started = time.monotonic()
     if semantic_selection is None and messages:
         from .session_drafting import current_semantic_selection

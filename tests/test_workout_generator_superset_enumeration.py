@@ -8,7 +8,7 @@ from test_workout_generator_planning_tools import planning_case
 
 def pairing_case():
     equipment, requirements, _, draft = planning_case()
-    requirements.update(sessionsPerWeek=1, objectiveOrder=['duration_economy'])
+    requirements.update(sessionsPerWeek=1, objectiveOrder=['execution_order'])
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 3, 'maximum': 6}
     requirements['auditTargets']['perSessionEffectiveSets']['chest'] = {'minimum': 3, 'maximum': 6}
     requirements['requiredCoverage'] = [
@@ -31,6 +31,14 @@ def pairing_case():
     sessions[0].update(name='Day A', trainingDays=[0], timesCompletedInAWeek=1)
     sessions[0]['exercises'] = [first, second]
     return equipment, requirements, sessions
+
+
+def test_solver_rejects_unsupported_duration_economy_objective_order():
+    equipment, requirements, sessions = pairing_case()
+    requirements['objectiveOrder'] = ['duration_economy']
+
+    with pytest.raises(ValueError, match='Invalid objectiveOrder:.*duration_economy'):
+        joint_planning.solve_prescribed_week(sessions, requirements, equipment)
 
 
 @pytest.mark.parametrize('transition, round_rest', [(0, 60), (20, 75)])
@@ -57,7 +65,7 @@ def test_generated_superset_pair_uses_approved_recovery_without_mutating_sources
 
 
 @pytest.mark.parametrize('exact_targets', [False, True])
-def test_two_set_pair_with_zero_prescribed_transition_saves_native_time(exact_targets):
+def test_two_set_candidate_preserves_unpaired_selected_work_and_volume(exact_targets):
     equipment, requirements, sessions = pairing_case()
     requirements['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] = 2
     requirements['auditTargets']['perSessionEffectiveSets']['chest']['minimum'] = 2
@@ -80,10 +88,14 @@ def test_two_set_pair_with_zero_prescribed_transition_saves_native_time(exact_ta
     assert result['feasible'], result
     exercises = result['sessions'][0]['exercises']
     assert [item['numWorkSets'] for item in exercises] == [2, 2]
-    assert [item['restAfterSupersetExerciseSeconds'] for item in exercises] == [0, 60]
-    assert exercises[0]['superset'] is not None and exercises[0]['superset'] == exercises[1]['superset']
+    assert result['supersetCandidates']['codeGeneratedCandidateCount'] == 1
+    assert result['supersetCandidates']['compiledCandidateCount'] == 1
+    if exercises[0]['superset'] is not None:
+        assert exercises[0]['superset'] == exercises[1]['superset']
+        assert [item['restAfterSupersetExerciseSeconds'] for item in exercises] == [0, 60]
+    else:
+        assert [item['restAfterSupersetExerciseSeconds'] for item in exercises] == [0, 0]
     assert result['audit']['weeklyVolume'] == baseline['weeklyVolume']
-    assert baseline['workouts'][0]['estimatedSeconds'] - result['audit']['workouts'][0]['estimatedSeconds'] == 60
     assert not result['audit']['errors']
 
 
@@ -102,12 +114,13 @@ def test_solver_enumerates_compatible_pair_and_keeps_exact_occurrence_lineage(re
     assert sum(item['numWorkSets'] for item in exercises) == 6
     assert result['supersetCandidates']['codeGeneratedCandidateCount'] == 1
     assert result['supersetCandidates']['compiledCandidateCount'] == 1
-    assert result['supersetCandidates']['selectedCodeGeneratedGroupCount'] == 1
+    assert result['supersetCandidates']['selectedCodeGeneratedGroupCount'] == int(
+        exercises[0]['superset'] is not None and exercises[0]['superset'] == exercises[1]['superset'])
     assert result['supersetCandidates']['selectedSourceGroupCount'] == 0
     assert not result['audit']['errors']
 
 
-def test_preserved_source_selection_can_group_the_exact_retained_occurrences():
+def test_preserved_source_selection_keeps_exact_occurrences_without_unsupported_repair_priority():
     equipment, requirements, sessions = pairing_case()
 
     result = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
@@ -117,10 +130,10 @@ def test_preserved_source_selection_can_group_the_exact_retained_occurrences():
     exercises = result['sessions'][0]['exercises']
     assert [item['definition_id'] for item in exercises] == ['LIBRARY_0', 'LIBRARY_1']
     assert [item['numWorkSets'] for item in exercises] == [3, 3]
-    assert exercises[0]['superset'] is not None and exercises[0]['superset'] == exercises[1]['superset']
     assert result['occurrenceLineage'] == [[[0, 0], [0, 1]]]
     assert result['supersetCandidates']['codeGeneratedCandidateCount'] == 1
-    assert result['supersetCandidates']['selectedCodeGeneratedGroupCount'] == 1
+    assert result['supersetCandidates']['selectedCodeGeneratedGroupCount'] == int(
+        exercises[0]['superset'] is not None and exercises[0]['superset'] == exercises[1]['superset'])
 
 
 def test_solver_reports_and_rejects_calibrated_pair_with_shared_physical_load():
@@ -142,7 +155,7 @@ def test_solver_reports_and_rejects_calibrated_pair_with_shared_physical_load():
 
 def test_source_occurrence_identity_does_not_alias_same_slot_from_different_menus():
     equipment, requirements, sessions = pairing_case()
-    requirements.update(sessionsPerWeek=2, objectiveOrder=['duration_economy'])
+    requirements.update(sessionsPerWeek=2, objectiveOrder=['execution_order'])
     requirements['auditTargets']['weeklyEffectiveSets'] = {
         'chest': {'minimum': 3, 'maximum': 6}, 'quads': {'minimum': 3, 'maximum': 6}}
     requirements['auditTargets']['perSessionEffectiveSets'] = {
@@ -174,7 +187,7 @@ def test_source_occurrence_identity_does_not_alias_same_slot_from_different_menu
 
 def test_compiled_recipe_cache_includes_source_work_set_count():
     equipment, requirements, sessions = pairing_case()
-    requirements.update(sessionsPerWeek=2, objectiveOrder=['duration_economy'])
+    requirements.update(sessionsPerWeek=2, objectiveOrder=['execution_order'])
     requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': None,
         'minimumSets': 2, 'maximumSets': 3}]
     requirements['requiredCoverage'] = [

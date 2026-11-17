@@ -22,11 +22,9 @@ def confirmed_recipe(monkeypatch, *, execution_mode=None):
     equipment['exerciseDefinitions'][0]['id'] = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
     from workout_generator_pkg.planning_tools import audit_workout_plan, set_workout_requirements
     from test_workout_generator_planning_tools import planning_case, capability_requirement_messages
-    requirements['preferredSessionSeconds'] = 4500
-    requirements['auditTargets']['maximumSessionSeconds'] = 5400
     requirements['exerciseSelection'] = {'preferredMinimum': 2, 'preferredMaximum': 3, 'muscles': ['chest']}
     stored = set_workout_requirements(requirements, [{'role': 'user', 'content':
-        'Plan 5-6 chest sets, prefer 75-minute sessions with a 90-minute ceiling and 2-3 chest exercises.'}], equipment)
+        'Plan 5-6 chest sets and prefer 2-3 chest exercises when possible.'}], equipment)
     draft['requirementsId'] = stored['requirementsId']
     messages = capability_requirement_messages(stored, equipment)
     if execution_mode:
@@ -143,10 +141,9 @@ def test_confirmed_recipe_exports_native_schema_and_audit_without_provider_calls
     assert report['issues'] == []
     assert report['workouts'][0]['workingSets'] == 5
     assert report['weeklyVolume']['chest']['effective'] == 5
-    budget = report['sessionTimeBudgetEvidence']
-    assert budget['preferredSessionSeconds'] == 4500
-    assert budget['maximumSessionSeconds'] == 5400
-    assert budget['sessions'][0]['estimatedSeconds'] == report['workouts'][0]['estimatedSeconds']
+    # This pipeline no longer invents time estimates or accepts session-duration targets.
+    assert 'sessionTimeBudgetEvidence' not in report
+    assert all('estimatedSeconds' not in workout for workout in report['workouts'])
     selected = report['exerciseSelectionEvidence']['chest']
     assert selected['exerciseIds'] == ['aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee']
     assert selected['count'] == selected['shortfall'] == 1

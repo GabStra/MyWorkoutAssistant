@@ -20,15 +20,6 @@ DEFAULT_ISOLATION_REST_RULE = {'kind': 'rest', 'coverageKey': None, 'exerciseCat
     'context': 'straightSets', 'minimumSeconds': 60, 'maximumSeconds': 120}
 
 
-def default_block_recovery_rules(rules):
-    """Reuse approved straight-set ranges for the distinct inter-block boundary."""
-    return [{**rule, 'context': 'exerciseTransition'} for rule in rules
-        if rule.get('kind') == 'rest' and rule.get('context') == 'straightSets'
-        and not any(other.get('kind') == 'rest' and other.get('context') == 'exerciseTransition'
-            and other.get('coverageKey') in (None, rule.get('coverageKey'))
-            and other.get('exerciseCategory') in (None, rule.get('exerciseCategory')) for other in rules)]
-
-
 def block_recovery_bounds(block, requirements, definitions):
     categories = ['HEAVY_COMPOUND', 'MODERATE_COMPOUND', 'ISOLATION']
     category = next((category for category in categories if any(

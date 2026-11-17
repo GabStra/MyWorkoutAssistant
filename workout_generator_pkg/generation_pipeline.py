@@ -1,10 +1,11 @@
-"""Compile the current confirmed, reviewed plan into the native app package."""
+"""Compile reviewed or explicitly prescribed plans into the native app package."""
 
 from __future__ import annotations
 
 import copy
 import json
 import os
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -44,14 +45,23 @@ def execute_workout_generation(
     client, messages, custom_prompt="", resume_session_id=None,
     provided_equipment=None, logger=None, script_dir=None,
     force_use_reasoner=None, allow_educated_load_guesses=True, training_history=None,
+    plan_index_override=None, audit_requirements_override=None, enforce_review=True,
+    output_file=None,
 ):
-    """Compile without provider calls; confirmation and review remain authoritative."""
+    """Compile a reviewed plan, or an explicit PlanIndex through the same gates."""
     # These CLI-owned utilities remain public compatibility entry points.
     from .cli import (PlaceholderIdManager, _default_script_dir, save_workout_to_file,
                       display_workout_summary, display_timing_summary)
 
     def _gen_print(message):
-        logger.log_print(message) if logger is not None else print(message)
+        if logger is not None:
+            logger.log_print(message)
+            return
+        try:
+            print(message)
+        except UnicodeEncodeError:
+            encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+            print(str(message).encode(encoding, errors='replace').decode(encoding))
 
     def _log_step_error(step, error, prefix="Error reason"):
         _gen_print(f"{prefix} ({step}): {error}")
@@ -59,13 +69,27 @@ def execute_workout_generation(
     script_dir = script_dir or _default_script_dir()
     review_equipment = copy.deepcopy(provided_equipment or {})
     try:
-        canonical_snapshot = confirmed_draft(messages, review_equipment,
-            allow_educated_load_guesses, require_confirmation=True)
-        history_fingerprint = (training_history if training_history is not None
-                               else canonical_snapshot.get('historyFingerprint'))
-        require_current_review(canonical_snapshot, messages, review_equipment, history_fingerprint)
-        _, approved_requirements = active_requirement_result(messages)
-        audit_requirements = approved_requirements.get('requirements', {})
+        if enforce_review:
+            canonical_snapshot = confirmed_draft(messages, review_equipment,
+                allow_educated_load_guesses, require_confirmation=True)
+            history_fingerprint = (training_history if training_history is not None
+                                   else canonical_snapshot.get('historyFingerprint'))
+            require_current_review(canonical_snapshot, messages, review_equipment, history_fingerprint)
+            _, approved_requirements = active_requirement_result(messages)
+            audit_requirements = approved_requirements.get('requirements', {})
+        else:
+            if not isinstance(plan_index_override, dict):
+                raise ValueError("An explicit PlanIndex is required for direct compilation.")
+            canonical_snapshot = {
+                'planIndex': copy.deepcopy(plan_index_override),
+                # Coverage receipts exist only when the source supplied them;
+                # do not interpret the canonical PlanIndex as a submitted draft.
+                'submittedDraft': None,
+                'historyFingerprint': getattr(training_history, 'fingerprint', None),
+                'semanticSelection': None,
+            }
+            history_fingerprint = getattr(training_history, 'fingerprint', None)
+            audit_requirements = copy.deepcopy(audit_requirements_override or {})
         coverage_rules = audit_requirements.get('requiredCoverage', [])
     except ValueError as error:
         return {"success": False, "filepath": None, "error": str(error)}
@@ -98,6 +122,13 @@ def execute_workout_generation(
 
     try:
         plan_index = copy.deepcopy(canonical_snapshot['planIndex'])
+        if not enforce_review:
+            for entry in plan_index.get('exercises', []):
+                placement_notes = entry.pop('placementNotes', None)
+                if isinstance(placement_notes, str) and placement_notes.strip():
+                    existing_notes = entry.get('notes')
+                    entry['notes'] = '\n'.join(part.strip() for part in
+                        (existing_notes, placement_notes) if isinstance(part, str) and part.strip())
         execution_definitions = execution_decision_definitions(messages, review_equipment)
         supplied_exercise_definitions = [copy.deepcopy(execution_definitions.get(definition['id'], definition))
             for definition in review_equipment.get('exerciseDefinitions', [])]
@@ -120,15 +151,22 @@ def execute_workout_generation(
         plan_index['equipments'] = copy.deepcopy(provided_equipment['equipments'])
         plan_index['accessoryEquipments'] = copy.deepcopy(provided_equipment['accessoryEquipments'])
         hydrate_plan_index_from_exercise_library(plan_index, provided_equipment['exerciseDefinitions'])
+        from .prescribed_recurrence import normalize_recurring_prescription_fields
+        recurring_issues = normalize_recurring_prescription_fields(plan_index)
+        if recurring_issues:
+            details = "; ".join(issue.message for issue in recurring_issues)
+            raise ContractValidationError(
+                "Recurring-prescription contract validation failed: " + details)
         validate_plan_index_contract(plan_index, provided_equipment)
         validate_audit_targets(plan_index.get('auditTargets'))
         expected_plan = copy.deepcopy(plan_index)
-        apply_native_load_calibration_policy(expected_plan, messages, review_equipment,
-            getattr(training_history, 'fingerprint', None) or canonical_snapshot.get('historyFingerprint'),
-            allow_educated_load_guesses=allow_educated_load_guesses)
-        if ([item.get('requiresLoadCalibration') for item in plan_index['exercises']]
-                != [item.get('requiresLoadCalibration') for item in expected_plan['exercises']]):
-            raise ContractValidationError("The approved draft's load-calibration flags do not match its current comparable history. Re-audit the draft before generation.")
+        if enforce_review:
+            apply_native_load_calibration_policy(expected_plan, messages, review_equipment,
+                getattr(training_history, 'fingerprint', None) or canonical_snapshot.get('historyFingerprint'),
+                allow_educated_load_guesses=allow_educated_load_guesses)
+            if ([item.get('requiresLoadCalibration') for item in plan_index['exercises']]
+                    != [item.get('requiresLoadCalibration') for item in expected_plan['exercises']]):
+                raise ContractValidationError("The approved draft's load-calibration flags do not match its current comparable history. Re-audit the draft before generation.")
         plan_index = expected_plan
         plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses),
             plan_index.get('auditTargets') or {},
@@ -145,20 +183,28 @@ def execute_workout_generation(
         accessory_items = {item['id']: item for item in provided_equipment['accessoryEquipments']}
         exercise_definitions = {}
         for entry in plan_index['exercises']:
-            exercise = _materialize_exercise_definition(entry)
+            exercise = _materialize_exercise_definition(entry,
+                should_reapply_history_to_set=False if not enforce_review else None)
             exercise_definitions[entry['id']] = finalize_and_validate_exercise_definition(
                 exercise, plan_entry=entry,
                 equipment_subset=[equipment_items[entry['equipmentId']]] if entry.get('equipmentId') in equipment_items else [],
                 accessory_subset=[accessory_items[i] for i in entry.get('requiredAccessoryEquipmentIds') or []],
                 all_equipment_candidates=list(equipment_items.values()),
                 allow_educated_load_guesses=allow_educated_load_guesses)
+            if not enforce_review:
+                # Explicit prescribed targets stay fixed: a direct plan does not
+                # inherit the reviewed workflow's automatic progression/history policy.
+                exercise_definitions[entry['id']]['progressionMode'] = entry.get('progressionMode', 'OFF')
+                exercise_definitions[entry['id']]['requiresLoadCalibration'] = bool(
+                    entry.get('requiresLoadCalibration', False))
         validate_exercise_definitions_contract(plan_index, exercise_definitions)
         checkpoint(3, step_2_equipment_items=equipment_items, step_2_accessory_items=accessory_items,
                    step_3_exercise_definitions=exercise_definitions)
         workout_structures = {day['id']: build_workout_structure(day) for day in plan_index['workouts']}
         validate_workout_structures_contract(plan_index, workout_structures, exercise_definitions)
         placeholder_store = assemble_placeholder_workout_store(equipment_items, accessory_items,
-            exercise_definitions, workout_structures, plan_index)
+            exercise_definitions, workout_structures, plan_index,
+            should_reapply_history_to_set=False if not enforce_review else None)
         validate_assembled_workout_contract(plan_index, placeholder_store)
         Draft7Validator(create_placeholder_schema()).validate(placeholder_store)
         checkpoint(6, step_4_workout_structures=workout_structures,
@@ -167,7 +213,9 @@ def execute_workout_generation(
         data = convert_placeholders_to_uuids(placeholder_store, id_manager, validate_final=False, logger=logger)
         validate_uuid_conversion_parity(placeholder_store, data)
         Draft7Validator(JSON_SCHEMA).validate(data)
-        data = apply_exercise_library_schema_v2(data, supplied_exercise_definitions, supplied_exercise_movements)
+        selected_exercise_definitions = [definition for definition in supplied_exercise_definitions
+            if definition.get('id') in selected_ids]
+        data = apply_exercise_library_schema_v2(data, selected_exercise_definitions, supplied_exercise_movements)
         checkpoint(7, step_7_final_workout_store=data)
         _gen_print("Step 8: Auditing actual generated volume...")
         audit_start = time.time()
@@ -211,24 +259,36 @@ def execute_workout_generation(
         timing_data["total_time_seconds"] = step_times_total + save_times_total
         
         # Final calibration policy is controlled by the user-selected mode.
-        ensure_requiresLoadCalibration(
-            data,
-            allow_educated_load_guesses=allow_educated_load_guesses,
-        )
+        if enforce_review:
+            ensure_requiresLoadCalibration(
+                data,
+                allow_educated_load_guesses=allow_educated_load_guesses,
+            )
 
-        from .plan_review import _context
-        reviewed_context = _context(canonical_snapshot, messages, review_equipment,
-            training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'),
-            canonical_snapshot['review']['instructionBoundary'])
-        program_guidance = reviewed_context['finalArtifact']['programGuidance']
-        actual = reviewable_workout_artifact(canonical_snapshot['planIndex'], program_guidance,
-            data, id_manager.placeholder_to_uuid)
-        if actual != reviewed_context['finalArtifact']:
-            raise ContractValidationError('The final export differs from the independently reviewed artifact. Re-audit and review before export.')
+        if enforce_review:
+            from .plan_review import _context
+            reviewed_context = _context(canonical_snapshot, messages, review_equipment,
+                training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'),
+                canonical_snapshot['review']['instructionBoundary'])
+            program_guidance = reviewed_context['finalArtifact']['programGuidance']
+            actual = reviewable_workout_artifact(canonical_snapshot['planIndex'], program_guidance,
+                data, id_manager.placeholder_to_uuid)
+            if actual != reviewed_context['finalArtifact']:
+                raise ContractValidationError('The final export differs from the independently reviewed artifact. Re-audit and review before export.')
+        else:
+            program_guidance = None
         
 
         # Save workout to file
-        filepath = save_workout_to_file(data, script_dir)
+        if output_file:
+            filepath = os.path.abspath(output_file)
+            os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+            temporary = filepath + '.tmp'
+            with open(temporary, 'w', encoding='utf-8') as output:
+                json.dump(data, output, indent=2, ensure_ascii=False)
+            os.replace(temporary, filepath)
+        else:
+            filepath = save_workout_to_file(data, script_dir)
         guidance_filepath = None
         if isinstance(program_guidance, str) and program_guidance.strip():
             if not filepath:
@@ -273,4 +333,25 @@ def execute_workout_generation(
         traceback.print_exc()
         _log_step_error("Pipeline", e)
         return {"success": False, "filepath": None, "error": f"Error: {e}"}
+
+
+def compile_plan_index(
+    plan_index, provided_equipment, *, training_history=None,
+    allow_educated_load_guesses=True, output_dir=None, output_file=None,
+    logger=None, audit_requirements=None,
+):
+    """Compile an explicit PlanIndex without conversation or review artifacts.
+
+    This shares the schema, materialization, package, and programming audit gates
+    with the reviewed workflow. It deliberately does not manufacture review
+    receipts; the caller supplies the concrete plan and its source-derived audit
+    requirements.
+    """
+    return execute_workout_generation(
+        None, [], provided_equipment=provided_equipment, logger=logger,
+        script_dir=output_dir, allow_educated_load_guesses=allow_educated_load_guesses,
+        training_history=training_history, plan_index_override=plan_index,
+        audit_requirements_override=audit_requirements, enforce_review=False,
+        output_file=output_file,
+    )
 

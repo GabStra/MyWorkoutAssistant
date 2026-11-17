@@ -16,7 +16,7 @@ from .plan_contract import (LIBRARY_DEFINITION_OWNED_FIELDS, validate_plan_index
 from .json_patching import apply_json_patch, validate_patch_operations_scope
 from .muscle_roles import MUSCLE_LABELS, REGIONAL_MUSCLE_LABELS, MOVEMENT_COVERAGE_ROLES, coverage_role_descriptions
 from .programming_guidelines import (EXECUTION_RULES_SCHEMA, MINIMUM_WORK_SETS_RULE, SESSION_STRUCTURE_RULE,
-    DEFAULT_ISOLATION_REST_RULE, default_block_recovery_rules, prescribe_block_recovery,
+    DEFAULT_ISOLATION_REST_RULE, prescribe_block_recovery,
     EXECUTION_ORDER_DESCRIPTION,
     execution_rule_errors,
     render_execution_rule, audit_execution_rules, audit_execution_details, normalize_work_set_bounds,
@@ -1016,7 +1016,7 @@ _EXERCISE = {"type": "object", "properties": {
     "restAfterExerciseSeconds": {"type": "integer", "minimum": 0, "maximum": 1800, "description": "Transition after the complete exercise/block, not between superset rounds. Must be 0 on non-final superset members."},
     "superset": {"type": ["string", "null"], "minLength": 1},
     "restAfterSupersetExerciseSeconds": {"type": "integer", "minimum": 0, "maximum": 1800, "description": "Rest after this member every superset round: A-to-B on A, round recovery on the final member (omitted after the last round). Must be 0 for straight sets. Zero transition is allowed only when intended."},
-    "intraSetRestInSeconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 300, "description": "Positive seconds between sides of a unilateral set; null for bilateral work. Complete both sides before logging the physical working set once for volume."},
+    "intraSetRestInSeconds": {"type": ["integer", "null"], "minimum": 0, "maximum": 300, "description": "Seconds between sides of a paired-side set; 0 means no pause, null for bilateral or single-sequence work. Complete both sides before logging the physical working set once for volume."},
     "generateWarmUpSets": {"type": "boolean"},
     "repDurationSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0,
         "description": "Total seconds per rep including concentric, eccentric and pauses. Supply only an explicit tempo prescription. Includes concentric and eccentric phases and pauses. For timed/running work use null."},
@@ -1785,8 +1785,12 @@ def _normalize_replacement_exercise(item, source, reference, task, *, error_path
             'Keep the source exercise or choose a loaded replacement with supported equipment; preserve its approved warm-up rule.')
     item['generateWarmUpSets'] = bool(warmup_supported and (
         needs_warmup or source.get('generateWarmUpSets')))
-    item['intraSetRestInSeconds'] = (_UNILATERAL_SIDE_REST_DEFAULT_SECONDS
-        if replacement_definition and _exercise_requires_unilateral_rest(replacement_definition) else None)
+    if replacement_definition and _exercise_requires_unilateral_rest(replacement_definition):
+        side_rest = item.get('intraSetRestInSeconds')
+        item['intraSetRestInSeconds'] = (side_rest if type(side_rest) is int and side_rest <= 0
+            else _UNILATERAL_SIDE_REST_DEFAULT_SECONDS)
+    else:
+        item['intraSetRestInSeconds'] = None
     explicit_fields = set(explicit_fields)
     if 'workSetTemplate' not in explicit_fields and isinstance(item.get('workSetTemplate'), dict):
         item['workSetTemplate'].pop('weight', None)
@@ -3649,8 +3653,9 @@ def _ensure_application_execution_rules(requirements, *, include_rest_defaults=T
             and rule.get('context') == 'straightSets'
             and rule.get('exerciseCategory') in (None, 'ISOLATION') for rule in rules):
         missing.append(DEFAULT_ISOLATION_REST_RULE)
-    if include_rest_defaults:
-        missing.extend(default_block_recovery_rules(rules + missing))
+    # Between-set recovery does not authorize an inferred rest between
+    # completed blocks. A transition rest is prescribed only by an explicit
+    # exerciseTransition rule (or an explicit restAfterExerciseSeconds value).
     if len(rules) + len(missing) > EXECUTION_RULES_SCHEMA['maxItems']:
         raise PlanningInputError('execution_rule_limit',
             'The structured execution-rule limit leaves no room for the code-owned execution defaults.',
@@ -3970,7 +3975,7 @@ def _normalize_definition_dependent_fields(arguments, equipment, requirements=No
             if definition['exerciseType'] not in ('WEIGHT', 'BODY_WEIGHT') or not definition.get('equipmentId'):
                 item['generateWarmUpSets'] = False
             if _exercise_requires_unilateral_rest(definition):
-                if type(item.get('intraSetRestInSeconds')) is not int or item['intraSetRestInSeconds'] <= 0:
+                if item.get('intraSetRestInSeconds') is None or type(item['intraSetRestInSeconds']) is not int:
                     item['intraSetRestInSeconds'] = _UNILATERAL_SIDE_REST_DEFAULT_SECONDS
             else:
                 item['intraSetRestInSeconds'] = None
@@ -4148,42 +4153,23 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
             exercise['satisfiesCoverage'] = copy.deepcopy(item.get('satisfiesCoverage', []))
             if 'allocationBounds' in item:
                 exercise['allocationBounds'] = copy.deepcopy(item['allocationBounds'])
-            exercise['notes'] = exercise.get('notes', '')
-            exercise['notes'] += ' ' + effort_acceptance_guidance(
-                item.get('effortAcceptance'), requirements.get('workingSetRIR'))
+            # User-facing notes stay concise and actionable. Counts, loads and
+            # rest are already structured in the emitted sets; repeating them
+            # here makes the athlete instructions long and stale-prone.
+            note_parts = [exercise.get('notes', '').strip(),
+                effort_acceptance_guidance(item.get('effortAcceptance'),
+                    requirements.get('workingSetRIR')).strip()]
             if item['generateWarmUpSets']:
-                exercise['notes'] += (' Warm-up: follow any app-generated ramp-up sets before working sets, '
-                    'using their displayed loads, repetitions and rests. Actual ramp-ups depend on the working '
-                    'load and available lighter resistance at runtime; enabling this path does not guarantee generated sets or sufficient preparation.')
-            elif not native_warmup_supported(definition, {gear['id'] for gear in equipment.get('equipments', [])}):
-                exercise['notes'] += (' Warm-up: this configuration cannot generate lighter loaded ramp-up sets through the native app path; '
-                    'an exercise-specific preparation protocol is not established by this plan. '
-                    'Personal capability remains unverified.')
-            elif not item['generateWarmUpSets']:
-                exercise['notes'] += ' Warm-up: no additional app-generated ramp-up sets are prescribed for this exercise.'
-            if item.get('intraSetRestInSeconds'):
-                exercise['notes'] += (f" Paired-side/direction work: complete {item['numWorkSets']} logged working sets. "
-                    f"Each set includes both sides, with {item['intraSetRestInSeconds']}s between sides. "
-                    'Finish both sides before logging that set once; '
-                    'count that paired set once for muscle volume.')
+                note_parts.append('Use app-generated ramp-up sets when available.')
+            if item.get('intraSetRestInSeconds') is not None:
+                note_parts.append('Paired-side/direction work: complete both sides within each set '
+                    'and log the set once.')
             elif definition.get('reviewedExecution', {}).get('setMode') == 'single_sequence':
-                exercise['notes'] += (' Counting: the prescribed reps/time are the total for one complete execution sequence, '
-                    'not a separate prescription for each side or direction.')
-            if item['superset'] is None:
-                exercise['notes'] += (f" Straight sets: complete all {item['numWorkSets']} working sets with "
-                    f"{item['restBetweenSetsSeconds']}s between sets.")
-                if item['restAfterExerciseSeconds'] or exercise_index < len(day['exercises']) - 1:
-                    exercise['notes'] += f" Then take {item['restAfterExerciseSeconds']}s recovery rest."
-                if exercise_index < len(day['exercises']) - 1:
-                    exercise['notes'] += " Keep the next exercise's physical setup separate from this recovery prescription."
-            else:
-                exercise['notes'] += (f" Superset: perform one set of each member in displayed order for "
-                    f"{item['numWorkSets']} rounds. Rest {item['restAfterSupersetExerciseSeconds']}s after this "
-                    'member before the next member or round; omit round recovery after the final round. '
-                    f"After completing the group, this member contributes {item['restAfterExerciseSeconds']}s transition rest.")
-                if (item['restAfterSupersetExerciseSeconds'] == 0 and item['restBetweenSetsSeconds'] == 0
-                        and item['restAfterExerciseSeconds'] == 0):
-                    exercise['notes'] += ' Keep each station reachable throughout the group.'
+                note_parts.append('Counting: the prescribed reps/time are the total for one complete '
+                    'execution sequence, not a separate prescription for each side or direction.')
+            if item['superset'] is not None:
+                note_parts.append('Superset: alternate members in displayed order; rest after the round.')
+            exercise['notes'] = ' '.join(part for part in note_parts if part)
             if item.get("targetSetPrescriptions"):
                 exercise["targetSetPrescriptions"] = copy.deepcopy(item["targetSetPrescriptions"])
             if 'workSetTemplate' in item:
@@ -4238,6 +4224,9 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
         # Block timers live on the workout entry (supersetModes), keyed by the
         # group label, and are merged onto the built groups here.
         _merge_superset_modes(day, groups, day_index, input_errors)
+        if complete_session and workout["restToNextSeconds"]:
+            # The final block has no following exercise to transition to.
+            workout["restToNextSeconds"][-1] = 0
         plan["workouts"].append(workout)
     try:
         _validate_draft_plan(plan, equipment, execution_definitions=execution_definitions)
@@ -4315,7 +4304,7 @@ def render_draft(plan, requirements, report, restriction_policy=None, source_dra
                 reps = "—"
             if e.get('repDurationSeconds') is not None:
                 reps += f"; {e['repDurationSeconds']:g}s/rep"
-            if e.get("intraSetRestInSeconds"):
+            if e.get("intraSetRestInSeconds") is not None:
                 reps += f" per side; {e['intraSetRestInSeconds']}s between sides"
             pair = groups.get(reference)
             between = "—" if pair else f"{e['restBetweenSetsSeconds']}s"

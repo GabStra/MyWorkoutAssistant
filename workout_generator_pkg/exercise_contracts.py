@@ -448,9 +448,9 @@ EXERCISE_EMISSION_PROFILES = {
             exercise_id="EXERCISE_WARMUP",
             name="Warm Up",
             sets=[
-                {"id": "SET_WARMUP", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": True, "autoStop": True},
+                {"id": "SET_WARMUP", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": False, "autoStop": True},
                 {"id": "SET_6", "type": "RestSet", "timeInSeconds": 60, "subCategory": "WorkSet"},
-                {"id": "SET_7", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": True, "autoStop": True},
+                {"id": "SET_7", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": False, "autoStop": True},
             ],
             exercise_type="COUNTDOWN",
             equipment_id=None,

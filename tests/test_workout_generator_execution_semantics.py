@@ -86,6 +86,35 @@ def test_explicit_counting_uses_native_side_rest_without_changing_logged_sets():
     assert _materialize_exercise_definition(exercise)['intraSetRestInSeconds'] is None
 
 
+def test_zero_rest_preserves_paired_side_execution_and_rejects_negative_rest():
+    from workout_generator_pkg.planning_tools import _normalize_definition_dependent_fields
+
+    exercise = _exercise(reviewedExecution={'limbMode': 'bilateral', 'setMode': 'paired_sides'},
+                         intraSetRestInSeconds=0, satisfiesCoverage=['rotational_core'])
+    validate_plan_index_contract(_plan(exercise))
+    emitted = _materialize_exercise_definition(exercise)
+    assert emitted['intraSetRestInSeconds'] == 0
+    assert [item['reps'] for item in emitted['sets'] if item['type'] == 'WeightSet'] == [10, 10]
+
+    equipment = {'exerciseDefinitions': [{'id': 'paired', 'exerciseType': 'BODY_WEIGHT',
+        'equipmentId': None, 'bodyWeightPercentage': 65,
+        'reviewedExecution': {'limbMode': 'bilateral', 'setMode': 'paired_sides'}}], 'equipments': []}
+    draft = {'workouts': [{'exercises': [{'definition_id': 'LIBRARY_0',
+        'intraSetRestInSeconds': 0, 'generateWarmUpSets': False}]}]}
+    _normalize_definition_dependent_fields(draft, equipment)
+    assert draft['workouts'][0]['exercises'][0]['intraSetRestInSeconds'] == 0
+    draft['workouts'][0]['exercises'][0]['intraSetRestInSeconds'] = None
+    _normalize_definition_dependent_fields(draft, equipment)
+    assert draft['workouts'][0]['exercises'][0]['intraSetRestInSeconds'] == 30
+
+    exercise['intraSetRestInSeconds'] = -1
+    with pytest.raises(ContractValidationError) as caught:
+        validate_plan_index_contract(_plan(exercise))
+    assert any(issue.code == 'invalid_intra_set_rest' for issue in caught.value.issues)
+    with pytest.raises(ValueError, match='non-negative intraSetRestInSeconds'):
+        _materialize_exercise_definition(exercise)
+
+
 def test_reviewed_set_mode_annotation_is_validated_and_projected():
     definition_id = '00000000-0000-0000-0000-000000000001'
     execution = {'setMode': 'paired_sides', 'source': 'https://example.com/execution',

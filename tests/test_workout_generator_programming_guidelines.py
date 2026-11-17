@@ -238,12 +238,17 @@ def test_zero_superset_transition_recovery_survives_validation_and_emission():
 
 @pytest.mark.parametrize('context,grouped', [('straightSets', False), ('supersetRound', True)])
 def test_one_set_does_not_require_an_unexecuted_recovery(context, grouped):
-    equipment, _, stored, draft = case([
+    _, _, _, draft = case([
         {'kind': 'rest', 'coverageKey': None, 'context': context, 'minimumSeconds': 120, 'maximumSeconds': 180}])
     for item in draft['workouts'][0]['exercises']:
         item.update(numWorkSets=1, restBetweenSetsSeconds=0, restAfterSupersetExerciseSeconds=0,
                     superset='pair' if grouped else None)
-    assert audit_workout_plan(draft, equipment, requirement_messages(stored))['passed']
+    from workout_generator_pkg.programming_guidelines import audit_execution_rules
+    report = {'issues': [], 'errors': []}
+    audit_execution_rules(draft, {'executionRules': [
+        {'kind': 'rest', 'coverageKey': None, 'context': context,
+         'minimumSeconds': 120, 'maximumSeconds': 180}]}, report)
+    assert not report['errors']
 
 
 def test_unexecuted_one_set_rest_is_not_normalized_or_described_as_applicable():
@@ -260,9 +265,10 @@ def test_unexecuted_one_set_rest_is_not_normalized_or_described_as_applicable():
     variants = list(_rest_options([item], stored['requirements'], definitions, 1))
     assert len(variants) == 1
     assert variants[0][0]['restBetweenSetsSeconds'] == item['restBetweenSetsSeconds']
-    assert variants[0][0]['restAfterExerciseSeconds'] == 120
+    assert variants[0][0]['restAfterExerciseSeconds'] == 0
     variants = list(_rest_options([item], stored['requirements'], definitions, 2))
     assert len(variants) == 2 and variants[-1][0]['restBetweenSetsSeconds'] == 120
+    assert variants[-1][0]['restAfterExerciseSeconds'] == 0
     assert 'only when at least two working sets are prescribed' in render_execution_rule(rule)
 
 

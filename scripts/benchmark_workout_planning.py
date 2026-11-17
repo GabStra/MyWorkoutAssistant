@@ -1,8 +1,17 @@
-"""Compare retained workout-planning logs without making model requests."""
+"""Compare retained workout-planning logs or workflow receipts without model requests.
+
+Create a receipt after verifying the exact export:
+  python scripts/benchmark_workout_planning.py --workflow-log conversation.log \\
+      --identity-json identity.json --valid-package --output workflow_metrics.json
+
+Compare receipts labelled prescribed and open-ended:
+  python scripts/benchmark_workout_planning.py --workflow-reports prescribed.json open-ended.json
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from collections import Counter
@@ -10,7 +19,8 @@ from datetime import datetime
 from pathlib import Path
 if __package__ in (None, ''):
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from workout_generator_pkg.usage_reporting import usage_events, summarize_usage
+from workout_generator_pkg.usage_reporting import (usage_events, summarize_usage,
+    compare_workflow_metrics, workflow_metrics_from_log)
 
 
 TIMESTAMP = re.compile(r'^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\]')
@@ -133,10 +143,97 @@ def render_comparison(summaries):
     return '\n'.join(['| ' + ' | '.join(headers) + ' |', '| ' + ' | '.join(['---'] * len(headers)) + ' |', *rows])
 
 
+def render_workflow_comparison(comparison):
+    reports = comparison['reports']
+    fields = (
+        ('End-to-end wall seconds', 'totalWallSeconds'),
+        ('API calls (completed + pending)', 'apiCalls'),
+        ('Summed API request seconds (may overlap)', 'apiRequestSecondsSummed'),
+        ('Repair attempts', 'repairAttempts'),
+        ('Valid package', 'validPackage'),
+        ('Prompt tokens', 'promptTokens'), ('Completion tokens', 'completionTokens'),
+        ('Reasoning tokens', 'reasoningTokens'), ('Cache-hit tokens', 'cacheHitTokens'),
+        ('Cache-miss tokens', 'cacheMissTokens'), ('Models', 'models'),
+        ('API calls by stage', 'callsByStage'),
+        ('Provided stage wall seconds', 'stageWallSeconds'),
+        ('API stage wall seconds', 'apiStageWallSeconds'), ('Reused stages', 'reusedStages'),
+    )
+    rows = ['| Metric | Prescribed | Open-ended |', '| --- | --- | --- |']
+    for label, field in fields:
+        values = []
+        for report in reports.values():
+            value = report.get(field) if field in ('totalWallSeconds', 'apiCalls',
+                'apiRequestSecondsSummed', 'repairAttempts', 'validPackage', 'stageWallSeconds',
+                'apiStageWallSeconds', 'reusedStages', 'models', 'callsByStage') else \
+                (report.get('tokenTotals') or {}).get(field)
+            values.append(json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, (dict, list))
+                          else '?' if value is None else str(value))
+        rows.append(f'| {label} | {values[0]} | {values[1]} |')
+    identity_status = 'YES' if comparison['identityMatched'] else 'NO'
+    valid_status = 'YES' if comparison['controlledComparison'] else 'NO'
+    rows.extend(['', f"Identity fields match: **{identity_status}**.",
+                 f"Valid controlled effectiveness comparison: **{valid_status}**.", comparison['interpretation']])
+    if comparison['identityMismatches']:
+        rows.append('Mismatched or missing identity fields: ' + ', '.join(comparison['identityMismatches']) + '.')
+    rows.append('Wall-time differences are measurements for these runs; this report does not attribute causation or infer model speedups from stub timings.')
+    return '\n'.join(rows)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('logs', nargs='+', help='one or more retained conversation .log files')
+    parser.add_argument('logs', nargs='*', help='retained conversation .log files')
+    parser.add_argument('--workflow-reports', nargs=2, metavar=('PRESCRIBED_JSON', 'OPEN_ENDED_JSON'),
+                        help='compare two measured workflow JSON reports with identity checks')
+    parser.add_argument('--workflow-log', help='write the measured workflow receipt from one conversation log')
+    parser.add_argument('--identity-json', help='JSON object with source/library/history/model/settings identities')
+    package = parser.add_mutually_exclusive_group()
+    package.add_argument('--valid-package', action='store_true', dest='valid_package',
+                         help='caller has verified the exact exported package')
+    package.add_argument('--invalid-package', action='store_false', dest='valid_package',
+                         help='caller verified that no valid package was produced')
+    parser.set_defaults(valid_package=None)
+    parser.add_argument('--repair-attempts', type=int, default=0)
+    parser.add_argument('--reused-stage', action='append', default=[])
+    parser.add_argument('--stage-times-json', help='optional JSON object of measured caller-owned stage wall seconds')
+    parser.add_argument('--output', help='write the workflow receipt JSON to this path instead of stdout')
     args = parser.parse_args(argv)
+    if args.workflow_reports:
+        if args.workflow_log or args.logs:
+            parser.error('--workflow-reports cannot be combined with logs or --workflow-log')
+        try:
+            reports = [json.loads(Path(path).read_text(encoding='utf-8')) for path in args.workflow_reports]
+        except (OSError, ValueError) as error:
+            parser.error(f'cannot read workflow report: {error}')
+        if not all(isinstance(report, dict) for report in reports):
+            parser.error('workflow reports must be JSON objects')
+        comparison = compare_workflow_metrics(*reports)
+        print(render_workflow_comparison(comparison))
+        return 0 if comparison['controlledComparison'] else 2
+    if args.workflow_log:
+        if args.logs:
+            parser.error('--workflow-log cannot be combined with positional logs')
+        if args.valid_package is None:
+            parser.error('state --valid-package or --invalid-package; package validity is caller-verified')
+        try:
+            identity = json.loads(Path(args.identity_json).read_text(encoding='utf-8')) if args.identity_json else None
+            stage_times = json.loads(Path(args.stage_times_json).read_text(encoding='utf-8')) if args.stage_times_json else None
+            if identity is not None and not isinstance(identity, dict):
+                raise ValueError('identity JSON must be an object')
+            if stage_times is not None and not isinstance(stage_times, dict):
+                raise ValueError('stage times JSON must be an object')
+            report = workflow_metrics_from_log(args.workflow_log, identity=identity,
+                valid_package=args.valid_package, repair_attempts=args.repair_attempts,
+                stage_times=stage_times, reused_stages=args.reused_stage)
+        except (OSError, ValueError) as error:
+            parser.error(f'cannot build workflow report: {error}')
+        output = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + '\n'
+        if args.output:
+            Path(args.output).write_text(output, encoding='utf-8')
+        else:
+            print(output, end='')
+        return 0
+    if not args.logs:
+        parser.error('provide conversation logs or --workflow-reports')
     summaries = [analyze_log(path) for path in args.logs]
     print(render_comparison(summaries))
     print('\nWall time includes user idle time. Planner/tool durations can be nested; they are shown separately, never added to wall time. API request seconds may overlap when calls run concurrently.')

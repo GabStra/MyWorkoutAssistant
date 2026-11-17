@@ -27,7 +27,8 @@ JSON_SCHEMA = {
     ],
     "properties": {                                                                                                                                                                                                                              
         "name": {"type": "string"},
-        "workouts": {"type": "array", "items": {"$ref": "#/$defs/Workout"}},                                                                                                                                                                    
+        "workouts": {"type": "array", "items": {"$ref": "#/$defs/Workout"}},
+        "suggestNextPrescription": {"type": "boolean", "default": True},
         "equipments": {"type": "array", "items": {"$ref": "#/$defs/Equipment"}},                                                                                                                                                                
         "accessoryEquipments": {"type": "array", "items": {"$ref": "#/$defs/EquipmentAccessory"}},
     },
@@ -118,6 +119,7 @@ JSON_SCHEMA = {
                 "reps": {"type": "integer"},                                                                                                                                                                                                     
                 "weight": {"type": "number"},                                                                                                                                                                                                    
                 "subCategory": {"$ref": "#/$defs/SetSubCategory"},
+                "shouldReapplyHistoryToSet": {"type": "boolean"},
                 "note": {"type": ["string", "null"]},
             }
         },                                                                                                                                                                                                                                       
@@ -131,6 +133,7 @@ JSON_SCHEMA = {
                 "reps": {"type": "integer"},                                                                                                                                                                                                     
                 "additionalWeight": {"type": "number"},                                                                                                                                                                                          
                 "subCategory": {"$ref": "#/$defs/SetSubCategory"},
+                "shouldReapplyHistoryToSet": {"type": "boolean"},
                 "note": {"type": ["string", "null"]},
             }
         },                                                                                                                                                                                                                                       
@@ -144,6 +147,7 @@ JSON_SCHEMA = {
                 "timeInMillis": {"type": "integer"},
                 "autoStart": {"type": "boolean"},
                 "autoStop": {"type": "boolean"},
+                "shouldReapplyHistoryToSet": {"type": "boolean"},
                 "targetWeight": {"type": ["number", "null"], "minimum": 0},
                 "targetDistanceMeters": {"type": ["number", "null"], "minimum": 0},
                 "targetCalories": {"type": ["number", "null"], "minimum": 0},
@@ -159,6 +163,7 @@ JSON_SCHEMA = {
                 "timeInMillis": {"type": "integer"},
                 "autoStart": {"type": "boolean"},
                 "autoStop": {"type": "boolean"},
+                "shouldReapplyHistoryToSet": {"type": "boolean"},
                 "targetWeight": {"type": ["number", "null"], "minimum": 0},
                 "targetDistanceMeters": {"type": ["number", "null"], "minimum": 0},
                 "targetCalories": {"type": ["number", "null"], "minimum": 0},
@@ -177,6 +182,7 @@ JSON_SCHEMA = {
                 "targetDistanceMeters": {"type": ["number", "null"], "minimum": 0},
                 "timeInMillis": {"type": ["integer", "null"], "minimum": 0},
                 "targetWeight": {"type": ["number", "null"], "minimum": 0},
+                "shouldReapplyHistoryToSet": {"type": "boolean"},
                 "note": {"type": ["string", "null"]}
             }
         },
@@ -405,7 +411,8 @@ JSON_SCHEMA = {
                 "id": {"$ref": "#/$defs/UUID"},
                 "name": {"type": "string"},
                 "workoutIds": {"type": "array", "items": {"$ref": "#/$defs/UUID"}},
-                "order": {"type": "integer"}
+                "order": {"type": "integer"},
+                "suggestNextPrescription": {"type": "boolean", "default": True}
             }
         },
         "WeeklyProgressOverride": {
@@ -659,7 +666,9 @@ EXAMPLE_JSON = {
 }                                                                                                                                                                                                                                                   
 PARALLEL_LOG_REQUEST_TRUNCATE = 8000
 DEEPSEEK_CHAT_DEFAULT_TOKENS = 4000
-DEEPSEEK_CHAT_MAX_TOKENS = 8000
+# The chat endpoint counts reasoning tokens against max_tokens even with thinking
+# disabled, so 8000 truncated long plan turns; 32000 leaves room for the answer.
+DEEPSEEK_CHAT_MAX_TOKENS = 32000
 DEEPSEEK_REASONER_DEFAULT_TOKENS = 32768
 DEEPSEEK_REASONER_MAX_TOKENS = 65536
 
@@ -753,7 +762,7 @@ JSON_SYSTEM_PROMPT = (
     f"- exerciseCategory must use ExerciseCategory enum values only: {EXERCISE_CATEGORY_ENUM_VALUES}.\n\n"
     "Text fields:\n"
     "- workout.description: max 50 characters INCLUDING generated schedule text. Use a short training-focus label, not an exercise list.\n"
-    "- exercise.notes: max 500 characters for model-written cues; Python adds standard guidance separately. Preserve execution, progression and stop instructions; do not repeat structured values.\n\n"
+    "- exercise.notes: concise athlete-facing execution cues only (max 500 characters); Python adds standard guidance separately. Keep genuine setup, tempo, per-side and stop instructions. Do not repeat structured quantities such as sets, reps, loads or rest, and do not include provenance, audit or training-history narration.\n\n"
     "Optional advanced fields:\n"
     "- HR target fields and load jump tuning fields should be set only when explicitly requested; otherwise null.\n"
     "JSON Schema:\n"
@@ -811,6 +820,33 @@ JSON_SCHEMA['$defs']['Exercise']['properties']['trainingMuscles'] = {
         key: {'type': 'array', 'uniqueItems': True, 'items': {'type': 'string'}} for key in ('primary', 'secondary')
     }, 'required': ['primary', 'secondary'], 'additionalProperties': False,
 }
+
+# Approved recurring-prescription fields. They are optional so every legacy
+# package keeps its existing shape; absent values mean non-recurring / NONE.
+JSON_SCHEMA['$defs']['LoadHistoryPolicy'] = {
+    "type": "string",
+    "enum": ["NONE", "LAST_WORKING_LOAD", "PRESCRIBED_WEIGHT"],
+}
+JSON_SCHEMA['$defs']['Exercise']['properties'].update({
+    "recurringExerciseId": {
+        "anyOf": [{"$ref": "#/$defs/UUID"}, {"type": "null"}]
+    },
+    "loadHistoryPolicy": {"$ref": "#/$defs/LoadHistoryPolicy"},
+})
+JSON_SCHEMA['$defs']['Workout']['properties'].update({
+    "recurringSessionId": {
+        "anyOf": [{"$ref": "#/$defs/UUID"}, {"type": "null"}]
+    },
+    "prescriptionOrdinal": {
+        "anyOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "null"},
+        ]
+    },
+    "prescriptionLabel": {
+        "anyOf": [{"type": "string"}, {"type": "null"}]
+    },
+})
 
 MUSCLE_GROUP_FIXES = {
     "BACK_QUADRICEPS": "FRONT_QUADRICEPS",

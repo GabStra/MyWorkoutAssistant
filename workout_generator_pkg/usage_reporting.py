@@ -1,5 +1,6 @@
 """Provider-reported token totals and reproducible model-token cost estimates."""
 import json
+import math
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ ALIASES = {'deepseek-v4-flash': 'deepseek-flash', 'deepseek-v4-flash-vision-exp'
 HOLIDAYS_2026 = [('01-01','01-03'), ('02-15','02-23'), ('04-04','04-06'), ('05-01','05-05'),
                  ('06-19','06-21'), ('09-25','09-27'), ('10-01','10-07')]
 METRIC = re.compile(r'\[api_metric\]\s+(\{.*\})\s*$')
+LOG_TIMESTAMP = re.compile(r'^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\]')
 
 
 def usage_events(lines):
@@ -30,7 +32,8 @@ def usage_events(lines):
             event = json.loads(match.group(1))
         except (ValueError, TypeError):
             continue
-        if isinstance(event, dict) and event.get('event') in ('api_request', 'api_request_started', 'submission_rejected'):
+        if isinstance(event, dict) and event.get('event') in (
+                'api_request', 'api_request_started', 'submission_rejected', 'repair_attempt'):
             yield event
 
 
@@ -138,6 +141,162 @@ def summarize_usage(events):
             'basis':'Published model-token rate card, not an invoice or balance deduction.',
             'rateCardVerifiedAt':PRICE_VERIFIED,'source':PRICE_SOURCE,'holidaySource':HOLIDAY_SOURCE},
         'requestsDetail':rows, 'stageRejections': summarize_rejections(events)}
+
+
+def api_stage_wall_seconds(events):
+    """Union request intervals per stage so concurrent calls count once in wall time."""
+    intervals = {}
+    for event in events:
+        if event.get('event') != 'api_request':
+            continue
+        start, end = event.get('requestStartedAtUTC'), event.get('requestFinishedAtUTC')
+        if not start or not end:
+            continue
+        try:
+            first, last = (datetime.fromisoformat(value.replace('Z', '+00:00'))
+                           for value in (start, end))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if first.tzinfo is None or last.tzinfo is None or last < first:
+            continue
+        intervals.setdefault(event.get('stage') or 'unscoped', []).append((first, last))
+
+    result = {}
+    for stage, spans in intervals.items():
+        spans.sort()
+        start, end = spans[0]
+        seconds = 0.0
+        for next_start, next_end in spans[1:]:
+            if next_start > end:
+                seconds += (end - start).total_seconds()
+                start, end = next_start, next_end
+            elif next_end > end:
+                end = next_end
+        result[stage] = round(seconds + (end - start).total_seconds(), 3)
+    return dict(sorted(result.items()))
+
+
+_WORKFLOW_IDENTITY_FIELDS = ('source', 'library', 'history', 'model', 'settings')
+
+
+def build_workflow_metrics(api_events, *, total_wall_seconds, stage_times=None,
+                           repair_attempts=0, valid_package=False, reused_stages=(), identity=None):
+    """Build a measured workflow receipt; unknown token totals remain null."""
+    events = list(api_events)
+    usage = summarize_usage(events)
+    rows = usage['requestsDetail']
+    pending = usage['pendingRequests']
+
+    def exact_total(field):
+        if pending or any(not _count(row.get(field)) for row in rows):
+            return None
+        return sum(row[field] for row in rows)
+
+    if type(repair_attempts) is not int or repair_attempts < 0:
+        raise ValueError('repair_attempts must be a non-negative integer.')
+    event_repairs = sum(event.get('event') == 'repair_attempt' for event in events)
+    repairs = repair_attempts or event_repairs
+    repair_source = 'argument' if repair_attempts else ('events' if event_repairs else 'argument')
+    if not isinstance(valid_package, bool):
+        raise TypeError('valid_package must be a bool.')
+    if not isinstance(total_wall_seconds, (int, float)) or isinstance(total_wall_seconds, bool) \
+            or not math.isfinite(total_wall_seconds) or total_wall_seconds < 0:
+        raise ValueError('total_wall_seconds must be a finite non-negative number.')
+    if identity is not None and not isinstance(identity, dict):
+        raise TypeError('identity must be a mapping of controlled-run fingerprints.')
+    stages = dict(sorted((stage_times or {}).items()))
+    api_stages = api_stage_wall_seconds(events)
+    outcomes = usage['outcomes']
+    token_fields = ('promptTokens', 'completionTokens', 'reasoningTokens', 'cacheHitTokens', 'cacheMissTokens')
+    token_totals = {field: exact_total(field) for field in token_fields}
+    return {
+        'schemaVersion': 1,
+        'totalWallSeconds': round(float(total_wall_seconds), 3),
+        'stageWallSeconds': stages,
+        'apiStageWallSeconds': api_stages,
+        'apiCalls': usage['requests'],
+        'completedApiCalls': usage['completedRequests'],
+        'pendingApiCalls': pending,
+        'apiSuccesses': outcomes.get('success', 0),
+        'apiFailures': sum(outcomes.get(outcome, 0) for outcome in ('failure', 'truncated', 'cancelled')),
+        'apiRequestSecondsSummed': (round(sum(row['elapsedSeconds'] for row in rows), 3)
+            if rows and not pending and all(isinstance(row.get('elapsedSeconds'), (int, float))
+                and not isinstance(row.get('elapsedSeconds'), bool) for row in rows) else None),
+        'tokenTotals': token_totals,
+        'tokenTotalsComplete': all(value is not None for value in token_totals.values()),
+        'promptAndCompletionTokensComplete': (token_totals['promptTokens'] is not None
+            and token_totals['completionTokens'] is not None),
+        'cacheSplitComplete': (token_totals['cacheHitTokens'] is not None
+            and token_totals['cacheMissTokens'] is not None),
+        'callsByStage': usage['stages'],
+        'models': usage['models'],
+        'repairAttempts': repairs,
+        'repairAttemptsSource': repair_source,
+        'validPackage': valid_package,
+        'reusedStages': list(dict.fromkeys(reused_stages)),
+        'identity': dict(identity) if identity is not None else None,
+        'measurementNote': 'API request seconds are summed and may overlap; API stage wall seconds union concurrent requests. Stage wall seconds are caller-provided. Total wall seconds are end-to-end elapsed time.',
+    }
+
+
+def compare_workflow_metrics(prescribed, open_ended):
+    """Check required run identities before labeling two receipts controlled."""
+    reports = {'prescribed': prescribed, 'open-ended': open_ended}
+    identities = {label: report.get('identity') if isinstance(report, dict) else None
+                  for label, report in reports.items()}
+    mismatches = []
+    for field in _WORKFLOW_IDENTITY_FIELDS:
+        values = list(identities.values())
+        missing = any(not isinstance(value, dict) or field not in value
+                      or (field != 'history' and value[field] in (None, '')) for value in values)
+        if missing or (not missing and identities['prescribed'][field] != identities['open-ended'][field]):
+            mismatches.append(field)
+    identity_matched = not mismatches
+    valid_packages = {label: report.get('validPackage') is True for label, report in reports.items()}
+    effective = identity_matched and all(valid_packages.values())
+    return {'identityMatched': identity_matched, 'controlledComparison': effective,
+            'validPackages': valid_packages, 'identityFields': list(_WORKFLOW_IDENTITY_FIELDS),
+            'identityMismatches': mismatches, 'reports': reports,
+            'interpretation': ('Both reports match on every identity field and have valid packages.'
+                if effective else 'Do not claim an effectiveness comparison: identities must match and both packages must be valid.')}
+
+
+def workflow_metrics_from_log(log_path, *, identity=None, valid_package, repair_attempts=0,
+                              stage_times=None, reused_stages=()):
+    """Build a receipt from a retained conversation log; the caller owns validity and identity."""
+    path = Path(getattr(log_path, 'log_filepath', log_path))
+    lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+    timestamps, saved_at = [], []
+    for index, line in enumerate(lines):
+        match = LOG_TIMESTAMP.match(line)
+        if not match:
+            continue
+        try:
+            moment = datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            continue
+        timestamps.append(moment)
+        if ('Workout generated successfully and saved to:' in line or 'Saved to:' in line):
+            saved_at.append((index, moment))
+    if not timestamps:
+        raise ValueError(f'No timestamped conversation entries in {path}.')
+    if valid_package:
+        if not saved_at:
+            raise ValueError('The log has no saved-export marker for this caller-verified package.')
+        finish_index, finished = saved_at[-1]
+        boundary = 'saved_export'
+    else:
+        finish_index = len(lines) - 1
+        finished = timestamps[-1]
+        boundary = 'conversation_end'
+    elapsed = max(0.0, (finished - timestamps[0]).total_seconds())
+    metrics = build_workflow_metrics(usage_events(lines[:finish_index + 1]), total_wall_seconds=elapsed,
+        stage_times=stage_times, repair_attempts=repair_attempts, valid_package=valid_package,
+        reused_stages=reused_stages, identity=identity)
+    metrics.update(sourceLog=str(path), completionBoundary=boundary,
+        wallIncludesUserIdleTime=True,
+        wallTimeNote='Measured from the first retained conversation log entry through the saved-export marker (or conversation end for an invalid package); includes user idle time.')
+    return metrics
 
 
 def summarize_rejections(events):

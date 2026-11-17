@@ -554,6 +554,11 @@ def test_capability_scoped_preparation_keeps_unweighted_replacement_without_nati
     _normalize_replacement_exercise(replacement, source, 'EXERCISE_0', task)
     assert replacement['generateWarmUpSets'] is False
     assert replacement['numWorkSets'] == draft['workouts'][0]['exercises'][0]['numWorkSets']
+    task['recipeDefinitions']['LIBRARY_3']['reviewedExecution'] = {
+        'limbMode': 'bilateral', 'setMode': 'paired_sides'}
+    replacement['intraSetRestInSeconds'] = 0
+    _normalize_replacement_exercise(replacement, source, 'EXERCISE_0', task)
+    assert replacement['intraSetRestInSeconds'] == 0
 
 
 def test_feasible_solver_menu_does_not_remove_semantic_choice_without_a_blocker():

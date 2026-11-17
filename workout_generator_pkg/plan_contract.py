@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .exercise_contracts import execution_set_mode, execution_semantics_problem
 from .muscle_roles import project_training_muscles
+from .prescribed_recurrence import recurring_prescription_issues
 from .domain_ops import (
     get_selectable_weights_for_exercise,
     pair_implement_total_for,
@@ -57,6 +58,14 @@ def hydrate_plan_index_from_exercise_library(
         for field in LIBRARY_DEFINITION_OWNED_FIELDS:
             if field in definition:
                 exercise[field] = copy.deepcopy(definition[field])
+            elif field in {"equipmentId", "bodyWeightPercentage"}:
+                # These nullable fields are consumed by deterministic
+                # materialization even when a library definition omits them.
+                exercise[field] = None
+            elif field in {"requiredAccessoryEquipmentIds", "secondaryMuscleGroups"}:
+                # An omitted optional collection means no items, not a missing
+                # compiler input.
+                exercise[field] = []
             else:
                 exercise.pop(field, None)
     for day in plan_index.get('workouts', []):
@@ -568,21 +577,21 @@ def _collect_contract_issues_plan_index(
                 f"Exercise '{ex_name}' single_sequence execution must use null intraSetRestInSeconds; a value repeats the entire set on both sides.",
                 exercise_id=ex_id, field='intraSetRestInSeconds'))
         if intra_set_rest_in_seconds is not None:
-            if type(intra_set_rest_in_seconds) is not int or intra_set_rest_in_seconds <= 0:
+            if type(intra_set_rest_in_seconds) is not int or intra_set_rest_in_seconds < 0:
                 issues.append(
                     ContractIssue(
                         "invalid_intra_set_rest",
-                        f"Exercise '{ex_name}' must use a positive integer intraSetRestInSeconds when provided.",
+                        f"Exercise '{ex_name}' must use a non-negative integer intraSetRestInSeconds when provided.",
                         field="intraSetRestInSeconds",
                     )
                 )
         if _exercise_requires_unilateral_rest(ex, definition) and not (
-            type(intra_set_rest_in_seconds) is int and intra_set_rest_in_seconds > 0
+            type(intra_set_rest_in_seconds) is int and intra_set_rest_in_seconds >= 0
         ):
             issues.append(
                 ContractIssue(
                     "missing_unilateral_intra_set_rest",
-                    f"Exercise '{ex_name}' is unilateral single-side work and must include a positive intraSetRestInSeconds in the PlanIndex.",
+                    f"Exercise '{ex_name}' is paired-side work and must include a non-negative intraSetRestInSeconds in the PlanIndex.",
                     field="intraSetRestInSeconds",
                 )
             )
@@ -867,6 +876,13 @@ def _collect_contract_issues_plan_index(
                 )
             )
 
+    for issue in recurring_prescription_issues(plan_index):
+        issues.append(ContractIssue(
+            issue.code,
+            issue.message,
+            exercise_id=issue.exercise_id,
+        ))
+
     return issues
 
 
@@ -1147,12 +1163,12 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
             )
         )
     if _exercise_requires_unilateral_rest(plan_ex) and not (
-        type(actual_intra_set_rest) is int and actual_intra_set_rest > 0
+        type(actual_intra_set_rest) is int and actual_intra_set_rest >= 0
     ):
         issues.append(
             ContractIssue(
                 "missing_unilateral_intra_set_rest",
-                f"Exercise '{ex_id}' is unilateral single-side work and must emit a positive intraSetRestInSeconds (name: '{actual_name}').",
+                f"Exercise '{ex_id}' is paired-side work and must emit a non-negative intraSetRestInSeconds (name: '{actual_name}').",
             )
         )
 
@@ -1564,7 +1580,7 @@ def validate_workout_structures_contract(
                     expected_components.append(("Exercise", expected[index]))
                     outer_rest = rest_to_next[index]
                     index += 1
-                if outer_rest > 0:
+                if outer_rest > 0 and index < len(expected):
                     expected_components.append(("Rest", outer_rest))
             actual_components = []
             for component in structure.get("workoutComponents", []):
@@ -1608,7 +1624,9 @@ def validate_assembled_workout_contract(plan_index, workout_store):
         if warmup:
             seconds = warmup['sets'][0]['timeInMillis'] // 1000
             definition = next(day['generalWarmupDefinition'] for day in plan_index['workouts'] if day['id'] == workout['id'])
-            if (not emitted_components or not general_warmup_matches(emitted_components[0], warmup['id'], seconds, definition)
+            if (not emitted_components or not general_warmup_matches(
+                    emitted_components[0], warmup['id'], seconds, definition,
+                    warmup['sets'][0]['autoStart'])
                     or len(emitted_components) > 1 and emitted_components[1].get('type') == 'Rest'):
                 raise ContractValidationError('General warm-up must match the approved first timer with no following rest.')
             emitted_components = emitted_components[1:]
@@ -1643,6 +1661,8 @@ def _canonicalize_ids_for_parity(value: Any, key: Optional[str] = None) -> Any:
         "nextVersionId",
         "polarDeviceId",
         "workoutPlanId",
+        "recurringSessionId",
+        "recurringExerciseId",
     }
     id_list_keys = {
         "requiredAccessoryEquipmentIds",

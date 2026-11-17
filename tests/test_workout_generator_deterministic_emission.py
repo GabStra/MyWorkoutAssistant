@@ -221,7 +221,11 @@ def test_code_owned_general_warmup_preserves_review_export_and_audit(seconds):
         assert {day['workoutComponents'][0]['exerciseDefinitionId'] for day in exported['workouts']} == {warmup_definition['id']}
         report_placeholder = actual['workouts'][0]['workoutComponents'][0]
         assert report_placeholder['name'] == warmup_definition['name']
+        assert report_placeholder['nameOverride'] == 'Warm-up'
         assert report_placeholder['equipmentId'] == warmup_definition['equipmentId']
+        report_export = exported['workouts'][0]['workoutComponents'][0]
+        assert report_export['name'] == warmup_definition['name']
+        assert report_export['nameOverride'] == 'Warm-up'
     mapping = manager.placeholder_to_uuid
     report = audit_workout_package(exported, {},
         general_warmup_by_workout=general_warmup_audit_options(plan, mapping))

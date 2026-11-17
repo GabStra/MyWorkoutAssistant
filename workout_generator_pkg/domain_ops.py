@@ -98,7 +98,9 @@ def build_workout_structure(workout_entry):
             components.append({"componentType": "Exercise", "exerciseId": exercise_ids[index], "enabled": True})
             rest = rests[index]
             index += 1
-        if rest:
+        # A terminal value cannot transition to a following block; keep only
+        # genuine between-block rests and let the session end after the work.
+        if rest and index < len(exercise_ids):
             components.append({"componentType": "Rest", "enabled": True, "timeInSeconds": rest})
     metadata = {
         "id": workout_entry["id"], "name": workout_entry["name"],
@@ -108,10 +110,13 @@ def build_workout_structure(workout_entry):
         "timesCompletedInAWeek": workout_entry.get("timesCompletedInAWeek"), "type": workout_entry.get("type", 0),
         "workoutPlanId": workout_entry.get("workoutPlanId"),
     }
+    for field in ("recurringSessionId", "prescriptionOrdinal", "prescriptionLabel"):
+        if workout_entry.get(field) is not None:
+            metadata[field] = workout_entry[field]
     return {"workoutMetadata": metadata, "workoutComponents": components}
 
 
-def general_warmup_exercises(plan):
+def general_warmup_exercises(plan, should_reapply_history_to_set=None):
     """Allocate preparation occurrences outside the selected exercise-library work."""
     last_id = max((int(item['id'].removeprefix('EXERCISE_'))
         for item in plan.get('exercises', [])
@@ -123,29 +128,41 @@ def general_warmup_exercises(plan):
         seconds = day['generalWarmupSeconds']
         if type(seconds) is not int or seconds < 0:
             raise ValueError('General warm-up duration must be nonnegative integer seconds.')
+        # Deterministic preparation timers wait for the athlete by default.
+        # An explicit source setting on the day wins when supplied.
+        auto_start = day.get('generalWarmupAutoStart', False)
+        if type(auto_start) is not bool:
+            raise ValueError('General warm-up auto-start policy must be boolean when supplied.')
         result[day['id']] = (general_warmup_exercise(f'EXERCISE_{last_id + index + 1}', seconds,
-                day.get('generalWarmupDefinition'))
+                day.get('generalWarmupDefinition'), should_reapply_history_to_set, auto_start=auto_start)
             if seconds else None)
     return result
 
 
-def general_warmup_exercise(exercise_id, seconds, definition):
+def general_warmup_exercise(exercise_id, seconds, definition, should_reapply_history_to_set=None,
+                            auto_start=False):
     if not isinstance(definition, dict) or not definition.get('id') or definition.get('exerciseType') != 'COUNTDOWN':
         raise ValueError('An explicit general warm-up requires a selected COUNTDOWN library definition.')
     number = int(exercise_id.removeprefix('EXERCISE_'))
+    if should_reapply_history_to_set is not None and type(should_reapply_history_to_set) is not bool:
+        raise ValueError('History reapplication policy must be a boolean or None.')
+    if type(auto_start) is not bool:
+        raise ValueError('General warm-up auto-start policy must be a boolean.')
+    warmup_set = {'id': f'SET_{number * 50}', 'type': 'TimedDurationSet',
+        'timeInMillis': seconds * 1000, 'autoStart': auto_start, 'autoStop': True}
+    if should_reapply_history_to_set is not None:
+        warmup_set['shouldReapplyHistoryToSet'] = should_reapply_history_to_set
     return {**{key: copy.deepcopy(definition[key]) for key in DEFINITION_OWNED_FIELDS if key in definition},
-        'id': exercise_id, 'type': 'Exercise', 'enabled': True,
+        'id': exercise_id, 'type': 'Exercise', 'enabled': True, 'nameOverride': 'Warm-up',
         'notes': 'General warm-up preparation, excluded from working-set volume. Begin the first exercise without a prescribed rest. Station preparation time is unverified.',
         'generateWarmUpSets': False, 'progressionMode': 'OFF', 'keepScreenOn': False,
         'showCountDownTimer': True, 'requiresLoadCalibration': False,
-        'intraSetRestInSeconds': None,
-        'sets': [{'id': f'SET_{number * 50}', 'type': 'TimedDurationSet',
-            'timeInMillis': seconds * 1000, 'autoStart': True, 'autoStop': True}]}
+        'intraSetRestInSeconds': None, 'sets': [warmup_set]}
 
 
-def general_warmup_matches(component, exercise_id, seconds, definition):
+def general_warmup_matches(component, exercise_id, seconds, definition, auto_start=False):
     """Validate code-owned execution fields before or after UUID conversion."""
-    expected = general_warmup_exercise('EXERCISE_0', seconds, definition)
+    expected = general_warmup_exercise('EXERCISE_0', seconds, definition, auto_start=auto_start)
     return (isinstance(component, dict) and component.get('id') == exercise_id
         and component.get('exerciseDefinitionId', definition['id']) == definition['id']
         and all(component.get(key) == value for key, value in expected.items() if key not in ('id', 'sets'))
@@ -165,7 +182,8 @@ def general_warmup_audit_options(plan, id_map=None):
             definition['requiredAccessoryEquipmentIds'] = [mapping.get(key, key)
                 for key in definition.get('requiredAccessoryEquipmentIds', [])]
         result[mapping.get(day_id, day_id)] = {'exerciseId': mapping.get(exercise['id'], exercise['id'])
-            if exercise else None, 'seconds': days[day_id]['generalWarmupSeconds'], 'definition': definition}
+            if exercise else None, 'seconds': days[day_id]['generalWarmupSeconds'], 'definition': definition,
+            'autoStart': days[day_id].get('generalWarmupAutoStart', False)}
     return result
 
 
@@ -1978,7 +1996,8 @@ def strip_rep_range_fields_for_timed_exercises_in_workout_store(workout_store: D
 strip_rep_range_fields_for_timed_exercises = sanitize_rep_range_fields_on_exercise_dict
 
 
-def assemble_placeholder_workout_store(equipment_items, accessory_items, exercise_definitions, workout_structures, plan_index, user_data=None):
+def assemble_placeholder_workout_store(equipment_items, accessory_items, exercise_definitions, workout_structures, plan_index, user_data=None,
+        should_reapply_history_to_set=None):
     """
     Assemble emitted objects into a placeholder-based workout plan package candidate.
     This assembles the normalized objects (EquipmentItem, AccessoryEquipment, ExerciseDefinition, WorkoutStructure)
@@ -2002,7 +2021,7 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
     # Build workouts array: use plan_index workout order so order field matches user-provided order (0, 1, 2, ...)
     workouts = []
     plan_workouts = plan_index.get("workouts", [])
-    general_warmups = general_warmup_exercises(plan_index)
+    general_warmups = general_warmup_exercises(plan_index, should_reapply_history_to_set)
 
     # Deterministic CrossFit-mode carry-through: the planner encodes time caps, EMOM
     # cadence and cardio quantities on the plan index (supersetGroups / timed
@@ -2210,6 +2229,9 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
             "type": metadata.get("type", 0),
             "workoutPlanId": metadata.get("workoutPlanId"),
         }
+        for field in ("recurringSessionId", "prescriptionOrdinal", "prescriptionLabel"):
+            if metadata.get(field) is not None:
+                workout[field] = metadata[field]
         workouts.append(workout)
     
     plan_name = plan_index.get("planName") or "Generated Workout Plan"
@@ -3398,8 +3420,11 @@ def WorkoutStructure(workout_structure_dict):
     return workout_structure_dict
 
 
-def _materialize_exercise_definition(exercise_entry):
+def _materialize_exercise_definition(exercise_entry, *, should_reapply_history_to_set=None):
     """Build an exercise object when its approved PlanIndex has enough data."""
+    if (should_reapply_history_to_set is not None
+            and not isinstance(should_reapply_history_to_set, bool)):
+        raise ValueError("should_reapply_history_to_set must be a boolean when supplied.")
     exercise_entry = project_training_muscles(copy.deepcopy(exercise_entry))
     execution_problem = execution_semantics_problem(exercise_entry)
     if execution_problem:
@@ -3408,8 +3433,8 @@ def _materialize_exercise_definition(exercise_entry):
     side_rest = exercise_entry.get('intraSetRestInSeconds')
     if set_mode == 'single_sequence' and side_rest is not None:
         raise ValueError('single_sequence execution requires null intraSetRestInSeconds.')
-    if set_mode == 'paired_sides' and (type(side_rest) is not int or side_rest <= 0):
-        raise ValueError('paired_sides execution requires positive intraSetRestInSeconds.')
+    if set_mode == 'paired_sides' and (type(side_rest) is not int or side_rest < 0):
+        raise ValueError('paired_sides execution requires non-negative intraSetRestInSeconds.')
     exercise_id = exercise_entry.get("id")
     exercise_type = exercise_entry.get("exerciseType")
     if exercise_type not in {"WEIGHT", "BODY_WEIGHT", "COUNTDOWN", "COUNTUP", "RUNNING"}:
@@ -3444,6 +3469,8 @@ def _materialize_exercise_definition(exercise_entry):
     sets = []
 
     def append_work_set(work_set):
+        if should_reapply_history_to_set is not None:
+            work_set["shouldReapplyHistoryToSet"] = should_reapply_history_to_set
         sets.append({"id": f"SET_{set_number + len(sets)}", **work_set})
 
     def append_rest_set():
@@ -3591,4 +3618,10 @@ def _materialize_exercise_definition(exercise_entry):
             item["minReps"] = exercise_entry["minReps"]
         if "maxReps" in exercise_entry:
             item["maxReps"] = exercise_entry["maxReps"]
+    recurring_id = exercise_entry.get("recurringExerciseId")
+    if recurring_id is not None:
+        item["recurringExerciseId"] = recurring_id
+        item["loadHistoryPolicy"] = exercise_entry.get("loadHistoryPolicy") or "NONE"
+    elif exercise_entry.get("loadHistoryPolicy") is not None:
+        item["loadHistoryPolicy"] = exercise_entry["loadHistoryPolicy"]
     return item

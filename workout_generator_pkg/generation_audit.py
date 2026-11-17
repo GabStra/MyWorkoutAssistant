@@ -2305,7 +2305,8 @@ def audit_workout_package(package, targets, *, coverage_by_exercise=None,
         warmup = general_warmups.get(workout.get('id'))
         if warmup and warmup['seconds']:
             components = workout.get('workoutComponents', [])
-            if (not components or not general_warmup_matches(components[0], warmup['exerciseId'], warmup['seconds'], warmup['definition'])
+            if (not components or not general_warmup_matches(components[0], warmup['exerciseId'], warmup['seconds'],
+                    warmup['definition'], warmup.get('autoStart', False))
                     or len(components) > 1 and components[1].get('type') == 'Rest'):
                 add_audit_issue(report, 'general_warmup_mismatch',
                     f"{workout['name']}: the prescribed general warm-up must be the first timer with no following rest.",

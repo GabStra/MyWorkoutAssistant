@@ -161,7 +161,7 @@ EXERCISE_EXAMPLE = {
                     "id": "SET_WARMUP",
                     "type": "TimedDurationSet",
                     "timeInMillis": 300000,
-                    "autoStart": True,
+                    "autoStart": False,
                     "autoStop": True,
                 }
             ],
