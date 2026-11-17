@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.WorkoutAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutHistoryAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutPlanPackageAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutPlanAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutRecordAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutStoreAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
@@ -50,6 +51,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import java.io.ByteArrayInputStream
@@ -104,6 +106,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
 fun fromJSONToWorkoutStore(json: String): WorkoutStore {
     val gson = GsonBuilder()
         .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
+        .registerTypeAdapter(WorkoutPlan::class.java, WorkoutPlanAdapter())
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
@@ -248,6 +251,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
 }
 
 enum class BackupFileType {
+    FULL_BACKUP,
     APP_BACKUP,
     INCREMENTAL_APP_BACKUP,
     EXERCISE_LIBRARY_PACKAGE,
@@ -275,6 +279,9 @@ fun detectBackupFileType(json: String): BackupFileType {
         val jsonObject = jsonElement.asJsonObject
         
         val format = jsonObject.get("format")?.takeIf { it.isJsonPrimitive }?.asString
+        if (format == FULL_BACKUP_FORMAT) {
+            return BackupFileType.FULL_BACKUP
+        }
         if (format == APP_BACKUP_ARCHIVE_FORMAT) {
             return BackupFileType.INCREMENTAL_APP_BACKUP
         }
@@ -313,8 +320,8 @@ fun detectBackupFileType(json: String): BackupFileType {
     }
 }
 
-fun fromJSONtoAppBackup(json: String) : AppBackup {
-    val gson = GsonBuilder()
+/** Gson configured for AppBackup trees; shared with [FullBackup] JSON. */
+internal fun backupGson(): Gson = GsonBuilder()
         .registerTypeAdapter(AppBackup::class.java, AppBackupAdapter())
         .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
@@ -334,8 +341,8 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
         .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
         .create()
-    return gson.fromJson(json, AppBackup::class.java)
-}
+
+fun fromJSONtoAppBackup(json: String): AppBackup = backupGson().fromJson(json, AppBackup::class.java)
 
 fun fromBackupJsonToAppBackup(json: String): AppBackup {
     return when (detectBackupFileType(json)) {
@@ -764,7 +771,8 @@ fun exerciseSessionSnapshotFromLegacySetHistories(setHistories: List<SetHistory>
 fun buildExerciseSessionSnapshot(
     currentSets: List<Set>,
     setHistories: List<SetHistory>,
-    restHistories: List<RestHistory> = emptyList()
+    restHistories: List<RestHistory> = emptyList(),
+    preservePrescription: Boolean = false
 ): ExerciseSessionSnapshot {
     val latestSetHistoryById = linkedMapOf<UUID, SetHistory>()
     setHistories
@@ -792,7 +800,7 @@ fun buildExerciseSessionSnapshot(
                 val setHistory = latestSetHistoryById[set.id]
                 val resolvedSet = when {
                     setHistory != null && isSetDataValid(set, setHistory.setData) ->
-                        applyCompletedSetHistoryToSet(set, setHistory)
+                        if (preservePrescription) set else applyCompletedSetHistoryToSet(set, setHistory)
                     set is RestSet -> {
                         val rh = latestRestHistoryByRestSetId[set.id]
                         if (rh != null) {

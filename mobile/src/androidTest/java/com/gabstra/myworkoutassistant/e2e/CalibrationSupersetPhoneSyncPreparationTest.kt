@@ -26,7 +26,7 @@ class CalibrationSupersetPhoneSyncPreparationTest {
         db.workoutRecordDao().deleteAll()
         db.exerciseInfoDao().deleteAll()
         db.exerciseSessionProgressionDao().deleteAll()
-        WorkoutStoreRepository(context.filesDir).saveWorkoutStore(
+        WorkoutStoreRepository.forActiveProfile(context).saveWorkoutStore(
             CalibrationSupersetCrossDevicePhoneWorkoutStoreFixture.createWorkoutStore()
         )
 

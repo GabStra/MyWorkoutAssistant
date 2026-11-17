@@ -8,9 +8,12 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatNumber
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -75,7 +78,12 @@ suspend fun buildExerciseHistoryMarkdown(
         .filter { it.isNormallyCompleted() }
         .filter { historyStartDate == null || !it.date.isBefore(historyStartDate) }
         .filter { historyEndDate == null || !it.date.isAfter(historyEndDate) }
-        .sortedWith(compareBy({ it.date }, { it.time }))
+        .sortedWith(
+            compareBy<com.gabstra.myworkoutassistant.shared.WorkoutHistory> { it.date }
+                .thenBy { it.knownStartTimeOrNull() == null }
+                .thenBy { it.knownStartTimeOrNull() }
+                .thenBy { it.id.toString() }
+        )
 
     if (completedWorkoutHistories.isEmpty()) {
         return ExerciseHistoryMarkdownResult.Failure("No completed sessions found for this exercise")
@@ -157,7 +165,11 @@ suspend fun buildExerciseHistoryMarkdown(
             if (pct != null && pct > 0 && eff != null) eff / (pct / 100) else null
         } else null
 
-        markdown.append("## S${sessionIndex + 1} (${workoutHistory.startTime.toLocalDate()})\n")
+        markdown.append("## S${sessionIndex + 1} (${exerciseHistorySessionLabel(workoutHistory)})\n")
+        val reportedExerciseName = performedExerciseDisplayName(exercise.name, activeSetHistories)
+        if (reportedExerciseName != exercise.name) {
+            markdown.append("- Reported exercise: $reportedExerciseName\n")
+        }
 
         val restsForSession =
             restHistoryDao.getByWorkoutHistoryIdAndExerciseId(workoutHistory.id, exercise.id)
@@ -165,7 +177,7 @@ suspend fun buildExerciseHistoryMarkdown(
         appendExerciseSessionCompactSummaryMarkdown(
             markdown = markdown,
             workoutName = workoutName,
-            sessionDurationSeconds = workoutHistory.duration,
+            sessionDurationSeconds = workoutHistory.knownDurationSecondsOrNull()?.takeIf { it > 0 },
             sessionBodyWeightKg = sessionBwFromSnapshot,
             activeSetHistories = activeSetHistories,
             restsForExercise = restsForSession,
@@ -185,7 +197,7 @@ suspend fun buildExerciseHistoryMarkdown(
 private fun appendExerciseSessionCompactSummaryMarkdown(
     markdown: StringBuilder,
     workoutName: String,
-    sessionDurationSeconds: Int,
+    sessionDurationSeconds: Int?,
     sessionBodyWeightKg: Double?,
     activeSetHistories: List<SetHistory>,
     restsForExercise: List<RestHistory>,
@@ -215,7 +227,9 @@ private fun appendExerciseSessionCompactSummaryMarkdown(
 
     markdown.append("### Context\n")
     markdown.append("- Workout: $workoutName\n")
-    markdown.append("- Session duration: ${formatDurationForExport(sessionDurationSeconds)}\n")
+    markdown.append(
+        "- Session duration: ${sessionDurationSeconds?.let(::formatDurationForExport) ?: "unknown"}\n"
+    )
     sessionBodyWeightKg?.let { bodyWeight ->
         markdown.append("- Session BW: ${formatNumber(bodyWeight)} kg\n")
     }
@@ -451,5 +465,15 @@ private fun describeOutcome(
         executedReps > plannedReps -> "exceeded"
         executedReps < plannedReps -> "below"
         else -> "matched"
+    }
+}
+
+/** Session label for exercise history: always-known date plus an imported marker. */
+private fun exerciseHistorySessionLabel(
+    workoutHistory: com.gabstra.myworkoutassistant.shared.WorkoutHistory,
+): String = buildString {
+    append(workoutHistory.date)
+    if (workoutHistory.origin == WorkoutHistoryOrigin.USER_IMPORTED) {
+        append(" imported/user-reported")
     }
 }

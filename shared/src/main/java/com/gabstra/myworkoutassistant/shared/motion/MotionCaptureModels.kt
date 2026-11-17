@@ -53,6 +53,37 @@ data class MotionCaptureSensorConfig(
     val userInitiated: Boolean? = null
 )
 
+/**
+ * User-selectable richness of the captured stream. [CORE] drops the optional streams to save
+ * battery/CPU; [FULL] is exactly the default [MotionCaptureSensorConfig] used by the app.
+ */
+enum class MotionCaptureDetailLevel {
+    CORE,
+    FULL;
+
+    fun toSensorConfig(
+        sampleRate: MotionCaptureSampleRate = MotionCaptureSampleRate.HZ_50
+    ): MotionCaptureSensorConfig = when (this) {
+        CORE -> MotionCaptureSensorConfig(
+            sampleRateHz = sampleRate.hz,
+            enabledSensors = listOf(
+                MotionSensorType.ACCELEROMETER,
+                MotionSensorType.GYROSCOPE,
+                MotionSensorType.ROTATION_VECTOR,
+                MotionSensorType.HEART_RATE
+            )
+        )
+        // Reuse the default constructor at 50 Hz so FULL stays byte-for-byte identical to today's config.
+        FULL -> MotionCaptureSensorConfig(sampleRateHz = sampleRate.hz)
+    }
+}
+
+/** User-selectable sampling rate; [hz] is the value requested from each sensor. */
+enum class MotionCaptureSampleRate(val hz: Int) {
+    HZ_50(50),
+    HZ_25(25)
+}
+
 enum class MotionCaptureSessionStatus {
     ACTIVE,
     COMPLETED,

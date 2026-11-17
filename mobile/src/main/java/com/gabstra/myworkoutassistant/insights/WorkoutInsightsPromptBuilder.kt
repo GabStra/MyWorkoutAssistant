@@ -8,6 +8,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -16,6 +17,8 @@ import com.gabstra.myworkoutassistant.shared.export.WorkoutSessionMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutSessionMarkdown
 import com.gabstra.myworkoutassistant.shared.export.normalizeHeartRatePercentBound
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
 import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
@@ -339,10 +342,17 @@ private fun buildPreviousSessionsToolMarkdown(
     .joinToString("\n") { history ->
         buildString {
             append(history.date)
-            append(' ')
-            append(history.time)
-            append(" | ")
-            append("${(history.duration / 60.0).roundToInt()} minutes")
+            history.knownStartTimeOrNull()?.let { start ->
+                append(' ')
+                append(start.toLocalTime())
+            }
+            if (history.origin == WorkoutHistoryOrigin.USER_IMPORTED) {
+                append(" | imported (user-reported)")
+            }
+            history.knownDurationSecondsOrNull()?.takeIf { it > 0 }?.let { durationSeconds ->
+                append(" | ")
+                append("${(durationSeconds / 60.0).roundToInt()} minutes")
+            }
             val heartRates = history.heartBeatRecords.filter { it > 0 }
             if (heartRates.isNotEmpty()) {
                 append(" | avg ")
@@ -354,6 +364,22 @@ private fun buildPreviousSessionsToolMarkdown(
             if (!history.isDone) append(" | incomplete")
         }
     }
+
+/**
+ * Legacy behavior compares real start times; when either session only has a date,
+ * fall back to date-only ordering instead of trusting placeholder midnight values.
+ */
+private fun com.gabstra.myworkoutassistant.shared.WorkoutHistory.isAtOrBeforeSession(
+    other: com.gabstra.myworkoutassistant.shared.WorkoutHistory,
+): Boolean {
+    val thisStart = knownStartTimeOrNull()
+    val otherStart = other.knownStartTimeOrNull()
+    return if (thisStart != null && otherStart != null) {
+        !thisStart.isAfter(otherStart)
+    } else {
+        !date.isAfter(other.date)
+    }
+}
 
 suspend fun buildWorkoutSessionInsightsPrompt(
     workoutHistoryId: UUID,
@@ -428,19 +454,30 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                 ?: listOf(workoutHistory.workoutId)
             suspend fun recentEquivalentPreviousSessions(limit: Int): List<com.gabstra.myworkoutassistant.shared.WorkoutHistory> =
                 equivalentWorkoutIds.flatMap { equivalentId ->
-                    workoutHistoryDao.getRecentDoneWorkoutHistoriesByWorkoutId(
-                        workoutId = equivalentId,
-                        excludedId = workoutHistory.id,
-                        limit = limit,
-                    )
-                }.sortedByDescending { it.startTime }.take(limit)
+                    workoutHistoryDao.getWorkoutsByWorkoutId(equivalentId)
+                }.distinctBy { it.id }
+                    .filter { it.id != workoutHistory.id && it.isDone && it.isAtOrBeforeSession(workoutHistory) }
+                    .sortedWith(
+                        compareByDescending<com.gabstra.myworkoutassistant.shared.WorkoutHistory> { it.date }
+                            .thenByDescending { it.knownStartTimeOrNull() != null }
+                            .thenByDescending { it.knownStartTimeOrNull() }
+                            .thenByDescending { it.version.toLong() }
+                            .thenByDescending { it.id.toString() }
+                    ).take(limit)
 
             val previousSessions = recentEquivalentPreviousSessions(WorkoutSessionFactsBuilder.MAX_PREVIOUS_SESSIONS)
             val historySessions = equivalentWorkoutIds.flatMap { equivalentId ->
                 workoutHistoryDao.getWorkoutsByWorkoutId(equivalentId)
             }.distinctBy { it.id }
-                .filter { it.id != workoutHistory.id && it.startTime <= workoutHistory.startTime }
-                .sortedByDescending { it.startTime }
+                // Imported sessions carry only a date, so compare calendar dates and
+                // order real start times first instead of trusting placeholders.
+                .filter { it.id != workoutHistory.id && it.isAtOrBeforeSession(workoutHistory) }
+                .sortedWith(
+                    compareByDescending<com.gabstra.myworkoutassistant.shared.WorkoutHistory> { it.date }
+                        .thenByDescending { it.knownStartTimeOrNull() != null }
+                        .thenByDescending { it.knownStartTimeOrNull() }
+                        .thenByDescending { it.id.toString() }
+                )
             val historySummaries = historySessions.map { history ->
                 "Session id: ${history.id} | ${buildPreviousSessionsToolMarkdown(listOf(history))}"
             }
@@ -2736,6 +2773,8 @@ internal fun buildWorkoutSessionChartTimelineToolContext(
     setHistories: List<com.gabstra.myworkoutassistant.shared.SetHistory>,
     restHistories: List<com.gabstra.myworkoutassistant.shared.RestHistory>,
 ): WorkoutInsightsChartTimelineContext? {
+    val durationSeconds = workoutHistory.knownDurationSecondsOrNull()?.takeIf { it > 0 } ?: return null
+    if (workoutHistory.knownStartTimeOrNull() == null) return null
     val segments = buildWorkoutSessionChartTimelineSegments(
         workoutHistory = workoutHistory,
         workout = workout,
@@ -2743,7 +2782,7 @@ internal fun buildWorkoutSessionChartTimelineToolContext(
         restHistories = restHistories,
     ) ?: return null
     return WorkoutInsightsChartTimelineContext(
-        durationSeconds = workoutHistory.duration,
+        durationSeconds = durationSeconds,
         segments = segments.map {
             WorkoutInsightsChartTimelineSegment(
                 startSeconds = it.startSeconds,
@@ -2760,6 +2799,8 @@ private fun buildWorkoutSessionChartTimelineSegments(
     setHistories: List<com.gabstra.myworkoutassistant.shared.SetHistory>,
     restHistories: List<com.gabstra.myworkoutassistant.shared.RestHistory>,
 ): List<ChartTimelineSegment>? {
+    val workoutStart = workoutHistory.knownStartTimeOrNull() ?: return null
+    val workoutDurationSeconds = workoutHistory.knownDurationSecondsOrNull()?.takeIf { it > 0 } ?: return null
     val exerciseLabels = buildWorkoutExerciseLabels(workout)
     val mergedTimeline = mergeSessionTimeline(setHistories, restHistories)
     val steps = mutableListOf<ChartTimelineStep>()
@@ -2768,7 +2809,7 @@ private fun buildWorkoutSessionChartTimelineSegments(
     fun addStep(label: String, startSeconds: Int, endSeconds: Int) {
         val normalizedLabel = label.trim().takeIf { it.isNotBlank() } ?: return
         val normalizedStart = startSeconds.coerceAtLeast(0)
-        val normalizedEnd = endSeconds.coerceAtMost(workoutHistory.duration)
+        val normalizedEnd = endSeconds.coerceAtMost(workoutDurationSeconds)
         if (normalizedEnd <= normalizedStart) return
 
         val previous = steps.lastOrNull()
@@ -2786,8 +2827,8 @@ private fun buildWorkoutSessionChartTimelineSegments(
     for (item in mergedTimeline) {
         when (item) {
             is SessionTimelineItem.SetStep -> {
-                val start = secondsFromWorkoutStart(workoutHistory.startTime, item.history.startTime) ?: continue
-                val end = secondsFromWorkoutStart(workoutHistory.startTime, item.history.endTime)
+                val start = secondsFromWorkoutStart(workoutStart, item.history.startTime) ?: continue
+                val end = secondsFromWorkoutStart(workoutStart, item.history.endTime)
                     ?: (start + inferSetDurationSeconds(item.history))
                 addStep(
                     label = exerciseLabels[item.history.exerciseId].orEmpty().ifBlank { "Unnamed exercise block" },
@@ -2796,8 +2837,8 @@ private fun buildWorkoutSessionChartTimelineSegments(
                 )
             }
             is SessionTimelineItem.RestStep -> {
-                val start = secondsFromWorkoutStart(workoutHistory.startTime, item.history.startTime) ?: continue
-                val end = secondsFromWorkoutStart(workoutHistory.startTime, item.history.endTime)
+                val start = secondsFromWorkoutStart(workoutStart, item.history.startTime) ?: continue
+                val end = secondsFromWorkoutStart(workoutStart, item.history.endTime)
                     ?: (start + inferRestDurationSeconds(item.history))
                 addStep(
                     label = buildRestTimelineLabel(
@@ -2833,11 +2874,11 @@ private fun buildWorkoutSessionChartTimelineSegments(
     }
 
     val lastStep = steps.lastOrNull()
-    if (lastStep != null && workoutHistory.duration - lastStep.endSeconds >= 120) {
+    if (lastStep != null && workoutDurationSeconds - lastStep.endSeconds >= 120) {
         segments += ChartTimelineSegment(
             label = "Wrap-up after ${lastStep.label}",
             startSeconds = lastStep.endSeconds,
-            endSeconds = workoutHistory.duration
+            endSeconds = workoutDurationSeconds
         )
     }
 

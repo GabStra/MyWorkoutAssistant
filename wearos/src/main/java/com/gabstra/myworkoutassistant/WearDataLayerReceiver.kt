@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.navigation.NavController
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
@@ -63,13 +64,17 @@ internal class WearDataLayerReceiver(
         if (workoutStoreJson == null && appBackupEndJson == null) {
             return
         }
-        val refreshedWorkoutStore = workoutStoreRepository.getWorkoutStore()
         CoroutineScope(Dispatchers.IO).launch {
-            appViewModel.applyExternalSyncWorkoutStore(refreshedWorkoutStore)
-            appViewModel.refreshSelectedWorkoutRecord()
+            try {
+                val refreshedWorkoutStore = workoutStoreRepository.getWorkoutStore()
+                appViewModel.applyExternalSyncWorkoutStore(refreshedWorkoutStore)
+                appViewModel.refreshSelectedWorkoutRecord()
+            } catch (exception: Exception) {
+                Log.e("WearDataLayerReceiver", "Error refreshing workout store", exception)
+            }
         }
 /*        if (workoutStoreJson != null) {
-            Toast.makeText(activity, "Workouts updated on your watch.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(activity, activity.getString(R.string.wear_sync_workouts_updated), Toast.LENGTH_SHORT).show()
         }*/
     }
 
@@ -121,7 +126,7 @@ internal class WearDataLayerReceiver(
         val workoutState = appViewModel.workoutState.value
         val isWorkoutActive = workoutState !is WorkoutState.Completed
 /*        if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
-            Toast.makeText(context, "Sync finished successfully.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.wear_sync_finished), Toast.LENGTH_SHORT).show()
         }*/
     }
 
@@ -143,7 +148,7 @@ internal class WearDataLayerReceiver(
         val workoutState = appViewModel.workoutState.value
         val isWorkoutActive = workoutState !is WorkoutState.Completed
 /*        if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
-            Toast.makeText(context, "Couldn't finish syncing. Try again.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.wear_sync_failed_try_again), Toast.LENGTH_SHORT).show()
         }*/
     }
 }

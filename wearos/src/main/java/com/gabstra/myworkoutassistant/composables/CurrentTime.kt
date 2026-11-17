@@ -12,11 +12,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.Text
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -59,9 +59,9 @@ fun CurrentTime() {
         }
     }
 
-    Text(
+    TightNumericText(
         text = annotatedText,
-        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+        style = MaterialTheme.typography.numeralMicro,
         textAlign = TextAlign.Center
     )
 }

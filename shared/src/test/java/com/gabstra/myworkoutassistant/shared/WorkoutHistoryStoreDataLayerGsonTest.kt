@@ -14,7 +14,9 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -52,13 +54,17 @@ class WorkoutHistoryStoreDataLayerGsonTest {
             id = whId,
             workoutId = workoutId,
             date = LocalDate.of(2024, 6, 1),
-            time = LocalTime.of(9, 30),
-            startTime = LocalDateTime.of(2024, 6, 1, 9, 30),
-            duration = 1200,
+            time = LocalTime.MIDNIGHT,
+            startTime = LocalDateTime.of(2024, 6, 1, 0, 0),
+            duration = 0,
             heartBeatRecords = emptyList(),
             isDone = true,
             hasBeenSentToHealth = false,
-            globalId = UUID.randomUUID()
+            globalId = UUID.randomUUID(),
+            recurringSessionId = UUID.randomUUID(),
+            origin = WorkoutHistoryOrigin.USER_IMPORTED,
+            startTimeKnown = false,
+            durationKnown = false
         )
         val exerciseId = UUID.randomUUID()
         val setHistory = SetHistory(
@@ -67,10 +73,14 @@ class WorkoutHistoryStoreDataLayerGsonTest {
             exerciseId = exerciseId,
             setId = UUID.randomUUID(),
             order = 0u,
-            startTime = LocalDateTime.of(2024, 6, 1, 9, 30),
-            endTime = LocalDateTime.of(2024, 6, 1, 9, 40),
+            startTime = null,
+            endTime = null,
             setData = EnduranceSetData(0, 120, true, true, true),
-            skipped = false
+            skipped = false,
+            recurringExerciseId = UUID.randomUUID(),
+            exerciseDefinitionIdSnapshot = UUID.randomUUID(),
+            exerciseTypeSnapshot = "WEIGHT",
+            exerciseNameSnapshot = "Press — dumbbell substitution"
         )
         val original = WorkoutHistoryStore(
             WorkoutHistory = workoutHistory,
@@ -82,8 +92,54 @@ class WorkoutHistoryStoreDataLayerGsonTest {
         val json = gson.toJson(original)
         val parsed = gson.fromJson(json, WorkoutHistoryStore::class.java)
         assertTrue(parsed.SetHistories.single().setData is EnduranceSetData)
+        assertEquals(workoutHistory.recurringSessionId, parsed.WorkoutHistory.recurringSessionId)
+        assertEquals(WorkoutHistoryOrigin.USER_IMPORTED, parsed.WorkoutHistory.origin)
+        assertEquals(false, parsed.WorkoutHistory.startTimeKnown)
+        assertEquals(false, parsed.WorkoutHistory.durationKnown)
+        assertEquals(null, parsed.SetHistories.single().startTime)
+        assertEquals(null, parsed.SetHistories.single().endTime)
+        assertEquals(setHistory.exerciseNameSnapshot, parsed.SetHistories.single().exerciseNameSnapshot)
+        assertEquals(setHistory.recurringExerciseId, parsed.SetHistories.single().recurringExerciseId)
+        assertEquals(setHistory.exerciseDefinitionIdSnapshot, parsed.SetHistories.single().exerciseDefinitionIdSnapshot)
+        assertEquals(setHistory.exerciseTypeSnapshot, parsed.SetHistories.single().exerciseTypeSnapshot)
         val ed = parsed.SetHistories.single().setData as EnduranceSetData
         assertEquals(120, ed.endTimer)
+    }
+
+    @Test
+    fun sourceNoteIsAbsentFromSerializedHistoryAndIgnoredWhenLegacyJsonContainsIt() {
+        val gson = dataLayerWorkoutHistoryGson()
+        val history = WorkoutHistory(
+            id = UUID.randomUUID(),
+            workoutId = UUID.randomUUID(),
+            date = LocalDate.of(2024, 6, 3),
+            time = LocalTime.MIDNIGHT,
+            startTime = LocalDateTime.of(2024, 6, 3, 0, 0),
+            duration = 0,
+            heartBeatRecords = emptyList(),
+            isDone = true,
+            hasBeenSentToHealth = false,
+            globalId = UUID.randomUUID(),
+            origin = WorkoutHistoryOrigin.USER_IMPORTED,
+            startTimeKnown = false,
+            durationKnown = false
+        )
+        val original = WorkoutHistoryStore(
+            WorkoutHistory = history,
+            SetHistories = emptyList(),
+            ExerciseInfos = emptyList(),
+            WorkoutRecord = null,
+            ExerciseSessionProgressions = emptyList()
+        )
+        val json = gson.toJson(original)
+        assertFalse(json.contains("sourceNote"))
+
+        val legacyJson = JsonParser.parseString(json).asJsonObject.apply {
+            getAsJsonObject("WorkoutHistory").addProperty("sourceNote", "legacy paper log")
+        }
+        val parsed = gson.fromJson(legacyJson, WorkoutHistoryStore::class.java)
+        assertEquals(history.id, parsed.WorkoutHistory.id)
+        assertEquals(WorkoutHistoryOrigin.USER_IMPORTED, parsed.WorkoutHistory.origin)
     }
 
     @Test

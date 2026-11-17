@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -37,6 +38,7 @@ import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -226,7 +228,7 @@ private fun ProgressionRow(
                     text = info.exerciseName,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                 )
-                StatusIndicator(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
+                StatusIndicator(label = stringResource(R.string.page_progression_last), status = info.vsLast, modifier = Modifier.weight(1f))
             }
         }
     }
@@ -329,7 +331,7 @@ internal fun ProgressionSectionContent(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                LoadingText(baseText = "Loading", style = MaterialTheme.typography.bodyMedium)
+                LoadingText(baseText = stringResource(R.string.page_loading), style = MaterialTheme.typography.bodyMedium)
             }
         }
     } else if (!progressionData.isNullOrEmpty()) {
@@ -343,8 +345,8 @@ internal fun ProgressionSectionContent(
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(modifier = Modifier.weight(2f), text = "EXERCISE", style = headerStyle, textAlign = TextAlign.Center)
-                Text(modifier =Modifier.weight(1f), text = "VS LAST", style = headerStyle, textAlign = TextAlign.Center)
+                Text(modifier = Modifier.weight(2f), text = stringResource(R.string.page_progression_exercise), style = headerStyle, textAlign = TextAlign.Center)
+                Text(modifier =Modifier.weight(1f), text = stringResource(R.string.page_progression_vs_last), style = headerStyle, textAlign = TextAlign.Center)
 
             }
 

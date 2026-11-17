@@ -19,6 +19,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
@@ -35,19 +37,22 @@ fun WeightPickerDialog(
 ) {
     StandardDialog(
         onDismissRequest = onDismissRequest,
-        title = "Available Weights",
+        title = stringResource(R.string.picker_available_weights_title),
         body = {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 if (selectedWeight != null) {
                     Text(
-                        text = "Current: ${String.format(Locale.US, "%.2f kg", selectedWeight)}",
+                        text = stringResource(
+                            R.string.picker_current_weight,
+                            String.format(Locale.US, "%.2f", selectedWeight)
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.tertiaryContent
                     )
                 }
 
                 Text(
-                    text = "${combinations.size} available options",
+                    text = stringResource(R.string.picker_available_options, combinations.size),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiaryContent
                 )
@@ -55,7 +60,7 @@ fun WeightPickerDialog(
                 OutlinedTextField(
                     value = filter,
                     onValueChange = onFilterChange,
-                    label = { Text("Filter") },
+                    label = { Text(stringResource(R.string.picker_filter)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -67,7 +72,7 @@ fun WeightPickerDialog(
                             .padding(top = Spacing.xs)
                     ) {
                         Text(
-                            text = "No weights match this filter",
+                            text = stringResource(R.string.picker_no_weights_match),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.md)
@@ -82,7 +87,10 @@ fun WeightPickerDialog(
                     ) {
                         combinations.forEach { (weight, label) ->
                             val isSelected = selectedWeight != null && selectedWeight == weight
-                            val weightText = String.format(Locale.US, "%.2f kg", weight)
+                            val weightText = stringResource(
+                                R.string.picker_weight_kg,
+                                String.format(Locale.US, "%.2f", weight)
+                            )
                             val showsDistinctWeightText = label.trim() != weightText
 
                             val borderColor = if (isSelected) {
@@ -137,7 +145,7 @@ fun WeightPickerDialog(
                                         Spacer(modifier = Modifier.width(Spacing.sm))
                                         Icon(
                                             imageVector = Icons.Default.Check,
-                                            contentDescription = "Selected weight",
+                                            contentDescription = stringResource(R.string.picker_selected_weight_cd),
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                     }
@@ -150,7 +158,7 @@ fun WeightPickerDialog(
         },
         showConfirm = false,
         showDismiss = true,
-        dismissText = "Close",
+        dismissText = stringResource(R.string.common_close),
         onDismissButton = onDismissRequest
     )
 }

@@ -80,6 +80,41 @@ class WorkoutStatusSessionModelsTest {
     }
 
     @Test
+    fun sortWorkoutStatusSessions_placesUnknownStartTimeAfterKnownSameDaySessions() {
+        val workout = testWorkout()
+        val date = LocalDate.of(2026, 5, 20)
+
+        val sorted = sortWorkoutStatusSessions(
+            listOf(
+                AppWorkoutStatusSessionEntry(
+                    WeeklyStatusWorkoutHistory(
+                        workoutHistory = testWorkoutHistory(
+                            workout = workout,
+                            date = date,
+                            time = LocalTime.MIDNIGHT,
+                            startTimeKnown = false,
+                        ),
+                        workout = workout,
+                        isExcludedFromWeeklyProgress = false,
+                    )
+                ),
+                AppWorkoutStatusSessionEntry(
+                    WeeklyStatusWorkoutHistory(
+                        workoutHistory = testWorkoutHistory(workout, date, LocalTime.of(10, 0)),
+                        workout = workout,
+                        isExcludedFromWeeklyProgress = false,
+                    )
+                ),
+            )
+        )
+
+        assertEquals(2, sorted.size)
+        assertEquals(true, sorted[0].startedAtKnown)
+        assertEquals(LocalTime.of(10, 0), sorted[0].startedAt.toLocalTime())
+        assertEquals(false, sorted[1].startedAtKnown)
+    }
+
+    @Test
     fun deduplicateWorkoutStatusSessions_collapsesRepeatedExternalEntries() {
         val date = LocalDate.of(2026, 5, 20)
         val externalOne = ExternalWorkoutStatusSessionEntry(
@@ -147,6 +182,7 @@ class WorkoutStatusSessionModelsTest {
         workout: Workout,
         date: LocalDate,
         time: LocalTime,
+        startTimeKnown: Boolean = true,
     ): WorkoutHistory {
         return WorkoutHistory(
             id = UUID.randomUUID(),
@@ -160,6 +196,7 @@ class WorkoutStatusSessionModelsTest {
             hasBeenSentToHealth = false,
             globalId = UUID.randomUUID(),
             version = 0u,
+            startTimeKnown = startTimeKnown,
         )
     }
 

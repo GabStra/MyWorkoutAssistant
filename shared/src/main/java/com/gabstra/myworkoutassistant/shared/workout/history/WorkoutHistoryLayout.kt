@@ -25,7 +25,9 @@ sealed class WorkoutHistoryLayoutItem {
  * Builds layout items in workout template order.
  * Exercises/supersets are normally shown only when set history exists, but the current active
  * exercise can also be surfaced via [activeExerciseId] so in-progress sessions remain visible
- * before the first set history row is written for that component.
+ * before the first set history row is written for that component. If a superset has child
+ * exercise history but no superset grouping key, those actual child rows are shown as individual
+ * exercise sections instead of being dropped or assigned invented round/order metadata.
  * Between-workout-component [RestHistory] rows are placed at each template [Rest] via
  * [orderedBetweenWorkoutComponentRestHistories] (one row per template [Rest] per session).
  */
@@ -41,22 +43,30 @@ fun buildWorkoutHistoryLayout(
 
     val items = mutableListOf<WorkoutHistoryLayoutItem>()
 
+    fun hasSetHistory(componentId: UUID): Boolean = setHistoriesByExerciseId[componentId]
+        .orEmpty()
+        .any { !it.skipped && it.setData !is RestSetData }
+
     for (component in workout.workoutComponents) {
         when (component) {
             is Exercise -> {
-                val hasSetHistory = setHistoriesByExerciseId[component.id]
-                    .orEmpty()
-                    .any { !it.skipped && it.setData !is RestSetData }
-                if (hasSetHistory || component.id == activeExerciseId) {
+                if (hasSetHistory(component.id) || component.id == activeExerciseId) {
                     items.add(WorkoutHistoryLayoutItem.ExerciseSection(component.id))
                 }
             }
             is Superset -> {
-                val hasSetHistory = setHistoriesByExerciseId[component.id]
-                    .orEmpty()
-                    .any { !it.skipped && it.setData !is RestSetData }
+                val hasGroupedSetHistory = hasSetHistory(component.id)
+                val childExercisesWithHistory = component.exercises.filter { hasSetHistory(it.id) }
                 val containsActiveExercise = component.exercises.any { it.id == activeExerciseId }
-                if (hasSetHistory || containsActiveExercise) {
+
+                if (hasGroupedSetHistory) {
+                    items.add(WorkoutHistoryLayoutItem.SupersetSection(component.id))
+                }
+                if (childExercisesWithHistory.isNotEmpty()) {
+                    childExercisesWithHistory.forEach { exercise ->
+                        items.add(WorkoutHistoryLayoutItem.ExerciseSection(exercise.id))
+                    }
+                } else if (!hasGroupedSetHistory && containsActiveExercise) {
                     items.add(WorkoutHistoryLayoutItem.SupersetSection(component.id))
                 }
             }

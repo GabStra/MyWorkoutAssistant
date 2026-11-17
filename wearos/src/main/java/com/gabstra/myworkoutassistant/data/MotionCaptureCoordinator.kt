@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureChunkCompressor
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureDetailLevel
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureExerciseCandidate
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureEventRecord
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureEventType
@@ -15,10 +16,10 @@ import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureLabel
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureLabelKind
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureLabelMapper
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureReviewStatus
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSampleRate
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentDao
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentEntity
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentRecord
-import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSensorConfig
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionDao
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEditor
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity
@@ -56,11 +57,48 @@ data class MotionCaptureReviewSession(
 
 data class MotionCaptureUiState(
     val collectionEnabled: Boolean = false,
+    val detailLevel: MotionCaptureDetailLevel = MotionCaptureDetailLevel.FULL,
+    val sampleRate: MotionCaptureSampleRate = MotionCaptureSampleRate.HZ_50,
     val hasRequiredSensors: Boolean = false,
     val isCapturing: Boolean = false,
     val activeSessionId: UUID? = null,
     val latestReviewSession: MotionCaptureReviewSession? = null,
     val lastExportDirectory: String? = null
+)
+
+/**
+ * Cheap snapshot of everything the motion-capture label depends on. Two ticks with the same key
+ * produce the same [MotionCaptureLabelMapper] result.
+ */
+private data class MotionCaptureLabelKey(
+    val workoutId: UUID,
+    val workoutStateType: Class<out WorkoutState>,
+    val exerciseId: UUID?,
+    val setId: UUID?,
+    val setIndex: UInt?,
+    val isWarmupSet: Boolean,
+    val isCalibrationSet: Boolean,
+    val isAutoRegulationSet: Boolean,
+    val isIntraSetRest: Boolean
+)
+
+/**
+ * Everything that can change the outcome of [MotionCaptureCoordinator.onScreenStateChanged]'s
+ * launched work. Timer progress callbacks rebuild the screen state every tick; when this key is
+ * unchanged the launch is redundant.
+ */
+private data class MotionCaptureTickKey(
+    val labelKey: MotionCaptureLabelKey,
+    val sessionPhase: WorkoutSessionPhase,
+    val collectionEnabled: Boolean,
+    val detailLevel: MotionCaptureDetailLevel,
+    val sampleRate: MotionCaptureSampleRate,
+    val hasRequiredSensors: Boolean,
+    val workoutHistoryId: UUID?,
+    val activeSessionId: UUID?,
+    val activeSessionWorkoutId: UUID?,
+    val activeSessionWorkoutHistoryId: UUID?,
+    val isCaptureJobActive: Boolean
 )
 
 class MotionCaptureCoordinator(
@@ -75,7 +113,8 @@ class MotionCaptureCoordinator(
     private val sessionDao: MotionCaptureSessionDao = appDatabase.motionCaptureSessionDao()
     private val segmentDao: MotionCaptureSegmentDao = appDatabase.motionCaptureSegmentDao()
     private val exportService = MotionCaptureExportService()
-    private val sensorConfig = MotionCaptureSensorConfig()
+    private var sensorConfig =
+        MotionCaptureDetailLevel.FULL.toSensorConfig(MotionCaptureSampleRate.HZ_50)
 
     init {
         sensorRepository.logInventory()
@@ -104,6 +143,10 @@ class MotionCaptureCoordinator(
     private var captureToggledOnManually = false
     /** Per-workout override; null means "use the preference". Scoped by workout id. */
     private var sessionOverrideEnabled: Boolean? = null
+    /** Per-workout detail override; null means [MotionCaptureDetailLevel.FULL]. */
+    private var sessionOverrideDetailLevel: MotionCaptureDetailLevel? = null
+    /** Per-workout sample-rate override; null means [MotionCaptureSampleRate.HZ_50]. */
+    private var sessionOverrideSampleRate: MotionCaptureSampleRate? = null
     private var overrideWorkoutId: UUID? = null
     private var currentWorkoutId: UUID? = null
     private var lastScreenState: WorkoutScreenState? = null
@@ -112,6 +155,13 @@ class MotionCaptureCoordinator(
     private val stillnessTracker = StillnessTracker()
     private var lastStillness = true
     private val eventsFileName = "events.csv"
+    private var lastProcessedTickKey: MotionCaptureTickKey? = null
+    private var lastProcessedWorkout: Workout? = null
+    private var cachedLabelKey: MotionCaptureLabelKey? = null
+    private var cachedLabelWorkout: Workout? = null
+    private var cachedLabel: MotionCaptureLabel? = null
+    private var cachedCandidatesWorkout: Workout? = null
+    private var cachedCandidates: List<MotionCaptureExerciseCandidate> = emptyList()
 
     companion object {
         private const val TAG = "MotionCapture"
@@ -124,6 +174,90 @@ class MotionCaptureCoordinator(
     private fun exportsRootDirectory(): File =
         File(context.filesDir, "motion_capture/exports").apply { mkdirs() }
 
+    private fun labelKeyFor(workoutState: WorkoutState, workout: Workout): MotionCaptureLabelKey =
+        when (workoutState) {
+            is WorkoutState.Set -> MotionCaptureLabelKey(
+                workoutId = workout.id,
+                workoutStateType = workoutState.javaClass,
+                exerciseId = workoutState.exerciseId,
+                setId = workoutState.set.id,
+                setIndex = workoutState.setIndex,
+                isWarmupSet = workoutState.isWarmupSet,
+                isCalibrationSet = workoutState.isCalibrationSet,
+                isAutoRegulationSet = workoutState.isAutoRegulationWorkSet,
+                isIntraSetRest = false
+            )
+            is WorkoutState.Rest -> MotionCaptureLabelKey(
+                workoutId = workout.id,
+                workoutStateType = workoutState.javaClass,
+                exerciseId = workoutState.exerciseId,
+                setId = workoutState.set.id,
+                setIndex = null,
+                isWarmupSet = false,
+                isCalibrationSet = false,
+                isAutoRegulationSet = false,
+                isIntraSetRest = workoutState.isIntraSetRest
+            )
+            else -> MotionCaptureLabelKey(
+                workoutId = workout.id,
+                workoutStateType = workoutState.javaClass,
+                exerciseId = null,
+                setId = null,
+                setIndex = null,
+                isWarmupSet = false,
+                isCalibrationSet = false,
+                isAutoRegulationSet = false,
+                isIntraSetRest = false
+            )
+        }
+
+    private fun tickKeyFor(screenState: WorkoutScreenState): MotionCaptureTickKey {
+        val uiState = _uiState.value
+        val session = activeSession
+        return MotionCaptureTickKey(
+            labelKey = labelKeyFor(screenState.workoutState, screenState.selectedWorkout),
+            sessionPhase = screenState.sessionPhase,
+            collectionEnabled = uiState.collectionEnabled,
+            detailLevel = uiState.detailLevel,
+            sampleRate = uiState.sampleRate,
+            hasRequiredSensors = uiState.hasRequiredSensors,
+            workoutHistoryId = activeWorkoutHistoryIdProvider(),
+            activeSessionId = session?.id,
+            activeSessionWorkoutId = session?.workoutId,
+            activeSessionWorkoutHistoryId = session?.workoutHistoryId,
+            isCaptureJobActive = captureJob?.isActive == true
+        )
+    }
+
+    /** Deterministic per workout object; rebuilt only when the workout instance changes. */
+    private fun candidatesFor(workout: Workout): List<MotionCaptureExerciseCandidate> {
+        if (cachedCandidatesWorkout === workout) {
+            return cachedCandidates
+        }
+        return MotionCaptureWorkoutCatalog.buildCandidates(workout).also {
+            cachedCandidatesWorkout = workout
+            cachedCandidates = it
+        }
+    }
+
+    /** Reuses the mapper result while the label inputs and workout instance are unchanged. */
+    private fun resolveLabel(
+        screenState: WorkoutScreenState,
+        labelKey: MotionCaptureLabelKey
+    ): MotionCaptureLabel? {
+        if (cachedLabelKey == labelKey && cachedLabelWorkout === screenState.selectedWorkout) {
+            return cachedLabel
+        }
+        return MotionCaptureLabelMapper.map(
+            screenState.workoutState,
+            screenState.selectedWorkout
+        ).also {
+            cachedLabelKey = labelKey
+            cachedLabelWorkout = screenState.selectedWorkout
+            cachedLabel = it
+        }
+    }
+
     /**
      * Per-workout override of the motion-capture default. Not persisted: the next workout
      * starts from the preference again.
@@ -133,6 +267,9 @@ class MotionCaptureCoordinator(
         overrideWorkoutId = currentWorkoutId
         captureToggledOnManually = enabled
         _uiState.value = _uiState.value.copy(collectionEnabled = enabled)
+        // The toggle may be flipped back before another screen-state tick is processed, so force
+        // the next onScreenStateChanged call to run capture/label work.
+        lastProcessedTickKey = null
         if (!enabled) {
             scope.launch {
                 if (activeSession != null) stopCapture(MotionCaptureSessionStatus.ABANDONED)
@@ -143,6 +280,73 @@ class MotionCaptureCoordinator(
         }
     }
 
+    /**
+     * Per-workout detail level, mirroring [setSessionCollectionEnabled]: resets to FULL for the
+     * next workout. A switch mid-session restarts sensor collection with the new config.
+     */
+    fun setSessionDetailLevel(level: MotionCaptureDetailLevel) {
+        if (_uiState.value.detailLevel == level) return
+        sessionOverrideDetailLevel = level
+        overrideWorkoutId = currentWorkoutId
+        applyDetailLevel(level)
+        lastProcessedTickKey = null
+        scope.launch {
+            updateActiveSessionSensorConfig()
+            // Cancel the in-flight job so the next screen-state tick restarts collection with
+            // the new sensor set instead of keeping the old registration.
+            captureJob?.cancel()
+            captureJob = null
+            lastProcessedTickKey = null
+            lastScreenState?.let { onScreenStateChanged(it) }
+        }
+    }
+
+    private fun applyDetailLevel(level: MotionCaptureDetailLevel) {
+        if (_uiState.value.detailLevel == level) return
+        sensorConfig = level.toSensorConfig(_uiState.value.sampleRate)
+        _uiState.value = _uiState.value.copy(detailLevel = level)
+    }
+
+    /**
+     * Per-workout sample rate, mirroring [setSessionDetailLevel]: resets to [MotionCaptureSampleRate.HZ_50]
+     * for the next workout. A switch mid-session restarts sensor collection with the new config.
+     */
+    fun setSessionSampleRate(rate: MotionCaptureSampleRate) {
+        if (_uiState.value.sampleRate == rate) return
+        sessionOverrideSampleRate = rate
+        overrideWorkoutId = currentWorkoutId
+        applySampleRate(rate)
+        lastProcessedTickKey = null
+        scope.launch {
+            updateActiveSessionSensorConfig()
+            // Cancel the in-flight job so the next screen-state tick restarts collection with
+            // the new rate instead of keeping the old registration.
+            captureJob?.cancel()
+            captureJob = null
+            lastProcessedTickKey = null
+            lastScreenState?.let { onScreenStateChanged(it) }
+        }
+    }
+
+    private fun applySampleRate(rate: MotionCaptureSampleRate) {
+        if (_uiState.value.sampleRate == rate) return
+        sensorConfig = _uiState.value.detailLevel.toSensorConfig(rate)
+        _uiState.value = _uiState.value.copy(sampleRate = rate)
+    }
+
+    /** Keeps the self-describing session record in sync with a mid-session level switch. */
+    private suspend fun updateActiveSessionSensorConfig() {
+        val session = activeSession ?: return
+        val updatedConfig = sensorConfig.copy(
+            observedSensors = sensorRepository.observedSensors(sensorConfig).sorted().toList(),
+            userInitiated = session.sensorConfig.userInitiated
+        )
+        if (updatedConfig == session.sensorConfig) return
+        val updated = session.copy(sensorConfig = updatedConfig)
+        sessionDao.insert(updated.toEntity())
+        activeSession = updated
+    }
+
     fun onScreenStateChanged(screenState: WorkoutScreenState) {
         lastScreenState = screenState
         currentWorkoutId = screenState.selectedWorkout.id
@@ -151,9 +355,32 @@ class MotionCaptureCoordinator(
         } else {
             true
         }
+        val detailLevel = if (overrideWorkoutId == currentWorkoutId) {
+            sessionOverrideDetailLevel ?: MotionCaptureDetailLevel.FULL
+        } else {
+            MotionCaptureDetailLevel.FULL
+        }
+        val sampleRate = if (overrideWorkoutId == currentWorkoutId) {
+            sessionOverrideSampleRate ?: MotionCaptureSampleRate.HZ_50
+        } else {
+            MotionCaptureSampleRate.HZ_50
+        }
+        applyDetailLevel(detailLevel)
+        applySampleRate(sampleRate)
         if (_uiState.value.collectionEnabled != enabled) {
             _uiState.value = _uiState.value.copy(collectionEnabled = enabled)
         }
+        val tickKey = tickKeyFor(screenState)
+        if (tickKey == lastProcessedTickKey && lastProcessedWorkout === screenState.selectedWorkout) {
+            // Keep the previous-state snapshot fresh for exit-event rep counts without doing
+            // capture or label work on redundant timer ticks.
+            if (lastObservedWorkoutState !== screenState.workoutState) {
+                lastObservedWorkoutState = screenState.workoutState
+            }
+            return
+        }
+        lastProcessedTickKey = tickKey
+        lastProcessedWorkout = screenState.selectedWorkout
         if (!enabled || !_uiState.value.hasRequiredSensors) {
             if (activeSession != null) {
                 scope.launch { stopCapture(MotionCaptureSessionStatus.ABANDONED) }
@@ -171,9 +398,13 @@ class MotionCaptureCoordinator(
         }
 
         scope.launch {
-            startCaptureIfNeeded(screenState.selectedWorkout)
+            val captureSettled = startCaptureIfNeeded(screenState.selectedWorkout)
             restartSensorCollectionIfNeeded()
-            syncLabel(screenState)
+            syncLabel(screenState, tickKey.labelKey)
+            if (!captureSettled) {
+                // Low storage: retry on the next tick so capture starts once space is available.
+                lastProcessedTickKey = null
+            }
         }
     }
 
@@ -260,22 +491,23 @@ class MotionCaptureCoordinator(
         return exportDirectory.absolutePath
     }
 
-    private suspend fun startCaptureIfNeeded(workout: Workout) {
-        if (sessionsRootDirectory().usableSpace < MIN_FREE_BYTES_FOR_CAPTURE) {
-            Log.e(TAG, "Motion capture not started - low storage (free=${sessionsRootDirectory().usableSpace} bytes)")
-            return
+    private suspend fun startCaptureIfNeeded(workout: Workout): Boolean {
+        val usableSpace = withContext(Dispatchers.IO) { sessionsRootDirectory().usableSpace }
+        if (usableSpace < MIN_FREE_BYTES_FOR_CAPTURE) {
+            Log.e(TAG, "Motion capture not started - low storage (free=$usableSpace bytes)")
+            return false
         }
         val historyId = activeWorkoutHistoryIdProvider()
         val currentSession = activeSession
         if (currentSession != null && currentSession.workoutId == workout.id) {
             if (currentSession.workoutHistoryId == historyId || historyId == null) {
-                return
+                return true
             }
             if (currentSession.workoutHistoryId == null) {
                 val updatedSession = currentSession.copy(workoutHistoryId = historyId)
                 sessionDao.insert(updatedSession.toEntity())
                 activeSession = updatedSession
-                return
+                return true
             }
         }
         if (currentSession != null) {
@@ -283,7 +515,7 @@ class MotionCaptureCoordinator(
         }
         val sessionId = UUID.randomUUID()
         val sessionDirectoryName = sessionId.toString()
-        val candidates = MotionCaptureWorkoutCatalog.buildCandidates(workout)
+        val candidates = candidatesFor(workout)
         val session = MotionCaptureSessionRecord(
             id = sessionId,
             workoutId = workout.id,
@@ -313,18 +545,24 @@ class MotionCaptureCoordinator(
         currentChunkFileName = null
         lowStorageAbortTriggered = false
         captureToggledOnManually = false
-        val sessionDirectory = sessionsRootDirectory().resolve(sessionDirectoryName).apply { mkdirs() }
-        initializeEventsFile(sessionDirectory)
+        withContext(Dispatchers.IO) {
+            val sessionDirectory = sessionsRootDirectory().resolve(sessionDirectoryName).apply { mkdirs() }
+            initializeEventsFile(sessionDirectory)
+        }
         startSensorCollection(session)
+        return true
     }
 
-    private suspend fun syncLabel(screenState: WorkoutScreenState) {
+    private suspend fun syncLabel(
+        screenState: WorkoutScreenState,
+        labelKey: MotionCaptureLabelKey
+    ) {
         val session = activeSession ?: return
         val previousLabel = activeLabel
         val previousSegment = activeSegment
         val previousWorkoutState = lastObservedWorkoutState
         lastObservedWorkoutState = screenState.workoutState
-        val newLabel = MotionCaptureLabelMapper.map(screenState.workoutState, screenState.selectedWorkout)
+        val newLabel = resolveLabel(screenState, labelKey)
         val transitionEpochMs = System.currentTimeMillis()
         val transitionElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         if (newLabel == null) {

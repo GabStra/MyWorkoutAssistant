@@ -12,6 +12,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.toSets
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import java.util.UUID
 
 /**
@@ -28,6 +30,10 @@ data class CompletedExerciseSessionMerge(
 
 object ExerciseSessionReconstruction {
 
+    fun shouldPreservePrescription(exercise: Exercise): Boolean =
+        exercise.recurringExerciseId != null ||
+            exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT
+
     /**
      * Overlays set + intra-exercise rest execution onto the programmed [templateSets].
      * Single API for watch completion and phone sync.
@@ -37,6 +43,7 @@ object ExerciseSessionReconstruction {
         rawSetHistoriesForExercise: List<SetHistory>,
         allRestHistories: List<RestHistory>,
         exerciseId: UUID,
+        preservePrescription: Boolean = false,
     ): CompletedExerciseSessionMerge {
         val preparedSetHistories = prepareSetHistoriesForSnapshot(rawSetHistoriesForExercise)
         val intraExerciseRests = allRestHistories.filter {
@@ -46,6 +53,7 @@ object ExerciseSessionReconstruction {
             currentSets = templateSets,
             setHistories = preparedSetHistories,
             restHistories = intraExerciseRests,
+            preservePrescription = preservePrescription,
         )
         return CompletedExerciseSessionMerge(snapshot, preparedSetHistories)
     }

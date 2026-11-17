@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.insights
 
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,6 +16,8 @@ class WorkoutSessionFactsBuilderTest {
         heartBeats: List<Int>,
         durationSeconds: Int,
         workoutId: UUID = UUID.randomUUID(),
+        durationKnown: Boolean = true,
+        origin: WorkoutHistoryOrigin = WorkoutHistoryOrigin.RECORDED,
     ) = WorkoutHistory(
         id = UUID.randomUUID(),
         workoutId = workoutId,
@@ -26,6 +29,8 @@ class WorkoutSessionFactsBuilderTest {
         isDone = true,
         hasBeenSentToHealth = false,
         globalId = UUID.randomUUID(),
+        origin = origin,
+        durationKnown = durationKnown,
     )
 
     @Test
@@ -110,6 +115,34 @@ class WorkoutSessionFactsBuilderTest {
             "FACT Session duration: 30:00 (30 minutes)",
             facts.lines.single(),
         )
+    }
+
+    @Test
+    fun `unknown imported duration is not reported or averaged as a measured value`() {
+        val sameWorkoutId = UUID.randomUUID()
+        val facts = WorkoutSessionFactsBuilder.build(
+            workoutHistory = history(
+                heartBeats = List(10) { 140 },
+                durationSeconds = 0,
+                workoutId = sameWorkoutId,
+                durationKnown = false,
+                origin = WorkoutHistoryOrigin.USER_IMPORTED,
+            ),
+            previousSessionsNewestFirst = listOf(
+                history(List(10) { 140 }, durationSeconds = 0, workoutId = sameWorkoutId, durationKnown = false),
+                history(List(10) { 140 }, durationSeconds = 3000, workoutId = sameWorkoutId),
+            ),
+            targetBoundsPercentMaxHr = null,
+            userAge = 30,
+            measuredMaxHeartRate = null,
+            restingHeartRate = null,
+        )
+
+        val text = facts.lines.joinToString("\n")
+        assertFalse(text.contains("FACT Session duration:"))
+        assertFalse(text.contains("versus recent sessions"))
+        assertTrue(text.contains("FACT Average heart rate: 140 bpm"))
+        assertTrue(text.contains("user-reported/imported history"))
     }
 
     @Test

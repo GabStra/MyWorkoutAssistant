@@ -13,7 +13,9 @@ class WorkoutScreenPhaseRenderModelTest {
     fun resumingShowsOnlyDedicatedLoadingUi() {
         val model = resolveWorkoutPhaseRenderModel(
             sessionPhase = WorkoutSessionPhase.RESUMING,
-            isRefreshing = false
+            isRefreshing = false,
+            reloadingMessage = "Reloading your workout",
+            resumingMessage = "Resuming your workout"
         )
 
         assertEquals("Resuming your workout", model.loadingMessage)
@@ -27,7 +29,9 @@ class WorkoutScreenPhaseRenderModelTest {
     fun activeShowsHeaderAndWorkoutContent() {
         val model = resolveWorkoutPhaseRenderModel(
             sessionPhase = WorkoutSessionPhase.ACTIVE,
-            isRefreshing = false
+            isRefreshing = false,
+            reloadingMessage = "Reloading your workout",
+            resumingMessage = "Resuming your workout"
         )
 
         assertTrue(model.showHeader)
@@ -40,7 +44,9 @@ class WorkoutScreenPhaseRenderModelTest {
     fun preparingKeepsPreparationContentAndHidesHeader() {
         val model = resolveWorkoutPhaseRenderModel(
             sessionPhase = WorkoutSessionPhase.PREPARING,
-            isRefreshing = false
+            isRefreshing = false,
+            reloadingMessage = "Reloading your workout",
+            resumingMessage = "Resuming your workout"
         )
 
         assertTrue(model.renderPreparing)

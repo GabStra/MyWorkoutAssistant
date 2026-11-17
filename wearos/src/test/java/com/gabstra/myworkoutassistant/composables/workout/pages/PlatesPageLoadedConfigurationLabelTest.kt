@@ -9,13 +9,14 @@ class PlatesPageLoadedConfigurationLabelTest {
         assertEquals(
             "20×4 · 10×2 · 2.5",
             formatPlateConfigurationLabel(
-                listOf(2.5, 20.0, 10.0, 20.0, 10.0, 20.0, 20.0)
+                listOf(2.5, 20.0, 10.0, 20.0, 10.0, 20.0, 20.0),
+                barOnlyLabel = "Bar only",
             ),
         )
     }
 
     @Test
     fun `labels an empty configuration as bar only`() {
-        assertEquals("Bar only", formatPlateConfigurationLabel(emptyList()))
+        assertEquals("Bar only", formatPlateConfigurationLabel(emptyList(), barOnlyLabel = "Bar only"))
     }
 }

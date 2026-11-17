@@ -27,6 +27,13 @@ data class AppBackup(
     val RemoteInsightsModel: String? = null,
     /** User insight preferences appended to insight and chat requests. */
     val WorkoutInsightsCustomInstructions: String? = null,
+    /**
+     * Profile this backup belongs to. Null for backups written before profiles existed, which
+     * any profile may accept.
+     */
+    val ProfileId: String? = null,
+    /** Profile name at export time; lets a restore recognise its owner after a reinstall. */
+    val ProfileName: String? = null,
 )
 
 data class ExerciseMovementBackup(

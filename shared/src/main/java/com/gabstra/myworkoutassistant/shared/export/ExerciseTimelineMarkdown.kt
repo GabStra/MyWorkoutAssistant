@@ -1,11 +1,14 @@
 package com.gabstra.myworkoutassistant.shared.export
 
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.formatNumber
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -20,6 +23,53 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDateTime
 import java.util.Locale
 import kotlin.math.roundToInt
+
+/**
+ * Exercise label to report for history whose performed variation may differ from
+ * the current template (e.g. a user-imported equipment substitution). Uses the
+ * per-set [SetHistory.exerciseNameSnapshot] when present; otherwise the canonical
+ * template name.
+ */
+internal fun performedExerciseDisplayName(
+    canonicalName: String,
+    setHistories: List<SetHistory>,
+): String {
+    val performedNames = setHistories
+        .mapNotNull { history -> history.exerciseNameSnapshot?.takeIf { it.isNotBlank() } }
+        .distinct()
+    return if (performedNames.isEmpty()) canonicalName else performedNames.joinToString(" / ")
+}
+
+/**
+ * Session date with time and duration only when the source actually reported
+ * them. Unknown timing is labeled instead of rendering a midnight/zero placeholder.
+ */
+internal fun buildSessionDateTimeDurationLine(history: WorkoutHistory): String = buildString {
+    append(history.date)
+    history.knownStartTimeOrNull()?.let { start ->
+        append(' ')
+        append(start.toLocalTime())
+    }
+    append(" | Dur: ")
+    append(
+        history.knownDurationSecondsOrNull()
+            ?.takeIf { it > 0 }
+            ?.let(::formatDurationForExport)
+            ?: "unknown"
+    )
+}
+
+/**
+ * Marks user-imported sessions as reported data, so exported history is never
+ * presented as watch-measured.
+ */
+internal fun appendReportedSessionSourceMarkdown(
+    markdown: StringBuilder,
+    history: WorkoutHistory,
+) {
+    if (history.origin != WorkoutHistoryOrigin.USER_IMPORTED) return
+    markdown.append("Session source: User-reported/imported (not watch-measured)\n")
+}
 
 /**
  * Appends merged set + intra-exercise rest timeline for one exercise. Returns (total volume kg, total timed work seconds).
@@ -83,6 +133,11 @@ internal fun appendExerciseTimelineToMarkdown(
                 val snapName = setHistory.equipmentNameSnapshot
                 if (!snapName.isNullOrBlank() && snapName != equipmentNameForHeader) {
                     setLine.append(" (@ $snapName)")
+                }
+                val reportedExerciseName = setHistory.exerciseNameSnapshot
+                    ?.takeIf { it.isNotBlank() && it != exercise.name }
+                if (reportedExerciseName != null) {
+                    setLine.append(" [reported as $reportedExerciseName]")
                 }
                 markdown.append(setLine.toString()).append("\n")
             }

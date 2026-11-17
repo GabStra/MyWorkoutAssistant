@@ -396,6 +396,16 @@ internal fun buildExerciseHistoryRows(
     return rows
 }
 
+internal fun historyExerciseDisplayName(
+    canonicalName: String,
+    setHistories: List<SetHistory>,
+): String {
+    val performedNames = setHistories.mapNotNull { history ->
+        history.exerciseNameSnapshot?.takeIf { it.isNotBlank() }
+    }.distinct()
+    return performedNames.takeIf { it.isNotEmpty() }?.joinToString(" / ") ?: canonicalName
+}
+
 private fun formatHistoricalTimedSetValue(startTimer: Int, endTimer: Int): String {
     return if (endTimer == 0) {
         formatTime(startTimer / 1000)
@@ -433,8 +443,7 @@ internal fun shouldDuplicateUnilateralHistoryRow(
     exercise: Exercise,
     setData: Any?,
 ): Boolean {
-    val intraSetRestSeconds = exercise.intraSetRestInSeconds ?: return false
-    if (intraSetRestSeconds <= 0) return false
+    if (!exercise.hasPairedSideExecution) return false
     return setData is WeightSetData || setData is BodyWeightSetData || setData == null
 }
 
@@ -442,8 +451,7 @@ private fun shouldDuplicateUnilateralTemplateRow(
     exercise: Exercise,
     set: Set,
 ): Boolean {
-    val intraSetRestSeconds = exercise.intraSetRestInSeconds ?: return false
-    if (intraSetRestSeconds <= 0) return false
+    if (!exercise.hasPairedSideExecution) return false
     return set is WeightSet || set is BodyWeightSet
 }
 
@@ -650,6 +658,7 @@ fun ExerciseHistoryRenderer(
     collapsedSummary: String? = null,
 ) {
     val firstHistory = setHistories.firstOrNull()
+    val historicalExerciseName = historyExerciseDisplayName(exercise.name, setHistories)
     val equipment = firstHistory?.equipmentIdSnapshot
         ?.let { appViewModel.getEquipmentById(it) }
         ?: exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
@@ -694,7 +703,7 @@ fun ExerciseHistoryRenderer(
                     modifier = m
                         .padding(horizontal = 10.dp)
                         .basicMarquee(iterations = Int.MAX_VALUE),
-                    text = exercise.name,
+                    text = historicalExerciseName,
                     maxLines = 2,
                     style = historyExerciseNameTextStyle(),
                     color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray

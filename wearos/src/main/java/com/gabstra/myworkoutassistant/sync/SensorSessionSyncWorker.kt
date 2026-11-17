@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionStatus
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.delay
@@ -31,12 +32,17 @@ class SensorSessionSyncWorker(
             delay(COMPLETION_SETTLE_MS)
 
             val syncedIds = SensorSessionSyncedIdTracker.getSyncedIds(context)
-            val pendingSessionIds = AppDatabase.getDatabase(context)
-                .motionCaptureSyncDao()
-                .getSessionsByStatus(MotionCaptureSessionStatus.COMPLETED.name)
-                .map { it.id }
-                .filterNot { it in syncedIds }
-                .toSet()
+            // Sessions can belong to a profile other than the active one after a switch.
+            val profileBySessionId = buildMap {
+                Profiles.profiles(context).forEach { profile ->
+                    AppDatabase.getDatabase(context, profile.id)
+                        .motionCaptureSyncDao()
+                        .getSessionsByStatus(MotionCaptureSessionStatus.COMPLETED.name)
+                        .filterNot { it.id in syncedIds }
+                        .forEach { put(it.id, profile.id) }
+                }
+            }
+            val pendingSessionIds = profileBySessionId.keys
 
             if (pendingSessionIds.isEmpty()) {
                 Log.d(TAG, "SYNC_TRACE event=worker_noop side=wear channel=sensorSession reason=worker_retry")
@@ -47,11 +53,17 @@ class SensorSessionSyncWorker(
                 TAG,
                 "SYNC_TRACE event=worker_send side=wear channel=sensorSession pending=${pendingSessionIds.size}"
             )
-            val result = SensorSessionSyncSender.send(
-                context = context,
-                dataClient = Wearable.getDataClient(context),
-                sessionIds = pendingSessionIds
-            )
+            val failedSessionIds = profileBySessionId.entries
+                .groupBy({ it.value }, { it.key })
+                .flatMap { (profileId, ids) ->
+                    SensorSessionSyncSender.send(
+                        context = context,
+                        dataClient = Wearable.getDataClient(context),
+                        sessionIds = ids.toSet(),
+                        profileId = profileId,
+                    ).failedSessionIds
+                }
+            val result = SensorSessionSyncResult(emptySet(), failedSessionIds.toSet())
             if (result.failedSessionIds.isEmpty()) {
                 Result.success()
             } else {

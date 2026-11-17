@@ -48,7 +48,7 @@ class PhoneToWearMovementVisibilityE2ETest : WearBaseE2ETest() {
         var failureDetail = "movement sync was not checked"
 
         while (System.currentTimeMillis() < deadline) {
-            val syncedExercise = WorkoutStoreRepository(context.filesDir)
+            val syncedExercise = WorkoutStoreRepository.forActiveProfile(context)
                 .getWorkoutStore()
                 .workouts
                 .asSequence()

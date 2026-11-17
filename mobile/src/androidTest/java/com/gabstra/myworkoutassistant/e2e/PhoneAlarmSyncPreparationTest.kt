@@ -36,7 +36,7 @@ class PhoneAlarmSyncPreparationTest {
             db.exerciseSessionProgressionDao().deleteAll()
             db.workoutScheduleDao().deleteAll()
 
-            WorkoutStoreRepository(context.filesDir).saveWorkoutStore(
+            WorkoutStoreRepository.forActiveProfile(context).saveWorkoutStore(
                 AlarmTriggerPhoneWorkoutStoreFixture.createWorkoutStore()
             )
 

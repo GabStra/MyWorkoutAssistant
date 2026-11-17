@@ -9,9 +9,11 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatNumber
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -71,7 +73,8 @@ internal suspend fun loadComparableExerciseSessions(
         .filter { it.isNormallyCompleted() }
         .filter { historyStartDate == null || !it.date.isBefore(historyStartDate) }
         .filter { historyEndDate == null || !it.date.isAfter(historyEndDate) }
-        .sortedWith(compareBy<WorkoutHistory> { it.date }.thenBy { it.time })
+        .sortedWith(compareBy<WorkoutHistory> { it.date }.thenBy { it.knownStartTimeOrNull() == null }
+            .thenBy { it.knownStartTimeOrNull() }.thenBy { it.id.toString() })
 
     return completedWorkoutHistories.mapNotNull { workoutHistory ->
         val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
@@ -144,8 +147,11 @@ internal fun appendExerciseContextMarkdown(
         )
     }
 
-    if (exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds > 0) {
-        markdown.append("- Intra-set rest: ${exercise.intraSetRestInSeconds}s\n")
+    if (exercise.hasPairedSideExecution) {
+        markdown.append("- Paired-side sets: prescribed reps apply to each side\n")
+        exercise.intraSetRestInSeconds?.takeIf { it > 0 }?.let { rest ->
+            markdown.append("- Intra-set rest: ${rest}s\n")
+        }
     }
 
     markdown.append("- Warm-up sets: ${if (exercise.generateWarmUpSets) "enabled" else "disabled"}\n")
@@ -193,7 +199,8 @@ internal fun appendHistoricalSessionBlockMarkdown(
     }
 
     val metrics = metricsForSetHistories(session.activeSetHistories, achievableWeights, equipment)
-    markdown.append("- Date: ${session.workoutHistory.date} ${session.workoutHistory.time}\n")
+    markdown.append("- Date: ${sessionDateLabel(session.workoutHistory)}\n")
+    reportedExerciseNameLine(session.activeSetHistories)?.let { markdown.append(it) }
     session.workout?.name?.let { markdown.append("- Workout: $it\n") }
     markdown.append("- Executed sets: ${metrics.executedSetCount}\n")
     if (metrics.totalDurationSeconds > 0) {
@@ -219,7 +226,8 @@ internal fun appendExecutedSummaryMarkdown(
 ) {
     val metrics = metricsForSetHistories(session.activeSetHistories, achievableWeights, equipment)
     markdown.append("#### Executed\n")
-    markdown.append("- Date: ${session.workoutHistory.date} ${session.workoutHistory.time}\n")
+    markdown.append("- Date: ${sessionDateLabel(session.workoutHistory)}\n")
+    reportedExerciseNameLine(session.activeSetHistories)?.let { markdown.append(it) }
     markdown.append("- Executed sets: ${metrics.executedSetCount}\n")
     if (metrics.totalDurationSeconds > 0) {
         markdown.append("- Total duration: ${formatDurationForExport(metrics.totalDurationSeconds)}\n")
@@ -661,4 +669,24 @@ private fun trendSignal(
         abs(values[0] - values[1]) < 0.001 && abs(values[1] - values[2]) < 0.001 -> "trend:stable"
         else -> "trend:mixed"
     }
+}
+
+/** Date plus reported time when known; unknown-time sessions are not shown as midnight. */
+private fun sessionDateLabel(history: WorkoutHistory): String = buildString {
+    append(history.date)
+    history.knownStartTimeOrNull()?.let { start ->
+        append(' ')
+        append(start.toLocalTime())
+    }
+    if (history.origin == WorkoutHistoryOrigin.USER_IMPORTED) {
+        append(" (imported/user-reported)")
+    }
+}
+
+/** Reported variation label for a session that documents a performed substitution. */
+private fun reportedExerciseNameLine(setHistories: List<SetHistory>): String? {
+    val names = setHistories
+        .mapNotNull { history -> history.exerciseNameSnapshot?.takeIf { it.isNotBlank() } }
+        .distinct()
+    return names.takeIf { it.isNotEmpty() }?.let { "- Reported exercise: ${it.joinToString(" / ")}\n" }
 }

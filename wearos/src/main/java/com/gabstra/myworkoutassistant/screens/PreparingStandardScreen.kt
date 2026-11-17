@@ -91,6 +91,6 @@ fun PreparingStandardScreen(
     }
 
     FullScreenLoadingIndicator(
-        text = if (watchHeartRateReady) "Preparing HR sensor" else "Waiting for HR sensor"
+        text = if (watchHeartRateReady) "Getting your workout ready" else "Checking your heart rate"
     )
 }

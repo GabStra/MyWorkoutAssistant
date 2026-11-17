@@ -1,11 +1,12 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,6 +21,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.presentation.theme.asNumeral
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 
 private val MetadataLineItemHeight = 16.dp
 
@@ -67,11 +70,14 @@ fun ExerciseMetadataStrip(
             itemVerticalAlignment = Alignment.CenterVertically
         ) {
             exerciseLabel?.let {
-                MetadataText(
-                    text = "Exercise: $it",
-                    style = baseStyle,
-                    color = secondaryTextColor
-                )
+                MetadataLineItem {
+                    LabeledNumericValue(
+                        label = "Exercise:",
+                        value = it,
+                        style = baseStyle,
+                        color = secondaryTextColor,
+                    )
+                }
             }
 
             if (supersetExerciseTotal != null && supersetExerciseIndex != null) {
@@ -106,19 +112,26 @@ fun ExerciseMetadataStrip(
             }
 
             setLabel?.let {
-                MetadataText(
-                    text = "$setLabelPrefix: $it",
-                    style = baseStyle,
-                    color = secondaryTextColor
-                )
+                MetadataLineItem {
+                    LabeledNumericValue(
+                        label = "$setLabelPrefix:",
+                        value = it,
+                        style = baseStyle,
+                        color = secondaryTextColor,
+                    )
+                }
             }
 
             repRange?.let {
-                MetadataText(
-                    text = "Target: $it reps",
-                    style = baseStyle,
-                    color = secondaryTextColor
-                )
+                MetadataLineItem {
+                    LabeledNumericValue(
+                        label = "Target:",
+                        value = it,
+                        style = baseStyle,
+                        color = secondaryTextColor,
+                        suffix = " reps",
+                    )
+                }
             }
 
             sideIndicator?.let {
@@ -148,26 +161,9 @@ fun ExerciseMetadataStrip(
 }
 
 @Composable
-private fun MetadataText(
-    text: String,
-    style: TextStyle,
-    color: Color,
-) {
-    MetadataLineItem {
-        Text(
-            text = text,
-            style = style,
-            color = color,
-            maxLines = 1,
-            softWrap = false
-        )
-    }
-}
-
-@Composable
 private fun MetadataLineItem(content: @Composable () -> Unit) {
     Box(
-        modifier = Modifier.height(MetadataLineItemHeight),
+        modifier = Modifier.heightIn(min = MetadataLineItemHeight),
         contentAlignment = Alignment.Center
     ) {
         content()

@@ -20,6 +20,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.ContainerPosition
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateEditor
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
@@ -335,9 +336,10 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
     launchIO {
         val machine = stateMachine ?: return@launchIO
         val currentState = machine.currentState as? WorkoutState.CalibrationLoadSelection ?: return@launchIO
+        val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
+        if (exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return@launchIO
         val selectedWeight = extractSelectedWeight(currentState) ?: return@launchIO
         val updatedSet = updateCalibrationSetWithWeight(currentState, selectedWeight) ?: return@launchIO
-        val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
         val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
 
         val warmupStates = generateWarmupStates(exercise, equipment, currentState, selectedWeight)

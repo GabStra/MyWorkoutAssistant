@@ -11,6 +11,7 @@ import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.RestHistoryScope
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
@@ -26,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReas
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -205,6 +207,64 @@ class WorkoutSessionMarkdownExportTest {
 
         val markdown = (result as WorkoutSessionMarkdownResult.Success).markdown
         assertTrue(markdown.contains("Session status: Finished early before completing the workout"))
+    }
+
+    @Test
+    fun buildWorkoutSessionMarkdown_labelsUnknownImportedTimingAndKeepsReportedSets() = runTest {
+        val workout = createWorkout()
+        val workoutStore = createWorkoutStore(workout)
+        val historyId = UUID.randomUUID()
+        val date = LocalDate.of(2026, 3, 2)
+
+        database.workoutHistoryDao().insert(
+            com.gabstra.myworkoutassistant.shared.WorkoutHistory(
+                id = historyId,
+                workoutId = workoutId,
+                date = date,
+                time = LocalTime.MIDNIGHT,
+                startTime = date.atStartOfDay(),
+                duration = 0,
+                heartBeatRecords = emptyList(),
+                isDone = true,
+                hasBeenSentToHealth = false,
+                globalId = workoutGlobalId,
+                origin = WorkoutHistoryOrigin.USER_IMPORTED,
+                startTimeKnown = false,
+                durationKnown = false
+            )
+        )
+        database.setHistoryDao().insertAll(
+            SetHistory(
+                id = UUID.randomUUID(),
+                workoutHistoryId = historyId,
+                exerciseId = exerciseId,
+                equipmentIdSnapshot = equipmentId,
+                setId = workSet1Id,
+                order = 0u,
+                startTime = null,
+                endTime = null,
+                exerciseNameSnapshot = "Machine Chest Press",
+                setData = WeightSetData(actualReps = 9, actualWeight = 50.0, volume = 450.0),
+                skipped = false
+            )
+        )
+
+        val result = buildWorkoutSessionMarkdown(
+            workoutHistoryId = historyId,
+            workoutHistoryDao = database.workoutHistoryDao(),
+            setHistoryDao = database.setHistoryDao(),
+            restHistoryDao = database.restHistoryDao(),
+            exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
+            workoutStore = workoutStore
+        )
+
+        val markdown = (result as WorkoutSessionMarkdownResult.Success).markdown
+        assertTrue(markdown.contains("2026-03-02 | Dur: unknown"))
+        assertFalse(markdown.contains("00:00"))
+        assertTrue(markdown.contains("Session source: User-reported/imported (not watch-measured)"))
+        assertFalse(markdown.contains("Source note:"))
+        assertTrue(markdown.contains("### Machine Chest Press"))
+        assertTrue(markdown.contains("for 9 reps"))
     }
 
     private suspend fun insertCompletedSession(

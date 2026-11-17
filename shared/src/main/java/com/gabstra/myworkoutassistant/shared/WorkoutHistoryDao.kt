@@ -55,6 +55,12 @@ interface WorkoutHistoryDao {
     @Query("SELECT * FROM workout_history WHERE isDone = :isDone")
     suspend fun getAllWorkoutHistoriesByIsDone(isDone: Boolean = true): List<WorkoutHistory>
 
+    @Query("SELECT id FROM workout_history WHERE isDone = 1")
+    suspend fun getCompletedWorkoutHistoryIds(): List<UUID>
+
+    @Query("SELECT * FROM workout_history WHERE isDone = 1 AND id IN (:ids)")
+    suspend fun getCompletedWorkoutHistoriesByIds(ids: List<UUID>): List<WorkoutHistory>
+
     @Query(
         """
         SELECT * FROM workout_history

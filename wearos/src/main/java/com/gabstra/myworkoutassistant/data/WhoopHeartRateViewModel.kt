@@ -144,6 +144,9 @@ private class WhoopBleClient(
         private const val SCAN_TIMEOUT_MS = 10_000L
         private const val CACHED_ADDRESS_TIMEOUT_MS = 3_000L
         private const val PREF_LAST_ADDRESS = "last_address"
+        // BuildConfig generation is disabled for this module; keep per-sample logging off in
+        // every build. Flip locally only when diagnosing the heart-rate stream.
+        private const val LOG_HEART_RATE_SAMPLES = false
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -156,6 +159,9 @@ private class WhoopBleClient(
     private var usingCachedAddress = false
     private var cachedAddressFallback: Runnable? = null
     private val loggedScanDeviceAddresses = mutableSetOf<String>()
+    // Bluetooth names/addresses are fixed for a connection; resolve the label once per GATT.
+    private var cachedLabelGatt: BluetoothGatt? = null
+    private var cachedLabelValue: String? = null
 
     private fun hasPermission(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -225,13 +231,20 @@ private class WhoopBleClient(
     }
 
     private fun gattLabel(gatt: BluetoothGatt): String {
-        if (!hasBluetoothConnectPermission()) {
-            return config.displayName?.trim()?.takeIf { it.isNotEmpty() }
-                ?: config.deviceId?.trim()?.takeIf { it.isNotEmpty() }
-                ?: "your WHOOP"
+        cachedLabelValue?.let { cached ->
+            if (cachedLabelGatt === gatt) return cached
         }
 
-        return gattDeviceName(gatt) ?: gattDeviceAddress(gatt)
+        val label = if (!hasBluetoothConnectPermission()) {
+            config.displayName?.trim()?.takeIf { it.isNotEmpty() }
+                ?: config.deviceId?.trim()?.takeIf { it.isNotEmpty() }
+                ?: "your WHOOP"
+        } else {
+            gattDeviceName(gatt) ?: gattDeviceAddress(gatt)
+        }
+        cachedLabelGatt = gatt
+        cachedLabelValue = label
+        return label
     }
 
     @SuppressLint("MissingPermission")
@@ -656,11 +669,12 @@ private class WhoopBleClient(
                     }
                     cachedAddressFallback?.let { handler.removeCallbacks(it) }
                     cachedAddressFallback = null
+                    val label = gattLabel(gatt)
                     onStateChange(
                         ExternalHeartRateConnectionState.Connected(
                             source = HeartRateSource.WHOOP_BLE,
-                            message = "Connected to ${gattLabel(gatt)}.",
-                            deviceLabel = gattLabel(gatt)
+                            message = "Connected to $label.",
+                            deviceLabel = label
                         )
                     )
                     discoverServices(gatt)
@@ -753,10 +767,12 @@ private class WhoopBleClient(
                 .takeIf { it.isNotEmpty() }
                 ?.let(onRrIntervals)
             if (bpm > 0) {
-                Log.d(
-                    TAG,
-                    "WHOOP heart-rate notification: address=${gattAddressOrUnknown(gatt)}, bpm=$bpm"
-                )
+                if (LOG_HEART_RATE_SAMPLES) {
+                    Log.d(
+                        TAG,
+                        "WHOOP heart-rate notification: address=${gattAddressOrUnknown(gatt)}, bpm=$bpm"
+                    )
+                }
                 flowEmitter?.onNext(bpm)
                 onStateChange(
                     ExternalHeartRateConnectionState.Streaming(

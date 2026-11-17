@@ -63,7 +63,7 @@ class TuesdayWorkoutSyncVerificationTest {
             it.workoutId == WORKOUT_ID && !it.isDone
         })
 
-        val workout = WorkoutStoreRepository(context.filesDir).getWorkoutStore().workouts.single {
+        val workout = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore().workouts.single {
             it.id == WORKOUT_ID
         }
         val calibrationSuperset = workout.workoutComponents.last() as Superset

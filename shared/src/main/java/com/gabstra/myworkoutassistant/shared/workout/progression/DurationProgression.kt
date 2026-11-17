@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.export.sliceHeartRateRecords
 import com.gabstra.myworkoutassistant.shared.export.targetZoneBpmBounds
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
@@ -147,8 +148,14 @@ suspend fun calculateDurationProgression(
             it.equipmentId == exercise.equipmentId
     } ?: DurationProgressionSnapshot(UUID.randomUUID(), config, set.timeInMillis / 1000,
         set.timeInMillis / 1000, zone.first, zone.second, exercise.equipmentId)
+    // Ordering and "recorded before this policy" only make sense with a real start
+    // time. Imported sessions may carry a date-only placeholder, so they cannot
+    // participate in consecutive-session progression accounting.
     val histories = versions.flatMap { workoutHistoryDao.getWorkoutsByWorkoutId(it) }
-        .distinctBy { it.id }.filter { it.isDone && it.startTime <= through }.sortedByDescending { it.startTime }
+        .distinctBy { it.id }
+        .filter { it.isDone }
+        .filter { history -> history.knownStartTimeOrNull()?.let { !it.isAfter(through) } == true }
+        .sortedByDescending { it.knownStartTimeOrNull() }
     val assessments = mutableListOf<DurationSessionAssessment>()
     val currentSeconds = set.timeInMillis / 1000
     var successes = 0

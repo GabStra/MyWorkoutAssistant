@@ -5,13 +5,12 @@ import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -23,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -35,6 +35,7 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.RadioButton
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
@@ -53,13 +54,21 @@ import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.WorkoutNameText
 import com.gabstra.myworkoutassistant.composables.missingWorkoutPermissions
 import com.gabstra.myworkoutassistant.composables.workoutPermissionMessage
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
+import com.gabstra.myworkoutassistant.shared.workout.presentation.orderWorkoutsForPresentation
 import kotlinx.coroutines.delay
+
+@Composable
+private fun Workout.detailTitle(): String =
+    if (recurringSessionId == null) name
+    else "${prescriptionLabel ?: prescriptionOrdinal?.let { stringResource(R.string.wear_prescription_with_ordinal, it) } ?: stringResource(R.string.wear_recurring_session)} · $name"
 
 @Composable
 fun WorkoutDetailScreen(
@@ -72,6 +81,13 @@ fun WorkoutDetailScreen(
     val workouts by viewModel.workouts.collectAsState()
 
     val workout = remember(selectedWorkoutId,workouts) { workouts.find { it.id == selectedWorkoutId }!! }
+    val recurringPrescriptions = remember(workout.recurringSessionId, workouts) {
+        workout.recurringSessionId?.let { sessionId ->
+            orderWorkoutsForPresentation(
+                workouts.filter { it.enabled && it.isActive && it.recurringSessionId == sessionId }
+            )
+        }.orEmpty()
+    }
     val context = LocalContext.current
 
     BackHandler(true) {
@@ -93,7 +109,7 @@ fun WorkoutDetailScreen(
         checkStartTime = System.currentTimeMillis()
     }
     
-    LaunchedEffect(isCheckingWorkoutRecord) {
+    LaunchedEffect(selectedWorkoutId, isCheckingWorkoutRecord) {
         if (!isCheckingWorkoutRecord) {
             // Check completed, but ensure minimum display time (300ms) to prevent flashing
             val elapsed = System.currentTimeMillis() - checkStartTime
@@ -191,7 +207,7 @@ fun WorkoutDetailScreen(
 
     if (showPermissionRationale) {
         PermissionRequestDialog(
-            title = "Workout permissions",
+            title = stringResource(R.string.wear_workout_permissions),
             message = workoutPermissionMessage(permissionsToRequest),
             onContinue = {
                 showPermissionRationale = false
@@ -229,9 +245,12 @@ fun WorkoutDetailScreen(
             )
         )
 
+        val detailTitleText = workout.detailTitle()
+        val workoutDetailCd = stringResource(R.string.wear_workout_detail_cd, detailTitleText)
+
         Box(
             modifier = Modifier.semantics {
-                contentDescription = "Workout detail: ${workout.name}"
+                contentDescription = workoutDetailCd
             }
         ) {
             ScreenScaffold(
@@ -247,6 +266,7 @@ fun WorkoutDetailScreen(
                 }
             ){ contentPadding ->
                 TransformingLazyColumn(
+                    modifier = if (recurringPrescriptions.isNotEmpty()) Modifier.selectableGroup() else Modifier,
                     contentPadding = contentPadding,
                     state = state,
                 ) {
@@ -257,7 +277,46 @@ fun WorkoutDetailScreen(
                                 .transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                         ) {
-                            WorkoutNameText(text = workout.name)
+                            WorkoutNameText(text = detailTitleText)
+                        }
+                    }
+
+                    if (recurringPrescriptions.isNotEmpty()) {
+                        item {
+                            ListHeader(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec),
+                                transformation = SurfaceTransformation(spec),
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.wear_prescription_header),
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                        }
+                        recurringPrescriptions.forEach { prescription ->
+                            item {
+                                RadioButton(
+                                    selected = prescription.id == selectedWorkoutId,
+                                    onSelect = {
+                                        viewModel.setSelectedWorkoutId(prescription.id)
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .transformedHeight(this, spec),
+                                    transformation = SurfaceTransformation(spec),
+                                    label = {
+                                        Text(
+                                            text = prescription.prescriptionLabel
+                                                ?: prescription.prescriptionOrdinal?.let { stringResource(R.string.wear_prescription_with_ordinal, it) }
+                                                ?: stringResource(R.string.wear_recurring_session)
+                                        )
+                                    }
+                                )
+                            }
                         }
                     }
 
@@ -277,13 +336,14 @@ fun WorkoutDetailScreen(
 
                     if (hasWorkoutRecord) {
                         item {
+                            val resumeWorkoutCd = stringResource(R.string.wear_resume_workout_cd)
                             WearPrimaryButton(
                                 modifier = Modifier
-                                    .semantics { contentDescription = "Resume incomplete workout" }
+                                    .semantics { contentDescription = resumeWorkoutCd }
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                text = "Resume",
+                                text = stringResource(R.string.wear_resume),
                                 onClick = {
                                     hapticsViewModel.doGentleVibration()
                                     requestPermissionsOrResumeWorkout()
@@ -292,9 +352,16 @@ fun WorkoutDetailScreen(
                         }
                     }
 
+                    if (recurringPrescriptions.isNotEmpty()) {
+                        item {
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                    }
+
                     item {
+                        val startWorkoutCd = stringResource(R.string.wear_start_workout_cd)
                         val startModifier = Modifier
-                            .semantics { contentDescription = "Start workout" }
+                            .semantics { contentDescription = startWorkoutCd }
                             .fillMaxWidth()
                             .transformedHeight(this, spec)
                         val onStartClick = {
@@ -309,14 +376,14 @@ fun WorkoutDetailScreen(
                             ButtonWithText(
                                 modifier = startModifier,
                                 transformation = SurfaceTransformation(spec),
-                                text = "Start new",
+                                text = stringResource(R.string.wear_start_new),
                                 onClick = onStartClick,
                             )
                         } else {
                             WearPrimaryButton(
                                 modifier = startModifier,
                                 transformation = SurfaceTransformation(spec),
-                                text = "Start",
+                                text = stringResource(R.string.wear_start),
                                 onClick = onStartClick,
                             )
                         }
@@ -327,13 +394,14 @@ fun WorkoutDetailScreen(
                             Spacer(modifier = Modifier.height(10.dp))
                         }
                         item {
+                            val viewExercisesCd = stringResource(R.string.wear_view_exercises_cd)
                             ButtonWithText(
                                 modifier = Modifier
-                                    .semantics { contentDescription = "View workout exercises" }
+                                    .semantics { contentDescription = viewExercisesCd }
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                text = "Exercises",
+                                text = stringResource(R.string.wear_exercises),
                                 onClick = {
                                     hapticsViewModel.doGentleVibration()
                                     navController.navigate(Screen.WorkoutExercises.route)
@@ -344,9 +412,10 @@ fun WorkoutDetailScreen(
 
                     if (hasWorkoutRecord) {
                         item {
+                            val discardWorkoutCd = stringResource(R.string.wear_discard_workout_cd)
                             ButtonWithText(
                                 modifier = Modifier
-                                    .semantics { contentDescription = "Discard incomplete workout" }
+                                    .semantics { contentDescription = discardWorkoutCd }
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
@@ -363,7 +432,7 @@ fun WorkoutDetailScreen(
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
-                            text = "Back",
+                            text = stringResource(R.string.wear_back),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 navController.popBackStack()

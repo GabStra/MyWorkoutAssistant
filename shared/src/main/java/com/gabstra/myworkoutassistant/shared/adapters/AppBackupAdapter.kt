@@ -62,6 +62,12 @@ class AppBackupAdapter : JsonDeserializer<AppBackup> {
                 ?.asString,
             WorkoutInsightsCustomInstructions = jsonObject.get("WorkoutInsightsCustomInstructions")
                 ?.takeUnless { it.isJsonNull }
+                ?.asString,
+            ProfileId = jsonObject.get("ProfileId")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString,
+            ProfileName = jsonObject.get("ProfileName")
+                ?.takeUnless { it.isJsonNull }
                 ?.asString
         )
     }

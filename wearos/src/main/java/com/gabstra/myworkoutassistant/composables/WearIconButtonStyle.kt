@@ -1,7 +1,10 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.IconButtonColors
 import androidx.wear.compose.material3.IconButtonDefaults
 
 internal val WearStandardIconButtonSize: Dp = 50.dp
@@ -18,3 +21,10 @@ internal val WearSecondaryIconButtonIconSize: Dp =
 
 internal fun wearIconSizeForButton(buttonSize: Dp): Dp =
     IconButtonDefaults.iconSizeFor(buttonSize)
+
+@Composable
+internal fun wearColoredIconButtonColors(containerColor: Color): IconButtonColors =
+    IconButtonDefaults.iconButtonColors(
+        containerColor = containerColor,
+        contentColor = Color.White,
+    )

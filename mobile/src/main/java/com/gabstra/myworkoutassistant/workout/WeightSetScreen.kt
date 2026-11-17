@@ -56,6 +56,7 @@ fun WeightSetScreen(
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as WeightSetData
+    val historicalSetData = state.historicalSetData as? WeightSetData
     val comparisonSetData = (state.historicalSetData as? WeightSetData) ?: previousSetData
     val initialSetData = state.previousSetData as WeightSetData
     var currentSetData by remember(state.set.id, state.equipmentId) {
@@ -326,6 +327,13 @@ fun WeightSetScreen(
             modifier = customModifier,
             verticalArrangement = Arrangement.Center
         ){
+            historicalSetData?.let { historical ->
+                Text(
+                    text = "Last used: ${equipment?.formatWeight(historical.actualWeight) ?: historical.actualWeight} kg × ${historical.actualReps} reps",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -49,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
@@ -89,7 +91,9 @@ fun WorkoutsBottomBar(
     onGroupedWorkoutsHistoriesChange: (Map<java.time.LocalDate, List<WorkoutHistory>>?) -> Unit,
     onMoveWorkoutUp: () -> Unit,
     onMoveWorkoutDown: () -> Unit,
-    isSelectionModeActive: Boolean
+    isSelectionModeActive: Boolean,
+    canManageRecurringSession: Boolean = false,
+    onManageRecurringSession: () -> Unit = {},
 ) {
     if (isSelectionModeActive) {
         var showDeleteConfirmation by remember(selectedWorkouts) { mutableStateOf(false) }
@@ -179,6 +183,30 @@ fun WorkoutsBottomBar(
                                         maxLines = 2,
                                         modifier = Modifier.heightIn(min = 0.dp)
                                     )
+                                }
+                                if (canManageRecurringSession) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.width(76.dp)
+                                    ) {
+                                        IconButton(
+                                            onClick = onManageRecurringSession,
+                                            modifier = Modifier.testTag("manage_recurring_session"),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Manage prescriptions",
+                                                tint = MaterialTheme.colorScheme.onBackground,
+                                            )
+                                        }
+                                        Text(
+                                            "Manage prescriptions",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 2,
+                                            modifier = Modifier.heightIn(min = 0.dp),
+                                        )
+                                    }
                                 }
                                 val selectedIndexInActive = if (selectedWorkouts.size == 1 && activeWorkouts.isNotEmpty()) {
                                     activeWorkouts.indexOfFirst { it.id == selectedWorkouts.first().id }

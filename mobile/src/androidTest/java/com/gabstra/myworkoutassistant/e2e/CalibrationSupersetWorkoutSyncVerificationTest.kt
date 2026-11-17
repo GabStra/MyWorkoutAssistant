@@ -64,7 +64,7 @@ class CalibrationSupersetWorkoutSyncVerificationTest {
             }
         )
 
-        val workout = WorkoutStoreRepository(context.filesDir).getWorkoutStore().workouts.single {
+        val workout = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore().workouts.single {
             it.id == CalibrationSupersetCrossDevicePhoneWorkoutStoreFixture.WORKOUT_ID
         }
         val superset = workout.workoutComponents.single() as Superset

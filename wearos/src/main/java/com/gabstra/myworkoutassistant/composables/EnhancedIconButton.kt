@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.IconButtonColors
-import androidx.wear.compose.material3.IconButtonDefaults
+import androidx.wear.compose.material3.MaterialTheme
 
 @Composable
 fun EnhancedIconButton(
@@ -34,7 +34,8 @@ fun EnhancedIconButton(
     modifier: Modifier = Modifier,
     buttonModifier: Modifier = Modifier,
     enabled: Boolean = true,
-    colors: IconButtonColors = IconButtonDefaults.filledTonalIconButtonColors(),
+    // House rule: grey-contained icon buttons always carry white icons.
+    colors: IconButtonColors = wearColoredIconButtonColors(MaterialTheme.colorScheme.surfaceContainerHigh),
     buttonSize: Dp = WearStandardIconButtonSize,
     hitBoxScale: Float = 1.5f,
     content: @Composable () -> Unit

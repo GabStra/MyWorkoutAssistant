@@ -36,10 +36,10 @@ fun showActiveWorkoutNotification(
     notificationManager.createNotificationChannel(
         NotificationChannel(
             ACTIVE_WORKOUT_CHANNEL_ID,
-            "Active workout",
+            context.getString(R.string.notif_channel_active_workout),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Shows when a workout is in progress"
+            description = context.getString(R.string.notif_channel_active_workout_desc)
             setSound(null, null)
             enableVibration(false)
         },
@@ -56,7 +56,7 @@ fun showActiveWorkoutNotification(
     )
     val notificationBuilder = NotificationCompat.Builder(context, ACTIVE_WORKOUT_CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_workout_notification)
-        .setContentTitle("Workout in progress")
+        .setContentTitle(context.getString(R.string.notif_workout_in_progress))
         .setContentIntent(pendingIntent)
         .setCategory(NotificationCompat.CATEGORY_WORKOUT)
         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -67,7 +67,8 @@ fun showActiveWorkoutNotification(
     if (timerUiState == null || !timerUiState.isRunning) {
         notificationBuilder
             .setContentText(
-                formatTimerNotificationStatus(timerUiState) ?: "Tap to return to your workout",
+                formatTimerNotificationStatus(timerUiState)
+                    ?: context.getString(R.string.notif_tap_to_return),
             )
             .setShowWhen(false)
             .setUsesChronometer(false)
@@ -81,11 +82,11 @@ fun showActiveWorkoutNotification(
         notificationBuilder
             .setContentText(
                 when (timerUiState.timerType) {
-                    WorkoutTimerService.TimerType.REST -> "Rest timer"
-                    WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set timer"
-                    WorkoutTimerService.TimerType.ENDURANCE_SET -> "Set elapsed"
-                    WorkoutTimerService.TimerType.SUPERSET_CAP -> "Time left"
-                    WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> "Round"
+                    WorkoutTimerService.TimerType.REST -> context.getString(R.string.notif_rest_timer)
+                    WorkoutTimerService.TimerType.TIMED_DURATION_SET -> context.getString(R.string.notif_set_timer)
+                    WorkoutTimerService.TimerType.ENDURANCE_SET -> context.getString(R.string.notif_set_elapsed)
+                    WorkoutTimerService.TimerType.SUPERSET_CAP -> context.getString(R.string.notif_time_left)
+                    WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> context.getString(R.string.notif_round)
                 },
             )
             .setWhen(timerBaseWallClockMillis)
@@ -120,10 +121,10 @@ fun showTimerCompletedNotification(
     notificationManager.createNotificationChannel(
         NotificationChannel(
             TIMER_COMPLETION_CHANNEL_ID,
-            "Timer completion",
+            context.getString(R.string.notif_channel_timer_completion),
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
-            description = "Alerts when a workout timer finishes"
+            description = context.getString(R.string.notif_channel_timer_completion_desc)
             enableVibration(true)
         },
     )

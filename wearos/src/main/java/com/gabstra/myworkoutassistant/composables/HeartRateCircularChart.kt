@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -49,19 +48,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.ExternalHeartRateDeviceController
 import com.gabstra.myworkoutassistant.data.isReady
@@ -113,9 +116,9 @@ fun HrStatusBadge(
         val status = hrStatus ?: lastHrStatus
         if (status != null) {
             val message = when (status) {
-                HeartRateStatus.HIGHER_THAN_TARGET -> "Above Target"
-                HeartRateStatus.LOWER_THAN_TARGET -> "Below Target"
-                HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
+                HeartRateStatus.HIGHER_THAN_TARGET -> stringResource(R.string.chart_hr_above_target)
+                HeartRateStatus.LOWER_THAN_TARGET -> stringResource(R.string.chart_hr_below_target)
+                HeartRateStatus.OUT_OF_MAX -> stringResource(R.string.chart_hr_max_exceeded)
             }
             val icon = when (status) {
                 HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
@@ -153,7 +156,7 @@ fun HrStatusBadge(
                         ) {
                             Icon(
                                 imageVector = icon,
-                                contentDescription = "HR Status",
+                                contentDescription = stringResource(R.string.chart_cd_hr_status),
                                 modifier = Modifier.size(15.dp),
                                 tint = Red
                             )
@@ -318,11 +321,21 @@ private fun HeartRateDisplay(
     val labelStyle = MaterialTheme.typography.labelMedium
 
     val heartSize = 15.dp
-    val chipWidth = 27.5.dp
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    val zoneStyle = MaterialTheme.typography.bodySmall
+    val valueWidth = with(density) {
+        maxOf(
+            textMeasurer.measure("100%", labelStyle).size.width,
+            textMeasurer.measure("999", labelStyle).size.width,
+            textMeasurer.measure(textToDisplay, labelStyle).size.width,
+        ).toDp().coerceAtLeast(45.dp)
+    }
+    val chipWidth = with(density) {
+        textMeasurer.measure("Z5", zoneStyle).size.width.toDp() + 5.dp
+    }.coerceAtLeast(27.5.dp)
 
-    // The chip is wider than the heart; without compensation the value would sit left
-    // of the screen centerline by half their difference. All slots are fixed-width, so
-    // nothing shifts as the value, zone, or display mode changes.
+    // Keep the value centered while allowing the slots to grow with the system font size.
     val centerlineOffset = (chipWidth - heartSize) / 2
 
     Row(
@@ -336,23 +349,12 @@ private fun HeartRateDisplay(
             size = heartSize
         )
 
-        BasicText(
+        TightNumericText(
             text = textToDisplay,
-            // Fixed-width, centered box: fits "100%" up to large font scales (autosize
-            // absorbs the rest), so digit growth never re-centers the ensemble.
-            modifier = Modifier.width(45.dp),
-            style = labelStyle.copy(
-                textAlign = TextAlign.Center,
-                color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground,
-                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                lineHeightStyle = LineHeightStyle(
-                    alignment = LineHeightStyle.Alignment.Center,
-                    trim = LineHeightStyle.Trim.Both,
-                ),
-            ),
-            maxLines = 1,
-            softWrap = false,
-            autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = labelStyle.fontSize),
+            modifier = Modifier.width(valueWidth),
+            style = MaterialTheme.typography.numeralMicro,
+            color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground,
+            textAlign = TextAlign.Center,
         )
 
         Box(
@@ -382,10 +384,6 @@ private fun HeartRateDisplay(
                         ),
                     maxLines = 1,
                     softWrap = false,
-                    autoSize = TextAutoSize.StepBased(
-                        minFontSize = 8.sp,
-                        maxFontSize = MaterialTheme.typography.bodySmall.fontSize,
-                    ),
                 )
             }
         }
@@ -722,7 +720,7 @@ private fun HeartRateView(
             if (hr == 0) {
                 Icon(
                     imageVector = Icons.Filled.SensorsOff,
-                    contentDescription = "Disconnected",
+                    contentDescription = stringResource(R.string.chart_cd_disconnected),
                     modifier = Modifier
                         .size(15.dp)
                         .offset(y = -WorkoutPagerLayoutTokens.BottomIndicatorSpacing)

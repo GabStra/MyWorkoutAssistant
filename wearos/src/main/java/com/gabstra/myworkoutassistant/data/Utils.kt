@@ -25,10 +25,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
@@ -47,6 +51,8 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutHistoryAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -864,7 +870,11 @@ suspend fun waitForSyncCompletion(transactionId: String): Boolean {
     }
 }
 
-suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
+suspend fun sendWorkoutStore(
+    dataClient: DataClient,
+    workoutStore: WorkoutStore,
+    profileId: String,
+) {
     val transactionId = UUID.randomUUID().toString()
     Log.d("DataLayerSync", "Starting workout store sync, transactionId=$transactionId")
     try {
@@ -887,6 +897,9 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
             dataMap.putByteArray("compressedJson", compressedData)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
             dataMap.putString("transactionId", transactionId)
+            // Which profile this store belongs to; the phone applies it there, not to whichever
+            // profile happens to be open.
+            dataMap.putString(PROFILE_ID_KEY, profileId)
         }.asPutDataRequest().setUrgent()
 
         Tasks.await(dataClient.putDataItem(request))
@@ -941,6 +954,23 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
     }
 }
 
+private val workoutHistoryStoreGson by lazy {
+    GsonBuilder()
+        .registerTypeAdapter(LocalDate::class.java, WearLocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, WearLocalTimeAdapter())
+        .registerTypeAdapter(LocalDateTime::class.java, WearLocalDateTimeAdapter())
+        .registerTypeAdapter(Set::class.java, SetAdapter())
+        .registerTypeAdapter(SetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
+        .registerTypeAdapter(com.gabstra.myworkoutassistant.shared.WorkoutHistory::class.java, WorkoutHistoryAdapter())
+        .create()
+}
+
 /**
  * Sends a WorkoutHistoryStore to the phone via the Data Layer.
  * @param transactionId Optional; if null, one is generated. Caller can pass one to register for SYNC_COMPLETE (markHistorySyncedForTransaction).
@@ -950,7 +980,9 @@ suspend fun sendWorkoutHistoryStore(
     dataClient: DataClient,
     workoutHistoryStore: WorkoutHistoryStore,
     context: android.content.Context? = null,
-    transactionId: String? = null
+    transactionId: String? = null,
+    profileId: String? = null,
+    batchPreflight: WorkoutHistoryBatchSendPreflight? = null
 ): Pair<Boolean, String> {
     val usedTransactionId = transactionId ?: UUID.randomUUID().toString()
     if (WorkoutHistoryTransferCoordinator.sendMutex.isLocked) {
@@ -964,66 +996,111 @@ suspend fun sendWorkoutHistoryStore(
             dataClient = dataClient,
             workoutHistoryStore = workoutHistoryStore,
             context = context,
-            usedTransactionId = usedTransactionId
+            usedTransactionId = usedTransactionId,
+            profileId = profileId,
+            batchPreflight = batchPreflight
         )
     }
+}
+
+data class WorkoutHistoryBatchSendPreflight(
+    val connectionAvailable: Boolean,
+    val handshakeSucceeded: Boolean
+)
+
+/**
+ * Performs the one-off network checks for a batch of history sends: removes abandoned payloads,
+ * verifies the phone transport, and completes a single handshake. Callers pass the result to
+ * [sendWorkoutHistoryStore] so individual sends skip the repeated preamble.
+ */
+internal suspend fun prepareWorkoutHistoryBatchSend(
+    context: Context,
+    dataClient: DataClient
+): WorkoutHistoryBatchSendPreflight {
+    cleanupAbandonedWorkoutHistoryPayloadDataItems(dataClient)
+
+    val connectionAvailable = checkConnection(context)
+    if (!connectionAvailable) {
+        Log.d("DataLayerSync", "Skipping workout history batch sync - phone not connected")
+        return WorkoutHistoryBatchSendPreflight(
+            connectionAvailable = false,
+            handshakeSucceeded = false
+        )
+    }
+
+    val handshakeTransactionId = UUID.randomUUID().toString()
+    val handshakeSucceeded = try {
+        sendSyncRequest(dataClient, handshakeTransactionId, context)
+    } finally {
+        SyncHandshakeManager.cleanup(handshakeTransactionId)
+        cleanupWorkoutHistoryTransactionDataItems(dataClient, handshakeTransactionId)
+    }
+    if (!handshakeSucceeded) {
+        Log.w(
+            "DataLayerSync",
+            "Batch handshake failed (no ACK) - proceeding with best-effort sends"
+        )
+    }
+    return WorkoutHistoryBatchSendPreflight(
+        connectionAvailable = true,
+        handshakeSucceeded = handshakeSucceeded
+    )
 }
 
 private suspend fun sendWorkoutHistoryStoreInternal(
     dataClient: DataClient,
     workoutHistoryStore: WorkoutHistoryStore,
     context: android.content.Context?,
-    usedTransactionId: String
+    usedTransactionId: String,
+    profileId: String?,
+    batchPreflight: WorkoutHistoryBatchSendPreflight?
 ): Pair<Boolean, String> {
     try {
-        cleanupAbandonedWorkoutHistoryPayloadDataItems(dataClient)
+        if (batchPreflight == null) {
+            cleanupAbandonedWorkoutHistoryPayloadDataItems(dataClient)
 
-        // Check if phone is connected before attempting sync
-        // This prevents sync attempts when phone is not available
-        if (context != null) {
-            val hasConnection = withContext(Dispatchers.IO) {
-                checkConnection(context)
+            // Check if phone is connected before attempting sync
+            // This prevents sync attempts when phone is not available
+            if (context != null) {
+                val hasConnection = withContext(Dispatchers.IO) {
+                    checkConnection(context)
+                }
+                if (!hasConnection) {
+                    Log.d("DataLayerSync", "Skipping workout history sync - phone not connected (transaction: $usedTransactionId)")
+                    return Pair(false, usedTransactionId)
+                }
             }
-            if (!hasConnection) {
-                Log.d("DataLayerSync", "Skipping workout history sync - phone not connected (transaction: $usedTransactionId)")
-                return Pair(false, usedTransactionId)
+
+            // Send sync request and wait for acknowledgment
+            val handshakeSuccess = sendSyncRequest(dataClient, usedTransactionId, context)
+            if (!handshakeSuccess) {
+                // Handshake (ACK) failed or timed out, but the phone clearly received the request
+                // in our logs, so fall back to best-effort send instead of aborting.
+                // This avoids blocking sync when the ACK data item doesn't make it back to the watch.
+                Log.w(
+                    "DataLayerSync",
+                    "Handshake failed (no ACK) for transaction: $usedTransactionId - proceeding with best-effort send"
+                )
             }
-        }
-        
-        // Send sync request and wait for acknowledgment
-        val handshakeSuccess = sendSyncRequest(dataClient, usedTransactionId, context)
-        if (!handshakeSuccess) {
-            // Handshake (ACK) failed or timed out, but the phone clearly received the request
-            // in our logs, so fall back to best-effort send instead of aborting.
-            // This avoids blocking sync when the ACK data item doesn't make it back to the watch.
-            Log.w(
-                "DataLayerSync",
-                "Handshake failed (no ACK) for transaction: $usedTransactionId - proceeding with best-effort send"
-            )
+        } else if (!batchPreflight.connectionAvailable) {
+            Log.d("DataLayerSync", "Skipping workout history sync - phone not connected (transaction: $usedTransactionId)")
+            return Pair(false, usedTransactionId)
         }
 
         // Register completion and error waiters BEFORE sending data
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(usedTransactionId)
         val errorWaiter = SyncHandshakeManager.registerErrorWaiter(usedTransactionId)
 
-        val gson = GsonBuilder()
-            .registerTypeAdapter(LocalDate::class.java, WearLocalDateAdapter())
-            .registerTypeAdapter(LocalTime::class.java, WearLocalTimeAdapter())
-            .registerTypeAdapter(LocalDateTime::class.java, WearLocalDateTimeAdapter())
-            .registerTypeAdapter(Set::class.java, SetAdapter())
-            .registerTypeAdapter(SetData::class.java, SetDataAdapter())
-            .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
-            .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
-            .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
-            .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
-            .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
-            .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
-            .registerTypeAdapter(com.gabstra.myworkoutassistant.shared.WorkoutHistory::class.java, WorkoutHistoryAdapter())
-            .create()
-    val jsonString = gson.toJson(workoutHistoryStore)
+    val jsonString = workoutHistoryStoreGson.toJson(workoutHistoryStore)
     val chunkSize = 90_000
     val compressedData = compressString(jsonString)
-    val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
+    val chunks = ArrayList<ByteArray>((compressedData.size + chunkSize - 1) / chunkSize)
+    var offset = 0
+    while (offset < compressedData.size) {
+        val end = minOf(offset + chunkSize, compressedData.size)
+        chunks += compressedData.copyOfRange(offset, end)
+        offset = end
+    }
     Log.d(
         "WorkoutSync",
         "SYNC_TRACE event=start side=wear direction=send tx=$usedTransactionId historyId=${workoutHistoryStore.WorkoutHistory.id} isDone=${workoutHistoryStore.WorkoutHistory.isDone} chunks=${chunks.size} bytes=${compressedData.size}"
@@ -1035,6 +1112,9 @@ private suspend fun sendWorkoutHistoryStoreInternal(
             dataMap.putInt("chunksCount", chunks.size)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
             dataMap.putString("transactionId", usedTransactionId)
+            // Which profile produced this session, so the phone files it with the right person.
+            (profileId ?: context?.let { Profiles.activeProfileId(it) })
+                ?.let { dataMap.putString(PROFILE_ID_KEY, it) }
         }.asPutDataRequest().setUrgent()
 
         Tasks.await(dataClient.putDataItem(startRequest))
@@ -1309,7 +1389,11 @@ private suspend fun cleanupWorkoutHistoryTransactionDataItems(
     }
 }
 
-fun sendErrorLogsToMobile(dataClient: DataClient, errorLogs: List<ErrorLog>): Boolean {
+fun sendErrorLogsToMobile(
+    context: android.content.Context,
+    dataClient: DataClient,
+    errorLogs: List<ErrorLog>
+): Boolean {
     try {
         if (errorLogs.isEmpty()) {
             return true // No logs to send, consider it successful
@@ -1323,6 +1407,8 @@ fun sendErrorLogsToMobile(dataClient: DataClient, errorLogs: List<ErrorLog>): Bo
         val request = PutDataMapRequest.create("/errorLogsSync").apply {
             dataMap.putByteArray("compressedJson", compressedData)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            // Diagnostics belong to the profile that produced them.
+            dataMap.putString(PROFILE_ID_KEY, Profiles.activeProfileId(context))
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(request)
@@ -1649,19 +1735,53 @@ fun getContrastRatio(color1: Color, color2: Color): Double {
     return (max(luminance1, luminance2) + 0.05) / (min(luminance1, luminance2) + 0.05)
 }
 
-fun Modifier.circleMask(radiusOffset: Dp = 0.dp) = this.drawWithContent {
-    // Create a circular path for the mask
-    val path = androidx.compose.ui.graphics.Path().apply {
+fun Modifier.circleMask(radiusOffset: Dp = 0.dp, fadeWidth: Dp = 0.dp): Modifier = this
+    .graphicsLayer {
+        // DstIn must blend against this node's own pixels only, never the ring drawn beneath.
+        if (fadeWidth > 0.dp) compositingStrategy = CompositingStrategy.Offscreen
+    }
+    .drawWithContent {
         val radius = (size.width * 0.5f) - radiusOffset.toPx()
+        if (radius <= 0f) return@drawWithContent
         val center = Offset(size.width / 2, size.height / 2)
-        addOval(androidx.compose.ui.geometry.Rect(center.x - radius, center.y - radius, center.x + radius, center.y + radius))
-    }
+        val path = androidx.compose.ui.graphics.Path().apply {
+            addOval(Rect(center.x - radius, center.y - radius, center.x + radius, center.y + radius))
+        }
 
-    // Clip the path and draw the content
-    clipPath(path) {
-        this@drawWithContent.drawContent()
+        // Clip the path and draw the content
+        clipPath(path) {
+            this@drawWithContent.drawContent()
+        }
+
+        if (fadeWidth > 0.dp) {
+            // Radial alpha ramp: opaque core, fading out across the band, zero at the edge.
+            val fadePx = fadeWidth.toPx().coerceAtMost(radius)
+            val brush = Brush.radialGradient(
+                colorStops = arrayOf(
+                    ((radius - fadePx) / radius) to Color.Black,
+                    1f to Color.Transparent,
+                ),
+                center = center,
+                radius = radius,
+            )
+            drawCircle(brush = brush, center = center, radius = radius, blendMode = BlendMode.DstIn)
+            // The oval is radiusOffset larger than the node's half-height, so the radial
+            // band never reaches the padded top/bottom edges; ramp those separately.
+            val verticalFade = fadeWidth.toPx().coerceAtMost(size.height / 2f)
+            if (verticalFade > 0f) {
+                val t = verticalFade / size.height
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        t to Color.Black,
+                        1f - t to Color.Black,
+                        1f to Color.Transparent,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+        }
     }
-}
 
 @SuppressLint("DefaultLocale")
 fun formatNumber(value: Double, unit: String? = null): String = (when {

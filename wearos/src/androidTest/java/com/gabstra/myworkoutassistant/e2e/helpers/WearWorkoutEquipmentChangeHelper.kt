@@ -198,7 +198,7 @@ object WearWorkoutEquipmentChangeHelper {
         workoutName: String,
         exerciseName: String
     ): String? {
-        val workoutStore = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
+        val workoutStore = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName } ?: return null
         val exercise = workout.workoutComponents
             .filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>()
@@ -219,7 +219,7 @@ object WearWorkoutEquipmentChangeHelper {
         val currentState = flattenSequence(decoded.sequenceItems)
             .getOrNull(decoded.currentIndex) as? WorkoutState.Set
             ?: return null
-        val workoutStore = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
+        val workoutStore = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore()
         val exercise = workoutStore.workouts
             .asSequence()
             .flatMap { workout -> workout.workoutComponents.asSequence() }

@@ -52,7 +52,7 @@ class WorkoutAlarmReceiver : BroadcastReceiver() {
             return
         }
 
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.find { it.globalId == schedule.workoutId }
 

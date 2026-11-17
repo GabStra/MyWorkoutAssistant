@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared
 
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import java.time.LocalDate
 import java.util.UUID
 import org.junit.Assert.assertEquals
@@ -9,6 +10,49 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkoutStoreValidationTest {
+    @Test
+    fun `recurring metadata rejects duplicate ordinals and conflicting track equipment`() {
+        val sessionId = UUID.randomUUID()
+        val trackId = UUID.randomUUID()
+        val definitionId = UUID.randomUUID()
+        val first = createExercise(UUID.randomUUID(), "Press A", listOf(UUID.randomUUID())).copy(
+            exerciseDefinitionId = definitionId,
+            recurringExerciseId = trackId,
+            loadHistoryPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD,
+        )
+        val changedTrack = first.copy(id = UUID.randomUUID(), equipmentId = UUID.randomUUID())
+        val store = WorkoutStore(
+            workouts = listOf(
+                createWorkout(UUID.randomUUID(), UUID.randomUUID(), first).copy(
+                    recurringSessionId = sessionId, prescriptionOrdinal = 1
+                ),
+                createWorkout(UUID.randomUUID(), UUID.randomUUID(), changedTrack).copy(
+                    recurringSessionId = sessionId, prescriptionOrdinal = 1
+                ),
+            ),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.0,
+        )
+
+        val issues = store.findRecurringMetadataIssues()
+
+        assertTrue(issues.any { it.details.contains("ordinal 1 is duplicated") })
+        assertTrue(issues.any { it.details.contains("changes definition, exercise type, or equipment") })
+    }
+
+    @Test
+    fun `legacy metadata is accepted while load carry requires a recurring slot`() {
+        val legacy = createWorkout(UUID.randomUUID(), UUID.randomUUID(), createExercise(UUID.randomUUID(), "Legacy", listOf(UUID.randomUUID())))
+        val invalid = legacy.copy(workoutComponents = listOf(
+            (legacy.workoutComponents.single() as Exercise).copy(loadHistoryPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD)
+        ))
+
+        assertTrue(WorkoutStore(workouts = listOf(legacy), birthDateYear = 1990, weightKg = 80.0, progressionPercentageAmount = 0.0)
+            .findRecurringMetadataIssues().isEmpty())
+        assertTrue(WorkoutStore(workouts = listOf(invalid), birthDateYear = 1990, weightKg = 80.0, progressionPercentageAmount = 0.0)
+            .findRecurringMetadataIssues().isNotEmpty())
+    }
     @Test
     fun `validateWorkoutStoreForRuntimeUse allows repeated set ids across workout versions`() {
         val sharedSetId = UUID.randomUUID()

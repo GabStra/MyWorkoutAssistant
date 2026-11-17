@@ -153,7 +153,7 @@ class RunningWorkoutSyncVerificationTest {
         val db = AppDatabase.getDatabase(context)
         val appBackup = requireNotNull(
             createAppBackup(
-                workoutStore = WorkoutStoreRepository(context.filesDir).getWorkoutStore(),
+                workoutStore = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore(),
                 db = db,
                 context = context,
             ),

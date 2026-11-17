@@ -46,7 +46,7 @@ private fun TutorialStepItem(
         Text(
             text = title,
             modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = LighterGray,
             textAlign = TextAlign.Center
@@ -55,7 +55,7 @@ private fun TutorialStepItem(
             Text(
                 text = description,
                 modifier = Modifier.padding(top = 4.dp),
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Normal),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )

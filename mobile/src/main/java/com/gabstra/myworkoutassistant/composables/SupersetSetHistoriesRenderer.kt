@@ -103,6 +103,10 @@ fun SupersetSetHistoriesRenderer(
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             displayedExercises.forEach { exercise ->
                 val index = superset.exercises.indexOf(exercise)
+                val historicalExerciseName = historyExerciseDisplayName(
+                    exercise.name,
+                    completedSetHistories.filter { it.exerciseId == exercise.id },
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -121,7 +125,7 @@ fun SupersetSetHistoriesRenderer(
                         modifier = Modifier.weight(1f),
                     ) {
                         Text(
-                            text = exercise.name,
+                            text = historicalExerciseName,
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontWeight = if (exercise.id == focusedExerciseId) {
                                     FontWeight.SemiBold

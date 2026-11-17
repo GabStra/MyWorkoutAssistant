@@ -11,7 +11,9 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -226,6 +228,35 @@ class WorkoutSetStateFactoryTest {
         assertEquals(2u, secondSide.intraSetCounter)
         assertNotSame(firstSide, secondSide)
         assertSame(secondSide, rest.nextState)
+    }
+
+    @Test
+    fun `zero intra-set rest keeps paired sides consecutive without a rest state`() {
+        val factory = WorkoutSetStateFactory()
+        val exercise = createExercise("Pallof press", intraSetRestInSeconds = 0)
+        val setState = createSetState(exercise)
+
+        assertTrue(factory.isUnilateralExercise(exercise))
+        val block = factory.buildUnilateralSetBlock(exercise, setState, 1)
+            as ExerciseChildItem.UnilateralSetBlock
+
+        assertEquals(2, block.childStates.size)
+        val firstSide = block.childStates[0] as WorkoutState.Set
+        val secondSide = block.childStates[1] as WorkoutState.Set
+        assertTrue(firstSide.isUnilateral)
+        assertTrue(secondSide.isUnilateral)
+        assertEquals(1u, firstSide.intraSetCounter)
+        assertEquals(2u, secondSide.intraSetCounter)
+        assertNotSame(firstSide, secondSide)
+    }
+
+    @Test
+    fun `negative intra-set rest is not paired-side execution`() {
+        val factory = WorkoutSetStateFactory()
+        val exercise = createExercise("Pallof press", intraSetRestInSeconds = -1)
+
+        assertFalse(factory.isUnilateralExercise(exercise))
+        assertNull(factory.buildUnilateralSetBlock(exercise, createSetState(exercise), 1))
     }
 
     private fun createExercise(name: String, intraSetRestInSeconds: Int?): Exercise = Exercise(

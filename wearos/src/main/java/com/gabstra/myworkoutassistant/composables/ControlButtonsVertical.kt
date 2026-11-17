@@ -1,15 +1,19 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.animation.animateColorAsState
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -26,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
@@ -44,7 +50,10 @@ import com.gabstra.myworkoutassistant.data.repeatActionOnLongPressOrTap
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 internal const val WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS = 10_000L
 
@@ -108,7 +117,8 @@ fun ControlButtonsVertical(
                 .fillMaxWidth()
                 .padding(bottom = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+            // Hit-box margins already add 3dp+4dp between the painted circles.
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -118,6 +128,7 @@ fun ControlButtonsVertical(
                 ControlButton(
                     Icons.Filled.ArrowDownward, "Subtract", Red, isMinusEnabled,
                     onMinusTap, onMinusLongPress, onMinusCoarse,
+                    iconTint = Color.White,
                     hitBoxSize = 56.dp,
                     buttonSize = WearStandardIconButtonSize,
                     iconSize = WearStandardIconButtonIconSize,
@@ -125,6 +136,7 @@ fun ControlButtonsVertical(
                 ControlButton(
                     Icons.Filled.ArrowUpward, "Add", Green, isPlusEnabled,
                     onPlusTap, onPlusLongPress, onPlusCoarse,
+                    iconTint = Color.White,
                     hitBoxSize = 56.dp,
                     buttonSize = WearStandardIconButtonSize,
                     iconSize = WearStandardIconButtonIconSize,
@@ -143,10 +155,10 @@ fun ControlButtonsVertical(
                         )
                     }
                     onResetClick?.let { resetClick ->
-                        ControlButton(
+                        HoldToConfirmControlButton(
                             Icons.Filled.RestartAlt, "Reset",
-                            MaterialTheme.colorScheme.surfaceContainerHigh, isResetEnabled,
-                            resetClick, resetClick, null,
+                            isResetEnabled,
+                            resetClick,
                         )
                     }
                 }
@@ -164,6 +176,7 @@ private fun ControlButton(
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onCoarse: (() -> Unit)? = null,
+    iconTint: Color = MaterialTheme.colorScheme.onBackground,
     hitBoxSize: androidx.compose.ui.unit.Dp = WearSecondaryIconButtonHitBoxSize,
     buttonSize: androidx.compose.ui.unit.Dp = WearSecondaryIconButtonSize,
     iconSize: androidx.compose.ui.unit.Dp = WearSecondaryIconButtonIconSize,
@@ -174,8 +187,7 @@ private fun ControlButton(
         label = "control button press",
     )
     val iconColor by animateColorAsState(
-        targetValue = if (enabled && isPressed) darkenButtonColor(MaterialTheme.colorScheme.onBackground)
-        else MaterialTheme.colorScheme.onBackground,
+        targetValue = if (enabled && isPressed) darkenButtonColor(iconTint) else iconTint,
         label = "control button icon press",
     )
     Box(
@@ -225,6 +237,104 @@ private fun ControlButton(
                 imageVector = icon,
                 contentDescription = null,
                 tint = iconColor,
+            )
+        }
+    }
+}
+
+/**
+ * Hold-to-confirm reset, mirroring the confirm button of CustomDialogYesOnLongPress:
+ * a progress ring fills while held, the action fires only when the hold completes,
+ * and releasing early cancels. Fires never on a plain tap.
+ */
+@Composable
+private fun HoldToConfirmControlButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onConfirmed: () -> Unit,
+) {
+    val holdDurationMillis = LocalViewConfiguration.current.longPressTimeoutMillis
+        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    val coroutineScope = rememberWearCoroutineScope()
+    val holdProgress = remember { Animatable(0f) }
+    var holdJob by remember { mutableStateOf<Job?>(null) }
+    var isPressed by remember { mutableStateOf(false) }
+    val buttonBackground by animateColorAsState(
+        targetValue = if (enabled && isPressed) darkenButtonColor(MaterialTheme.colorScheme.primary)
+        else MaterialTheme.colorScheme.primary,
+        label = "reset button press",
+    )
+
+    fun startHold() {
+        if (!enabled) return
+        isPressed = true
+        holdJob?.cancel()
+        holdJob = coroutineScope.launch {
+            holdProgress.snapTo(0f)
+            holdProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = holdDurationMillis, easing = LinearEasing)
+            )
+            onConfirmed()
+            holdProgress.snapTo(0f)
+        }
+    }
+
+    fun cancelHold() {
+        holdJob?.cancel()
+        holdJob = null
+        isPressed = false
+        coroutineScope.launch { holdProgress.snapTo(0f) }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(WearSecondaryIconButtonHitBoxSize)
+            .alpha(if (enabled) 1f else 0.45f)
+            .semantics(mergeDescendants = true) {
+                this.contentDescription = contentDescription
+                role = Role.Button
+                if (!enabled) disabled()
+                onLongClick(
+                    label = contentDescription
+                ) { enabled }
+            }
+            .pointerInput(enabled) {
+                detectTapGestures(
+                    onPress = {
+                        startHold()
+                        try {
+                            tryAwaitRelease()
+                        } finally {
+                            cancelHold()
+                        }
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        // No ring on a disabled button: it reads as an active affordance.
+        if (isPressed) {
+            androidx.wear.compose.material.CircularProgressIndicator(
+                progress = holdProgress.value,
+                modifier = Modifier.size(WearSecondaryIconButtonHitBoxSize),
+                strokeWidth = 3.dp,
+                indicatorColor = MaterialTheme.colorScheme.primary,
+                trackColor = MediumDarkGray,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(WearSecondaryIconButtonSize)
+                .background(buttonBackground, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                modifier = Modifier.size(WearSecondaryIconButtonIconSize),
+                imageVector = icon,
+                contentDescription = null,
+                tint = Color.White,
             )
         }
     }

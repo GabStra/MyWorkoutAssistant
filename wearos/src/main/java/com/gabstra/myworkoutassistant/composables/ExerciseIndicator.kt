@@ -99,17 +99,20 @@ fun ExerciseIndicator(
 
     // --- Flattened order: every exercise once; supersets kept contiguous ---
     // Include Set, CalibrationLoadSelection, CalibrationRIRSelection so exercises on calibration screens appear
-    val exerciseIds = viewModel.allWorkoutStates
-        .mapNotNull { state ->
-            when (state) {
-                is WorkoutState.Set -> state.exerciseId
-                is WorkoutState.CalibrationLoadSelection -> state.exerciseId
-                is WorkoutState.CalibrationRIRSelection -> state.exerciseId
-                else -> null
+    val allWorkoutStates = viewModel.allWorkoutStates
+    val exerciseIds = remember(allWorkoutStates) {
+        allWorkoutStates
+            .mapNotNull { state ->
+                when (state) {
+                    is WorkoutState.Set -> state.exerciseId
+                    is WorkoutState.CalibrationLoadSelection -> state.exerciseId
+                    is WorkoutState.CalibrationRIRSelection -> state.exerciseId
+                    else -> null
+                }
             }
-        }
-        .distinct()
-        .toList()
+            .distinct()
+            .toList()
+    }
 
     // Helper function to find active timer set for an exercise (uses position index for ordering)
     fun findActiveTimerSet(exerciseId: UUID, positionIndex: Int): WorkoutState.Set? {
@@ -193,17 +196,48 @@ fun ExerciseIndicator(
         val completedOverlayProgress: Float? = null
     )
 
-    // Calculate indicator progress.
+    data class ExerciseIndicatorBaseCounts(
+        val completedById: Map<UUID, Int>,
+        val totalById: Map<UUID, Int>,
+        val selectedTimerSet: WorkoutState.Set?
+    )
+
     // Avoid derivedStateOf + direct MutableState reads to prevent intermittent snapshot read crashes.
-    val indicatorProgressByExerciseId = exerciseIds.associateWith { id ->
-        val completed = completedCountBeforeCurrent(id)
-        val total = totalCountForExercise(id)
+    // Structural inputs change only on workout structure changes, set completion or state
+    // transitions, so rebuild them once and reuse the result across timer ticks.
+    val baseCounts = remember(allWorkoutStates, exerciseIds, currentPositionIndex, selectedExerciseId) {
+        ExerciseIndicatorBaseCounts(
+            completedById = exerciseIds.associateWith { id -> completedCountBeforeCurrent(id) },
+            totalById = exerciseIds.associateWith { id -> totalCountForExercise(id) },
+            selectedTimerSet = selectedExerciseId
+                ?.takeIf { exerciseIds.contains(it) }
+                ?.let { id -> findTimeExerciseSet(id, currentPositionIndex) }
+        )
+    }
+
+    val baseProgressByExerciseId = remember(baseCounts) {
+        baseCounts.totalById.mapValues { (id, total) ->
+            val completed = baseCounts.completedById.getValue(id)
+            IndicatorProgressLayer(baseProgress = completed.toFloat() / total.toFloat())
+        }
+    }
+
+    // Only the current exercise (and the currently selected one, when different) can be driven
+    // by the per-second timer. Their entries are derived on every composition while the rest of
+    // the ring reuses the remembered base map.
+    val timerDrivenExerciseIds = remember(currentExerciseId, selectedExerciseId, exerciseIds) {
+        listOfNotNull(currentExerciseId, selectedExerciseId)
+            .distinct()
+            .filter { exerciseIds.contains(it) }
+    }
+
+    fun resolveTimerDrivenProgressLayer(id: UUID): IndicatorProgressLayer {
+        val completed = baseCounts.completedById.getValue(id)
+        val total = baseCounts.totalById.getValue(id)
         val completedProgress = completed.toFloat() / total.toFloat()
 
-        val timerSet: WorkoutState.Set? = when {
-            selectedExerciseId != null && id == selectedExerciseId -> findTimeExerciseSet(id, currentPositionIndex)
-            else -> null
-        }
+        val timerSet: WorkoutState.Set? = baseCounts.selectedTimerSet
+            ?.takeIf { id == selectedExerciseId }
 
         val currentExerciseTimerProgress: Float? = when {
             id == currentExerciseId &&
@@ -214,7 +248,7 @@ fun ExerciseIndicator(
             else -> null
         }
 
-        when {
+        return when {
             currentExerciseTimerProgress != null -> {
                 val baseProgress = (completed.toFloat() + currentExerciseTimerProgress) / total.toFloat()
                 IndicatorProgressLayer(
@@ -243,6 +277,17 @@ fun ExerciseIndicator(
             }
         }
     }
+
+    val indicatorProgressByExerciseId: Map<UUID, IndicatorProgressLayer> =
+        if (timerDrivenExerciseIds.isEmpty()) {
+            baseProgressByExerciseId
+        } else {
+            baseProgressByExerciseId.toMutableMap().apply {
+                timerDrivenExerciseIds.forEach { id ->
+                    put(id, resolveTimerDrivenProgressLayer(id))
+                }
+            }
+        }
 
     val flatExerciseOrder = remember(exerciseIds, viewModel.supersetIdByExerciseId) {
         val seenSupers = mutableSetOf<UUID>()
@@ -341,7 +386,7 @@ fun ExerciseIndicator(
                 val startA = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
                 val endA = startA + segmentArcAngle
 
-                key(eid,indicatorProgress) {
+                key(eid) {
                     val indicatorColor = when {
                         isCurrent -> MaterialTheme.colorScheme.primary // Current exercise: bright gray/white
                         indicatorProgress >= 1.0f -> MaterialTheme.colorScheme.onBackground // Previous exercise (completed): green

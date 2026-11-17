@@ -52,7 +52,7 @@ class WorkoutVisibilityE2ETest : WearBaseE2ETest() {
         val deadline = System.currentTimeMillis() + E2ETestTimings.CROSS_DEVICE_SYNC_TIMEOUT_MS
         var lastCount = 0
         while (System.currentTimeMillis() < deadline) {
-            val workouts = WorkoutStoreRepository(context.filesDir).getWorkoutStore().workouts
+            val workouts = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore().workouts
             lastCount = workouts.size
             if (workouts.any { it.name == workoutName }) {
                 return

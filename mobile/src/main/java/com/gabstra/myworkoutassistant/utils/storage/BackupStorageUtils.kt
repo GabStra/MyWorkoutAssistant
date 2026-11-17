@@ -71,6 +71,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.compactAppBackupArchive
 import com.gabstra.myworkoutassistant.shared.createAppBackupArchive
@@ -149,15 +150,41 @@ private val backupFileWriteMutex = Mutex()
 private const val BACKUP_STORAGE_PREFS = "backup_storage_prefs"
 private const val AUTO_RESTORE_DOCUMENT_URI_KEY = "auto_restore_document_uri"
 private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME = "workout_store_backup"
-private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME = "$AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME.json"
-private const val AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME = "${AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME}_incremental.json"
 private const val MAX_AUTOMATIC_BACKUP_DELTAS = 50
 
+/**
+ * Automatic backup names are per profile, otherwise the last profile to save owns the only
+ * off-device recovery copy. The default profile keeps the historical name so existing installs
+ * and their restore discovery still work.
+ */
+fun activeProfileBackupSuffix(context: Context): String {
+    val profileId = Profiles.activeProfileId(context)
+    return if (profileId == Profiles.DEFAULT_PROFILE_ID) "" else "_$profileId"
+}
+/** Profile name reduced to something safe and readable for a file the user will see. */
+fun activeProfileNameFileSuffix(context: Context): String {
+    val profile = Profiles.activeProfile(context)
+    val safe = profile.name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(32)
+    return "_" + safe.ifEmpty { profile.id.take(8) }
+}
+
+
+private fun automaticBackupFileName(context: Context): String =
+    "$AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME${activeProfileBackupSuffix(context)}.json"
+
+private fun automaticBackupArchiveFileName(context: Context): String =
+    "${AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME}_incremental${activeProfileBackupSuffix(context)}.json"
+
+/** Keyed per profile: one SAF grant must not be reused by a different person's restore. */
+private fun autoRestoreDocumentUriKey(context: Context): String =
+    "$AUTO_RESTORE_DOCUMENT_URI_KEY${activeProfileBackupSuffix(context)}"
+
 fun buildWorkoutStoreBackupFileName(
+    profileSuffix: String = "",
     now: Date = Date()
 ): String {
     val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(now)
-    return "${AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME}_$timestamp.json"
+    return "${AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME}$profileSuffix" + "_$timestamp.json"
 }
 
 private fun backupStoragePrefs(context: Context) =
@@ -185,7 +212,7 @@ fun setAutomaticRestoreDocumentUri(context: Context, uri: Uri) {
     persistUriPermission(context, uri, readOnly = true)
     backupStoragePrefs(context)
         .edit {
-            putString(AUTO_RESTORE_DOCUMENT_URI_KEY, uri.toString())
+            putString(autoRestoreDocumentUriKey(context), uri.toString())
         }
 }
 
@@ -801,8 +828,8 @@ private suspend fun findAllBackupFiles(context: Context): List<BackupFileEntry> 
     return withContext(Dispatchers.IO) {
         try {
             val automaticBackups =
-                findAllBackupFilesInDownloadsFolder(context, AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME) +
-                    findAllBackupFilesInDownloadsFolder(context, AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME)
+                findAllBackupFilesInDownloadsFolder(context, automaticBackupFileName(context)) +
+                    findAllBackupFilesInDownloadsFolder(context, automaticBackupArchiveFileName(context))
             
             // Find manual backups (workout_backup_*.json pattern)
             val manualBackups = findManualBackupFiles(context)
@@ -1032,7 +1059,10 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase, context
                 RemoteInsightsModel = remoteInsightsConfig?.model?.trim()?.ifEmpty { null },
                 WorkoutInsightsCustomInstructions = context?.let {
                     WorkoutInsightsSettingsStore.getCustomInstructions(it).trim().ifEmpty { null }
-                }
+                },
+                // Whose data this is: the id is exact, the name survives a reinstall.
+                ProfileId = context?.let { Profiles.activeProfileId(it) },
+                ProfileName = context?.let { Profiles.activeProfile(it).name }
             )
 
             // Check if AppBackup has any data before returning
@@ -1104,7 +1134,7 @@ suspend fun saveWorkoutStoreWithBackupFromContext(
     workoutStore: WorkoutStore
 ) {
     withContext(Dispatchers.IO) {
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         workoutStoreRepository.saveWorkoutStore(workoutStore)
         BackupCoordinator.onWorkoutStorePersisted(
             context = context,
@@ -1129,7 +1159,7 @@ suspend fun cleanupDuplicateBackupFiles(context: Context) {
 
             val downloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
             val folderLabel = "${Environment.DIRECTORY_DOWNLOADS} (MediaStore): $downloadsPath"
-            val backupFileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
+            val backupFileName = automaticBackupFileName(context)
             val resolver = context.contentResolver
 
             Log.d("Utils", "Backup cleanup started in $folderLabel")
@@ -1308,19 +1338,23 @@ suspend fun saveWorkoutStoreToExternalStorage(
 
                 val existingDownloadsContent = findFileInDownloadsFolder(
                     context,
-                    AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME
+                    automaticBackupArchiveFileName(context)
                 )?.let { uri ->
                     readTextFromUri(context, uri)
                 } ?: findAllBackupFilesInDownloadsFolder(
                     context,
-                    AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
+                    automaticBackupFileName(context)
                 ).maxByOrNull { it.dateModified }?.let { backupFile ->
                     readTextFromUri(context, backupFile.uri)
                 }
                 val archiveContent = buildAutomaticBackupArchiveContent(existingDownloadsContent, appBackup)
+                // shortcut: every profile shares this one Downloads recovery file, so the last
+                // profile saved is the only one with a recovery copy here. Primary data is
+                // isolated per profile; make the name profile-scoped when backups go per-profile,
+                // and keep the default profile's name unchanged so restore discovery still works.
                 upsertDownloadsBackupFile(
                     context = context,
-                    fileName = AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME,
+                    fileName = automaticBackupArchiveFileName(context),
                     content = archiveContent
                 )
             } catch (e: Exception) {
@@ -1347,7 +1381,7 @@ suspend fun saveWorkoutStoreToExternalStorage(
  * Checks if an external backup is available from a configured restore document or the legacy file path.
  */
 fun hasExternalBackup(context: Context): Boolean {
-    if (readConfiguredBackupUri(context, AUTO_RESTORE_DOCUMENT_URI_KEY) != null) {
+    if (readConfiguredBackupUri(context, autoRestoreDocumentUriKey(context)) != null) {
         return true
     }
     // Check old location (external files dir) synchronously
@@ -1369,7 +1403,7 @@ fun hasExternalBackup(context: Context): Boolean {
 suspend fun loadExternalBackup(context: Context): AppBackup? {
     return withContext(Dispatchers.IO) {
         try {
-            loadAppBackupFromConfiguredUri(context, AUTO_RESTORE_DOCUMENT_URI_KEY)?.let {
+            loadAppBackupFromConfiguredUri(context, autoRestoreDocumentUriKey(context))?.let {
                 Log.d("Utils", "Backup loaded successfully from configured restore document")
                 return@withContext it
             }
@@ -1382,7 +1416,7 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
                 Log.d("Utils", "No configured restore document and external storage is unavailable")
                 return@withContext null
             }
-            val backupFileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
+            val backupFileName = automaticBackupFileName(context)
             val backupFile = java.io.File(externalDir, backupFileName)
             if (!backupFile.exists()) {
                 Log.d("Utils", "Backup file does not exist in any configured location")
@@ -1422,147 +1456,6 @@ suspend fun loadLatestBackupFromDownloads(context: Context): AppBackup? {
 
 suspend fun hasBackupFileCandidateInDownloads(context: Context): Boolean {
     return findAllBackupFiles(context).isNotEmpty()
-}
-
-suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutStore, db: AppDatabase) {
-    withContext(Dispatchers.IO) {
-        try {
-            val resolver = context.contentResolver
-
-            // Get all DAOs
-            val workoutHistoryDao = db.workoutHistoryDao()
-            val setHistoryDao = db.setHistoryDao()
-            val restHistoryDao = db.restHistoryDao()
-            val exerciseInfoDao = db.exerciseInfoDao()
-            val workoutScheduleDao = db.workoutScheduleDao()
-            val workoutRecordDao = db.workoutRecordDao()
-            val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
-            val errorLogDao = db.errorLogDao()
-
-            // Keep all workout histories from DB in export backup for the same reason as createAppBackup().
-            val validWorkoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-            val validWorkoutHistoryIds = validWorkoutHistories
-                .map { it.id }
-                .toHashSet()
-
-            // Filter set histories to match valid workout histories
-            val setHistories = setHistoryDao.getAllSetHistories().filter { setHistory ->
-                setHistory.workoutHistoryId != null &&
-                    setHistory.workoutHistoryId in validWorkoutHistoryIds
-            }
-
-            val restHistories = restHistoryDao.getAll().filter { rest ->
-                rest.workoutHistoryId != null && rest.workoutHistoryId in validWorkoutHistoryIds
-            }
-
-            // Get all exercise infos, workout schedules, workout records
-            val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-            val workoutSchedules = workoutScheduleDao.getAllSchedules()
-            val workoutRecords = workoutRecordDao.getAll()
-
-            // Filter exercise session progressions to match valid workout histories
-            val exerciseSessionProgressions = exerciseSessionProgressionDao.getAllExerciseSessionProgressions().filter { progression ->
-                progression.workoutHistoryId in validWorkoutHistoryIds
-            }
-
-            // Get all error logs
-            val errorLogs = errorLogDao.getAllErrorLogs().first()
-
-            // Create AppBackup with the same structure as original manual backup
-            val appBackup = AppBackup(
-                workoutStore,
-                validWorkoutHistories,
-                setHistories,
-                exerciseInfos,
-                workoutSchedules,
-                workoutRecords,
-                exerciseSessionProgressions,
-                errorLogs.takeIf { it.isNotEmpty() },
-                restHistories,
-                ExerciseMovements = collectExerciseMovementBackups(context, workoutStore)
-            )
-
-            // Check if AppBackup has any data before saving
-            val hasData = appBackup.WorkoutStore.workouts.isNotEmpty() ||
-                    appBackup.WorkoutHistories.isNotEmpty() ||
-                    appBackup.SetHistories.isNotEmpty() ||
-                    appBackup.RestHistories.orEmpty().isNotEmpty() ||
-                    appBackup.ExerciseInfos.isNotEmpty() ||
-                    appBackup.WorkoutSchedules.isNotEmpty() ||
-                    appBackup.WorkoutRecords.isNotEmpty() ||
-                    appBackup.ExerciseSessionProgressions.isNotEmpty() ||
-                    appBackup.ExerciseMovements.orEmpty().isNotEmpty() ||
-                    run {
-                        val errorLogs = appBackup.ErrorLogs
-                        errorLogs != null && errorLogs.isNotEmpty()
-                    }
-
-            if (!hasData) {
-                Log.d("Utils", "Skipping backup - no data to save")
-                return@withContext
-            }
-
-            val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
-
-            // Helper function to try inserting a file with a given filename
-            fun tryInsertFile(fileNameToTry: String): android.net.Uri? {
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileNameToTry)
-                    put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                }
-
-                return try {
-                    resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                } catch (e: IllegalStateException) {
-                    // MediaStore couldn't create unique file, likely because file already exists
-                    Log.w("Utils", "Failed to insert file with name $fileNameToTry: ${e.message}")
-                    null
-                } catch (e: Exception) {
-                    Log.e("Utils", "Unexpected error inserting file with name $fileNameToTry", e)
-                    null
-                }
-            }
-
-            // Generate timestamp-based filename
-            val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
-            val timestamp = sdf.format(java.util.Date())
-            val fileName = "workout_store_$timestamp.json"
-
-            // Try to insert file with timestamped name
-            val uri = tryInsertFile(fileName)
-
-            // Write the content if we successfully created the file
-            if (uri != null) {
-                try {
-                    resolver.openOutputStream(uri)?.use { outputStream ->
-                        outputStream.write(jsonString.toByteArray())
-                        outputStream.flush()
-                    } ?: run {
-                        Log.e("Utils", "Failed to open output stream for backup file: $fileName")
-                        // Clean up the failed file
-                        try {
-                            resolver.delete(uri, null, null)
-                        } catch (deleteException: Exception) {
-                            Log.e("Utils", "Error cleaning up failed file insert", deleteException)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("Utils", "Error writing to backup file: $fileName", e)
-                    // Try to clean up the failed insert
-                    try {
-                        resolver.delete(uri, null, null)
-                    } catch (deleteException: Exception) {
-                        Log.e("Utils", "Error cleaning up failed file insert", deleteException)
-                    }
-                }
-            } else {
-                Log.e("Utils", "Failed to create backup file - could not insert with filename: $fileName")
-            }
-        } catch (e: Exception) {
-            Log.e("Utils", "Error saving workout store to Downloads folder", e)
-        }
-    }
 }
 
 suspend fun writeMarkdownToDownloadsFolder(context: Context, fileName: String, fileContent: String) {

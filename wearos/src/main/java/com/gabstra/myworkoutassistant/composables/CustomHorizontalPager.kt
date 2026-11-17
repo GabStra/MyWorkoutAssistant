@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.LayoutDirection
@@ -42,6 +43,7 @@ import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.HorizontalPageIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -193,6 +195,7 @@ fun CustomHorizontalPager(
                 }
             }
         } else {
+            val pagerDescription = stringResource(R.string.page_cd_workout_pager)
             val hasMovingPlaceholder = movingPlaceholder != null
             val isMoving by remember(pagerState, hasMovingPlaceholder) {
                 derivedStateOf {
@@ -204,7 +207,7 @@ fun CustomHorizontalPager(
                 state = pagerState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .semantics { contentDescription = "Horizontal workout pager" },
+                    .semantics { contentDescription = pagerDescription },
                 flingBehavior = PagerDefaults.snapFlingBehavior(state = pagerState),
                 userScrollEnabled = userScrollEnabled,
                 beyondViewportPageCount = beyondViewportPageCount,

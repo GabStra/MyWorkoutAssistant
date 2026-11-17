@@ -28,8 +28,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import java.util.UUID
@@ -61,14 +63,14 @@ fun AccessoryForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center,
-                        text = if (accessory == null) "Create Accessory" else "Edit Accessory"
+                        text = if (accessory == null) stringResource(R.string.equipment_create_accessory) else stringResource(R.string.equipment_edit_accessory)
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 },
@@ -76,7 +78,7 @@ fun AccessoryForm(
                     IconButton(modifier = Modifier.alpha(0f), onClick = { onCancel() }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 }
@@ -92,11 +94,11 @@ fun AccessoryForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            EquipmentFormSection(title = "Details") {
+            EquipmentFormSection(title = stringResource(R.string.equipment_details)) {
                 OutlinedTextField(
                     value = nameState.value,
                     onValueChange = { nameState.value = it },
-                    label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
+                    label = { Text(stringResource(R.string.equipment_name_label), style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }

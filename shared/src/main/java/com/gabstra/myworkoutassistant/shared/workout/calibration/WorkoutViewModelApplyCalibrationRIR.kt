@@ -17,6 +17,7 @@ import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateEditor
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
@@ -166,6 +167,8 @@ private fun WorkoutViewModel.ensurePostCalibrationRestState(
 fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = false) {
     val machine = stateMachine ?: return
     val currentState = machine.currentState as? WorkoutState.CalibrationRIRSelection ?: return
+    val exercise = exercisesById[currentState.exerciseId] ?: return
+    if (exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return
     
     launchIO {
         // Store RIR in calibration set's SetData
@@ -179,7 +182,6 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
         val adjustedWeight = CalibrationHelper.applyCalibrationAdjustment(calibrationWeight, rir, formBreaks)
         
         // Find all remaining work sets in the exercise
-        val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
         val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
         val availableWeights = getWeightByEquipment(equipment)
         

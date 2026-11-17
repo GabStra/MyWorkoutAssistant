@@ -35,7 +35,7 @@ class PhoneToWearZercherMovementPreparationTest {
         db.exerciseInfoDao().deleteAll()
         db.exerciseSessionProgressionDao().deleteAll()
 
-        WorkoutStoreRepository(appContext.filesDir).saveWorkoutStore(
+        WorkoutStoreRepository.forActiveProfile(appContext).saveWorkoutStore(
             ZercherMovementPhoneWorkoutStoreFixture.createWorkoutStore(movementRef)
         )
         ExerciseMovementStorage.writeMovementJson(

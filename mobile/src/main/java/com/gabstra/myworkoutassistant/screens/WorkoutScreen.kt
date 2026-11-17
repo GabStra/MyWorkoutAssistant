@@ -47,9 +47,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.core.content.ContextCompat
+import com.gabstra.myworkoutassistant.R
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.HapticsViewModel
@@ -104,7 +106,7 @@ private fun MobileRestTimerHeader(
         Icon(
             modifier = Modifier.size(20.dp),
             imageVector = Icons.Filled.AccessTimeFilled,
-            contentDescription = "Rest timer",
+            contentDescription = stringResource(R.string.workout_rest_timer_cd),
             tint = MaterialTheme.colorScheme.onBackground,
         )
         androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(8.dp))
@@ -140,7 +142,7 @@ private fun MobileSetTimerHeader(
         Icon(
             modifier = Modifier.size(20.dp),
             imageVector = Icons.Filled.AccessTimeFilled,
-            contentDescription = "Set timer",
+            contentDescription = stringResource(R.string.workout_set_timer_cd),
             tint = MaterialTheme.colorScheme.onBackground,
         )
         androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(8.dp))
@@ -324,7 +326,7 @@ fun WorkoutScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Leave workout",
+                            contentDescription = stringResource(R.string.workout_leave_cd),
                             tint = MaterialTheme.colorScheme.onBackground,
                         )
                     }
@@ -497,7 +499,7 @@ fun WorkoutScreen(
                                 ) {
                                     AppCircularLoadingIndicator()
                                     Text(
-                                        text = "Starting workout",
+                                        text = stringResource(R.string.workout_starting),
                                         style = MaterialTheme.typography.titleLarge,
                                         textAlign = TextAlign.Center,
                                     )
@@ -509,18 +511,21 @@ fun WorkoutScreen(
                                 ) {
                                     AppCircularLoadingIndicator()
                                     Text(
-                                        text = "Getting your ${selectedWorkout.heartRateSource.displayName()} ready",
+                                        text = stringResource(
+                                            R.string.workout_getting_source_ready,
+                                            selectedWorkout.heartRateSource.displayName(),
+                                        ),
                                         style = MaterialTheme.typography.titleLarge,
                                         textAlign = TextAlign.Center,
                                     )
                                     Text(
                                         text = when (val connection = externalConnectionState) {
                                             ExternalHeartRateConnectionState.Idle ->
-                                                "Preparing connection"
+                                                stringResource(R.string.workout_preparing_connection)
                                             is ExternalHeartRateConnectionState.Connecting ->
                                                 connection.message
                                             is ExternalHeartRateConnectionState.Streaming ->
-                                                "Streaming from ${connection.deviceLabel}"
+                                                stringResource(R.string.workout_streaming_from, connection.deviceLabel)
                                             is ExternalHeartRateConnectionState.Error ->
                                                 connection.message
                                         },
@@ -536,7 +541,7 @@ fun WorkoutScreen(
                                                 hapticsViewModel.doGentleVibration()
                                             },
                                         ) {
-                                            Text("Skip")
+                                            Text(stringResource(R.string.workout_skip))
                                         }
                                     }
                                 }
@@ -587,8 +592,8 @@ fun WorkoutScreen(
                                     if (!isAppInForeground()) {
                                         showTimerCompletedNotification(
                                             context = context,
-                                            title = "Rest finished",
-                                            message = "Time for your next set",
+                                            title = context.getString(R.string.workout_rest_finished),
+                                            message = context.getString(R.string.workout_time_for_next_set),
                                         )
                                     }
                                     workoutViewModel.storeSetData()
@@ -623,7 +628,7 @@ fun WorkoutScreen(
         }
         CustomDialogYesOnLongPress(
             show = showWorkoutInProgressDialog,
-            title = "Workout in progress",
+            title = stringResource(R.string.workout_in_progress),
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
 

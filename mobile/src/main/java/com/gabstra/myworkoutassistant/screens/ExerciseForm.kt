@@ -57,10 +57,12 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ZoomableMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
@@ -83,9 +85,11 @@ import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionConfig
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
+import com.gabstra.myworkoutassistant.shared.RecurringWorkoutAuthoring
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -93,6 +97,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
 import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
 import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
@@ -121,6 +126,25 @@ private fun formatPercentage(value: Double): String {
     } else {
         roundedValue.toString()
     }
+}
+
+internal fun bodyWeightPercentageForSave(
+    originalValue: Double?,
+    input: String,
+    preserveOriginal: Boolean,
+): Double? {
+    val parsed = input.toDoubleOrNull()
+    return if (preserveOriginal && parsed == originalValue) originalValue else parsed?.round(2) ?: 0.0
+}
+
+internal fun <T> nullableSelectionForSave(
+    originalValue: T?,
+    selectedValue: T,
+    emptySelection: T,
+): T? = if (selectedValue == (originalValue ?: emptySelection)) {
+    originalValue
+} else {
+    selectedValue.takeUnless { it == emptySelection }
 }
 
 @Composable
@@ -163,9 +187,12 @@ private fun SwitchSettingRow(
 @Composable
 fun ExerciseForm(
     viewModel: AppViewModel,
-    onExerciseUpsert: (Exercise) -> Unit,
+    onExerciseUpsert: (Exercise, RecurringExerciseEdit?) -> Unit,
     onCancel: () -> Unit,
     exercise: Exercise? = null,
+    isNewPrescription: Boolean = false,
+    recurringWorkout: Workout? = null,
+    recurringFamily: List<Workout> = emptyList(),
     isSaving: Boolean = false
 ) {
     val context = LocalContext.current
@@ -189,6 +216,31 @@ fun ExerciseForm(
 
     val exerciseTypeDescriptions = rememberSaveable { getExerciseTypeDescriptions() }
     val selectedExerciseType = rememberSaveable { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
+    val recurringContext = recurringWorkout?.takeIf { it.recurringSessionId != null }
+    val recurringStateKey = listOf(
+        recurringWorkout?.id?.toString(),
+        exercise?.id?.toString(),
+        recurringContext?.recurringSessionId?.toString(),
+        exercise?.recurringExerciseId?.toString(),
+        exercise?.loadHistoryPolicy?.name,
+    ).joinToString("|")
+    val initialTrackSelection = initialRecurringTrackSelection(exercise, isNewPrescription)
+    val recurringTrackMode = rememberSaveable(recurringStateKey) {
+        mutableStateOf(initialTrackSelection.mode)
+    }
+    val recurringTrackId = rememberSaveable(recurringStateKey) {
+        mutableStateOf(initialTrackSelection.trackId?.toString())
+    }
+    val recurringLoadPolicy = rememberSaveable(recurringStateKey) {
+        mutableStateOf(
+            initialRecurringLoadPolicy(
+                existingPolicy = exercise?.loadHistoryPolicy,
+                isNewPrescription = isNewPrescription,
+                isRecurringWorkout = recurringContext != null,
+                exerciseType = selectedExerciseType.value,
+            )
+        )
+    }
     val runningEnvironment = rememberSaveable {
         mutableStateOf(exercise?.runningPrescription?.environment ?: RunningEnvironment.OUTDOOR)
     }
@@ -234,9 +286,9 @@ fun ExerciseForm(
     val requiresLoadCalibration = rememberSaveable { mutableStateOf(exercise?.requiresLoadCalibration ?: false) }
     var expandedMovement by rememberSaveable { mutableStateOf(false) }
 
-    // Unilateral toggle: derived from intraSetRestInSeconds domain contract (> 0 means unilateral)
+    // A non-null nonnegative value selects paired-side execution; zero means no inter-side rest.
     val isUnilateral = rememberSaveable {
-        mutableStateOf(exercise?.intraSetRestInSeconds?.let { it > 0 } ?: false)
+        mutableStateOf(exercise?.hasPairedSideExecution ?: false)
     }
 
     val bodyWeightPercentage = rememberSaveable { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
@@ -248,7 +300,14 @@ fun ExerciseForm(
         mutableStateOf(exercise?.requiredAccessoryEquipmentIds ?: emptyList<UUID>())
     }
 
-    val heartRateZones = listOf("None", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Custom")
+    val heartRateZones = listOf(
+        stringResource(R.string.common_none),
+        stringResource(R.string.exercise_hr_zone_2),
+        stringResource(R.string.exercise_hr_zone_3),
+        stringResource(R.string.exercise_hr_zone_4),
+        stringResource(R.string.exercise_hr_zone_5),
+        stringResource(R.string.exercise_hr_custom),
+    )
     val selectedLowerBoundMaxHRPercent = rememberSaveable { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
     val selectedUpperBoundMaxHRPercent = rememberSaveable { mutableStateOf(exercise?.upperBoundMaxHRPercent) }
 
@@ -327,33 +386,33 @@ fun ExerciseForm(
         equipments,
         selectedExerciseType.value,
     ) {
-        listOf(StandardFilterDropdownItem<UUID?>(value = null, label = "None")) +
+        listOf(StandardFilterDropdownItem<UUID?>(value = null, label = context.getString(R.string.common_none))) +
             equipments.filter { it.isCompatibleWith(selectedExerciseType.value) }.map { equipment ->
                 StandardFilterDropdownItem(value = equipment.id, label = equipment.name)
             }
     }
     val exerciseCategoryOptions: List<StandardFilterDropdownItem<ExerciseCategory?>> = remember {
         listOf(
-            StandardFilterDropdownItem<ExerciseCategory?>(null, "Not set"),
+            StandardFilterDropdownItem<ExerciseCategory?>(null, context.getString(R.string.common_not_set)),
             StandardFilterDropdownItem(
                 ExerciseCategory.HEAVY_COMPOUND,
-                "Heavy compound"
+                context.getString(R.string.exercise_category_heavy_compound)
             ),
             StandardFilterDropdownItem(
                 ExerciseCategory.MODERATE_COMPOUND,
-                "Moderate compound"
+                context.getString(R.string.exercise_category_moderate_compound)
             ),
             StandardFilterDropdownItem(
                 ExerciseCategory.ISOLATION,
-                "Isolation"
+                context.getString(R.string.exercise_category_isolation)
             )
         )
     }
     val progressionModeOptions: List<StandardFilterDropdownItem<ProgressionMode>> = remember {
         listOf(
-            StandardFilterDropdownItem(ProgressionMode.OFF, "Off"),
-            StandardFilterDropdownItem(ProgressionMode.DOUBLE_PROGRESSION, "Double progression"),
-            StandardFilterDropdownItem(ProgressionMode.AUTO_REGULATION, "Auto-regulation")
+            StandardFilterDropdownItem(ProgressionMode.OFF, context.getString(R.string.common_off)),
+            StandardFilterDropdownItem(ProgressionMode.DOUBLE_PROGRESSION, context.getString(R.string.exercise_progression_double)),
+            StandardFilterDropdownItem(ProgressionMode.AUTO_REGULATION, context.getString(R.string.exercise_progression_auto_regulation))
         )
     }
     val globalDeloadConfig = remember(viewModel.workoutStore) { viewModel.workoutStore.deloadConfig }
@@ -445,7 +504,11 @@ fun ExerciseForm(
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
-                        text = if (exercise == null) "Create exercise" else "Edit exercise",
+                        text = if (exercise == null) {
+                            stringResource(R.string.exercise_form_create_title)
+                        } else {
+                            stringResource(R.string.exercise_form_edit_title)
+                        },
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.titleLarge
                     )
@@ -459,7 +522,7 @@ fun ExerciseForm(
                     IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
@@ -467,7 +530,7 @@ fun ExerciseForm(
                     IconButton(modifier = Modifier.alpha(0f), onClick = { }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 }
@@ -483,7 +546,7 @@ fun ExerciseForm(
                 .padding(horizontal = Spacing.md),
         ) {
             // ----- Essentials -----
-            FormSectionTitle(text = "Essentials")
+            FormSectionTitle(text = stringResource(R.string.exercise_essentials))
             StyledCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(Spacing.md),
@@ -492,15 +555,15 @@ fun ExerciseForm(
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Exercise name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.exercise_name_label), style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (exercise?.exerciseDefinitionId != null) {
-                        ContentSubtitle("Workout-specific name. Use the library name to follow future library renames.")
+                        ContentSubtitle(stringResource(R.string.exercise_name_override_hint))
                     }
                     if (exercise == null) {
                         StandardFilterDropdown(
-                            label = "Exercise type",
+                            label = stringResource(R.string.exercise_type_label),
                             selectedText = selectedExerciseType.value.toReadableString(),
                             items = exerciseTypeItems,
                             onItemSelected = { type ->
@@ -514,35 +577,97 @@ fun ExerciseForm(
                         )
                     }
                     SwitchSettingRow(
-                        title = "Keep screen awake",
+                        title = stringResource(R.string.exercise_keep_screen_awake),
                         checked = keepScreenOn.value,
                         onCheckedChange = { keepScreenOn.value = it }
                     )
                     OutlinedTextField(
                         value = notesState.value,
                         onValueChange = { notesState.value = it },
-                        label = { Text("Notes", style = MaterialTheme.typography.labelLarge) },
+                        label = {
+                            Text(
+                                if (recurringContext != null) {
+                                    stringResource(R.string.exercise_prescription_notes_label)
+                                } else {
+                                    stringResource(R.string.exercise_notes_label)
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 3,
                         singleLine = false
                     )
+                    if (recurringContext != null) {
+                        ContentSubtitle(stringResource(R.string.exercise_prescription_notes_hint))
+                    }
                 }
+            }
+
+            if (recurringContext != null) {
+                val pendingEquipmentSets = reconcileSetsForEquipmentChange(
+                    sets = exercise?.sets ?: emptyList(),
+                    previousEquipmentId = exercise?.equipmentId,
+                    selectedEquipment = selectedEquipmentId.value?.let(viewModel::getEquipmentById),
+                )
+                val trackCandidate = exercise?.copy(
+                    name = nameState.value,
+                    exerciseType = selectedExerciseType.value,
+                    equipmentId = selectedEquipmentId.value,
+                    bodyWeightPercentage = bodyWeightPercentage.value.toDoubleOrNull()
+                        ?: exercise.bodyWeightPercentage,
+                    sets = pendingEquipmentSets,
+                ) ?: Exercise(
+                    id = UUID(0L, 0L),
+                    enabled = true,
+                    name = nameState.value,
+                    notes = notesState.value,
+                    sets = pendingEquipmentSets,
+                    exerciseType = selectedExerciseType.value,
+                    minReps = minReps.floatValue.toInt(),
+                    maxReps = maxReps.floatValue.toInt(),
+                    lowerBoundMaxHRPercent = null,
+                    upperBoundMaxHRPercent = null,
+                    equipmentId = selectedEquipmentId.value,
+                    bodyWeightPercentage = bodyWeightPercentage.value.toDoubleOrNull(),
+                )
+                RecurringExerciseControls(
+                    exercise = trackCandidate,
+                    family = recurringFamily,
+                    trackSelection = RecurringTrackSelection(
+                        recurringTrackMode.value,
+                        recurringTrackId.value?.let { runCatching { UUID.fromString(it) }.getOrNull() },
+                    ),
+                    onTrackSelectionChange = {
+                        recurringTrackMode.value = it.mode
+                        recurringTrackId.value = it.trackId?.toString()
+                    },
+                    loadHistoryPolicy = recurringLoadPolicy.value,
+                    onLoadHistoryPolicyChange = { recurringLoadPolicy.value = it },
+                    requiresLoadCalibration = requiresLoadCalibration.value,
+                    progressionMode = progressionMode.value,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
 
             Spacer(Modifier.height(Spacing.md))
             if (selectedExerciseType.value == ExerciseType.RUNNING) {
-                FormSectionTitle(text = "Running target")
+                FormSectionTitle(text = stringResource(R.string.exercise_running_target))
                 StyledCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.padding(Spacing.md),
                         verticalArrangement = Arrangement.spacedBy(Spacing.md)
                     ) {
                         StandardFilterDropdown(
-                            label = "Environment",
-                            selectedText = if (runningEnvironment.value == RunningEnvironment.OUTDOOR) "Outdoor" else "Treadmill",
+                            label = stringResource(R.string.exercise_environment_label),
+                            selectedText = if (runningEnvironment.value == RunningEnvironment.OUTDOOR) {
+                                stringResource(R.string.exercise_env_outdoor)
+                            } else {
+                                stringResource(R.string.exercise_env_treadmill)
+                            },
                             items = listOf(
-                                StandardFilterDropdownItem(RunningEnvironment.OUTDOOR, "Outdoor"),
-                                StandardFilterDropdownItem(RunningEnvironment.TREADMILL, "Treadmill")
+                                StandardFilterDropdownItem(RunningEnvironment.OUTDOOR, stringResource(R.string.exercise_env_outdoor)),
+                                StandardFilterDropdownItem(RunningEnvironment.TREADMILL, stringResource(R.string.exercise_env_treadmill))
                             ),
                             onItemSelected = { runningEnvironment.value = it },
                             selectedValue = runningEnvironment.value,
@@ -550,11 +675,15 @@ fun ExerciseForm(
                             isItemSelected = { it == runningEnvironment.value }
                         )
                         StandardFilterDropdown(
-                            label = "Target",
-                            selectedText = if (runningTargetType.value == RunningTargetType.TIME) "Time" else "Distance",
+                            label = stringResource(R.string.exercise_target_label),
+                            selectedText = if (runningTargetType.value == RunningTargetType.TIME) {
+                                stringResource(R.string.exercise_target_time)
+                            } else {
+                                stringResource(R.string.exercise_target_distance)
+                            },
                             items = listOf(
-                                StandardFilterDropdownItem(RunningTargetType.TIME, "Time"),
-                                StandardFilterDropdownItem(RunningTargetType.DISTANCE, "Distance")
+                                StandardFilterDropdownItem(RunningTargetType.TIME, stringResource(R.string.exercise_target_time)),
+                                StandardFilterDropdownItem(RunningTargetType.DISTANCE, stringResource(R.string.exercise_target_distance))
                             ),
                             onItemSelected = { runningTargetType.value = it },
                             selectedValue = runningTargetType.value,
@@ -568,8 +697,13 @@ fun ExerciseForm(
                             },
                             label = {
                                 Text(
-                                    if (runningTargetType.value == RunningTargetType.TIME) "Minutes" else
-                                        if (viewModel.workoutStore.distanceUnit == DistanceUnit.KILOMETERS) "Kilometers" else "Miles"
+                                    if (runningTargetType.value == RunningTargetType.TIME) {
+                                        stringResource(R.string.exercise_minutes)
+                                    } else if (viewModel.workoutStore.distanceUnit == DistanceUnit.KILOMETERS) {
+                                        stringResource(R.string.exercise_kilometers)
+                                    } else {
+                                        stringResource(R.string.exercise_miles)
+                                    }
                                 )
                             },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -577,7 +711,7 @@ fun ExerciseForm(
                             singleLine = true
                         )
                         Text(
-                            "The watch alerts at the target; finish the run step when you are ready.",
+                            stringResource(R.string.exercise_running_target_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.tertiaryContent
                         )
@@ -586,9 +720,9 @@ fun ExerciseForm(
                 Spacer(Modifier.height(Spacing.md))
             }
             CollapsibleSection(
-                title = "Movement",
-                summary = exercise?.movementRef?.movementId?.let { "Movement: $it" }
-                    ?: "No movement in exercise library",
+                title = stringResource(R.string.exercise_movement),
+                summary = exercise?.movementRef?.movementId?.let { stringResource(R.string.exercise_movement_summary_with_id, it) }
+                    ?: stringResource(R.string.exercise_no_movement),
                 expanded = expandedMovement,
                 onToggle = { expandedMovement = !expandedMovement }
             ) {
@@ -601,7 +735,7 @@ fun ExerciseForm(
             if (nameState.value.isNotBlank()) {
                 Spacer(Modifier.height(Spacing.md))
 
-                FormSectionTitle(text = "Training setup")
+                FormSectionTitle(text = stringResource(R.string.exercise_training_setup))
                 // ----- Display -----
                 if (selectedExerciseType.value == ExerciseType.COUNTDOWN || selectedExerciseType.value == ExerciseType.COUNTUP) {
                     StyledCard(modifier = Modifier.fillMaxWidth()) {
@@ -611,29 +745,29 @@ fun ExerciseForm(
                         ) {
                             if (selectedExerciseType.value == ExerciseType.COUNTDOWN) {
                                 SwitchSettingRow(
-                                    title = "Duration progression",
+                                    title = stringResource(R.string.exercise_duration_progression),
                                     checked = durationProgressionEnabled.value,
                                     onCheckedChange = { durationProgressionEnabled.value = it }
                                 )
                                 if (durationProgressionEnabled.value) {
-                                    Text("For one unweighted steady timed work set with a heart-rate target. Rest is excluded. Qualifying sessions start after enabling; changing the duration, target zone or rule starts a new qualifying period.", style = MaterialTheme.typography.bodySmall)
-                                    Text("Increase: ${durationIncrement.intValue} minutes")
+                                    Text(stringResource(R.string.exercise_duration_progression_desc), style = MaterialTheme.typography.bodySmall)
+                                    Text(stringResource(R.string.exercise_duration_increase, durationIncrement.intValue))
                                     SingleValueStepperRow(value = durationIncrement.intValue, onValueChange = { durationIncrement.intValue = it }, minBound = 1, maxBound = 60, step = 1)
-                                    Text("Maximum duration: ${durationMaximum.intValue} minutes")
+                                    Text(stringResource(R.string.exercise_duration_max, durationMaximum.intValue))
                                     SingleValueStepperRow(value = durationMaximum.intValue, onValueChange = { durationMaximum.intValue = it }, minBound = 1, maxBound = 1440, step = 5)
-                                    Text("Consecutive qualifying sessions: ${durationSuccesses.intValue}")
+                                    Text(stringResource(R.string.exercise_duration_sessions, durationSuccesses.intValue))
                                     SingleValueStepperRow(value = durationSuccesses.intValue, onValueChange = { durationSuccesses.intValue = it }, minBound = 1, maxBound = 20, step = 1)
-                                    Text("Minimum work samples in target zone: ${durationZonePercent.intValue}%")
+                                    Text(stringResource(R.string.exercise_duration_zone_min, durationZonePercent.intValue))
                                     SingleValueStepperRow(value = durationZonePercent.intValue, onValueChange = { durationZonePercent.intValue = it }, minBound = 1, maxBound = 100, step = 5)
-                                    Text("Minimum work HR coverage: ${durationCoveragePercent.intValue}%")
+                                    Text(stringResource(R.string.exercise_duration_coverage_min, durationCoveragePercent.intValue))
                                     SingleValueStepperRow(value = durationCoveragePercent.intValue, onValueChange = { durationCoveragePercent.intValue = it }, minBound = 1, maxBound = 100, step = 5)
                                     if (selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) {
-                                        Text("Set a heart-rate target below to enable automatic increases.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                                        Text(stringResource(R.string.exercise_duration_needs_target), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
                             }
                             SwitchSettingRow(
-                                title = "Show countdown timer",
+                                title = stringResource(R.string.exercise_show_countdown_timer),
                                 checked = showCountDownTimer.value,
                                 onCheckedChange = { showCountDownTimer.value = it }
                             )
@@ -651,22 +785,23 @@ fun ExerciseForm(
                     )
                 ) {
                     val selectedEquipmentName = remember(equipmentItems, selectedEquipmentId.value) {
-                        equipmentItems.firstOrNull { it.value == selectedEquipmentId.value }?.label ?: "None"
+                        equipmentItems.firstOrNull { it.value == selectedEquipmentId.value }?.label
+                            ?: context.getString(R.string.common_none)
                     }
                     val equipmentSummary = remember(selectedEquipmentName, selectedAccessoryIds.value, accessories) {
                         val accCount = selectedAccessoryIds.value.size
-                        val accessoriesSummary = if (accCount == 0) "None" else accCount.toString()
-                        "Equipment: $selectedEquipmentName\nAccessories: $accessoriesSummary"
+                        val accessoriesSummary = if (accCount == 0) context.getString(R.string.common_none) else accCount.toString()
+                        context.getString(R.string.exercise_equipment_summary, selectedEquipmentName, accessoriesSummary)
                     }
                     CollapsibleSection(
-                        title = "Equipment",
+                        title = stringResource(R.string.exercise_equipment),
                         summary = equipmentSummary,
                         expanded = expandedEquipment,
                         onToggle = { expandedEquipment = !expandedEquipment }
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                             StandardFilterDropdown<UUID?>(
-                                label = "Equipment",
+                                label = stringResource(R.string.exercise_equipment),
                                 selectedText = selectedEquipmentName,
                                 items = equipmentItems,
                                 onItemSelected = { selectedEquipmentId.value = it },
@@ -675,13 +810,13 @@ fun ExerciseForm(
                                 isItemSelected = { it == selectedEquipmentId.value }
                             )
                             Text(
-                                text = "Accessories",
+                                text = stringResource(R.string.exercise_accessories),
                                 style = MaterialTheme.typography.titleMedium,
                                 modifier = Modifier.padding(bottom = Spacing.sm)
                             )
                             if (accessories.isEmpty()) {
                                 Text(
-                                    text = "No accessories available. Add accessories in the Equipment tab.",
+                                    text = stringResource(R.string.exercise_no_accessories),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -723,22 +858,20 @@ fun ExerciseForm(
                 }
 
                 // ----- Target muscles -----
-                val targetMusclesSummary = remember(selectedMuscleGroups.value.size, selectedSecondaryMuscleGroups.value.size) {
-                    val primaryCount = selectedMuscleGroups.value.size
-                    val secondaryCount = selectedSecondaryMuscleGroups.value.size
-                    when {
-                        primaryCount == 0 && secondaryCount == 0 ->
-                            "No target muscles selected"
-                        secondaryCount == 0 ->
-                            "Primary muscles: $primaryCount\nSecondary muscles: 0"
-                        primaryCount == 0 ->
-                            "Primary muscles: 0\nSecondary muscles: $secondaryCount"
-                        else ->
-                            "Primary muscles: $primaryCount\nSecondary muscles: $secondaryCount"
-                    }
+                val primaryCount = selectedMuscleGroups.value.size
+                val secondaryCount = selectedSecondaryMuscleGroups.value.size
+                val targetMusclesSummary = when {
+                    primaryCount == 0 && secondaryCount == 0 ->
+                        stringResource(R.string.exercise_no_target_muscles)
+                    secondaryCount == 0 ->
+                        stringResource(R.string.exercise_target_muscles_summary, primaryCount, 0)
+                    primaryCount == 0 ->
+                        stringResource(R.string.exercise_target_muscles_summary, 0, secondaryCount)
+                    else ->
+                        stringResource(R.string.exercise_target_muscles_summary, primaryCount, secondaryCount)
                 }
                 CollapsibleSection(
-                    title = "Target muscles",
+                    title = stringResource(R.string.exercise_target_muscles),
                     summary = targetMusclesSummary,
                     expanded = expandedTargetMuscles,
                     onToggle = { expandedTargetMuscles = !expandedTargetMuscles }
@@ -749,7 +882,7 @@ fun ExerciseForm(
                             horizontalArrangement = Arrangement.End
                         ) {
                             AppPrimaryOutlinedButton(
-                                text = "Reset zoom & center",
+                                text = stringResource(R.string.exercise_reset_zoom),
                                 onClick = { resetMuscleMapTrigger++ },
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -789,7 +922,7 @@ fun ExerciseForm(
                         )
 
                         Text(
-                            text = "Choose how taps on the map are saved:",
+                            text = stringResource(R.string.exercise_map_tap_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.tertiaryContent
                         )
@@ -798,30 +931,30 @@ fun ExerciseForm(
                             horizontalArrangement = Arrangement.spacedBy(Spacing.md)
                         ) {
                             if (!isSelectingSecondary) AppPrimaryButton(
-                                text = "Primary muscles",
+                                text = stringResource(R.string.exercise_primary_muscles),
                                 onClick = { isSelectingSecondary = false },
                                 modifier = Modifier.weight(1f),
                                 textAlign = TextAlign.Center,
                             ) else AppSecondaryButton(
-                                text = "Primary muscles",
+                                text = stringResource(R.string.exercise_primary_muscles),
                                 onClick = { isSelectingSecondary = false },
                                 modifier = Modifier.weight(1f),
                                 textAlign = TextAlign.Center,
                             )
                             if (isSelectingSecondary) AppPrimaryButton(
-                                text = "Secondary muscles",
+                                text = stringResource(R.string.exercise_secondary_muscles),
                                 onClick = { isSelectingSecondary = true },
                                 modifier = Modifier.weight(1f),
                                 textAlign = TextAlign.Center,
                             ) else AppSecondaryButton(
-                                text = "Secondary muscles",
+                                text = stringResource(R.string.exercise_secondary_muscles),
                                 onClick = { isSelectingSecondary = true },
                                 modifier = Modifier.weight(1f),
                                 textAlign = TextAlign.Center,
                             )
                         }
                         Text(
-                            text = "Primary muscles are the main muscles worked. Secondary muscles are assisting muscles.",
+                            text = stringResource(R.string.exercise_muscles_explanation),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.tertiaryContent
                         )
@@ -840,7 +973,11 @@ fun ExerciseForm(
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                                 Text(
-                                    text = "Target reps range (${minReps.floatValue.toInt()} – ${maxReps.floatValue.toInt()})",
+                                    text = stringResource(
+                                        R.string.exercise_reps_range,
+                                        minReps.floatValue.toInt(),
+                                        maxReps.floatValue.toInt()
+                                    ),
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 MinMaxStepperRow(
@@ -862,7 +999,7 @@ fun ExerciseForm(
                                             bodyWeightPercentage.value = it
                                         }
                                     },
-                                    label = { Text("Bodyweight load (%)", style = MaterialTheme.typography.labelLarge) },
+                                    label = { Text(stringResource(R.string.exercise_bodyweight_load_label), style = MaterialTheme.typography.labelLarge) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -883,19 +1020,26 @@ fun ExerciseForm(
                     progressionMode.value,
                     exerciseCategoryOptions
                 ) {
-                    val catLabel = exerciseCategoryOptions.firstOrNull { it.value == selectedExerciseCategory.value }?.label ?: "Not set"
-                    val progLabel = progressionModeOptions.firstOrNull { it.value == progressionMode.value }?.label ?: "Off"
-                    "Generate warm-up sets: ${if (generateWarmupSets.value) "On" else "Off"}\nExercise category: $catLabel\nProgression mode: $progLabel"
+                    val catLabel = exerciseCategoryOptions.firstOrNull { it.value == selectedExerciseCategory.value }?.label
+                        ?: context.getString(R.string.common_not_set)
+                    val progLabel = progressionModeOptions.firstOrNull { it.value == progressionMode.value }?.label
+                        ?: context.getString(R.string.common_off)
+                    context.getString(
+                        R.string.exercise_warmup_summary,
+                        if (generateWarmupSets.value) context.getString(R.string.common_on) else context.getString(R.string.common_off),
+                        catLabel,
+                        progLabel
+                    )
                 }
                 CollapsibleSection(
-                    title = "Warm-up & progression",
+                    title = stringResource(R.string.exercise_warmup_progression),
                     summary = warmupProgressionSummary,
                     expanded = expandedWarmupProgression,
                     onToggle = { expandedWarmupProgression = !expandedWarmupProgression }
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                         SwitchSettingRow(
-                            title = "Generate Warm-up sets",
+                            title = stringResource(R.string.exercise_generate_warmup_sets),
                             checked = generateWarmupSets.value,
                             onCheckedChange = { generateWarmupSets.value = it }
                         )
@@ -904,10 +1048,10 @@ fun ExerciseForm(
                             remember(exerciseCategoryOptions, selectedExerciseCategory.value) {
                                 exerciseCategoryOptions.firstOrNull {
                                     it.value == selectedExerciseCategory.value
-                                }?.label ?: "Not set"
+                                }?.label ?: context.getString(R.string.common_not_set)
                             }
                         StandardFilterDropdown<ExerciseCategory?>(
-                            label = "Exercise category",
+                            label = stringResource(R.string.exercise_exercise_category),
                             selectedText = selectedExerciseCategoryLabel,
                             items = exerciseCategoryOptions,
                             onItemSelected = { selectedExerciseCategory.value = it },
@@ -918,10 +1062,11 @@ fun ExerciseForm(
 
                         val selectedProgressionModeLabel =
                             remember(progressionModeOptions, progressionMode.value) {
-                                progressionModeOptions.firstOrNull { it.value == progressionMode.value }?.label ?: "Off"
+                                progressionModeOptions.firstOrNull { it.value == progressionMode.value }?.label
+                                    ?: context.getString(R.string.common_off)
                             }
                         StandardFilterDropdown<ProgressionMode>(
-                            label = "Progression mode",
+                            label = stringResource(R.string.exercise_progression_mode),
                             selectedText = selectedProgressionModeLabel,
                             items = progressionModeOptions,
                             onItemSelected = { mode ->
@@ -938,7 +1083,10 @@ fun ExerciseForm(
                         if (progressionMode.value != ProgressionMode.OFF) {
                             Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                                 Text(
-                                    text = "Default load increase (${(loadJumpDefaultPctState.floatValue * 100).toInt()}%)",
+                                    text = stringResource(
+                                        R.string.exercise_default_load_increase,
+                                        (loadJumpDefaultPctState.floatValue * 100).toInt()
+                                    ),
                                     style = MaterialTheme.typography.bodyLarge
                                 )
                                 SingleValueStepperRow(
@@ -957,7 +1105,10 @@ fun ExerciseForm(
 
                             Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                                 Text(
-                                    text = "Maximum load increase (${(loadJumpMaxPctState.floatValue * 100).toInt()}%)",
+                                    text = stringResource(
+                                        R.string.exercise_max_load_increase,
+                                        (loadJumpMaxPctState.floatValue * 100).toInt()
+                                    ),
                                     style = MaterialTheme.typography.bodyLarge
                                 )
                                 SingleValueStepperRow(
@@ -971,7 +1122,7 @@ fun ExerciseForm(
 
                             Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                                 Text(
-                                    text = "Overcap reps threshold",
+                                    text = stringResource(R.string.exercise_overcap_reps_threshold),
                                     style = MaterialTheme.typography.bodyLarge
                                 )
                                 SingleValueStepperRow(
@@ -996,14 +1147,14 @@ fun ExerciseForm(
                         verticalArrangement = Arrangement.spacedBy(Spacing.md)
                     ) {
                         SwitchSettingRow(
-                            title = "Unilateral exercise (left/right sides)",
-                            subtitle = "Treat each set as left and right sides with rest between sides.",
+                            title = stringResource(R.string.exercise_unilateral_title),
+                            subtitle = stringResource(R.string.exercise_unilateral_subtitle),
                             checked = isUnilateral.value,
                             onCheckedChange = { isUnilateral.value = it }
                         )
 
                         if (isUnilateral.value) {
-                            Text("Rest between sides", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.exercise_rest_between_sides), style = MaterialTheme.typography.titleMedium)
                             CustomTimePicker(
                                 initialHour = hours,
                                 initialMinute = minutes,
@@ -1013,7 +1164,7 @@ fun ExerciseForm(
 
                             if (intraSetRestSeconds == 0) {
                                 Text(
-                                    text = "Set a non-zero rest between sides for unilateral exercises.",
+                                    text = stringResource(R.string.exercise_unilateral_rest_error),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error
                                 )
@@ -1036,7 +1187,7 @@ fun ExerciseForm(
                         verticalArrangement = Arrangement.spacedBy(Spacing.md)
                     ) {
                         StandardFilterDropdown(
-                            label = "Target heart-rate zone",
+                            label = stringResource(R.string.exercise_target_hr_zone),
                             selectedText = heartRateZones[selectedHeartRateZoneIndex],
                             items = heartRateZoneItems,
                             onItemSelected = { index ->
@@ -1068,7 +1219,7 @@ fun ExerciseForm(
                             val lb = selectedLowerBoundMaxHRPercent.value ?: 50f
                             val ub = selectedUpperBoundMaxHRPercent.value ?: 60f
                             Text(
-                                text = "Custom heart-rate zone (${lb.toInt()}% – ${ub.toInt()}%)",
+                                text = stringResource(R.string.exercise_custom_hr_zone, lb.toInt(), ub.toInt()),
                                 style = MaterialTheme.typography.titleMedium
                             )
                             MinMaxStepperRow(
@@ -1097,38 +1248,53 @@ fun ExerciseForm(
                             selectedEquipmentId.value != viewModel.GENERIC_ID)
 
                 if (showDeloadOverrides || showCalibration) {
-                    FormSectionTitle(text = "Advanced")
+                    FormSectionTitle(text = stringResource(R.string.exercise_advanced))
                     Spacer(Modifier.height(Spacing.xs))
                 }
 
                 if (showDeloadOverrides) {
                     val deloadSummary =
-                        "Failed sessions before deload: ${resolvedDeloadConfig.failedSessionsThreshold ?: "Off"}\n" +
-                            "Completed sessions between deloads: ${resolvedDeloadConfig.completedSessionsInterval ?: "Off"}\n" +
-                            "Deload weight: ${formatPercentage(resolvedDeloadConfig.weightFactor * 100)}%\n" +
-                            "Reps removed from each set: ${resolvedDeloadConfig.repsDrop}\n" +
-                            "Work sets performed: ${resolvedDeloadConfig.cutSetsTo ?: "All"}"
+                        stringResource(
+                            R.string.exercise_deload_failed_before,
+                            resolvedDeloadConfig.failedSessionsThreshold ?: context.getString(R.string.common_off)
+                        ) + "\n" +
+                            stringResource(
+                                R.string.exercise_deload_completed_between,
+                                resolvedDeloadConfig.completedSessionsInterval ?: context.getString(R.string.common_off)
+                            ) + "\n" +
+                            stringResource(
+                                R.string.exercise_deload_weight_line,
+                                formatPercentage(resolvedDeloadConfig.weightFactor * 100)
+                            ) + "\n" +
+                            stringResource(R.string.exercise_deload_reps_removed, resolvedDeloadConfig.repsDrop) + "\n" +
+                            stringResource(
+                                R.string.exercise_deload_work_sets,
+                                resolvedDeloadConfig.cutSetsTo ?: context.getString(R.string.common_all)
+                            )
                     CollapsibleSection(
-                        title = "Deload overrides",
+                        title = stringResource(R.string.exercise_deload_overrides),
                         summary = deloadSummary,
                         expanded = expandedDeloadOverrides,
                         onToggle = { expandedDeloadOverrides = !expandedDeloadOverrides }
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                             Text(
-                                text = "Override the global deload defaults for this exercise only.",
+                                text = stringResource(R.string.exercise_deload_override_hint),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
 
                             Text(
-                                text = "When to deload",
+                                text = stringResource(R.string.exercise_when_to_deload),
                                 style = MaterialTheme.typography.titleMedium
                             )
 
                             SwitchSettingRow(
-                                title = "Use global default",
-                                subtitle = "Failed sessions before deload: ${globalDeloadConfig.failedSessionsThreshold ?: "Off"}",
+                                title = stringResource(R.string.exercise_use_global_default),
+                                subtitle = stringResource(
+                                    R.string.exercise_deload_failed_before,
+                                    globalDeloadConfig.failedSessionsThreshold ?: context.getString(R.string.common_off)
+                                ),
                                 checked = useGlobalDeloadFailedThreshold.value,
                                 onCheckedChange = { useGlobalDeloadFailedThreshold.value = it }
                             )
@@ -1140,15 +1306,18 @@ fun ExerciseForm(
                                             deloadFailedSessionsThresholdState.value = input
                                         }
                                     },
-                                    label = { Text("Failed sessions before deload") },
+                                    label = { Text(stringResource(R.string.exercise_deload_failed_label)) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
 
                             SwitchSettingRow(
-                                title = "Use global default",
-                                subtitle = "Completed sessions between deloads: ${globalDeloadConfig.completedSessionsInterval ?: "Off"}",
+                                title = stringResource(R.string.exercise_use_global_default),
+                                subtitle = stringResource(
+                                    R.string.exercise_deload_completed_between,
+                                    globalDeloadConfig.completedSessionsInterval ?: context.getString(R.string.common_off)
+                                ),
                                 checked = useGlobalDeloadCompletedInterval.value,
                                 onCheckedChange = { useGlobalDeloadCompletedInterval.value = it }
                             )
@@ -1160,7 +1329,7 @@ fun ExerciseForm(
                                             deloadCompletedSessionsIntervalState.value = input
                                         }
                                     },
-                                    label = { Text("Completed sessions between deloads") },
+                                    label = { Text(stringResource(R.string.exercise_deload_completed_label)) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -1169,13 +1338,16 @@ fun ExerciseForm(
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                             Text(
-                                text = "Deload adjustments",
+                                text = stringResource(R.string.exercise_deload_adjustments),
                                 style = MaterialTheme.typography.titleMedium
                             )
 
                             SwitchSettingRow(
-                                title = "Use global default",
-                                subtitle = "Deload weight: ${formatPercentage(globalDeloadConfig.weightFactor * 100)}%",
+                                title = stringResource(R.string.exercise_use_global_default),
+                                subtitle = stringResource(
+                                    R.string.exercise_deload_weight_line,
+                                    formatPercentage(globalDeloadConfig.weightFactor * 100)
+                                ),
                                 checked = useGlobalDeloadWeightFactor.value,
                                 onCheckedChange = { useGlobalDeloadWeightFactor.value = it }
                             )
@@ -1193,16 +1365,16 @@ fun ExerciseForm(
                                             deloadWeightFactorState.value = input
                                         }
                                     },
-                                    label = { Text("Deload weight (%)") },
-                                    supportingText = { Text("Percentage of the normal working weight.") },
+                                    label = { Text(stringResource(R.string.exercise_deload_weight_label)) },
+                                    supportingText = { Text(stringResource(R.string.exercise_deload_weight_support)) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
 
                             SwitchSettingRow(
-                                title = "Use global default",
-                                subtitle = "Reps removed from each set: ${globalDeloadConfig.repsDrop}",
+                                title = stringResource(R.string.exercise_use_global_default),
+                                subtitle = stringResource(R.string.exercise_deload_reps_removed, globalDeloadConfig.repsDrop),
                                 checked = useGlobalDeloadRepsDrop.value,
                                 onCheckedChange = { useGlobalDeloadRepsDrop.value = it }
                             )
@@ -1214,15 +1386,18 @@ fun ExerciseForm(
                                             deloadRepsDropState.value = input
                                         }
                                     },
-                                    label = { Text("Reps removed from each set") },
+                                    label = { Text(stringResource(R.string.exercise_deload_reps_label)) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
 
                             SwitchSettingRow(
-                                title = "Use global default",
-                                subtitle = "Work sets performed: ${globalDeloadConfig.cutSetsTo ?: "All"}",
+                                title = stringResource(R.string.exercise_use_global_default),
+                                subtitle = stringResource(
+                                    R.string.exercise_deload_work_sets,
+                                    globalDeloadConfig.cutSetsTo ?: context.getString(R.string.common_all)
+                                ),
                                 checked = useGlobalDeloadCutSetsTo.value,
                                 onCheckedChange = { useGlobalDeloadCutSetsTo.value = it }
                             )
@@ -1234,14 +1409,14 @@ fun ExerciseForm(
                                             deloadCutSetsToState.value = input
                                         }
                                     },
-                                    label = { Text("Work sets performed during deload") },
+                                    label = { Text(stringResource(R.string.exercise_deload_cut_sets_label)) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
 
                             Text(
-                                text = "A deload starts when either trigger shown above is reached. If both show Off, automatic deload is off for this exercise.",
+                                text = stringResource(R.string.exercise_deload_trigger_hint),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
@@ -1253,20 +1428,23 @@ fun ExerciseForm(
                 // ----- Calibration -----
                 if (showCalibration) {
                     CollapsibleSection(
-                        title = "Calibration",
-                        summary = "Calibration mode: ${if (requiresLoadCalibration.value) "On" else "Off"}",
+                        title = stringResource(R.string.exercise_calibration),
+                        summary = stringResource(
+                            R.string.exercise_calibration_mode_summary,
+                            if (requiresLoadCalibration.value) context.getString(R.string.common_on) else context.getString(R.string.common_off)
+                        ),
                         expanded = expandedCalibration,
                         onToggle = { expandedCalibration = !expandedCalibration }
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                             Text(
-                                text = "Use calibration when you do not yet know a reliable working weight for this exercise. At the start of the workout, the watch asks you to choose a load, complete a calibration set, and report your reps in reserve (RIR). It then adjusts the load for the remaining work sets and turns calibration off for future sessions.",
+                                text = stringResource(R.string.exercise_calibration_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
                             SwitchSettingRow(
-                                title = "Use Calibration mode",
-                                subtitle = "Run this setup once before the first work set.",
+                                title = stringResource(R.string.exercise_use_calibration),
+                                subtitle = stringResource(R.string.exercise_calibration_subtitle),
                                 checked = requiresLoadCalibration.value,
                                 onCheckedChange = {
                                     requiresLoadCalibration.value = it
@@ -1283,7 +1461,7 @@ fun ExerciseForm(
 
             if (!nameState.value.isNotBlank()) {
                 Text(
-                    text = "Set a name above to configure training and advanced options.",
+                    text = stringResource(R.string.exercise_name_required_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiaryContent,
                     modifier = Modifier.padding(top = Spacing.md)
@@ -1306,15 +1484,34 @@ fun ExerciseForm(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     onClick = onCancel,
                     modifier = Modifier.weight(1f)
                 )
 
                 AppPrimaryButton(
-                    text = "Save",
+                    text = stringResource(R.string.common_save),
                     onClick = {
-                        val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()?.round(2)
+                        val bodyWeightPercentageValue = bodyWeightPercentageForSave(
+                            originalValue = exercise?.bodyWeightPercentage,
+                            input = bodyWeightPercentage.value,
+                            preserveOriginal = exercise != null,
+                        )
+                        val savedMuscleGroups = nullableSelectionForSave(
+                            exercise?.muscleGroups,
+                            selectedMuscleGroups.value,
+                            emptySet(),
+                        )
+                        val savedSecondaryMuscleGroups = nullableSelectionForSave(
+                            exercise?.secondaryMuscleGroups,
+                            selectedSecondaryMuscleGroups.value,
+                            emptySet(),
+                        )
+                        val savedAccessoryEquipmentIds = nullableSelectionForSave(
+                            exercise?.requiredAccessoryEquipmentIds,
+                            selectedAccessoryIds.value,
+                            emptyList(),
+                        )
                         val supportsCalibrationForExercise =
                             selectedExerciseType.value == ExerciseType.WEIGHT ||
                                 (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)
@@ -1415,13 +1612,13 @@ fun ExerciseForm(
                                     it.id == selectedId && it.isCompatibleWith(selectedExerciseType.value)
                                 }
                             },
-                            bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
+                            bodyWeightPercentage = bodyWeightPercentageValue,
                             generateWarmUpSets = generateWarmupSets.value,
                             progressionMode = progressionMode.value,
                             durationProgression = durationProgressionConfig,
                             keepScreenOn = keepScreenOn.value,
                             showCountDownTimer = showCountDownTimer.value,
-                            intraSetRestInSeconds = if (isUnilateral.value && intraSetRestSeconds > 0) {
+                            intraSetRestInSeconds = if (isUnilateral.value && intraSetRestSeconds >= 0) {
                                 intraSetRestSeconds
                             } else {
                                 null
@@ -1429,10 +1626,12 @@ fun ExerciseForm(
                             loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble().round(2),
                             loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble().round(2),
                             loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
-                            muscleGroups = if (selectedMuscleGroups.value.isEmpty()) null else selectedMuscleGroups.value,
-                            secondaryMuscleGroups = if (selectedSecondaryMuscleGroups.value.isEmpty()) null else selectedSecondaryMuscleGroups.value,
-                            requiredAccessoryEquipmentIds = selectedAccessoryIds.value,
+                            muscleGroups = savedMuscleGroups,
+                            secondaryMuscleGroups = savedSecondaryMuscleGroups,
+                            requiredAccessoryEquipmentIds = savedAccessoryEquipmentIds,
                             requiresLoadCalibration = requiresLoadCalibration.value,
+                            recurringExerciseId = exercise?.recurringExerciseId,
+                            loadHistoryPolicy = exercise?.loadHistoryPolicy ?: LoadHistoryPolicy.NONE,
                             exerciseCategory = selectedExerciseCategory.value,
                             deloadFailedSessionsThreshold = deloadFailedSessionsThreshold,
                             deloadCompletedSessionsInterval = deloadCompletedSessionsInterval,
@@ -1461,7 +1660,44 @@ fun ExerciseForm(
                                 exercise?.placementNotes
                             },
                         )
-                        onExerciseUpsert(newExercise)
+                        val savedExercise = sanitizeRecurringTrackMetadata(
+                            exercise = newExercise,
+                            originalExercise = exercise,
+                            isRecurringWorkout = recurringContext != null,
+                            family = recurringFamily,
+                        )
+                        val recurringEdit = recurringContext?.let {
+                            if (savedExercise.exerciseType !in setOf(ExerciseType.WEIGHT, ExerciseType.BODY_WEIGHT)) {
+                                null
+                            } else {
+                                val selection = normalizeRecurringTrackSelection(
+                                    RecurringTrackSelection(
+                                        recurringTrackMode.value,
+                                        recurringTrackId.value?.let { value ->
+                                            runCatching { UUID.fromString(value) }.getOrNull()
+                                        },
+                                    ),
+                                    RecurringWorkoutAuthoring.compatibleTrackChoices(savedExercise, recurringFamily)
+                                        .mapTo(mutableSetOf()) { choice -> choice.trackId },
+                                )
+                                val loadableSets = savedExercise.sets.filterNot { it is com.gabstra.myworkoutassistant.shared.sets.RestSet }
+                                val hasLoadableWorkingSet = loadableSets.isNotEmpty() && when (savedExercise.exerciseType) {
+                                    ExerciseType.WEIGHT -> loadableSets.all { it is WeightSet }
+                                    ExerciseType.BODY_WEIGHT -> loadableSets.all { it is BodyWeightSet }
+                                    else -> false
+                                }
+                                RecurringExerciseEdit(
+                                    trackSelection = selection,
+                                    loadHistoryPolicy = recurringLoadPolicyFor(
+                                        recurringLoadPolicy.value,
+                                        savedExercise.exerciseType,
+                                        selection,
+                                        hasLoadableWorkingSet,
+                                    ),
+                                )
+                            }
+                        }
+                        onExerciseUpsert(savedExercise, recurringEdit)
                     },
                     enabled = canBeSaved,
                     modifier = Modifier.weight(1f)
@@ -1471,7 +1707,7 @@ fun ExerciseForm(
             Spacer(Modifier.height(Spacing.xl))
         }
     }
-    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = stringResource(R.string.common_saving))
     }
 }
 

@@ -389,8 +389,9 @@ if ($devices.Count -eq 0) {
 $targetWearSerial = $null
 if ($WearEmulatorSerial) {
     $targetWearSerial = $WearEmulatorSerial
-    if (-not (Is-WearEmulator $targetWearSerial)) {
-        Write-Error "Provided -WearEmulatorSerial '$targetWearSerial' is not a connected Wear emulator."
+    $isConnected = @($devices | Where-Object { $_.Serial -eq $targetWearSerial -and $_.State -eq "device" }).Count -gt 0
+    if (-not $isConnected -or (Get-DeviceCharacteristics $targetWearSerial) -notmatch "watch") {
+        Write-Error "Provided -WearEmulatorSerial '$targetWearSerial' is not a connected Wear device."
         exit 1
     }
 } else {
@@ -411,7 +412,7 @@ if (-not $targetWearSerial) {
 $resolvePhase.Stop()
 $timings["resolveDeviceSeconds"] = [math]::Round($resolvePhase.Elapsed.TotalSeconds, 3)
 
-Write-Host "Using Wear emulator: $targetWearSerial" -ForegroundColor Green
+Write-Host "Using Wear device: $targetWearSerial" -ForegroundColor Green
 Write-Host "Running Wear OS E2E tests..." -ForegroundColor Cyan
 
 $logsDir = Resolve-RepoPath "wearos/build/e2e-logs"

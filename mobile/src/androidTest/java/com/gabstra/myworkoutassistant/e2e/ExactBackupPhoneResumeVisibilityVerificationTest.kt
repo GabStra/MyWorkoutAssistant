@@ -26,11 +26,11 @@ class ExactBackupPhoneResumeVisibilityVerificationTest {
         val db = AppDatabase.getDatabase(context)
         restoreBackupThroughDialog(context)
         waitForTargetResumeRecordOnPhone(db)
-        val targetWorkout = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
+        val targetWorkout = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore()
             .workouts
             .firstOrNull { it.id == TARGET_WORKOUT_ID }
             ?: error("Target workout $TARGET_WORKOUT_ID missing from restored workout store.")
-        val targetPlanName = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
+        val targetPlanName = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore()
             .workoutPlans
             .firstOrNull { it.id == targetWorkout.workoutPlanId }
             ?.name

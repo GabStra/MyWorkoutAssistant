@@ -251,8 +251,8 @@ private fun RestTimerBlock(
         }
     }
 
-    val timerTextStyle = MaterialTheme.typography.numeralExtraSmall
-    val timerHeaderStyle = MaterialTheme.typography.bodyExtraSmall
+    val timerTextStyle = MaterialTheme.typography.numeralSmall
+    val timerHeaderStyle = MaterialTheme.typography.bodySmall
 
     @Composable
     fun textComposable(seconds: Int, modifier: Modifier = Modifier, style: TextStyle = timerTextStyle) {

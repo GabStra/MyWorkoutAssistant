@@ -568,6 +568,48 @@ class ExerciseHistoryRowsTest {
         )
     }
 
+    @Test
+    fun `buildExerciseTemplatePreviewItems groups paired sides without an inter-side rest`() {
+        val setId = UUID.randomUUID()
+        val exercise = buildTemplateExercise(intraSetRestInSeconds = 0)
+
+        val previewItems = buildExerciseTemplatePreviewItems(
+            sets = listOf(
+                WeightSet(
+                    id = setId,
+                    reps = 10,
+                    weight = 12.0,
+                    subCategory = SetSubCategory.WorkSet,
+                )
+            ),
+            exercise = exercise,
+            equipment = null,
+        )
+
+        assertEquals(
+            listOf(
+                SetPreviewItemUiModel(
+                    setId = setId,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = "1-L",
+                            primaryValue = "12.0 kg",
+                            secondaryValue = "10",
+                        ),
+                        SetTableRowUiModel.Data(
+                            identifier = "1-R",
+                            primaryValue = "12.0 kg",
+                            secondaryValue = "10",
+                        ),
+                    ),
+                    usesDashedContainer = true,
+                    isGroupedUnilateral = true,
+                )
+            ),
+            previewItems
+        )
+    }
+
     private fun buildTemplateExercise(intraSetRestInSeconds: Int?) = Exercise(
         id = UUID.randomUUID(),
         enabled = true,

@@ -350,7 +350,7 @@ object CrossDeviceSyncAssertions {
             )
         }
 
-        val workoutStore = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
+        val workoutStore = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull {
             it.id == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID &&
                 it.globalId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_GLOBAL_ID

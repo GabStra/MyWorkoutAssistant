@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 import com.gabstra.myworkoutassistant.shared.Green
 
 
@@ -106,9 +107,9 @@ fun TrendComponentProgressBar(
                 ratio >= 1.1 -> String.format("+%d%%", ((ratio - 1) * 100).roundToInt())
                 else -> String.format("+%.1f%%", ((ratio - 1) * 100)).replace(',','.').replace(".0","")
             }
-            Text(
+            TightNumericText(
                 text = displayText,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.numeralMicro,
                 color = Green
             )
         }

@@ -66,6 +66,10 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_INDEX_JSON_KEY
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_NAME_KEY
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -671,6 +675,14 @@ suspend fun sendAppBackup(
     val transactionId = UUID.randomUUID().toString()
     Log.d("DataLayerSync", "Starting app backup, transactionId=$transactionId")
     try {
+        val backupToSend = if (appBackup.ProfileId != null && context != null) {
+            val targetProfile = Profiles.profiles(context).firstOrNull { it.id == appBackup.ProfileId }
+                ?: error("Cannot send backup for deleted phone profile ${appBackup.ProfileId}")
+            appBackup.copy(ProfileName = targetProfile.name)
+        } else {
+            appBackup
+        }
+
         // Check if watch is connected before attempting sync
         // This prevents sync attempts when watch is not available (e.g., during app uninstall)
         if (context != null) {
@@ -695,7 +707,7 @@ suspend fun sendAppBackup(
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
         val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
 
-        val jsonString = fromAppBackupToJSON(appBackup)
+        val jsonString = fromAppBackupToJSON(backupToSend)
         val chunkSize = 90_000
         val compressedData = compressString(jsonString)
         val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
@@ -706,6 +718,11 @@ suspend fun sendAppBackup(
             dataMap.putInt("chunksCount", chunks.size)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
             dataMap.putString("transactionId", transactionId)
+            // Pin the profile destination on the start item. Wear keeps the receiver's active
+            // profile unchanged and applies the backup to this named profile's database/store.
+            backupToSend.ProfileId?.let { dataMap.putString(PROFILE_ID_KEY, it) }
+            backupToSend.ProfileName?.let { dataMap.putString(PROFILE_NAME_KEY, it) }
+            context?.let { dataMap.putString(PROFILE_INDEX_JSON_KEY, Profiles.exportIndexJson(it)) }
         }.asPutDataRequest().setUrgent()
 
         Tasks.await(dataClient.putDataItem(startRequest))
@@ -724,6 +741,8 @@ suspend fun sendAppBackup(
                 }
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
                 dataMap.putString("transactionId", transactionId)
+                backupToSend.ProfileId?.let { dataMap.putString(PROFILE_ID_KEY, it) }
+                backupToSend.ProfileName?.let { dataMap.putString(PROFILE_NAME_KEY, it) }
             }.asPutDataRequest().setUrgent()
 
             Tasks.await(dataClient.putDataItem(request))

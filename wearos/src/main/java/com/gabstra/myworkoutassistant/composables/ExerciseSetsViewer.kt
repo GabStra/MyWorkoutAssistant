@@ -21,7 +21,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -342,9 +341,8 @@ fun SetTableRow(
     textColor: Color = MaterialTheme.colorScheme.onBackground,
     hasUnconfirmedLoadSelectionForExercise: Boolean = false,
     hideSetListRowText: Boolean = false,
+    itemStyle: TextStyle = MaterialTheme.typography.numeralSmall,
 ) {
-    val itemStyle = MaterialTheme.typography.numeralSmall
-
     val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
     val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
@@ -945,27 +943,24 @@ private fun MarqueeFittedTextCell(
             .clipToBounds(),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = fittedText.text,
-                style = baseStyle.copy(fontSize = fittedText.fontSize, color = color),
-                color = Color.Unspecified,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-                overflow = LocalTextConfiguration.current.overflow,
-                modifier = Modifier
-                    .trackableMarquee(
-                        state = marqueeState,
-                        iterations = Int.MAX_VALUE,
-                        edgeFadeWidth = 12.dp,
-                        edgeFadeColor = fadeColor,
-                    )
-                    .width(fittedText.inkWidth),
-            )
-        }
+        // The marquee records/draws its text through its own GraphicsLayer, so no extra
+        // offscreen composite layer is needed here.
+        Text(
+            text = fittedText.text,
+            style = baseStyle.copy(fontSize = fittedText.fontSize, color = color),
+            color = Color.Unspecified,
+            maxLines = 1,
+            textAlign = TextAlign.Center,
+            overflow = LocalTextConfiguration.current.overflow,
+            modifier = Modifier
+                .trackableMarquee(
+                    state = marqueeState,
+                    iterations = Int.MAX_VALUE,
+                    edgeFadeWidth = 12.dp,
+                    edgeFadeColor = fadeColor,
+                )
+                .width(fittedText.inkWidth),
+        )
     }
 }
 

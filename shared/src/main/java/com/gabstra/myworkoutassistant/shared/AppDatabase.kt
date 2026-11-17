@@ -8,6 +8,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.room.migration.Migration
 import androidx.room.TypeConverters
 import com.gabstra.myworkoutassistant.shared.RestHistory
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.typeconverters.HeartRateStreamsTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.HeartRateStreamTimesTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ExerciseSessionSnapshotTypeConverter
@@ -30,6 +31,8 @@ import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionDao
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity
 import com.gabstra.myworkoutassistant.shared.typeconverters.WorkoutSessionEndReasonTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.WorkoutHistoryOriginTypeConverter
+import java.util.concurrent.ConcurrentHashMap
 
 @Database(
     entities = [
@@ -44,7 +47,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeCo
         MotionCaptureSessionEntity::class,
         MotionCaptureSegmentEntity::class
     ],
-    version = 70,
+    version = 73,
     exportSchema = false
 )
 @TypeConverters(
@@ -64,7 +67,8 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeCo
     ProgressionStateTypeConverter::class,
     TernaryTypeConverter::class,
     WorkoutSessionEndReasonTypeConverter::class,
-    RunningResultsTypeConverter::class
+    RunningResultsTypeConverter::class,
+    WorkoutHistoryOriginTypeConverter::class
 )
 
 abstract class AppDatabase : RoomDatabase() {
@@ -111,6 +115,118 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE workout_history ADD COLUMN heartRateStreamsStartEpochMs INTEGER"
                 )
+            }
+        }
+
+        private val MIGRATION_70_71 = object : Migration(70, 71) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN recurringSessionId TEXT")
+                db.execSQL("ALTER TABLE set_history ADD COLUMN recurringExerciseId TEXT")
+                db.execSQL("ALTER TABLE set_history ADD COLUMN exerciseDefinitionIdSnapshot TEXT")
+                db.execSQL("ALTER TABLE set_history ADD COLUMN exerciseTypeSnapshot TEXT")
+            }
+        }
+
+        private val MIGRATION_71_72 = object : Migration(71, 72) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN origin TEXT NOT NULL DEFAULT 'RECORDED'")
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN startTimeKnown INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN durationKnown INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN sourceNote TEXT")
+                db.execSQL("ALTER TABLE set_history ADD COLUMN exerciseNameSnapshot TEXT")
+            }
+        }
+
+        /**
+         * Removes the retired workout-level source note without dropping history rows.
+         *
+         * SQLite DROP COLUMN is not available on all supported Android versions, so rebuild
+         * only workout_history from the exact Room 73 model. Before dropping the parent, stage
+         * every table with an incoming workout-history foreign key: SQLite's implicit delete for
+         * DROP TABLE can cascade into children when foreign-key enforcement is enabled. Restore
+         * rows after the replacement parent has its original name, then verify relationships.
+         */
+        private val MIGRATION_72_73 = object : Migration(72, 73) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val childTables = listOf(
+                    "set_history",
+                    "rest_history",
+                    "exercise_session_progression",
+                )
+                childTables.forEach { table ->
+                    db.execSQL("CREATE TEMP TABLE `${table}_migration_backup` AS SELECT * FROM `$table`")
+                }
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `workout_history_new` (
+                        `id` TEXT NOT NULL,
+                        `workoutId` TEXT NOT NULL,
+                        `date` INTEGER NOT NULL,
+                        `time` TEXT NOT NULL,
+                        `startTime` INTEGER NOT NULL,
+                        `duration` INTEGER NOT NULL,
+                        `heartBeatRecords` TEXT NOT NULL,
+                        `ibiRecords` TEXT NOT NULL,
+                        `restRmssdMs` REAL,
+                        `restSdnnMs` REAL,
+                        `sweatLossMl` INTEGER,
+                        `skinTempStartC` REAL,
+                        `skinTempMaxC` REAL,
+                        `heartRateSource` TEXT,
+                        `heartRateStreams` TEXT NOT NULL,
+                        `heartRateStreamTimes` TEXT NOT NULL,
+                        `heartRateStreamsStartEpochMs` INTEGER,
+                        `isDone` INTEGER NOT NULL,
+                        `hasBeenSentToHealth` INTEGER NOT NULL,
+                        `globalId` TEXT NOT NULL,
+                        `version` INTEGER NOT NULL,
+                        `endReason` TEXT NOT NULL,
+                        `runningResults` TEXT NOT NULL,
+                        `recurringSessionId` TEXT,
+                        `origin` TEXT NOT NULL,
+                        `startTimeKnown` INTEGER NOT NULL,
+                        `durationKnown` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `workout_history_new` (
+                        `id`, `workoutId`, `date`, `time`, `startTime`, `duration`,
+                        `heartBeatRecords`, `ibiRecords`, `restRmssdMs`, `restSdnnMs`,
+                        `sweatLossMl`, `skinTempStartC`, `skinTempMaxC`, `heartRateSource`,
+                        `heartRateStreams`, `heartRateStreamTimes`, `heartRateStreamsStartEpochMs`,
+                        `isDone`, `hasBeenSentToHealth`, `globalId`, `version`, `endReason`,
+                        `runningResults`, `recurringSessionId`, `origin`, `startTimeKnown`,
+                        `durationKnown`
+                    )
+                    SELECT
+                        `id`, `workoutId`, `date`, `time`, `startTime`, `duration`,
+                        `heartBeatRecords`, `ibiRecords`, `restRmssdMs`, `restSdnnMs`,
+                        `sweatLossMl`, `skinTempStartC`, `skinTempMaxC`, `heartRateSource`,
+                        `heartRateStreams`, `heartRateStreamTimes`, `heartRateStreamsStartEpochMs`,
+                        `isDone`, `hasBeenSentToHealth`, `globalId`, `version`, `endReason`,
+                        `runningResults`, `recurringSessionId`, `origin`, `startTimeKnown`,
+                        `durationKnown`
+                    FROM `workout_history`
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `workout_history`")
+                db.execSQL("ALTER TABLE `workout_history_new` RENAME TO `workout_history`")
+
+                childTables.forEach { table ->
+                    db.execSQL(
+                        "INSERT OR IGNORE INTO `$table` SELECT * FROM `${table}_migration_backup`",
+                    )
+                    db.execSQL("DROP TABLE `${table}_migration_backup`")
+                }
+
+                db.query("PRAGMA foreign_key_check").use { cursor ->
+                    check(!cursor.moveToFirst()) {
+                        "Foreign-key violation after rebuilding workout_history for migration 72 -> 73"
+                    }
+                }
             }
         }
 
@@ -200,29 +316,35 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        @Volatile
-        private var INSTANCE: AppDatabase? = null
+        // One open instance per profile database, keyed by database name.
+        private val instances = ConcurrentHashMap<String, AppDatabase>()
 
-        fun getDatabase(context: Context): AppDatabase {
-            val existing = INSTANCE
+        fun getDatabase(context: Context): AppDatabase =
+            getDatabase(context, Profiles.activeProfileId(context))
+
+        /** Opens the database of a specific profile, e.g. when applying data that arrived tagged with one. */
+        fun getDatabase(context: Context, profileId: String): AppDatabase {
+            val databaseName = Profiles.databaseName(profileId)
+            val existing = instances[databaseName]
             if (existing != null && existing.isOpen) {
                 return existing
             }
 
             return synchronized(this) {
-                val current = INSTANCE
+                val current = instances[databaseName]
                 if (current != null && current.isOpen) {
                     current
                 } else {
                     val instance = Room.databaseBuilder(
                         context.applicationContext,
                         AppDatabase::class.java,
-                        "app_database_2",
+                        databaseName,
                     )
                         .addMigrations(
                             MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63, MIGRATION_63_64,
                             MIGRATION_64_65, MIGRATION_65_66, MIGRATION_66_67, MIGRATION_67_68,
-                            MIGRATION_68_69, MIGRATION_69_70
+                            MIGRATION_68_69, MIGRATION_69_70, MIGRATION_70_71, MIGRATION_71_72,
+                            MIGRATION_72_73
                         )
                         .fallbackToDestructiveMigration(dropAllTables = true)
                         .addCallback(object : RoomDatabase.Callback() {
@@ -262,7 +384,7 @@ abstract class AppDatabase : RoomDatabase() {
                             }
                         })
                         .build()
-                    INSTANCE = instance
+                    instances[databaseName] = instance
                     instance
                 }
             }
@@ -270,8 +392,8 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun closeInstance() {
             synchronized(this) {
-                INSTANCE?.close()
-                INSTANCE = null
+                instances.values.forEach { it.close() }
+                instances.clear()
             }
         }
     }

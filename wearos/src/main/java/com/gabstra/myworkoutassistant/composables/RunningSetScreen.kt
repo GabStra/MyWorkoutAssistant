@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -38,13 +39,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -55,16 +59,16 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.composables.PermissionRequestDialog
-import com.gabstra.myworkoutassistant.composables.workoutPermissionMessage
 import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 import com.gabstra.myworkoutassistant.preview.createPreviewWorkoutStateMachine
 import com.gabstra.myworkoutassistant.screens.setFieldValue
 import com.gabstra.myworkoutassistant.services.RunningTrackingService
@@ -80,7 +84,6 @@ import com.gabstra.myworkoutassistant.shared.running.RunningRoutePoint
 import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RunningSetData
-import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
@@ -240,11 +243,10 @@ internal fun RunningSetScreen(
                             hapticsViewModel.doGentleVibration()
                         },
                     ) {
-                        SetValueSection(label = "DISTANCE ($distanceUnitLabel)", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
-                            Text(
+                        SetValueSection(label = stringResource(R.string.run_label_distance, distanceUnitLabel), headerStyle = MaterialTheme.typography.bodyExtraSmall) {
+                            TightNumericText(
                                 text = formatDistanceValue(correctionMeters, distanceUnit),
-                                style = MaterialTheme.typography.numeralSmall.exerciseTimerValueStyle(),
-                                maxLines = 1,
+                                style = MaterialTheme.typography.numeralSmall,
                             )
                         }
                     }
@@ -253,20 +255,18 @@ internal fun RunningSetScreen(
         } else Column(
             modifier = modifier
                 .fillMaxSize()
-                .padding(horizontal = 8.dp, vertical = 4.dp)
                 .then(
                     if (isCompletedTreadmill) Modifier else Modifier.verticalScroll(rememberScrollState()),
-                ),
+                )
+                // Padding inside the scroll (scrolls with content) so resting title/footer
+                // sit at the mask's edge bands and dissolve like side content.
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = if (isCompletedTreadmill) {
-                Arrangement.SpaceEvenly
-            } else {
-                Arrangement.spacedBy(5.dp)
-            },
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             if (!completed && !tracker.running) exerciseTitleComposable()
             Text(
-                text = if (isOutdoor) "OUTDOOR RUN" else "TREADMILL RUN",
+                text = if (isOutdoor) stringResource(R.string.run_outdoor) else stringResource(R.string.run_treadmill),
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
             )
@@ -276,39 +276,42 @@ internal fun RunningSetScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        SetValueSection(label = "ELAPSED", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
-                            Text(
+                    Box(
+                        Modifier.weight(1f).heightIn(min = 48.dp),
+                        contentAlignment = Alignment.TopCenter,
+                    ) {
+                        SetValueSection(label = stringResource(R.string.run_label_elapsed), headerStyle = MaterialTheme.typography.bodyExtraSmall) {
+                            TightNumericText(
                                 text = formatElapsed(elapsedMillis),
-                                style = MaterialTheme.typography.labelLarge,
-                                maxLines = 1,
-                                softWrap = false,
+                                style = MaterialTheme.typography.numeralExtraSmall,
                             )
                         }
                     }
+                    val editDistanceDescription = stringResource(
+                        R.string.run_cd_edit_treadmill_distance,
+                        formatDistanceDescription(correctionMeters, distanceUnit)
+                    )
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .heightIn(min = 48.dp)
                             .semantics(mergeDescendants = true) {
-                                contentDescription = "Edit treadmill distance, ${formatDistanceDescription(correctionMeters, distanceUnit)}"
+                                contentDescription = editDistanceDescription
                             }
                             .clickable(role = Role.Button) {
                                 isDistanceEditing = true
                                 hapticsViewModel.doGentleVibration()
                             },
-                        contentAlignment = Alignment.Center,
+                        contentAlignment = Alignment.TopCenter,
                     ) {
-                        SetValueSection(label = "DISTANCE ($distanceUnitLabel)", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
+                        SetValueSection(label = stringResource(R.string.run_label_distance, distanceUnitLabel), headerStyle = MaterialTheme.typography.bodyExtraSmall) {
                             Row(
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
+                                TightNumericText(
                                     text = formatDistanceValue(correctionMeters, distanceUnit),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1,
-                                    softWrap = false,
+                                    style = MaterialTheme.typography.numeralExtraSmall,
                                 )
                                 Icon(
                                     imageVector = Icons.Default.Edit,
@@ -322,20 +325,19 @@ internal fun RunningSetScreen(
                 }
             } else if (tracker.running || completed || elapsedMillis > 0L) {
                 // Hidden while the run has never started (no tracking, no accrued time).
-                SetValueSection(label = "ELAPSED", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
-                    Text(
+                SetValueSection(label = stringResource(R.string.run_label_elapsed), headerStyle = MaterialTheme.typography.bodyExtraSmall) {
+                    TightNumericText(
                         text = formatElapsed(elapsedMillis),
-                        style = MaterialTheme.typography.numeralSmall.exerciseTimerValueStyle(),
-                        maxLines = 1,
+                        style = MaterialTheme.typography.numeralSmall,
                     )
                 }
             }
             if (!completed) {
                 if (!tracker.running) {
-                    RunPlayIconButton(contentDescription = "Start run", onClick = ::startTracking)
+                    RunPlayIconButton(contentDescription = stringResource(R.string.run_cd_start_run), onClick = ::startTracking)
                 } else if (tracker.paused) {
                     RunPlayIconButton(
-                        contentDescription = "Resume run",
+                        contentDescription = stringResource(R.string.run_cd_resume_run),
                         onClick = {
                             RunningTrackingService.resume(context)
                             hapticsViewModel.doGentleVibration()
@@ -346,81 +348,61 @@ internal fun RunningSetScreen(
             if (tracker.running && !tracker.paused && !completed) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp,Alignment.CenterHorizontally),
                 ) {
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        SetValueSection(label = "DISTANCE ($distanceUnitLabel)", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
-                            Text(
+                    val distanceUnavailableLabel = stringResource(R.string.run_distance_unavailable)
+                    Box(Modifier.weight(1f,false), contentAlignment = Alignment.Center) {
+                        SetValueSection(label = stringResource(R.string.run_label_distance, distanceUnitLabel), headerStyle = MaterialTheme.typography.bodyExtraSmall) {
+                            DistanceValueText(
                                 text = formatDistanceValue(currentDistanceMeters.takeIf { it > 0.0 }, distanceUnit),
-                                modifier = Modifier.semantics {
-                                    contentDescription = currentDistanceMeters
-                                        .takeIf { it > 0.0 }
-                                        ?.let { formatDistanceDescription(it, distanceUnit) }
-                                        ?: "Distance unavailable"
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
+                                currentDistanceMeters = currentDistanceMeters,
+                                distanceUnit = distanceUnit,
+                                distanceUnavailableLabel = distanceUnavailableLabel,
+                                style = MaterialTheme.typography.numeralMicro,
                             )
                         }
                     }
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        SetValueSection(label = "AVG PACE ($distanceUnitLabel)", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
-                            Text(
+                    Box(Modifier.weight(1f,false), contentAlignment = Alignment.Center) {
+                        SetValueSection(label = stringResource(R.string.run_label_avg_pace, distanceUnitLabel), headerStyle = MaterialTheme.typography.bodyExtraSmall) {
+                            TightNumericText(
                                 text = formatAveragePaceValue(elapsedMillis, currentDistanceMeters, distanceUnit),
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
+                                style = MaterialTheme.typography.numeralMicro,
                             )
                         }
-                    }
-                }
-                if (isOutdoor && tracker.route.isNotEmpty()) {
-                    WearRunningRouteMap(
-                        route = tracker.route,
-                        modifier = Modifier.padding(horizontal = 20.dp),
-                        backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
-                        routeColor = MaterialTheme.colorScheme.primary,
-                        startColor = Green,
-                        currentColor = Red,
-                        labelColor = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text("START", style = MaterialTheme.typography.bodyExtraSmall, color = Green)
-                        Text("NOW", style = MaterialTheme.typography.bodyExtraSmall, color = Red)
                     }
                 }
                 if (isOutdoor && (!locationGranted || !tracker.locationAvailable)) {
                     val hasSavedRoute = tracker.route.isNotEmpty()
-                    val gpsStatus = if (hasSavedRoute) "GPS lost" else "No GPS · no route"
+                    val gpsStatus = if (hasSavedRoute) {
+                        stringResource(R.string.run_gps_lost)
+                    } else {
+                        stringResource(R.string.run_no_gps)
+                    }
+                    val gpsLostDescription = stringResource(R.string.run_cd_gps_lost_route_saved)
+                    val gpsUnavailableDescription = stringResource(R.string.run_cd_gps_unavailable_no_route)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 30.dp)
                             .semantics(mergeDescendants = true) {
                                 contentDescription = if (hasSavedRoute) {
-                                    "GPS signal lost; route saved"
+                                    gpsLostDescription
                                 } else {
-                                    "GPS unavailable; no route saved"
+                                    gpsUnavailableDescription
                                 }
                             },
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (hasSavedRoute) {
-                            Icon(
-                                imageVector = Icons.Default.LocationOff,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.LocationOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         Text(
                             text = gpsStatus,
-                            modifier = if (hasSavedRoute) Modifier.padding(start = 4.dp) else Modifier,
+                            modifier = Modifier.padding(start = 4.dp),
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -429,44 +411,62 @@ internal fun RunningSetScreen(
                 }
             }
             if (!completed) {
-                Column(
+                val (goalLabel, goalValue) = goalLabelAndValue(prescription, distanceUnit)
+                Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = formatTarget(prescription, distanceUnit),
-                        modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.labelSmall,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    // Same stacked label/value style as the distance and pace cells.
+                    SetValueSection(
+                        label = goalLabel,
+                        headerStyle = MaterialTheme.typography.bodyExtraSmall,
+                    ) {
+                        TightNumericText(
+                            text = goalValue,
+                            style = MaterialTheme.typography.numeralMicro,
+                            color = if (goalReached) Green else Color.Unspecified,
+                        )
+                    }
                     if (goalReached) {
                         Icon(
                             imageVector = Icons.Default.Check,
-                            contentDescription = "Goal reached",
-                            modifier = Modifier.size(20.dp),
+                            contentDescription = stringResource(R.string.run_cd_goal_reached),
+                            modifier = Modifier.padding(start = 4.dp).size(20.dp),
                             tint = Green,
                         )
                     }
                 }
             }
             tracker.errorMessage?.let {
-                Text(
-                    text = it,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 28.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ErrorOutline,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        text = it,
+                        modifier = Modifier.padding(start = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
             if (completed && !isOutdoor) {
                 WearPrimaryButton(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
-                    text = "Save run",
+                    text = stringResource(R.string.run_save_run),
                     onClick = { saveResult(viewModel, state, tracker, elapsedMillis, correctionMeters, isOutdoor, onComplete) },
                 )
             }
@@ -474,10 +474,13 @@ internal fun RunningSetScreen(
     }
 
     if (showRunningControlsDialog && tracker.running && !completed && !showPermissionRationale) {
+        val (dialogGoalLabel, dialogGoalValue) = goalLabelAndValue(prescription, distanceUnit)
         RunningControlsDialog(
             isPaused = tracker.paused,
             distance = formatDistanceValue(currentDistanceMeters.takeIf { it > 0.0 }, distanceUnit),
             averagePace = formatAveragePaceValue(elapsedMillis, currentDistanceMeters, distanceUnit),
+            goalLabel = dialogGoalLabel,
+            goalValue = dialogGoalValue,
             distanceUnitLabel = distanceUnitLabel,
             onPauseResume = {
                 if (tracker.paused) RunningTrackingService.resume(context) else RunningTrackingService.pause(context)
@@ -491,7 +494,7 @@ internal fun RunningSetScreen(
 
     if (showPermissionRationale) {
         PermissionRequestDialog(
-            title = "Run tracking permissions",
+            title = stringResource(R.string.run_permission_title),
             message = workoutPermissionMessage(permissionsToRequest),
             onContinue = {
                 showPermissionRationale = false
@@ -512,7 +515,7 @@ private fun RunPlayIconButton(contentDescription: String, onClick: () -> Unit) {
         modifier = Modifier.size(WearStandardIconButtonSize),
         hitBoxScale = 1f,
         onClick = onClick,
-        colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
+        colors = wearColoredIconButtonColors(containerColor = Green),
     ) {
         Icon(
             modifier = Modifier.size(WearStandardIconButtonIconSize),
@@ -528,6 +531,8 @@ private fun RunningControlsDialog(
     isPaused: Boolean,
     distance: String,
     averagePace: String,
+    goalLabel: String,
+    goalValue: String,
     distanceUnitLabel: String,
     onPauseResume: () -> Unit,
     onFinish: () -> Unit,
@@ -550,33 +555,34 @@ private fun RunningControlsDialog(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceEvenly,
             ) {
-                Text("RUN CONTROLS", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.run_controls_title), style = MaterialTheme.typography.titleMedium)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp,Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        SetValueSection(label = "DISTANCE ($distanceUnitLabel)", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
-                            Text(
+                    Box(Modifier.weight(1f,false), contentAlignment = Alignment.Center) {
+                        SetValueSection(label = stringResource(R.string.run_label_distance, distanceUnitLabel), headerStyle = MaterialTheme.typography.bodyExtraSmall) {
+                            TightNumericText(
                                 text = distance,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                softWrap = false,
+                                style = MaterialTheme.typography.numeralMicro,
                             )
                         }
                     }
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        SetValueSection(label = "AVG PACE ($distanceUnitLabel)", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
-                            Text(
+                    Box(Modifier.weight(1f,false), contentAlignment = Alignment.Center) {
+                        SetValueSection(label = stringResource(R.string.run_label_avg_pace, distanceUnitLabel), headerStyle = MaterialTheme.typography.bodyExtraSmall) {
+                            TightNumericText(
                                 text = averagePace,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                softWrap = false,
+                                style = MaterialTheme.typography.numeralMicro,
                             )
                         }
                     }
                 }
+                LabeledNumericValue(
+                    label = goalLabel,
+                    value = goalValue,
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(20.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -585,14 +591,14 @@ private fun RunningControlsDialog(
                         modifier = Modifier.size(WearStandardIconButtonSize),
                         hitBoxScale = 1f,
                         onClick = onPauseResume,
-                        colors = IconButtonDefaults.iconButtonColors(
+                        colors = wearColoredIconButtonColors(
                             containerColor = if (isPaused) Green else MaterialTheme.colorScheme.primary,
                         ),
                     ) {
                         Icon(
                             modifier = Modifier.size(WearStandardIconButtonIconSize),
                             imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                            contentDescription = if (isPaused) "Resume run" else "Pause run",
+                            contentDescription = if (isPaused) stringResource(R.string.run_cd_resume_run) else stringResource(R.string.run_cd_pause_run),
                             tint = androidx.wear.compose.material3.LocalContentColor.current,
                         )
                     }
@@ -600,12 +606,12 @@ private fun RunningControlsDialog(
                         modifier = Modifier.size(WearStandardIconButtonSize),
                         hitBoxScale = 1f,
                         onClick = onFinish,
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
+                        colors = wearColoredIconButtonColors(containerColor = Red),
                     ) {
                         Icon(
                             modifier = Modifier.size(WearStandardIconButtonIconSize),
                             imageVector = Icons.Default.Stop,
-                            contentDescription = "Finish run",
+                            contentDescription = stringResource(R.string.run_cd_finish_run),
                             tint = androidx.wear.compose.material3.LocalContentColor.current,
                         )
                     }
@@ -614,15 +620,13 @@ private fun RunningControlsDialog(
                     buttonSize = 40.dp,
                     hitBoxScale = 1.2f,
                     onClick = onDismiss,
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    ),
+                    colors = wearColoredIconButtonColors(MaterialTheme.colorScheme.surfaceContainerHigh),
                     buttonModifier = Modifier.clip(CircleShape),
                 ) {
                     Icon(
                         modifier = Modifier.size(20.dp),
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to run",
+                        contentDescription = stringResource(R.string.run_cd_back_to_run),
                         tint = androidx.wear.compose.material3.LocalContentColor.current,
                     )
                 }
@@ -679,9 +683,37 @@ private fun formatDistanceValue(meters: Double?, distanceUnit: DistanceUnit): St
 private fun formatDistanceDescription(meters: Double, distanceUnit: DistanceUnit): String =
     "${formatDistanceValue(meters, distanceUnit)} ${distanceUnit.abbreviation()}"
 
-private fun formatTarget(prescription: RunningPrescription, distanceUnit: DistanceUnit): String = when (prescription.targetType) {
-    RunningTargetType.TIME -> "Goal: ${formatElapsed((prescription.targetValue * 1000).toLong())}"
-    RunningTargetType.DISTANCE -> "Goal (${distanceUnit.abbreviation()}): ${formatDistanceValue(prescription.targetValue, distanceUnit)}"
+@Composable
+private fun DistanceValueText(
+    text: String,
+    currentDistanceMeters: Double,
+    distanceUnit: DistanceUnit,
+    distanceUnavailableLabel: String,
+    style: TextStyle,
+) {
+    TightNumericText(
+        text = text,
+        modifier = Modifier.semantics {
+            contentDescription = currentDistanceMeters
+                .takeIf { it > 0.0 }
+                ?.let { formatDistanceDescription(it, distanceUnit) }
+                ?: distanceUnavailableLabel
+        },
+        style = style,
+    )
+}
+
+@Composable
+private fun goalLabelAndValue(
+    prescription: RunningPrescription,
+    distanceUnit: DistanceUnit,
+): Pair<String, String> = when (prescription.targetType) {
+    RunningTargetType.TIME -> stringResource(R.string.run_goal_time_label) to
+        formatElapsed((prescription.targetValue * 1000).toLong())
+    RunningTargetType.DISTANCE -> stringResource(
+        R.string.run_goal_distance_label,
+        distanceUnit.abbreviation(),
+    ) to formatDistanceValue(prescription.targetValue, distanceUnit)
 }
 
 private fun DistanceUnit.abbreviation(): String = when (this) {
@@ -993,6 +1025,9 @@ private fun RunningSetScreenPreview(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(WorkoutPagerPageSafeAreaPadding)
+                    // Mirror the EXERCISE_DETAIL pager page mask so the preview matches production.
+                    // No padding after the mask: it would clip content inside the fade bands.
+                    .circleMask(radiusOffset = 16.dp, fadeWidth = 5.dp)
                     .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding),
                 state = fixture.state,
                 prescription = fixture.prescription,

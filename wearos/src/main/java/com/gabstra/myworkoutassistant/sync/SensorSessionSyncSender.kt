@@ -10,6 +10,8 @@ import com.gabstra.myworkoutassistant.data.checkConnection
 import com.gabstra.myworkoutassistant.data.sendSyncRequest
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncMappings
 import com.gabstra.myworkoutassistant.shared.datalayer.SensorSessionPayloadCodec
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureExportService
@@ -113,13 +115,14 @@ internal object SensorSessionSyncSender {
     suspend fun send(
         context: Context,
         dataClient: DataClient,
-        sessionIds: Set<UUID>
+        sessionIds: Set<UUID>,
+        profileId: String
     ): SensorSessionSyncResult {
         if (sessionIds.isEmpty()) {
             return SensorSessionSyncResult(emptySet(), emptySet())
         }
 
-        val db = AppDatabase.getDatabase(context)
+        val db = AppDatabase.getDatabase(context, profileId)
         val attemptedIds = linkedSetOf<UUID>()
         val failedIds = linkedSetOf<UUID>()
 
@@ -137,7 +140,7 @@ internal object SensorSessionSyncSender {
                 val payload = SensorSessionPayloadBuilder.build(context, session, segments)
 
                 val success = SensorSessionTransferCoordinator.sendMutex.withLock {
-                    sendPayload(context, dataClient, sessionId, payload)
+                    sendPayload(context, dataClient, sessionId, payload, profileId)
                 }
                 if (success) {
                     SensorSessionSyncedIdTracker.markSynced(context, sessionId)
@@ -160,7 +163,8 @@ internal object SensorSessionSyncSender {
         context: Context,
         dataClient: DataClient,
         sessionId: UUID,
-        payload: BuiltSensorSessionPayload
+        payload: BuiltSensorSessionPayload,
+        profileId: String
     ): Boolean {
         val transactionId = UUID.randomUUID().toString()
         try {
@@ -199,6 +203,8 @@ internal object SensorSessionSyncSender {
                 dataMap.putString("sessionId", sessionId.toString())
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
                 dataMap.putString("transactionId", transactionId)
+                // The capture belongs to the profile this watch is training on.
+                dataMap.putString(PROFILE_ID_KEY, profileId)
             }.asPutDataRequest().setUrgent()
             Tasks.await(dataClient.putDataItem(startRequest))
 

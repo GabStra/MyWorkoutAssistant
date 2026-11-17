@@ -180,7 +180,7 @@ class SamsungSensorDataRepository(
     private suspend fun trackerProfileFromWorkoutStore(): TrackerProfile? {
         val store = try {
             withContext(Dispatchers.IO) {
-                WorkoutStoreRepository(applicationContext.filesDir).getWorkoutStore()
+                WorkoutStoreRepository.forActiveProfile(applicationContext).getWorkoutStore()
             }
         } catch (throwable: Throwable) {
             Log.w(TAG, "Unreadable WorkoutStore — connecting without TrackerProfile", throwable)

@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.shared.resolveProgressionDecision
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.sortedLatestFirst
 import com.gabstra.myworkoutassistant.shared.workout.history.ExerciseSessionReconstruction
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -173,7 +174,10 @@ internal class WorkoutPersistenceCoordinator(
             supersetId = supersetMetadata?.supersetId,
             supersetRound = supersetMetadata?.supersetRound,
             supersetExerciseIndex = supersetMetadata?.supersetExerciseIndex,
-            executionSequence = nextExecutionSequence.toUInt()
+            executionSequence = nextExecutionSequence.toUInt(),
+            recurringExerciseId = historyIdentity.exerciseId?.let(exercisesById::get)?.recurringExerciseId,
+            exerciseDefinitionIdSnapshot = historyIdentity.exerciseId?.let(exercisesById::get)?.exerciseDefinitionId,
+            exerciseTypeSnapshot = historyIdentity.exerciseId?.let(exercisesById::get)?.exerciseType?.name
         )
 
         return SetHistorySnapshot(
@@ -366,6 +370,7 @@ internal class WorkoutPersistenceCoordinator(
                 isDone = isDone,
                 hasBeenSentToHealth = false,
                 globalId = selectedWorkoutSnapshot.globalId,
+                recurringSessionId = selectedWorkoutSnapshot.recurringSessionId,
                 endReason = resolvedEndReason,
                 runningResults = snapshot.runningResults
             )
@@ -440,6 +445,7 @@ internal class WorkoutPersistenceCoordinator(
                         rawSetHistoriesForExercise = setHistoriesByExerciseId[exercise.id].orEmpty(),
                         allRestHistories = newExecutedRestHistories,
                         exerciseId = exercise.id,
+                        preservePrescription = ExerciseSessionReconstruction.shouldPreservePrescription(exercise),
                     )
                 }
 

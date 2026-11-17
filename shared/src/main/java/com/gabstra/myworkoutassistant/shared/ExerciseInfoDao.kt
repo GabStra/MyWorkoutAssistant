@@ -12,6 +12,9 @@ interface ExerciseInfoDao {
     @Query("SELECT * FROM exercise_info WHERE id = :id")
     suspend fun getExerciseInfoById(id: UUID): ExerciseInfo?
 
+    @Query("SELECT * FROM exercise_info WHERE id IN (:ids)")
+    suspend fun getExerciseInfosByIds(ids: List<UUID>): List<ExerciseInfo>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(exerciseInfo: ExerciseInfo)
 

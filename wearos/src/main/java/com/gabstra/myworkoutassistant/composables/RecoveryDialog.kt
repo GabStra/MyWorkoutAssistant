@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +44,7 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -53,6 +55,7 @@ import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiSt
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOptions
 import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -79,7 +82,9 @@ internal fun RecoveryDialog(
     val startedText = uiState.workoutStartTime?.format(
         DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm")
     ).orEmpty()
-    val elapsedText = formatElapsedDuration(workout.workoutHistory.duration)
+    val elapsedText = formatElapsedDuration(
+        workout.workoutHistory.knownDurationSecondsOrNull() ?: 0
+    )
     var timerChoice by remember(workout.workoutHistory.id) { mutableStateOf(TimerRecoveryChoice.CONTINUE) }
     var calibrationChoice by remember(workout.workoutHistory.id) { mutableStateOf(CalibrationRecoveryChoice.CONTINUE) }
     val resumeWithChoices: (TimerRecoveryChoice, CalibrationRecoveryChoice) -> Unit = { timer, calibration ->
@@ -175,15 +180,15 @@ internal fun RecoveryDialog(
                             ) {
                                 RecoveryInfoBlock(
                                     entries = buildList {
-                                        add("Workout" to resolvedWorkoutName)
+                                        add(stringResource(R.string.page_recovery_label_workout) to resolvedWorkoutName)
                                         if (resolvedExerciseName.isNotBlank()) {
-                                            add("Exercise" to resolvedExerciseName)
+                                            add(stringResource(R.string.page_recovery_label_exercise) to resolvedExerciseName)
                                         }
                                         if (startedText.isNotEmpty()) {
-                                            add("Started" to startedText)
+                                            add(stringResource(R.string.page_recovery_label_started) to startedText)
                                         }
                                         if (elapsedText.isNotEmpty()) {
-                                            add("Elapsed" to elapsedText)
+                                            add(stringResource(R.string.page_recovery_label_elapsed) to elapsedText)
                                         }
                                     }
                                 )
@@ -208,8 +213,8 @@ internal fun RecoveryDialog(
                             RecoveryChoiceButton(
                                 modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                contentDescription = "Recovery timer continue option",
-                                text = "Continue",
+                                contentDescription = stringResource(R.string.page_recovery_cd_timer_continue),
+                                text = stringResource(R.string.page_recovery_continue),
                                 onClick = {
                                     timerChoice = TimerRecoveryChoice.CONTINUE
                                     resumeWithChoices(TimerRecoveryChoice.CONTINUE, calibrationChoice)
@@ -220,8 +225,8 @@ internal fun RecoveryDialog(
                             RecoveryChoiceButton(
                                 modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                contentDescription = "Recovery timer restart option",
-                                text = "Restart",
+                                contentDescription = stringResource(R.string.page_recovery_cd_timer_restart),
+                                text = stringResource(R.string.page_recovery_restart),
                                 onClick = {
                                     timerChoice = TimerRecoveryChoice.RESTART
                                     resumeWithChoices(TimerRecoveryChoice.RESTART, calibrationChoice)
@@ -252,8 +257,8 @@ internal fun RecoveryDialog(
                             RecoveryChoiceButton(
                                 modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                contentDescription = "Recovery calibration continue option",
-                                text = "Continue",
+                                contentDescription = stringResource(R.string.page_recovery_cd_calibration_continue),
+                                text = stringResource(R.string.page_recovery_continue),
                                 onClick = {
                                     calibrationChoice = CalibrationRecoveryChoice.CONTINUE
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.CONTINUE)
@@ -264,8 +269,8 @@ internal fun RecoveryDialog(
                             RecoveryChoiceButton(
                                 modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                contentDescription = "Recovery calibration restart option",
-                                text = "Restart",
+                                contentDescription = stringResource(R.string.page_recovery_cd_calibration_restart),
+                                text = stringResource(R.string.page_recovery_restart),
                                 onClick = {
                                     calibrationChoice = CalibrationRecoveryChoice.RESTART
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.RESTART)
@@ -282,8 +287,8 @@ internal fun RecoveryDialog(
                             RecoveryChoiceButton(
                                 modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                contentDescription = "Recovery resume action",
-                                text = "Resume",
+                                contentDescription = stringResource(R.string.page_recovery_cd_resume),
+                                text = stringResource(R.string.page_recovery_resume),
                                 colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(),
                                 onClick = {
                                     resumeWithChoices(timerChoice, calibrationChoice)
@@ -296,7 +301,7 @@ internal fun RecoveryDialog(
                         RecoveryChoiceButton(
                             modifier = Modifier.transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
-                            contentDescription = "Recovery discard action",
+                            contentDescription = stringResource(R.string.page_recovery_cd_discard),
                             text = IncompleteWorkoutStrings.DISCARD_BUTTON,
                             colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error,
@@ -310,7 +315,7 @@ internal fun RecoveryDialog(
                         RecoveryChoiceButton(
                             modifier = Modifier.transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
-                            contentDescription = "Recovery dismiss action",
+                            contentDescription = stringResource(R.string.page_recovery_cd_dismiss),
                             text = IncompleteWorkoutStrings.DISMISS_BUTTON,
                             onClick = onDismiss
                         )
@@ -344,7 +349,7 @@ private fun RecoveryInfoBlock(
                 Text(
                     text = label.uppercase(currentLocale),
                     modifier = Modifier.fillMaxWidth(),
-                    style = workoutPagerTitleTextStyle(),
+                    style = workoutSectionLabelTextStyle(),
                     color = MaterialTheme.colorScheme.onBackground,
                     textAlign = TextAlign.Center
                 )
@@ -371,7 +376,7 @@ private fun RecoveryBodyText(
         Text(
             text = text,
             textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.tertiaryContent,
         )
     }
@@ -386,7 +391,7 @@ private fun RecoverySectionHeader(
     Text(
         text = text.uppercase(currentLocale),
         modifier = modifier.padding(horizontal = 25.dp),
-        style = workoutPagerTitleTextStyle(),
+        style = workoutSectionLabelTextStyle(),
         color = MaterialTheme.colorScheme.onBackground,
         textAlign = TextAlign.Center
     )

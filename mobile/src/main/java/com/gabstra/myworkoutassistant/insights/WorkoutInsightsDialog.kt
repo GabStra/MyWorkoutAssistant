@@ -18,7 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ContentSubtitle
 import com.gabstra.myworkoutassistant.composables.ContentTitle
@@ -70,7 +72,7 @@ fun WorkoutInsightsDialog(
                 when {
                     state is WorkoutInsightsUiState.ImportingModel -> {
                         CenteredInsightBody {
-                            LoadingText("Importing local model...")
+                            LoadingText(stringResource(R.string.insights_importing_model))
                         }
                     }
 
@@ -86,8 +88,10 @@ fun WorkoutInsightsDialog(
                         CenteredInsightBody {
                             LoadingText(
                                 when (configurationState.mode) {
-                                    WorkoutInsightsMode.LOCAL -> "Preparing local request..."
-                                    WorkoutInsightsMode.REMOTE -> "Preparing remote request..."
+                                    WorkoutInsightsMode.LOCAL ->
+                                        stringResource(R.string.insights_preparing_local)
+                                    WorkoutInsightsMode.REMOTE ->
+                                        stringResource(R.string.insights_preparing_remote)
                                 }
                             )
                         }
@@ -137,9 +141,9 @@ fun WorkoutInsightsDialog(
                         Text(
                             text = when (configurationState.mode) {
                                 WorkoutInsightsMode.LOCAL ->
-                                    "Generate concise insights from your workout history using the selected local LiteRT-LM model."
+                                    stringResource(R.string.insights_local_description)
                                 WorkoutInsightsMode.REMOTE ->
-                                    "Generate concise insights from your workout history using the configured hosted OpenAI-compatible API."
+                                    stringResource(R.string.insights_remote_description)
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.fillMaxWidth()
@@ -150,7 +154,7 @@ fun WorkoutInsightsDialog(
         },
         confirmText = if (configurationState.isConfigured || state is WorkoutInsightsUiState.ImportingModel) null else configurationState.configureActionLabel,
         onConfirm = if (configurationState.isConfigured || state is WorkoutInsightsUiState.ImportingModel) null else onConfigure,
-        dismissText = "Close",
+        dismissText = stringResource(R.string.common_close),
         onDismissButton = onDismiss,
         showConfirm = !configurationState.isConfigured &&
             state !is WorkoutInsightsUiState.ImportingModel &&
@@ -165,20 +169,21 @@ private fun InsightStatusHeader(
     isModelConfigured: Boolean,
 ) {
     val statusLabel = when {
-        !isModelConfigured -> "Model required"
-        state is WorkoutInsightsUiState.ImportingModel -> "Importing"
-        state is WorkoutInsightsUiState.PreparingModel -> "Preparing"
-        state is WorkoutInsightsUiState.Generating -> "Generating"
-        state is WorkoutInsightsUiState.Success -> "Ready"
-        state is WorkoutInsightsUiState.Error -> "Needs retry"
-        else -> "Local model"
+        !isModelConfigured -> stringResource(R.string.insights_status_model_required)
+        state is WorkoutInsightsUiState.ImportingModel -> stringResource(R.string.insights_status_importing)
+        state is WorkoutInsightsUiState.PreparingModel -> stringResource(R.string.insights_status_preparing)
+        state is WorkoutInsightsUiState.Generating -> stringResource(R.string.insights_status_generating)
+        state is WorkoutInsightsUiState.Success -> stringResource(R.string.insights_status_ready)
+        state is WorkoutInsightsUiState.Error -> stringResource(R.string.insights_status_needs_retry)
+        else -> stringResource(R.string.insights_status_local_model)
     }
     val supportingText = when {
-        state is WorkoutInsightsUiState.ImportingModel -> "Copying the selected LiteRT-LM model before generating insights."
-        !isModelConfigured -> "Import a LiteRT-LM file to enable on-device insights."
-        state is WorkoutInsightsUiState.Success -> "Structured feedback from your recent workout data."
-        state is WorkoutInsightsUiState.Error -> "The local model could not complete this insight request."
-        else -> "On-device analysis using your selected LiteRT-LM model."
+        state is WorkoutInsightsUiState.ImportingModel ->
+            stringResource(R.string.insights_support_copying_model)
+        !isModelConfigured -> stringResource(R.string.insights_support_import_model)
+        state is WorkoutInsightsUiState.Success -> stringResource(R.string.insights_support_feedback)
+        state is WorkoutInsightsUiState.Error -> stringResource(R.string.insights_support_error)
+        else -> stringResource(R.string.insights_support_on_device)
     }
 
     SecondarySurface {
@@ -190,7 +195,7 @@ private fun InsightStatusHeader(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                ContentTitle(text = "Workout Insights")
+                ContentTitle(text = stringResource(R.string.insights_title))
                 Text(
                     text = statusLabel,
                     style = MaterialTheme.typography.labelSmall,
@@ -247,14 +252,15 @@ private fun GeneratingStatusRow(label: String) {
     }
 }
 
+@Composable
 private fun defaultProgressLabel(
     phase: WorkoutInsightsPhase,
 ): String = when (phase) {
-    WorkoutInsightsPhase.PREPARING_TOOLS -> "Loading insight model..."
-    WorkoutInsightsPhase.FETCHING_CONTEXT -> "Fetching workout context..."
-    WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> "Summarizing relevant history..."
-    WorkoutInsightsPhase.CHART_ANALYSIS -> "Analyzing heart-rate chart..."
-    WorkoutInsightsPhase.FINAL_SYNTHESIS -> "Generating insight..."
+    WorkoutInsightsPhase.PREPARING_TOOLS -> stringResource(R.string.insights_progress_preparing_tools)
+    WorkoutInsightsPhase.FETCHING_CONTEXT -> stringResource(R.string.insights_progress_fetching_context)
+    WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> stringResource(R.string.insights_progress_summarizing)
+    WorkoutInsightsPhase.CHART_ANALYSIS -> stringResource(R.string.insights_progress_chart_analysis)
+    WorkoutInsightsPhase.FINAL_SYNTHESIS -> stringResource(R.string.insights_progress_final_synthesis)
 }
 
 @Composable

@@ -23,6 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -65,7 +66,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
+import com.gabstra.myworkoutassistant.composables.ContentSubtitle
+import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.LocalBreadcrumbContent
@@ -78,12 +82,16 @@ import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExternalWorkoutSessionDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
+import com.gabstra.myworkoutassistant.screens.applyRecurringExerciseEdit
+import com.gabstra.myworkoutassistant.screens.sanitizeRecurringTrackMetadata
 import com.gabstra.myworkoutassistant.screens.ExerciseLibraryPickerScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDefinitionForm
 import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.allExercisePrescriptions
 import com.gabstra.myworkoutassistant.shared.duplicatePrescription
 import com.gabstra.myworkoutassistant.shared.effectiveFamilyId
+import com.gabstra.myworkoutassistant.shared.normalizeExerciseFamilyMovementOwnership
+import com.gabstra.myworkoutassistant.shared.normalizedForImport
 import com.gabstra.myworkoutassistant.shared.materializeDefinition
 import com.gabstra.myworkoutassistant.shared.resolveExerciseVariation
 import com.gabstra.myworkoutassistant.screens.HistoryChatScreen
@@ -97,8 +105,10 @@ import com.gabstra.myworkoutassistant.screens.SettingsScreen
 import com.gabstra.myworkoutassistant.screens.SupersetForm
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
+import com.gabstra.myworkoutassistant.screens.recurringPrescriptionDisplayLabel
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
+import com.gabstra.myworkoutassistant.screens.PlansScreen
 import com.gabstra.myworkoutassistant.screens.equipments.AccessoryForm
 import com.gabstra.myworkoutassistant.screens.equipments.BarbellForm
 import com.gabstra.myworkoutassistant.screens.equipments.CardioMachineForm
@@ -108,16 +118,25 @@ import com.gabstra.myworkoutassistant.screens.equipments.MachineForm
 import com.gabstra.myworkoutassistant.screens.equipments.PlateLoadedCableForm
 import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
 import com.gabstra.myworkoutassistant.shared.AppBackup
+import com.gabstra.myworkoutassistant.shared.mergedWithPersonalSettingsOf
+import com.gabstra.myworkoutassistant.shared.FullBackup
+import com.gabstra.myworkoutassistant.shared.fromFullBackupToJSON
+import com.gabstra.myworkoutassistant.shared.fromJSONToFullBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.BackupFileType
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.workout.history.importing.WorkoutHistoryImportPackage
+import com.gabstra.myworkoutassistant.shared.workout.history.importing.WorkoutHistoryImportService
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
+import java.io.File
 import com.gabstra.myworkoutassistant.shared.detectBackupFileType
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
@@ -145,6 +164,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.sync.BackupCoordinator
 import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
+import com.gabstra.myworkoutassistant.formatTime
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.CancellationException
@@ -160,10 +180,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 @Composable
 private fun PermissionRequirementRow(
@@ -196,6 +219,13 @@ private fun Throwable.toMainActivityToastMessage(
     return "$intro $detail"
 }
 
+private data class PendingWorkoutHistoryImport(
+    val targetProfileId: String,
+    val targetProfileName: String,
+    val payload: WorkoutHistoryImportPackage,
+)
+
+
 class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
@@ -212,7 +242,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var hapticsViewModel: HapticsViewModel
 
-    private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
+    private val workoutStoreRepository get() = WorkoutStoreRepository.forActiveProfile(this)
 
     private lateinit var myReceiver: BroadcastReceiver
 
@@ -435,13 +465,14 @@ fun MyWorkoutAssistantNavHost(
 
             try {
                 deleteWorkoutHistoriesFromHealthConnect(
+                    context,
                     unfinishedWorkoutHistories,
                     healthConnectClient
                 )
             } catch (e: Exception) {
                 Toast.makeText(
                     context,
-                    "Couldn't remove unfinished workout history from Health Connect.",
+                    context.getString(R.string.main_health_connect_remove_unfinished_error),
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -558,7 +589,7 @@ fun MyWorkoutAssistantNavHost(
     }
 
     var isExportingWorkoutDataForLlm by remember { mutableStateOf(false) }
-    var workoutDataExportStatus by remember { mutableStateOf("Exporting workout data...") }
+    var workoutDataExportStatus by remember { mutableStateOf(context.getString(R.string.main_exporting_workout_data)) }
 
     LaunchedEffect(
         hasHealthPermissions,
@@ -579,17 +610,17 @@ fun MyWorkoutAssistantNavHost(
     if (showPrerequisitesDialog && !isSyncing && !isRestoringBackup) {
         StandardDialog(
             onDismissRequest = {},
-            title = "Permissions required",
+            title = context.getString(R.string.main_permissions_required_title),
             body = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("To use the app, grant the following permissions:")
+                    Text(context.getString(R.string.main_permissions_required_body))
                     PermissionRequirementRow(
-                        label = "Health Connect permissions",
+                        label = context.getString(R.string.main_health_connect_permissions),
                         granted = hasHealthPermissions
                     )
                 }
             },
-            confirmText = "Continue",
+            confirmText = context.getString(R.string.main_continue),
             onConfirm = {
                 showPrerequisitesDialog = false
                 if (!hasHealthPermissions) {
@@ -599,8 +630,8 @@ fun MyWorkoutAssistantNavHost(
                         Toast.makeText(
                             context,
                             e.toMainActivityToastMessage(
-                                intro = "Couldn't open the Health Connect permission prompt.",
-                                fallbackDetail = "Please try again."
+                                intro = context.getString(R.string.main_open_permission_prompt_error),
+                                fallbackDetail = context.getString(R.string.main_please_try_again)
                             ),
                             Toast.LENGTH_SHORT
                         ).show()
@@ -615,6 +646,8 @@ fun MyWorkoutAssistantNavHost(
     }
     
     var importPlanResultMessage by remember { mutableStateOf<String?>(null) }
+    var pendingHistoryImport by remember { mutableStateOf<PendingWorkoutHistoryImport?>(null) }
+    var isImportingHistory by remember { mutableStateOf(false) }
 
     val workoutStorePickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -623,13 +656,46 @@ fun MyWorkoutAssistantNavHost(
                     context.contentResolver.openInputStream(it)?.use { inputStream ->
                         val reader = inputStream.bufferedReader()
                         val content = reader.readText()
+                        val importFormat = runCatching { JSONObject(content).optString("format") }.getOrNull()
+                        if (importFormat == WorkoutHistoryImportPackage.FORMAT) {
+                            val payload = WorkoutHistoryImportPackage.fromJson(content)
+                            val profile = Profiles.activeProfile(context)
+                            val targetProfileId = profile.id
+                            scope.launch {
+                                try {
+                                    val store = withContext(Dispatchers.IO) {
+                                        WorkoutStoreRepository(
+                                            Profiles.directory(context, targetProfileId),
+                                            context.filesDir,
+                                        ).getWorkoutStore()
+                                    }
+                                    WorkoutHistoryImportService.validate(store, targetProfileId, payload)
+                                    pendingHistoryImport = PendingWorkoutHistoryImport(
+                                        targetProfileId = targetProfileId,
+                                        targetProfileName = profile.name,
+                                        payload = payload,
+                                    )
+                                } catch (e: Exception) {
+                                    Toast.makeText(
+                                        context,
+                                        e.toMainActivityToastMessage(
+                                            intro = context.getString(R.string.main_review_history_error),
+                                            fallbackDetail = context.getString(R.string.main_choose_another_file)
+                                        ),
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                            return@let
+                        }
                         val fileType = detectBackupFileType(content)
                         when (fileType) {
+                            BackupFileType.FULL_BACKUP,
                             BackupFileType.APP_BACKUP,
                             BackupFileType.INCREMENTAL_APP_BACKUP -> {
                                 Toast.makeText(
                                     context,
-                                    "That file is a backup. Use Restore Backup instead.",
+                                    context.getString(R.string.main_file_is_backup),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 return@let
@@ -637,7 +703,7 @@ fun MyWorkoutAssistantNavHost(
                             BackupFileType.WORKOUT_STORE -> {
                                 Toast.makeText(
                                     context,
-                                    "That file is a full workout export, not a workout plan package.",
+                                    context.getString(R.string.main_file_is_full_export_not_plan),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 return@let
@@ -645,7 +711,7 @@ fun MyWorkoutAssistantNavHost(
                             BackupFileType.EXERCISE_LIBRARY_PACKAGE -> {
                                 Toast.makeText(
                                     context,
-                                    "That file is an exercise library. Import it from the Exercise Library tab.",
+                                    context.getString(R.string.main_file_is_exercise_library),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 return@let
@@ -653,7 +719,7 @@ fun MyWorkoutAssistantNavHost(
                             BackupFileType.UNKNOWN -> {
                                 Toast.makeText(
                                     context,
-                                    "That file isn't a valid workout plan package.",
+                                    context.getString(R.string.main_file_not_valid_plan_package),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 return@let
@@ -665,7 +731,7 @@ fun MyWorkoutAssistantNavHost(
                         if (importedWorkoutPlanPackage.name.isBlank()) {
                             Toast.makeText(
                                 context,
-                                "That workout plan package is missing a plan name.",
+                                context.getString(R.string.main_plan_package_missing_name),
                                 Toast.LENGTH_SHORT
                             ).show()
                             return@let
@@ -674,7 +740,7 @@ fun MyWorkoutAssistantNavHost(
                         if (importedWorkoutPlanPackage.workouts.isEmpty()) {
                             Toast.makeText(
                                 context,
-                                "That file doesn't contain any workouts to import.",
+                                context.getString(R.string.main_file_no_workouts),
                                 Toast.LENGTH_SHORT
                             ).show()
                             return@let
@@ -694,21 +760,31 @@ fun MyWorkoutAssistantNavHost(
                                     id = newPlanId,
                                     name = importedWorkoutPlanPackage.name,
                                     workoutIds = importedWorkoutPlanPackage.workouts.map { it.id },
-                                    order = nextOrder
+                                    order = nextOrder,
+                                    suggestNextPrescription = importedWorkoutPlanPackage.suggestNextPrescription,
                                 )
 
                                 val workoutsWithPlanId = importedWorkoutPlanPackage.workouts.map { workout ->
                                     workout.copy(workoutPlanId = newPlanId)
                                 }
                                 val currentWorkoutStore = appViewModel.workoutStore
-                                val importedDefinitions = importedWorkoutPlanPackage.exerciseDefinitions.map {
-                                    it.copy(exerciseFamilyId = it.effectiveFamilyId())
-                                }
+                                val importedDefinitions =
+                                    importedWorkoutPlanPackage.exerciseDefinitions.normalizedForImport()
                                 val existingDefinitionsById = currentWorkoutStore.exerciseDefinitions.associateBy { it.id }
                                 importedDefinitions.forEach { importedDefinition ->
                                     val existingDefinition = existingDefinitionsById[importedDefinition.id]
-                                    require(existingDefinition == null || existingDefinition == importedDefinition) {
-                                        "Exercise definition ${importedDefinition.id} conflicts with an existing library entry."
+                                    // Same rule the library merge applies: only the movement binding may
+                                    // differ, because normalisation assigns it.
+                                    require(
+                                        existingDefinition == null ||
+                                            existingDefinition.copy(
+                                                movementRef = importedDefinition.movementRef
+                                            ) == importedDefinition
+                                    ) {
+                                        context.getString(
+                                            R.string.main_definition_conflict,
+                                            importedDefinition.id
+                                        )
                                     }
                                 }
                                 val importedWorkoutStoreWithPlan = currentWorkoutStore.copy(
@@ -720,7 +796,7 @@ fun MyWorkoutAssistantNavHost(
                                     equipments = importedWorkoutPlanPackage.equipments,
                                     accessoryEquipments = importedWorkoutPlanPackage.accessoryEquipments,
                                     workoutPlans = listOf(newPlan)
-                                )
+                                ).normalizeExerciseFamilyMovementOwnership()
 
                                 withContext(Dispatchers.IO) {
                                     restoreExerciseMovementBackups(
@@ -732,7 +808,9 @@ fun MyWorkoutAssistantNavHost(
 
                                 appViewModel.importWorkoutStore(importedWorkoutStoreWithPlan)
 
-                                workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
+                                // Same persistence path as the library import: debounced save plus a
+                                // backup snapshot and the phone-to-watch trigger.
+                                appViewModel.scheduleWorkoutSave(context)
 
                                 val newWorkoutsCount = appViewModel.workouts.size
                                 val newEquipmentCount = appViewModel.equipments.size
@@ -742,11 +820,42 @@ fun MyWorkoutAssistantNavHost(
                                 val addedAccessories = newAccessoriesCount - existingAccessoriesCount
 
                                 val message = buildString {
-                                    append("Imported workout plan: ${importedWorkoutPlanPackage.name}")
-                                    append("\n$addedWorkouts workout(s)")
-                                    if (addedEquipment > 0) append(", $addedEquipment equipment item(s)")
-                                    if (addedAccessories > 0) append(", $addedAccessories accessory item(s)")
-                                    if (importedMovementCount > 0) append(", $importedMovementCount movement(s)")
+                                    append(
+                                        context.getString(
+                                            R.string.main_import_plan_result,
+                                            importedWorkoutPlanPackage.name
+                                        )
+                                    )
+                                    append(
+                                        context.getString(
+                                            R.string.main_import_plan_result_workouts,
+                                            addedWorkouts
+                                        )
+                                    )
+                                    if (addedEquipment > 0) {
+                                        append(
+                                            context.getString(
+                                                R.string.main_import_plan_result_equipment,
+                                                addedEquipment
+                                            )
+                                        )
+                                    }
+                                    if (addedAccessories > 0) {
+                                        append(
+                                            context.getString(
+                                                R.string.main_import_plan_result_accessories,
+                                                addedAccessories
+                                            )
+                                        )
+                                    }
+                                    if (importedMovementCount > 0) {
+                                        append(
+                                            context.getString(
+                                                R.string.main_import_plan_result_movements,
+                                                importedMovementCount
+                                            )
+                                        )
+                                    }
                                 }
 
                                 importPlanResultMessage = message
@@ -754,8 +863,8 @@ fun MyWorkoutAssistantNavHost(
                                 Toast.makeText(
                                     context,
                                     e.toMainActivityToastMessage(
-                                        intro = "Couldn't import that workout plan.",
-                                        fallbackDetail = "Please try again."
+                                        intro = context.getString(R.string.main_import_plan_error),
+                                        fallbackDetail = context.getString(R.string.main_please_try_again)
                                     ),
                                     Toast.LENGTH_SHORT
                                 ).show()
@@ -766,8 +875,8 @@ fun MyWorkoutAssistantNavHost(
                     Toast.makeText(
                         context,
                         e.toMainActivityToastMessage(
-                            intro = "Couldn't read that file.",
-                            fallbackDetail = "Please choose another file or try again."
+                            intro = context.getString(R.string.main_read_file_error),
+                            fallbackDetail = context.getString(R.string.main_choose_another_file)
                         ),
                         Toast.LENGTH_SHORT
                     ).show()
@@ -778,20 +887,135 @@ fun MyWorkoutAssistantNavHost(
     importPlanResultMessage?.let { message ->
         StandardDialog(
             onDismissRequest = { importPlanResultMessage = null },
-            title = "Workout plan imported",
+            title = context.getString(R.string.main_plan_imported_title),
             body = { Text(message) },
-            confirmText = "OK",
+            confirmText = context.getString(R.string.common_ok),
             onConfirm = { importPlanResultMessage = null },
             showDismiss = false
+        )
+    }
+
+    pendingHistoryImport?.let { pending ->
+        StandardDialog(
+            onDismissRequest = { if (!isImportingHistory) pendingHistoryImport = null },
+            title = context.getString(R.string.main_import_history_title),
+            body = {
+                val dateFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+                    .withLocale(Locale.getDefault())
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(pending.targetProfileName, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        context.getString(
+                            R.string.main_import_history_sessions_sets,
+                            pending.payload.workoutHistories.size,
+                            pending.payload.setHistories.size
+                        )
+                    )
+                    pending.payload.workoutHistories.forEach { history ->
+                        val workout = appViewModel.workouts.firstOrNull {
+                            it.id == history.workoutId && it.globalId == history.globalId
+                        }
+                        val duration = history.knownDurationSecondsOrNull()
+                            ?.takeIf { it > 0 }
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                workout?.let {
+                                    if (it.recurringSessionId != null) {
+                                        "${recurringPrescriptionDisplayLabel(it, context.getString(R.string.prescription))} · ${it.name}"
+                                    } else {
+                                        it.name
+                                    }
+                                } ?: context.getString(R.string.main_workout_fallback),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                buildString {
+                                    append(history.date.format(dateFormatter))
+                                    duration?.let {
+                                        append(
+                                            context.getString(
+                                                R.string.main_import_history_duration,
+                                                formatTime(it)
+                                            )
+                                        )
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmText = if (isImportingHistory) {
+                context.getString(R.string.main_importing)
+            } else {
+                context.getString(R.string.main_import_history_title)
+            },
+            onConfirm = {
+                if (!isImportingHistory) {
+                    isImportingHistory = true
+                    scope.launch {
+                        try {
+                            val activeProfileId = Profiles.activeProfileId(context)
+                            require(activeProfileId == pending.targetProfileId) {
+                                context.getString(R.string.main_import_history_profile_changed)
+                            }
+                            val store = withContext(Dispatchers.IO) {
+                                WorkoutStoreRepository(
+                                    Profiles.directory(context, pending.targetProfileId),
+                                    context.filesDir,
+                                ).getWorkoutStore()
+                            }
+                            WorkoutHistoryImportService.validate(
+                                store,
+                                pending.targetProfileId,
+                                pending.payload,
+                            )
+                            val result = WorkoutHistoryImportService.append(
+                                context,
+                                store,
+                                pending.targetProfileId,
+                                pending.payload,
+                            )
+                            appViewModel.loadWorkoutHistories(appViewModel.workouts)
+                            pendingHistoryImport = null
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    R.string.main_import_history_result,
+                                    result.insertedHistories,
+                                    result.insertedSets
+                                ),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(
+                                context,
+                                e.toMainActivityToastMessage(
+                                    intro = context.getString(R.string.main_import_history_error),
+                                    fallbackDetail = context.getString(R.string.main_review_profile_and_file)
+                                ),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } finally {
+                            isImportingHistory = false
+                        }
+                    }
+                }
+            },
+            dismissText = context.getString(R.string.common_cancel),
+            onDismissButton = { if (!isImportingHistory) pendingHistoryImport = null },
+            confirmEnabled = !isImportingHistory,
         )
     }
 
     workoutStoreValidationError?.let { message ->
         StandardDialog(
             onDismissRequest = { appViewModel.clearWorkoutStoreValidationError() },
-            title = "Workout Data Error",
+            title = context.getString(R.string.main_workout_data_error_title),
             body = { Text(message) },
-            confirmText = "OK",
+            confirmText = context.getString(R.string.common_ok),
             onConfirm = { appViewModel.clearWorkoutStoreValidationError() },
             showDismiss = false
         )
@@ -801,24 +1025,85 @@ fun MyWorkoutAssistantNavHost(
      * Helper function to restore from an AppBackup.
      * This function handles all the database operations and view model updates.
      */
+    /**
+     * Restores one profile's backup into [profileId].
+     *
+     * A full-backup restore calls this once per profile with [skipProfileIdentityCheck] and
+     * [applyToViewModels] false, so this single path keeps owning all the row validation.
+     */
     suspend fun restoreFromAppBackup(
         appBackup: AppBackup,
         context: Context,
         appViewModel: AppViewModel,
         workoutViewModel: WorkoutViewModel,
-        workoutStoreRepository: WorkoutStoreRepository,
-        db: AppDatabase,
-        workoutHistoryDao: WorkoutHistoryDao,
-        setHistoryDao: SetHistoryDao,
-        restHistoryDao: RestHistoryDao,
-        exerciseInfoDao: ExerciseInfoDao,
-        workoutScheduleDao: WorkoutScheduleDao,
-        workoutRecordDao: WorkoutRecordDao,
+        profileId: String,
         healthConnectClient: HealthConnectClient,
-        successToastMessage: String = "Backup restored."
+        skipProfileIdentityCheck: Boolean = false,
+        applyToViewModels: Boolean = true,
+        successToastMessage: String? = null
     ): Boolean {
         return withContext(Dispatchers.IO + NonCancellable) {
+            val db = AppDatabase.getDatabase(context, profileId)
+            val workoutHistoryDao = db.workoutHistoryDao()
+            val setHistoryDao = db.setHistoryDao()
+            val restHistoryDao = db.restHistoryDao()
+            val exerciseInfoDao = db.exerciseInfoDao()
+            val workoutScheduleDao = db.workoutScheduleDao()
+            val workoutRecordDao = db.workoutRecordDao()
+            val workoutStoreRepository =
+                if (profileId == Profiles.activeProfileId(context)) {
+                    WorkoutStoreRepository.forActiveProfile(context)
+                } else {
+                    WorkoutStoreRepository(Profiles.directory(context, profileId), context.filesDir)
+                }
             try {
+                // A restore replaces the whole store, so pouring another profile's backup into
+                // the active one would take over its history and body metrics. Refuse only when
+                // that owner still exists here — after a reinstall the id is gone and the data
+                // belongs to whoever is restoring it.
+                val activeProfileId = Profiles.activeProfileId(context)
+                val backupProfileId = appBackup.ProfileId
+                if (!skipProfileIdentityCheck && backupProfileId != null && backupProfileId != activeProfileId) {
+                    val localProfiles = Profiles.profiles(context)
+                    val owner = localProfiles.firstOrNull { it.id == backupProfileId }
+                        ?: appBackup.ProfileName?.let { name ->
+                            localProfiles.firstOrNull { it.name.equals(name, ignoreCase = true) }
+                        }
+                    if (owner != null) {
+                        Log.w(
+                            "BackupRestore",
+                            "Refusing to restore ${owner.name}'s backup while $activeProfileId is active"
+                        )
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    R.string.main_backup_belongs_to_profile,
+                                    owner.name
+                                ),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        return@withContext false
+                    }
+                    Log.i(
+                        "BackupRestore",
+                        "Restoring ${appBackup.ProfileName ?: backupProfileId} into $activeProfileId " +
+                            "(that profile does not exist on this device)"
+                    )
+                }
+
+                // A restore replaces the shared library for every profile on this device, so keep
+                // the previous copy before it is overwritten.
+                runCatching {
+                    val sharedStore = File(context.filesDir, "workout_store.json")
+                    if (sharedStore.exists()) {
+                        sharedStore.copyTo(
+                            File(context.filesDir, "workout_store.json.pre-restore"),
+                            overwrite = true,
+                        )
+                    }
+                }
 
                 val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
                 workout.isActive || (!workout.isActive && appBackup.WorkoutHistories.any { it.workoutId == workout.id })
@@ -841,6 +1126,7 @@ fun MyWorkoutAssistantNavHost(
 
                         try {
                             deleteWorkoutHistoriesFromHealthConnect(
+                                context,
                                 allWorkoutHistories,
                                 healthConnectClient
                             )
@@ -848,7 +1134,7 @@ fun MyWorkoutAssistantNavHost(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "Couldn't remove existing workout history from Health Connect. The restore will continue in the app.",
+                                    context.getString(R.string.main_remove_existing_history_error),
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -957,7 +1243,7 @@ fun MyWorkoutAssistantNavHost(
             }
 
             if (restoreSuccess) {
-                applyInsightsSettingsFromBackup(appBackup, context)
+                if (applyToViewModels) applyInsightsSettingsFromBackup(appBackup, context)
 
                 // Backfill ExerciseSessionProgression entries for workouts that don't have them but should
                 /*backfillExerciseSessionProgressions(
@@ -977,18 +1263,25 @@ fun MyWorkoutAssistantNavHost(
                     validateWorkoutStoreForRuntimeUse(planMigratedWorkoutStore)
                     workoutStoreRepository.saveWorkoutStore(planMigratedWorkoutStore)
 
-                    withContext(Dispatchers.Main) {
-                        appViewModel.updateWorkoutStore(planMigratedWorkoutStore)
-                        workoutViewModel.updateWorkoutStore(planMigratedWorkoutStore)
-                        appViewModel.triggerUpdate()
+                    if (applyToViewModels) {
+                        withContext(Dispatchers.Main) {
+                            appViewModel.updateWorkoutStore(planMigratedWorkoutStore)
+                            workoutViewModel.updateWorkoutStore(planMigratedWorkoutStore)
+                            appViewModel.triggerUpdate()
 
-                        // Show the success toast after all operations are complete
-                        Toast.makeText(context, successToastMessage, Toast.LENGTH_SHORT).show()
+                            // Show the success toast after all operations are complete
+                            Toast.makeText(
+                                context,
+                                successToastMessage
+                                    ?: context.getString(R.string.main_backup_restored),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        // Persist the restored state and enqueue the normal non-blocking sync path.
+                        // Only an explicit user action should opt into the blocking manual-sync UI.
+                        appViewModel.flushWorkoutSave(context)
+                        PhoneToWatchSyncCoordinator.onPhoneDataPersisted(context)
                     }
-                    // Persist the restored state and enqueue the normal non-blocking sync path.
-                    // Only an explicit user action should opt into the blocking manual-sync UI.
-                    appViewModel.flushWorkoutSave(context)
-                    PhoneToWatchSyncCoordinator.onPhoneDataPersisted(context)
                     true
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
@@ -999,8 +1292,8 @@ fun MyWorkoutAssistantNavHost(
                         Toast.makeText(
                             context,
                             e.toMainActivityToastMessage(
-                                intro = "The backup was restored, but some history migration steps failed.",
-                                fallbackDetail = "Please review your data and try again if needed."
+                                intro = context.getString(R.string.main_restore_migration_partial_error),
+                                fallbackDetail = context.getString(R.string.main_review_data_try_again)
                             ),
                             Toast.LENGTH_LONG
                         ).show()
@@ -1011,7 +1304,7 @@ fun MyWorkoutAssistantNavHost(
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         context,
-                        "Couldn't restore workout history from that backup.",
+                        context.getString(R.string.main_restore_history_error),
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -1030,8 +1323,8 @@ fun MyWorkoutAssistantNavHost(
                     Toast.makeText(
                         context,
                         e.toMainActivityToastMessage(
-                            intro = "Couldn't restore that backup.",
-                            fallbackDetail = "Please choose a valid backup file."
+                            intro = context.getString(R.string.main_restore_backup_error),
+                            fallbackDetail = context.getString(R.string.main_choose_valid_backup)
                         ),
                         Toast.LENGTH_LONG
                     ).show()
@@ -1041,6 +1334,58 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
+    /**
+     * Rebuilds the whole install from a full backup: shared content once, every profile with its
+     * own history, then device-wide settings and sensor recordings. Profiles that are not in the
+     * file are removed, so this must only run from an explicit user action.
+     */
+    suspend fun restoreFullBackup(
+        fullBackup: FullBackup,
+        context: Context,
+        appViewModel: AppViewModel,
+        workoutViewModel: WorkoutViewModel,
+        healthConnectClient: HealthConnectClient,
+    ): Boolean = withContext(Dispatchers.IO + NonCancellable) {
+        if (fullBackup.profiles.isEmpty()) return@withContext false
+
+        // Shared content and payloads first: every profile below is restored on top of them.
+        writeSharedStore(context, fullBackup.sharedStore)
+        restoreFullBackupPayloads(context, fullBackup)
+
+        var allRestored = true
+        fullBackup.profiles.forEach { profileBackup ->
+            Profiles.ensureProfile(context, profileBackup.profileId, profileBackup.profileName)
+            val merged = fullBackup.sharedStore
+                .mergedWithPersonalSettingsOf(profileBackup.backup.WorkoutStore)
+            val restored = restoreFromAppBackup(
+                appBackup = profileBackup.backup.copy(WorkoutStore = merged),
+                context = context,
+                appViewModel = appViewModel,
+                workoutViewModel = workoutViewModel,
+                profileId = profileBackup.profileId,
+                healthConnectClient = healthConnectClient,
+                skipProfileIdentityCheck = true,
+                applyToViewModels = false,
+                successToastMessage = "",
+            )
+            if (!restored) allRestored = false
+        }
+        if (!allRestored) return@withContext false
+
+        // Deletions last: a failure above leaves the previous profiles untouched.
+        val keptIds = fullBackup.profiles.map { it.profileId }.toSet()
+        val targetActiveProfileId = fullBackup.activeProfileId
+            ?.takeIf { it in keptIds }
+            ?: keptIds.first()
+        Profiles.setActiveProfile(context, targetActiveProfileId)
+        Profiles.profiles(context)
+            .filter { it.id !in keptIds }
+            .forEach { Profiles.delete(context, it.id) }
+
+        restoreFullBackupSettings(context, fullBackup.settings)
+        true
+    }
+
     fun resolveStartupRestoreGate() {
         deferHealthPermissionPrompt = false
     }
@@ -1048,30 +1393,38 @@ fun MyWorkoutAssistantNavHost(
     LaunchedEffect(initialDataLoaded) {
         if (!initialDataLoaded) return@LaunchedEffect
 
+        // Only the default profile offers the startup restore prompt: switching profile restarts
+        // the app, and a Downloads backup belongs to whichever profile wrote it.
+        if (Profiles.activeProfileId(context) != Profiles.DEFAULT_PROFILE_ID) {
+            resolveStartupRestoreGate()
+            return@LaunchedEffect
+        }
+
+        val suffix = activeProfileBackupSuffix(context)
         val prefs = context.getSharedPreferences("startup_restore", Context.MODE_PRIVATE)
-        val alreadyChecked = prefs.getBoolean("auto_restore_checked", false)
+        val alreadyChecked = prefs.getBoolean("auto_restore_checked$suffix", false)
         if (alreadyChecked) {
             resolveStartupRestoreGate()
             return@LaunchedEffect
         }
 
-        val hasCurrentData =
-            appViewModel.workoutStore.workouts.isNotEmpty() ||
-                appViewModel.workoutStore.workoutPlans.isNotEmpty() ||
-                appViewModel.workoutStore.equipments.isNotEmpty() ||
-                appViewModel.workoutStore.accessoryEquipments.isNotEmpty()
+        // Only this profile's own metrics count as "already set up": the shared library is the
+        // same for everyone, so keying off it would skip restoring a brand-new profile.
+        val hasCurrentData = appViewModel.workoutStore.let { store ->
+            store.birthDateYear != 0 || store.weightKg > 0.0
+        }
 
         if (hasCurrentData) {
-            prefs.edit { putBoolean("auto_restore_checked", true) }
+            prefs.edit { putBoolean("auto_restore_checked$suffix", true) }
             resolveStartupRestoreGate()
             return@LaunchedEffect
         }
 
         val appBackup = loadLatestBackupFromDownloads(context)
         if (appBackup == null) {
-            val alreadyPrompted = prefs.getBoolean("restore_picker_prompt_shown", false)
+            val alreadyPrompted = prefs.getBoolean("restore_picker_prompt_shown$suffix", false)
             if (!alreadyPrompted) {
-                prefs.edit { putBoolean("restore_picker_prompt_shown", true) }
+                prefs.edit { putBoolean("restore_picker_prompt_shown$suffix", true) }
                 showStartupRestorePickerPrompt = true
             } else {
                 resolveStartupRestoreGate()
@@ -1084,16 +1437,9 @@ fun MyWorkoutAssistantNavHost(
             context = context,
             appViewModel = appViewModel,
             workoutViewModel = workoutViewModel,
-            workoutStoreRepository = workoutStoreRepository,
-            db = db,
-            workoutHistoryDao = workoutHistoryDao,
-            setHistoryDao = setHistoryDao,
-            restHistoryDao = restHistoryDao,
-            exerciseInfoDao = exerciseInfoDao,
-            workoutScheduleDao = workoutScheduleDao,
-            workoutRecordDao = workoutRecordDao,
+            profileId = Profiles.activeProfileId(context),
             healthConnectClient = healthConnectClient,
-            successToastMessage = "Backup restored because your local data was empty."
+            successToastMessage = context.getString(R.string.main_backup_restored_auto)
         )
         if (restored) {
             prefs.edit { putBoolean("auto_restore_checked", true) }
@@ -1118,7 +1464,9 @@ fun MyWorkoutAssistantNavHost(
                         context.contentResolver.openInputStream(selectedUri)?.use { inputStream ->
                             inputStream.bufferedReader().readText()
                         }
-                    } ?: throw IllegalStateException("Couldn't open the selected file.")
+                    } ?: throw IllegalStateException(
+                        context.getString(R.string.main_open_selected_file_error)
+                    )
 
                     // Validate file type before attempting to parse.
                     val fileType = detectBackupFileType(content)
@@ -1127,7 +1475,7 @@ fun MyWorkoutAssistantNavHost(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "That file is a workout plan package. Use Import Workout Plan instead.",
+                                    context.getString(R.string.main_file_is_plan_package),
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -1138,7 +1486,7 @@ fun MyWorkoutAssistantNavHost(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "That file is a workout export, not a backup.",
+                                    context.getString(R.string.main_file_is_workout_export_not_backup),
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -1149,7 +1497,7 @@ fun MyWorkoutAssistantNavHost(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "That file is an exercise library. Import it from the Exercise Library tab.",
+                                    context.getString(R.string.main_file_is_exercise_library),
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -1160,7 +1508,7 @@ fun MyWorkoutAssistantNavHost(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "That file isn't a valid backup.",
+                                    context.getString(R.string.main_file_not_valid_backup),
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -1171,9 +1519,50 @@ fun MyWorkoutAssistantNavHost(
                         BackupFileType.INCREMENTAL_APP_BACKUP -> {
                             // File type is valid, proceed with restore.
                         }
+
+                        BackupFileType.FULL_BACKUP -> {
+                            // Valid; handled below, since it rebuilds every profile.
+                        }
                     }
 
                     setAutomaticRestoreDocumentUri(context, selectedUri)
+
+                    if (fileType == BackupFileType.FULL_BACKUP) {
+                        val fullBackup = withContext(Dispatchers.IO) {
+                            fromJSONToFullBackup(content)
+                        }
+                        val restored = restoreFullBackup(
+                            fullBackup = fullBackup,
+                            context = context,
+                            appViewModel = appViewModel,
+                            workoutViewModel = workoutViewModel,
+                            healthConnectClient = healthConnectClient,
+                        )
+                        if (restored) {
+                            // Profiles, databases and preferences all changed under the running
+                            // app, so relaunch instead of patching live state.
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.main_backup_restored_restarting),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                val relaunch = Intent(context, MainActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                                context.startActivity(relaunch)
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.main_restore_backup_error),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                        return@launch
+                    }
+
                     val appBackup = fromBackupJsonToAppBackup(content)
 
                     restoreFromAppBackup(
@@ -1181,14 +1570,7 @@ fun MyWorkoutAssistantNavHost(
                         context = context,
                         appViewModel = appViewModel,
                         workoutViewModel = workoutViewModel,
-                        workoutStoreRepository = workoutStoreRepository,
-                        db = db,
-                        workoutHistoryDao = workoutHistoryDao,
-                        setHistoryDao = setHistoryDao,
-                        restHistoryDao = restHistoryDao,
-                        exerciseInfoDao = exerciseInfoDao,
-                        workoutScheduleDao = workoutScheduleDao,
-                        workoutRecordDao = workoutRecordDao,
+                        profileId = Profiles.activeProfileId(context),
                         healthConnectClient = healthConnectClient
                     )
                 } catch (e: CancellationException) {
@@ -1198,8 +1580,8 @@ fun MyWorkoutAssistantNavHost(
                         Toast.makeText(
                             context,
                             e.toMainActivityToastMessage(
-                                intro = "Couldn't restore that backup.",
-                                fallbackDetail = "Please choose a valid backup file."
+                                intro = context.getString(R.string.main_restore_backup_error),
+                                fallbackDetail = context.getString(R.string.main_choose_valid_backup)
                             ),
                             Toast.LENGTH_LONG
                         ).show()
@@ -1217,19 +1599,19 @@ fun MyWorkoutAssistantNavHost(
                 showStartupRestorePickerPrompt = false
                 resolveStartupRestoreGate()
             },
-            title = "Restore backup?",
+            title = context.getString(R.string.main_restore_backup_prompt_title),
             body = {
                 Text(
-                    text = "Your local data is empty. Choose a backup file to restore your workouts.",
+                    text = context.getString(R.string.main_restore_backup_prompt_body),
                     style = MaterialTheme.typography.bodyLarge,
                 )
             },
-            confirmText = "Choose file",
+            confirmText = context.getString(R.string.main_choose_file),
             onConfirm = {
                 showStartupRestorePickerPrompt = false
                 jsonPickerLauncher.launch(arrayOf("application/json"))
             },
-            dismissText = "Not now",
+            dismissText = context.getString(R.string.main_not_now),
             onDismissButton = {
                 showStartupRestorePickerPrompt = false
                 resolveStartupRestoreGate()
@@ -1274,13 +1656,13 @@ fun MyWorkoutAssistantNavHost(
                     configuredLiteRtModelName = LiteRtLmModelStore.getConfiguredModelName(context)
                     Toast.makeText(
                         context,
-                        "LiteRT-LM model imported: $importedName",
+                        context.getString(R.string.main_model_imported, importedName),
                         Toast.LENGTH_SHORT
                     ).show()
                 } catch (e: Exception) {
                     Toast.makeText(
                         context,
-                        e.message ?: "Couldn't import LiteRT-LM model.",
+                        e.message ?: context.getString(R.string.main_model_import_error),
                         Toast.LENGTH_SHORT
                     ).show()
                 } finally {
@@ -1289,37 +1671,58 @@ fun MyWorkoutAssistantNavHost(
             }
         }
 
+    var showBackupKindDialog by remember { mutableStateOf(false) }
+    var backupForGenerator by remember { mutableStateOf(false) }
+
     val backupSaveLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
             uri?.let {
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            val appBackup = createAppBackup(appViewModel.workoutStore, db, context)
-                            if (appBackup == null) {
+                            val nothingToBackUp: suspend () -> Unit = {
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(
                                         context,
-                                        "There's nothing to back up yet.",
+                                        context.getString(R.string.main_nothing_to_backup),
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 }
-                                return@withContext
                             }
 
-                            val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
+                            val jsonString = if (backupForGenerator) {
+                                // Single profile in the legacy AppBackup shape the workout
+                                // generator reads: shared library + this profile's history.
+                                val appBackup = createAppBackup(
+                                    appViewModel.workoutStore,
+                                    db,
+                                    context,
+                                )
+                                if (appBackup == null) {
+                                    nothingToBackUp()
+                                    return@withContext
+                                }
+                                fromAppBackupToJSONPrettyPrint(appBackup)
+                            } else {
+                                val fullBackup = createFullBackup(context)
+                                if (fullBackup == null) {
+                                    nothingToBackUp()
+                                    return@withContext
+                                }
+                                fromFullBackupToJSON(fullBackup)
+                            }
                             context.contentResolver.openOutputStream(it)?.use { outputStream ->
                                 outputStream.write(jsonString.toByteArray())
                             }
                         }
-                        Toast.makeText(context, "Backup saved.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.main_backup_saved), Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
                         e.printStackTrace()
                         Toast.makeText(
                             context,
                             e.toMainActivityToastMessage(
-                                intro = "Couldn't save the backup.",
-                                fallbackDetail = "Please try again."
+                                intro = context.getString(R.string.main_save_backup_error),
+                                fallbackDetail = context.getString(R.string.main_please_try_again)
                             ),
                             Toast.LENGTH_LONG
                         ).show()
@@ -1329,6 +1732,50 @@ fun MyWorkoutAssistantNavHost(
         }
 
 
+
+    if (showBackupKindDialog) {
+        StandardDialog(
+            onDismissRequest = { showBackupKindDialog = false },
+            title = context.getString(R.string.main_save_backup_title),
+            body = {
+                Column {
+                    ContentSubtitle(context.getString(R.string.main_whole_device_backup_desc))
+                    AppPrimaryOutlinedButton(
+                        text = context.getString(R.string.main_whole_device_backup),
+                        onClick = {
+                            showBackupKindDialog = false
+                            backupForGenerator = false
+                            backupSaveLauncher.launch(buildWorkoutStoreBackupFileName("_full"))
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    ContentSubtitle(
+                        text = context.getString(R.string.main_generator_backup_desc),
+                        modifier = Modifier.padding(top = Spacing.sm)
+                    )
+                    AppPrimaryOutlinedButton(
+                        text = context.getString(
+                            R.string.main_generator_backup,
+                            Profiles.activeProfile(context).name
+                        ),
+                        onClick = {
+                            showBackupKindDialog = false
+                            backupForGenerator = true
+                            backupSaveLauncher.launch(
+                                buildWorkoutStoreBackupFileName(
+                                    "_generator" + activeProfileNameFileSuffix(context)
+                                )
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            showConfirm = false,
+            showDismiss = false,
+        )
+    }
+
     val syncWithWatch = {
         scope.launch {
             appViewModel.flushWorkoutSave(context)
@@ -1336,7 +1783,7 @@ fun MyWorkoutAssistantNavHost(
             if (!syncStarted) {
                 Toast.makeText(
                     context,
-                    "Wear app is not installed or reachable. Sync will retry in the background.",
+                    context.getString(R.string.main_wear_not_installed),
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -1399,7 +1846,9 @@ fun MyWorkoutAssistantNavHost(
         ) { currentScreen ->
             saveableStateHolder.SaveableStateProvider(currentScreen.screenIdentityKey()) {
                 when (currentScreen) {
-                    is ScreenData.Workouts -> {
+                    is ScreenData.Workouts, is ScreenData.SessionPrescriptions -> {
+                        val focusedRecurringSessionId =
+                            (currentScreen as? ScreenData.SessionPrescriptions)?.sessionId
                         WorkoutsScreen(
                             appViewModel,
                             workoutHistoryDao,
@@ -1420,9 +1869,7 @@ fun MyWorkoutAssistantNavHost(
                             onOpenSettingsClick = {
                                 appViewModel.setScreenData(ScreenData.Settings())
                             },
-                            onBackupClick = {
-                                backupSaveLauncher.launch(buildWorkoutStoreBackupFileName())
-                            },
+                            onBackupClick = { showBackupKindDialog = true },
                             onRestoreClick = {
                                 jsonPickerLauncher.launch(arrayOf("application/json"))
                             },
@@ -1438,7 +1885,7 @@ fun MyWorkoutAssistantNavHost(
                                 writeJsonToDownloadsFolder(context, filename, jsonString)
                                 Toast.makeText(
                                     context,
-                                    "Workout export saved to Downloads.",
+                                    context.getString(R.string.main_workout_export_saved),
                                     Toast.LENGTH_SHORT
                                 ).show()
                             },
@@ -1455,8 +1902,8 @@ fun MyWorkoutAssistantNavHost(
                                         Toast.makeText(
                                             context,
                                             e.toMainActivityToastMessage(
-                                                intro = "Couldn't export the workout plan.",
-                                                fallbackDetail = "Please try again."
+                                                intro = context.getString(R.string.main_export_plan_error),
+                                                fallbackDetail = context.getString(R.string.main_please_try_again)
                                             ),
                                             Toast.LENGTH_SHORT
                                         ).show()
@@ -1465,8 +1912,10 @@ fun MyWorkoutAssistantNavHost(
                             },
                             onExportWorkoutDataForLlm = { exportRange: WorkoutDataExportRange ->
                                 scope.launch {
-                                    workoutDataExportStatus =
-                                        "Preparing ${exportRange.label.lowercase(Locale.getDefault())} export..."
+                                    workoutDataExportStatus = context.getString(
+                                        R.string.main_export_preparing,
+                                        exportRange.label.lowercase(Locale.getDefault())
+                                    )
                                     isExportingWorkoutDataForLlm = true
                                     yield()
                                     try {
@@ -1490,14 +1939,15 @@ fun MyWorkoutAssistantNavHost(
                                         Toast.makeText(
                                             context,
                                             e.toMainActivityToastMessage(
-                                                intro = "Couldn't export workout data.",
-                                                fallbackDetail = "Please try again."
+                                                intro = context.getString(R.string.main_export_data_error),
+                                                fallbackDetail = context.getString(R.string.main_please_try_again)
                                             ),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     } finally {
                                         isExportingWorkoutDataForLlm = false
-                                        workoutDataExportStatus = "Exporting workout data..."
+                                        workoutDataExportStatus =
+                                            context.getString(R.string.main_exporting_workout_data)
                                     }
                                 }
                             },
@@ -1512,15 +1962,18 @@ fun MyWorkoutAssistantNavHost(
                                         }
                                         Toast.makeText(
                                             context,
-                                            "Equipment export saved as $filename.",
+                                            context.getString(
+                                                R.string.main_equipment_export_saved,
+                                                filename
+                                            ),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     } catch (e: Exception) {
                                         Toast.makeText(
                                             context,
                                             e.toMainActivityToastMessage(
-                                                intro = "Couldn't export your equipment list.",
-                                                fallbackDetail = "Please try again."
+                                                intro = context.getString(R.string.main_export_equipment_error),
+                                                fallbackDetail = context.getString(R.string.main_please_try_again)
                                             ),
                                             Toast.LENGTH_SHORT
                                         ).show()
@@ -1534,13 +1987,14 @@ fun MyWorkoutAssistantNavHost(
                                             val allWorkoutHistories =
                                                 workoutHistoryDao.getAllWorkoutHistories()
                                             deleteWorkoutHistoriesFromHealthConnect(
+                                                context,
                                                 allWorkoutHistories,
                                                 healthConnectClient
                                             )
                                         } catch (e: Exception) {
                                             Toast.makeText(
                                                 context,
-                                                "Couldn't remove workout history from Health Connect.",
+                                                context.getString(R.string.main_remove_history_error),
                                                 Toast.LENGTH_SHORT
                                             ).show()
                                         }
@@ -1548,7 +2002,11 @@ fun MyWorkoutAssistantNavHost(
                                         workoutHistoryDao.deleteAll()
                                         setHistoryDao.deleteAll()
                                     }
-                                    Toast.makeText(context, "All workout history was cleared.", Toast.LENGTH_SHORT)
+                                    Toast.makeText(
+                                        context,
+                                        context.getString(R.string.main_history_cleared),
+                                        Toast.LENGTH_SHORT
+                                    )
                                         .show()
 
                                     appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
@@ -1566,6 +2024,7 @@ fun MyWorkoutAssistantNavHost(
                                             val weight = appViewModel.workoutStore.weightKg
 
                                             sendWorkoutsToHealthConnect(
+                                                context = context,
                                                 healthConnectClient = healthConnectClient,
                                                 workouts = appViewModel.workouts,
                                                 workoutHistoryDao = workoutHistoryDao,
@@ -1578,13 +2037,13 @@ fun MyWorkoutAssistantNavHost(
                                         }
                                         Toast.makeText(
                                             context,
-                                            "Synced with Health Connect.",
+                                            context.getString(R.string.main_synced_health_connect),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     } catch (e: Exception) {
                                         Toast.makeText(
                                             context,
-                                            "Couldn't sync with Health Connect.",
+                                            context.getString(R.string.main_sync_health_connect_error),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -1597,7 +2056,7 @@ fun MyWorkoutAssistantNavHost(
                                     }
                                     Toast.makeText(
                                         context,
-                                        "All exercise info was cleared.",
+                                        context.getString(R.string.main_exercise_info_cleared),
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 }
@@ -1608,8 +2067,13 @@ fun MyWorkoutAssistantNavHost(
                             onViewSensorSessions = {
                                 appViewModel.setScreenData(ScreenData.SensorSessions())
                             },
-                            selectedTabIndex = appViewModel.selectedHomeTab
+                            selectedTabIndex = appViewModel.selectedHomeTab,
+                            focusedRecurringSessionId = focusedRecurringSessionId,
                         )
+                    }
+
+                    is ScreenData.Plans -> {
+                        PlansScreen(appViewModel)
                     }
 
                     is ScreenData.Settings -> {
@@ -1631,7 +2095,11 @@ fun MyWorkoutAssistantNavHost(
                                             workoutStoreRepository,
                                             db
                                         )
-                                        Toast.makeText(context, "Settings saved.", Toast.LENGTH_SHORT)
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.main_settings_saved),
+                                            Toast.LENGTH_SHORT
+                                        )
                                             .show()
                                         appViewModel.goBack()
                                     } finally {
@@ -1670,7 +2138,11 @@ fun MyWorkoutAssistantNavHost(
                                 LiteRtLmModelStore.clearConfiguredModel(context)
                                 configuredLiteRtModelPath = null
                                 configuredLiteRtModelName = null
-                                Toast.makeText(context, "LiteRT-LM model cleared.", Toast.LENGTH_SHORT)
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.main_model_cleared),
+                                    Toast.LENGTH_SHORT
+                                )
                                     .show()
                             },
                             isSaving = isSaving,
@@ -2188,11 +2660,14 @@ fun MyWorkoutAssistantNavHost(
                         }
 
                         selectedWorkout = currentWorkout
+                        val recurringFamily = selectedWorkout.recurringSessionId?.let { sessionId ->
+                            workouts.filter { it.isActive && it.recurringSessionId == sessionId }
+                        }.orEmpty()
 
                         var isSaving by remember { mutableStateOf(false) }
                         ExerciseForm(
                             appViewModel,
-                            onExerciseUpsert = { newExercise ->
+                            onExerciseUpsert = { newExercise, recurringEdit ->
                                 if (isSaving) return@ExerciseForm
                                 isSaving = true
                                 scope.launch {
@@ -2210,21 +2685,40 @@ fun MyWorkoutAssistantNavHost(
                                             exerciseCategory = newExercise.exerciseCategory,
                                             movementRef = newExercise.movementRef,
                                         )
+                                        val linkedExercise = newExercise.materializeDefinition(
+                                            selectedDefinition ?: definition,
+                                        )
+                                        val safeExercise = sanitizeRecurringTrackMetadata(
+                                            exercise = linkedExercise,
+                                            originalExercise = null,
+                                            isRecurringWorkout = selectedWorkout.recurringSessionId != null,
+                                            family = recurringFamily,
+                                        )
+                                        val trackedExercise = try {
+                                            applyRecurringExerciseEdit(safeExercise, recurringEdit, recurringFamily)
+                                        } catch (_: IllegalArgumentException) {
+                                            Toast.makeText(
+                                                context,
+                                                context.getString(R.string.main_weight_slot_incompatible),
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                            return@launch
+                                        }
+                                        val hasHistory = withContext(Dispatchers.IO) {
+                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                selectedWorkout.id
+                                            )
+                                        }
                                         if (selectedDefinition == null) {
                                             appViewModel.addExerciseDefinition(definition)
                                         }
                                         val storedDefinition = appViewModel.workoutStore.exerciseDefinitions
                                             .firstOrNull { it.id == definition.id }
                                             ?: definition
-                                        val linkedExercise = newExercise.materializeDefinition(storedDefinition)
-                                        val hasHistory = withContext(Dispatchers.IO) {
-                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                                selectedWorkout.id
-                                            )
-                                        }
+                                        val resolvedTrackedExercise = trackedExercise.materializeDefinition(storedDefinition)
                                         appViewModel.addWorkoutComponentVersioned(
                                             selectedWorkout,
-                                            linkedExercise,
+                                            resolvedTrackedExercise,
                                             hasHistory
                                         )
                                         appViewModel.scheduleWorkoutSave(
@@ -2254,6 +2748,9 @@ fun MyWorkoutAssistantNavHost(
                                 }
                             },
                             exercise = definitionTemplate,
+                            isNewPrescription = true,
+                            recurringWorkout = selectedWorkout.takeIf { it.recurringSessionId != null },
+                            recurringFamily = recurringFamily,
                             isSaving = isSaving
                         )
                     }
@@ -2398,6 +2895,9 @@ fun MyWorkoutAssistantNavHost(
                         }
 
                         selectedWorkout = currentWorkout
+                        val recurringFamily = selectedWorkout.recurringSessionId?.let { sessionId ->
+                            workouts.filter { it.isActive && it.recurringSessionId == sessionId }
+                        }.orEmpty()
 
                         val selectedExercise = findWorkoutComponentByIdInWorkout(
                             selectedWorkout,
@@ -2415,7 +2915,7 @@ fun MyWorkoutAssistantNavHost(
                             var isSaving by remember { mutableStateOf(false) }
                             ExerciseForm(
                                 appViewModel,
-                                onExerciseUpsert = { updatedExercise ->
+                                onExerciseUpsert = { updatedExercise, recurringEdit ->
                                     if (isSaving) return@ExerciseForm
                                     isSaving = true
                                     scope.launch {
@@ -2426,12 +2926,13 @@ fun MyWorkoutAssistantNavHost(
                                                 )
                                             }
                                             val sourceDefinitionId = selectedExercise.exerciseDefinitionId
-                                            val resolvedExercise = if (sourceDefinitionId != null) {
-                                                val resolution = appViewModel.workoutStore.resolveExerciseVariation(
-                                                    sourceDefinitionId = sourceDefinitionId,
+                                            val resolution = sourceDefinitionId?.let { definitionId ->
+                                                appViewModel.workoutStore.resolveExerciseVariation(
+                                                    sourceDefinitionId = definitionId,
                                                     candidate = updatedExercise,
                                                 )
-                                                appViewModel.updateWorkoutStore(resolution.workoutStore)
+                                            }
+                                            val resolvedExercise = if (resolution != null) {
                                                 val materialized = updatedExercise.materializeDefinition(
                                                     resolution.definition,
                                                 )
@@ -2446,10 +2947,27 @@ fun MyWorkoutAssistantNavHost(
                                             } else {
                                                 updatedExercise
                                             }
+                                            val safeExercise = sanitizeRecurringTrackMetadata(
+                                                exercise = resolvedExercise,
+                                                originalExercise = selectedExercise,
+                                                isRecurringWorkout = selectedWorkout.recurringSessionId != null,
+                                                family = recurringFamily,
+                                            )
+                                            val trackedExercise = try {
+                                                applyRecurringExerciseEdit(safeExercise, recurringEdit, recurringFamily)
+                                            } catch (_: IllegalArgumentException) {
+                                                Toast.makeText(
+                                                    context,
+                                                    context.getString(R.string.main_weight_slot_incompatible),
+                                                    Toast.LENGTH_LONG,
+                                                ).show()
+                                                return@launch
+                                            }
+                                            resolution?.let { appViewModel.updateWorkoutStore(it.workoutStore) }
                                             appViewModel.updateWorkoutComponentVersioned(
                                                 selectedWorkout,
                                                 selectedExercise,
-                                                resolvedExercise,
+                                                trackedExercise,
                                                 hasHistory
                                             )
                                             appViewModel.scheduleWorkoutSave(
@@ -2472,6 +2990,8 @@ fun MyWorkoutAssistantNavHost(
                                     appViewModel.goBack()
                                 },
                                 exercise = selectedExercise,
+                                recurringWorkout = selectedWorkout.takeIf { it.recurringSessionId != null },
+                                recurringFamily = recurringFamily,
                                 isSaving = isSaving
                             )
                         }

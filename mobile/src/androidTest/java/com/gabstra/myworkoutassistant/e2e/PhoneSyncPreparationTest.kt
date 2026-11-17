@@ -42,7 +42,7 @@ class PhoneSyncPreparationTest {
         db.exerciseSessionProgressionDao().deleteAll()
 
         val store = CrossDeviceSyncPhoneWorkoutStoreFixture.createWorkoutStore()
-        WorkoutStoreRepository(context.filesDir).saveWorkoutStore(store)
+        WorkoutStoreRepository.forActiveProfile(context).saveWorkoutStore(store)
         ExerciseMovementStorage.writeMovementJson(
             context = context,
             movementRef = CrossDeviceSyncPhoneWorkoutStoreFixture.movementRef(),

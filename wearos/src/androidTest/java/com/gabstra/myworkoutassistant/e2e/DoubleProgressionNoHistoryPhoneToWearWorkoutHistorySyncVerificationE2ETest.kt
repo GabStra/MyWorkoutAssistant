@@ -17,7 +17,7 @@ class DoubleProgressionNoHistoryPhoneToWearWorkoutHistorySyncVerificationE2ETest
     fun phoneSync_doesNotSeedHistoricalSessionOnWear() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val db = AppDatabase.getDatabase(context)
-        val repository = WorkoutStoreRepository(context.filesDir)
+        val repository = WorkoutStoreRepository.forActiveProfile(context)
         val deadline = System.currentTimeMillis() + E2ETestTimings.CROSS_DEVICE_SYNC_TIMEOUT_MS
 
         while (System.currentTimeMillis() < deadline) {

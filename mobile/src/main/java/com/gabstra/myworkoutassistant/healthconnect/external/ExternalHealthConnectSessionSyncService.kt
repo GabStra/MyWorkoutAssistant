@@ -7,6 +7,8 @@ import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Instant
@@ -39,10 +41,16 @@ class ExternalHealthConnectSessionSyncService(
         val localWorkoutHistoryIds = workoutHistoriesInRange
             .map { it.id.toString() }
             .toSet()
-        val appOwnedSessionWindows = workoutHistoriesInRange.map { history ->
+        // Only measured sessions can form a trustworthy dedupe window. Imported
+        // rows may carry a date-only placeholder, which must not accidentally
+        // exclude a legitimate external measured session.
+        val appOwnedSessionWindows = workoutHistoriesInRange.mapNotNull { history ->
+            val startTime = history.knownStartTimeOrNull() ?: return@mapNotNull null
+            val durationSeconds = history.knownDurationSecondsOrNull() ?: return@mapNotNull null
+            if (durationSeconds <= 0) return@mapNotNull null
             AppOwnedSessionWindow(
-                startTime = history.startTime,
-                endTime = history.startTime.plusSeconds(history.duration.toLong().coerceAtLeast(0L)),
+                startTime = startTime,
+                endTime = startTime.plusSeconds(durationSeconds.toLong()),
             )
         }
 

@@ -14,6 +14,8 @@ enum class WorkoutCalendarActivityKind {
 sealed interface WorkoutStatusSessionEntry {
     val date: LocalDate
     val startedAt: LocalDateTime
+    /** False for imported sessions that only carry a calendar date, not a start time. */
+    val startedAtKnown: Boolean get() = true
 }
 
 data class AppWorkoutStatusSessionEntry(
@@ -21,6 +23,7 @@ data class AppWorkoutStatusSessionEntry(
 ) : WorkoutStatusSessionEntry {
     override val date: LocalDate = weeklyStatusWorkoutHistory.workoutHistory.date
     override val startedAt: LocalDateTime = weeklyStatusWorkoutHistory.workoutHistory.startTime
+    override val startedAtKnown: Boolean = weeklyStatusWorkoutHistory.workoutHistory.startTimeKnown
 
     val workoutId: UUID = weeklyStatusWorkoutHistory.workout.id
 }
@@ -44,7 +47,15 @@ data class ExternalWorkoutStatusSessionEntry(
 
 fun sortWorkoutStatusSessions(
     sessions: List<WorkoutStatusSessionEntry>,
-): List<WorkoutStatusSessionEntry> = sessions.sortedBy { it.startedAt }
+): List<WorkoutStatusSessionEntry> = sessions
+    .withIndex()
+    .sortedWith(
+        compareBy<IndexedValue<WorkoutStatusSessionEntry>> { it.value.date }
+            .thenBy { if (it.value.startedAtKnown) 0 else 1 }
+            .thenBy { it.value.startedAt }
+            .thenBy { it.index }
+    )
+    .map { it.value }
 
 fun deduplicateWorkoutStatusSessions(
     sessions: List<WorkoutStatusSessionEntry>,

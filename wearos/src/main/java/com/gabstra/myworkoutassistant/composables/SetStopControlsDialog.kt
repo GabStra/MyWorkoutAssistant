@@ -24,8 +24,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onLongClick
@@ -38,10 +40,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+
+// Label-free hold target: bigger than the standard button since it is the primary hold action.
+private val HoldToStopButtonSize = 60.dp
 
 @Composable
 internal fun SetStopControlsDialog(onStop: () -> Unit, onDismiss: () -> Unit) {
@@ -54,10 +60,14 @@ internal fun SetStopControlsDialog(onStop: () -> Unit, onDismiss: () -> Unit) {
         label = "stop button press",
     )
     val stopIconColor by animateColorAsState(
-        targetValue = if (isStopPressed) darkenButtonColor(MaterialTheme.colorScheme.onBackground)
-        else MaterialTheme.colorScheme.onBackground,
+        targetValue = if (isStopPressed) darkenButtonColor(Color.White)
+        else Color.White,
         label = "stop icon press",
     )
+    val titleText = stringResource(R.string.set_controls_title)
+    val holdToStopDescription = stringResource(R.string.set_controls_cd_hold_to_stop)
+    val stopSetLabel = stringResource(R.string.set_controls_action_stop)
+    val backDescription = stringResource(R.string.set_controls_cd_back)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -75,89 +85,80 @@ internal fun SetStopControlsDialog(onStop: () -> Unit, onDismiss: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceEvenly,
             ) {
-                Text("SET CONTROLS", style = MaterialTheme.typography.titleMedium)
-                SetValueSection(
-                    label = "HOLD TO STOP",
-                    headerStyle = MaterialTheme.typography.bodyExtraSmall,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(WearStandardIconButtonSize)
-                        .semantics {
-                            role = Role.Button
-                            contentDescription = "Hold to stop set"
-                            onLongClick(label = "Stop set") {
-                                latestOnStop()
-                                true
-                            }
+                Text(titleText, style = MaterialTheme.typography.titleMedium)
+                Box(
+                    modifier = Modifier
+                        .size(HoldToStopButtonSize)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = holdToStopDescription
+                        onLongClick(label = stopSetLabel) {
+                            latestOnStop()
+                            true
                         }
-                        .pointerInput(holdDurationMillis) {
-                            detectTapGestures(onPress = {
-                                val pressScope = this
-                                isStopPressed = true
-                                coroutineScope {
-                                    val holdJob = launch {
-                                        holdProgress.snapTo(0f)
-                                        holdProgress.animateTo(
-                                            targetValue = 1f,
-                                            animationSpec = tween(holdDurationMillis, easing = LinearEasing),
-                                        )
-                                        latestOnStop()
-                                    }
-                                    try {
-                                        pressScope.tryAwaitRelease()
-                                    } finally {
-                                        isStopPressed = false
-                                        holdJob.cancel()
-                                        holdProgress.snapTo(0f)
-                                    }
+                    }
+                    .pointerInput(holdDurationMillis) {
+                        detectTapGestures(onPress = {
+                            val pressScope = this
+                            isStopPressed = true
+                            coroutineScope {
+                                val holdJob = launch {
+                                    holdProgress.snapTo(0f)
+                                    holdProgress.animateTo(
+                                        targetValue = 1f,
+                                        animationSpec = tween(holdDurationMillis, easing = LinearEasing),
+                                    )
+                                    latestOnStop()
                                 }
-                            })
-                        },
+                                try {
+                                    pressScope.tryAwaitRelease()
+                                } finally {
+                                    isStopPressed = false
+                                    holdJob.cancel()
+                                    holdProgress.snapTo(0f)
+                                }
+                            }
+                        })
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (holdProgress.value > 0f) {
+                    androidx.wear.compose.material.CircularProgressIndicator(
+                        progress = holdProgress.value,
+                        modifier = Modifier.size(HoldToStopButtonSize),
+                        strokeWidth = 4.dp,
+                        indicatorColor = Red,
+                        trackColor = MediumDarkGray,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(HoldToStopButtonSize)
+                        .clip(CircleShape)
+                        .background(stopButtonColor),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (holdProgress.value > 0f) {
-                        androidx.wear.compose.material.CircularProgressIndicator(
-                            progress = holdProgress.value,
-                            modifier = Modifier.size(WearStandardIconButtonSize),
-                            strokeWidth = 4.dp,
-                            indicatorColor = Red,
-                            trackColor = MediumDarkGray,
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(WearStandardIconButtonSize)
-                            .clip(CircleShape)
-                            .background(stopButtonColor),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            modifier = Modifier.size(WearStandardIconButtonIconSize),
-                            imageVector = Icons.Default.Stop,
-                            contentDescription = null,
-                            tint = stopIconColor,
-                        )
-                    }
+                    Icon(
+                        modifier = Modifier.size(wearIconSizeForButton(HoldToStopButtonSize)),
+                        imageVector = Icons.Default.Stop,
+                        contentDescription = null,
+                        tint = stopIconColor,
+                    )
                 }
-                }
-                SetValueSection(
-                    label = "BACK",
-                    headerStyle = MaterialTheme.typography.bodyExtraSmall,
-                ) {
-                    EnhancedIconButton(
-                        onClick = onDismiss,
-                        buttonSize = WearSecondaryIconButtonSize,
-                        hitBoxScale = 1f,
-                        buttonModifier = Modifier.clip(CircleShape),
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to set",
-                            tint = androidx.wear.compose.material3.LocalContentColor.current,
-                        )
-                    }
-                }
+            }
+            EnhancedIconButton(
+                onClick = onDismiss,
+                buttonSize = WearStandardIconButtonSize,
+                hitBoxScale = 1.2f,
+                colors = wearColoredIconButtonColors(MaterialTheme.colorScheme.surfaceContainerHigh),
+                buttonModifier = Modifier.clip(CircleShape),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = backDescription,
+                    tint = androidx.wear.compose.material3.LocalContentColor.current,
+                )
+            }
             }
         }
     }

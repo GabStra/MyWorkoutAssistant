@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
@@ -73,6 +74,7 @@ import com.gabstra.myworkoutassistant.shared.workout.plates.PlateRecalculationDe
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
+import com.gabstra.myworkoutassistant.shared.workout.model.isNormallyCompleted
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
@@ -102,6 +104,11 @@ import com.gabstra.myworkoutassistant.shared.workout.session.ResumptionIndexResu
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutRefreshService
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutResumptionService
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutSessionLifecycleService
+import com.gabstra.myworkoutassistant.shared.workout.session.withLastWorkingLoad
+import com.gabstra.myworkoutassistant.shared.workout.session.withHistoryPolicyLoads
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutSessionOrchestrator
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutTimerRestoreService
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
@@ -966,13 +973,15 @@ open class WorkoutViewModel(
                 _sessionPhase.value = WorkoutSessionPhase.COMPLETED
                 _nextWorkoutState.value = null
 
-                val completedState = WorkoutState.Completed(
-                    startWorkoutTime ?: refreshedHistory.startTime
-                )
-                completedState.endWorkoutTime =
-                    refreshedHistory.startTime.plusSeconds(refreshedHistory.duration.toLong())
-                applyDerivedSignalTransition(_workoutState.value, completedState)
-                _workoutState.value = completedState
+                val completedStart = startWorkoutTime ?: refreshedHistory.knownStartTimeOrNull()
+                val knownDurationSeconds = refreshedHistory.knownDurationSecondsOrNull()
+                if (completedStart != null && knownDurationSeconds != null) {
+                    val completedState = WorkoutState.Completed(completedStart)
+                    completedState.endWorkoutTime =
+                        completedStart.plusSeconds(knownDurationSeconds.toLong())
+                    applyDerivedSignalTransition(_workoutState.value, completedState)
+                    _workoutState.value = completedState
+                }
             }
         }
 
@@ -1661,7 +1670,7 @@ open class WorkoutViewModel(
                     _workoutResumeInfo.value = WorkoutResumeInfo(
                         exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
                         setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId], setIndex),
-                        startedAt = currentWorkoutHistory?.startTime,
+                        startedAt = currentWorkoutHistory?.knownStartTimeOrNull(),
                         sessionStatus = when (ownerDevice) {
                             SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
                             SessionOwnerDevice.WEAR -> {
@@ -1711,7 +1720,7 @@ open class WorkoutViewModel(
             _workoutResumeInfo.value = WorkoutResumeInfo(
                 exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
                 setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId], setIndex),
-                startedAt = currentWorkoutHistory?.startTime,
+                startedAt = currentWorkoutHistory?.knownStartTimeOrNull(),
                 sessionStatus = when (ownerDevice) {
                     SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
                     SessionOwnerDevice.WEAR -> {
@@ -1794,7 +1803,7 @@ open class WorkoutViewModel(
         return WorkoutResumeInfo(
             exerciseName = resumeExerciseName,
             setLabel = resolveWorkoutResumeSetLabel(resumeExercise, workoutRecord.setIndex),
-            startedAt = workoutHistory.startTime,
+            startedAt = workoutHistory.knownStartTimeOrNull(),
             sessionStatus = sessionStatus,
             lastActiveSyncAt = workoutRecord.lastActiveSyncAt,
             motionCaptureEnabled = workoutRecord.motionCaptureEnabled,
@@ -1939,6 +1948,23 @@ open class WorkoutViewModel(
             val resumeWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(resumeHistoryId)
             if (resumeWorkoutHistory == null) {
                 Log.e(TAG, "Workout history $resumeHistoryId not found when resuming")
+                pendingResumeWorkoutHistoryId = null
+                _workoutRecord = null
+                withContext(dispatchers.main) {
+                    _hasWorkoutRecord.value = false
+                    _workoutResumeInfo.value = null
+                    rebuildScreenState()
+                }
+                return@withContext
+            }
+            if (resumeWorkoutHistory.isDone ||
+                resumeWorkoutHistory.origin == WorkoutHistoryOrigin.USER_IMPORTED
+            ) {
+                Log.w(
+                    TAG,
+                    "resumeWorkoutFromRecord: refusing to resume completed/imported history " +
+                        "${resumeWorkoutHistory.id}"
+                )
                 pendingResumeWorkoutHistoryId = null
                 _workoutRecord = null
                 withContext(dispatchers.main) {
@@ -2296,16 +2322,20 @@ open class WorkoutViewModel(
             selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
         val validExercises = exercises.filter { exercise ->
             exercise.progressionMode != ProgressionMode.OFF &&
-                !exercise.requiresLoadCalibration
+                !exercise.requiresLoadCalibration &&
+                exercise.loadHistoryPolicy != LoadHistoryPolicy.PRESCRIBED_WEIGHT
         }
         val latestSetHistoryByKey = latestSetHistoryMap.entries.associate { (key, value) ->
             (key.exerciseId to key.setId) to value
         }
         validExercises.forEach { exercise ->
             val sessionDecision = computeSessionDecision(exercise)
+            val applicableHistory = if (exercise.recurringExerciseId != null) {
+                emptyMap<Pair<UUID, UUID>, SetHistory>()
+            } else latestSetHistoryByKey
             val validSets = workoutProgressionService.buildPreProcessedSets(
                 exercise = exercise,
-                latestSetHistoryByKey = latestSetHistoryByKey,
+                latestSetHistoryByKey = applicableHistory,
                 sessionDecision = sessionDecision
             )
             updateWorkout(
@@ -2326,6 +2356,7 @@ open class WorkoutViewModel(
             exercise.enabled &&
                 exercise.progressionMode != ProgressionMode.OFF &&
                 !exercise.requiresLoadCalibration &&
+                exercise.loadHistoryPolicy != LoadHistoryPolicy.PRESCRIBED_WEIGHT &&
                 exerciseProgressionByExerciseId.containsKey(exercise.id)
         }
         validExercises.forEach { exercise ->
@@ -2631,7 +2662,16 @@ open class WorkoutViewModel(
     }
 
     protected suspend fun loadWorkoutHistory() {
-        val loadedHistory = workoutSessionLifecycleService.loadWorkoutHistory(selectedWorkout.value)
+        val workout = selectedWorkout.value
+        val familyWorkouts = workout.recurringSessionId?.let { recurringSessionId ->
+            (workoutStore.workouts.filter { it.isActive && it.recurringSessionId == recurringSessionId } + workout)
+                .distinctBy { it.id }
+        } ?: listOf(workout)
+        val loadedHistory = workoutSessionLifecycleService.loadWorkoutHistory(
+            workout = workout,
+            familyWorkouts = familyWorkouts,
+            allWorkoutVersions = workoutStore.workouts,
+        )
         latestSetHistoriesByExerciseId.clear()
         latestSetHistoriesByExerciseId.putAll(loadedHistory.latestSetHistoriesByExerciseId)
         latestSetHistoryMap.clear()
@@ -2640,9 +2680,16 @@ open class WorkoutViewModel(
         }
     }
 
+    /** One completed-session snapshot from the database bound to this view model's active profile. */
+    suspend fun getCompletedWorkoutHistoriesForCurrentProfile(): List<WorkoutHistory> =
+        withContext(dispatchers.io) {
+            workoutHistoryDao.getAllWorkoutHistoriesByIsDone().filter { it.isNormallyCompleted() }
+        }
+
     private suspend fun hydrateSelectedWorkoutTemplateForSession() {
         val template = selectedWorkout.value
         loadWorkoutHistory()
+        materializeRecurringLoadsForSession()
         preProcessExercises()
         generateProgressions()
         applyProgressions()
@@ -2661,6 +2708,28 @@ open class WorkoutViewModel(
             Log.d(TAG, decision.asFactBlock())
         }
         initializeExercisesMaps(selectedWorkout.value)
+    }
+
+    private fun materializeRecurringLoadsForSession() {
+        val workout = selectedWorkout.value
+        fun prepareExercise(exercise: Exercise): Exercise =
+            if (exercise.recurringExerciseId != null &&
+                exercise.loadHistoryPolicy == LoadHistoryPolicy.LAST_WORKING_LOAD
+            ) {
+                exercise.withHistoryPolicyLoads(
+                    latestSetHistoryMap.entries
+                        .filter { it.key.exerciseId == exercise.id }
+                        .associate { (key, value) -> key.setId to value }
+                )
+            } else exercise
+
+        _selectedWorkout.value = workout.copy(workoutComponents = workout.workoutComponents.map { component ->
+            when (component) {
+                is Exercise -> prepareExercise(component)
+                is Superset -> component.copy(exercises = component.exercises.map(::prepareExercise))
+                else -> component
+            }
+        })
     }
 
     fun setActiveHrSource(source: HeartRateSource) {
@@ -3497,6 +3566,7 @@ open class WorkoutViewModel(
 
         val childItems = mutableListOf<ExerciseChildItem>()
         val hasCalibration = exercise.requiresLoadCalibration &&
+            exercise.loadHistoryPolicy != LoadHistoryPolicy.PRESCRIBED_WEIGHT &&
             (exercise.exerciseType == ExerciseType.WEIGHT ||
                 (exercise.exerciseType == ExerciseType.BODY_WEIGHT && exercise.equipmentId != null))
         val loadBlockStates = mutableListOf<WorkoutState>()
@@ -3569,7 +3639,17 @@ open class WorkoutViewModel(
 
                 if (historySet != null) {
                     val historySetData = historySet.setData
-                    if (
+                    val isRecurringHistory = exercise.recurringExerciseId != null
+                    if (isRecurringHistory) {
+                        historicalSetData = historySetData
+                        if (
+                            exercise.loadHistoryPolicy == LoadHistoryPolicy.LAST_WORKING_LOAD &&
+                            exerciseProgression == null && !exercise.requiresLoadCalibration
+                        ) {
+                            currentSetData = currentSetData.withLastWorkingLoad(set, historySet) ?: currentSetData
+                        }
+                    } else if (
+                        exercise.loadHistoryPolicy != LoadHistoryPolicy.PRESCRIBED_WEIGHT &&
                         set.shouldReapplyHistoryToSet &&
                         isSetDataValid(set, historySetData) &&
                         exerciseProgression == null
@@ -3631,7 +3711,8 @@ open class WorkoutViewModel(
                     )
                     childItems.add(ExerciseChildItem.Normal(setState))
                 } else {
-                    val isAutoRegulationWorkSet = exercise.progressionMode == ProgressionMode.AUTO_REGULATION &&
+                    val isAutoRegulationWorkSet = exercise.loadHistoryPolicy != LoadHistoryPolicy.PRESCRIBED_WEIGHT &&
+                        exercise.progressionMode == ProgressionMode.AUTO_REGULATION &&
                         index in workSetIndices &&
                         lastWorkSetIndex != null &&
                         index != lastWorkSetIndex
@@ -3892,6 +3973,7 @@ open class WorkoutViewModel(
         if (!currentState.isAutoRegulationWorkSet) return
 
         val exercise = exercisesById[currentState.exerciseId] ?: return
+        if (exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return
         val actualReps = when (val d = currentState.currentSetData) {
             is WeightSetData -> d.actualReps
             is BodyWeightSetData -> d.actualReps
@@ -3914,11 +3996,12 @@ open class WorkoutViewModel(
         val machine = stateMachine ?: return
         val currentState = machine.currentState as? WorkoutState.Set ?: return
         if (!currentState.isAutoRegulationWorkSet) return
+        val exercise = exercisesById[currentState.exerciseId] ?: return
+        if (exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return
 
         currentState.currentSetData = currentState.currentSetData.withRIR(rir, forAutoRegulation = true)
 
         launchIO {
-            val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
             val selectedWorkWeight = extractWorkWeight(currentState.currentSetData)
             val adjustedWeight = adjustmentMultiplier?.let { multiplier ->
                 selectedWorkWeight * multiplier

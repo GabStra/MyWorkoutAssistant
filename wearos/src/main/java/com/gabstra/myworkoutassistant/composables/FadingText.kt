@@ -3,6 +3,9 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentHeight
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -73,22 +76,31 @@ fun FadingText(
 
     val marqueeState = rememberTrackableMarqueeState()
 
+    // Numeric styles that fit get the same ink-tight box as TightNumericText; the marquee
+    // keeps its clipping box because it animates inside a fixed viewport.
+    val tightNumeric = !isInspectionMode && !hasOverflow && style.isTightNumericStyle()
+    val tightHeight = if (tightNumeric) {
+        with(density) { (style.fontSize * NumericLineHeightScale).toDp() }
+    } else {
+        0.dp
+    }
+
+    // Wrap content by default so Weight(1f, fill = false) parents can shrink to their text;
+    // callers that need full width pass Modifier.fillMaxWidth() themselves.
     val boxModifier = modifier
-        .fillMaxWidth()
-        .clipToBounds()
+        .then(if (tightNumeric) Modifier.height(tightHeight) else Modifier.clipToBounds())
         .then(
-            if (isInspectionMode) {
-                Modifier
-            } else {
+            // Offscreen compositing is only needed while the marquee is scrolling (fading edges).
+            if (!isInspectionMode && hasOverflow) {
                 Modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            } else {
+                Modifier
             }
         )
         .onGloballyPositioned { containerWidth = it.size.width.toFloat() }
         .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
 
-    val textModifier = if (isInspectionMode) {
-        Modifier.fillMaxWidth()
-    } else {
+    val textModifier = if (!isInspectionMode && hasOverflow) {
         Modifier
             .fillMaxWidth()
             .trackableMarquee(
@@ -98,6 +110,13 @@ fun FadingText(
                 edgeFadeWidth = fadeWidth,
                 edgeFadeColor = fadeColor,
             )
+    } else if (tightNumeric) {
+        // Unbounded measurement so the clamped box trims layout space without clipping glyphs.
+        Modifier.wrapContentHeight(unbounded = true)
+    } else {
+        // Fitting text wraps to its content; the marquee branch above still fills the
+        // available width so the scroll viewport is stable.
+        Modifier
     }
 
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {

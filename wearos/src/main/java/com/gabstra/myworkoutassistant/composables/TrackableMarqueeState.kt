@@ -186,6 +186,20 @@ private class TrackableMarqueeNode(
     private var animationJob: Job? = null
     private var marqueeLayer: GraphicsLayer? = null
 
+    // The recorded layer content only changes when the child is remeasured (text/layout/size
+    // change) or when the layer is recreated. Animation frames must not re-record it.
+    private var contentLayerDirty = true
+    private var recordedContentWidth = 0
+    private var recordedContentHeight = 0
+
+    // Fade brushes depend only on the viewport width, the fade band width and the fade color,
+    // so they are rebuilt only when one of those inputs changes (never per frame).
+    private var cachedFadeViewportWidth = 0
+    private var cachedFadeWidthPx = 0f
+    private var cachedFadeColor = Color.Unspecified
+    private var leftFadeBrush: Brush? = null
+    private var rightFadeBrush: Brush? = null
+
     private var spacingImpl: MarqueeSpacing by mutableStateOf(spacing)
     private var animationModeImpl: MarqueeAnimationMode by mutableStateOf(animationMode)
 
@@ -198,6 +212,7 @@ private class TrackableMarqueeNode(
     override fun onAttach() {
         marqueeLayer?.let { requireGraphicsContext().releaseGraphicsLayer(it) }
         marqueeLayer = requireGraphicsContext().createGraphicsLayer()
+        contentLayerDirty = true
         restartAnimation()
     }
 
@@ -249,6 +264,8 @@ private class TrackableMarqueeNode(
 
         containerWidth = constraints.constrainWidth(placeable.width)
         contentWidth = placeable.width
+        // Any remeasure can change the recorded content (text, style, layout or size).
+        contentLayerDirty = true
 
         state.containerWidthPx = containerWidth
         state.contentWidthPx = contentWidth
@@ -319,16 +336,26 @@ private class TrackableMarqueeNode(
         val secondCopyOffset = (cw + spacingPxLocal).toFloat()
         val drawHeight = size.height
 
-        marqueeLayer?.let { layer ->
-            layer.record(size = IntSize(cw, drawHeight.roundToInt())) {
-                this@draw.drawContent()
+        val layer = marqueeLayer
+        if (layer != null) {
+            val layerHeight = drawHeight.roundToInt()
+            if (
+                contentLayerDirty ||
+                recordedContentWidth != cw ||
+                recordedContentHeight != layerHeight
+            ) {
+                layer.record(size = IntSize(cw, layerHeight)) {
+                    this@draw.drawContent()
+                }
+                recordedContentWidth = cw
+                recordedContentHeight = layerHeight
+                contentLayerDirty = false
             }
         }
 
         clipRect(right = vw.toFloat()) {
             // draw marquee content
             translate(left = -clipWindowOffset) {
-                val layer = marqueeLayer
                 if (layer != null) {
                     if (firstCopyVisible) drawLayer(layer)
                     if (secondCopyVisible) translate(left = secondCopyOffset) { drawLayer(layer) }
@@ -342,31 +369,48 @@ private class TrackableMarqueeNode(
             if (cw > vw && edgeFadeWidth > 0.dp && edgeFadeColor != Color.Unspecified) {
                 val fadeSize = edgeFadeWidth.toPx().coerceAtMost(vw.toFloat() / 2f)
 
-                if (leftClips) {
-                    val leftBrush = Brush.horizontalGradient(
-                        colors = listOf(edgeFadeColor, edgeFadeColor.copy(alpha = 0f)),
+                if (leftFadeBrush == null ||
+                    rightFadeBrush == null ||
+                    cachedFadeViewportWidth != vw ||
+                    cachedFadeWidthPx != fadeSize ||
+                    cachedFadeColor != edgeFadeColor
+                ) {
+                    val transparentFadeColor = edgeFadeColor.copy(alpha = 0f)
+                    leftFadeBrush = Brush.horizontalGradient(
+                        colors = listOf(edgeFadeColor, transparentFadeColor),
                         startX = 0f,
                         endX = fadeSize
                     )
-                    drawRect(
-                        brush = leftBrush,
-                        topLeft = Offset.Zero,
-                        size = Size(fadeSize, size.height)
+                    val rightFadeStart = vw.toFloat() - fadeSize
+                    rightFadeBrush = Brush.horizontalGradient(
+                        colors = listOf(transparentFadeColor, edgeFadeColor),
+                        startX = rightFadeStart,
+                        endX = vw.toFloat()
                     )
+                    cachedFadeViewportWidth = vw
+                    cachedFadeWidthPx = fadeSize
+                    cachedFadeColor = edgeFadeColor
+                }
+
+                if (leftClips) {
+                    leftFadeBrush?.let { leftBrush ->
+                        drawRect(
+                            brush = leftBrush,
+                            topLeft = Offset.Zero,
+                            size = Size(fadeSize, drawHeight)
+                        )
+                    }
                 }
 
                 if (rightClips) {
                     val start = vw.toFloat() - fadeSize
-                    val rightBrush = Brush.horizontalGradient(
-                        colors = listOf(edgeFadeColor.copy(alpha = 0f), edgeFadeColor),
-                        startX = start,
-                        endX = vw.toFloat()
-                    )
-                    drawRect(
-                        brush = rightBrush,
-                        topLeft = Offset(start, 0f),
-                        size = Size(fadeSize, size.height)
-                    )
+                    rightFadeBrush?.let { rightBrush ->
+                        drawRect(
+                            brush = rightBrush,
+                            topLeft = Offset(start, 0f),
+                            size = Size(fadeSize, drawHeight)
+                        )
+                    }
                 }
             }
         }

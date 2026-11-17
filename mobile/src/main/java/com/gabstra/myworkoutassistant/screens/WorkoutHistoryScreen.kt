@@ -34,6 +34,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,13 +45,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -56,7 +62,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.health.connect.client.HealthConnectClient
+import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
@@ -71,6 +79,8 @@ import com.gabstra.myworkoutassistant.composables.HistoryGraphTabColumn
 import com.gabstra.myworkoutassistant.composables.HistoryFiltersBlock
 import com.gabstra.myworkoutassistant.composables.HistoryNavigationCard
 import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
+import com.gabstra.myworkoutassistant.composables.historyExerciseDisplayName
+import com.gabstra.myworkoutassistant.composables.workoutHistoryDateTimeLabel
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
@@ -107,6 +117,11 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
+import com.gabstra.myworkoutassistant.shared.workout.history.WorkoutHistoryDateCorrectionService
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
@@ -140,9 +155,15 @@ import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.widget.Toast
+import java.time.Instant
 import java.time.Duration
 import java.time.format.DateTimeFormatter
+import java.time.ZoneId
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.Calendar
 import java.util.UUID
 
@@ -200,7 +221,7 @@ fun Menu(
         IconButton(onClick = { expanded = !expanded }) {
             Icon(
                 imageVector = Icons.Default.MoreVert,
-                contentDescription = "More"
+                contentDescription = stringResource(R.string.history_more_cd)
             )
         }
 
@@ -209,7 +230,7 @@ fun Menu(
             onDismissRequest = { expanded = false }
         ) {
             AppDropdownMenuItem(
-                text = { Text("Delete selected history") },
+                text = { Text(stringResource(R.string.history_delete_selected)) },
                 onClick = {
                     onDeleteHistory()
                     expanded = false
@@ -249,7 +270,6 @@ fun WorkoutHistoryScreen(
     var isChartInteractionActive by remember { mutableStateOf(false) }
 
     val currentLocale = LocalLocale.current.platformLocale
-    val scope = rememberCoroutineScope()
     val userAge by appViewModel.userAge
     val measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate
     val restingHeartRate = appViewModel.workoutStore.restingHeartRate
@@ -283,6 +303,8 @@ fun WorkoutHistoryScreen(
     }
 
     var selectedWorkoutHistory by remember { mutableStateOf<WorkoutHistory?>(null) }
+    var showImportedDateCorrectionPicker by remember { mutableStateOf(false) }
+    var importedDateCorrectionProfileId by remember { mutableStateOf<String?>(null) }
 
     var setHistoriesByExerciseId by remember { mutableStateOf<Map<UUID, List<SetHistory>>>(emptyMap()) }
 
@@ -334,6 +356,17 @@ fun WorkoutHistoryScreen(
     }
 
     val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
+    val selectedHistoryWorkout = remember(
+        selectedWorkoutHistory?.workoutId,
+        selectedWorkoutHistory?.globalId,
+        workoutVersions,
+    ) {
+        selectedWorkoutHistory?.let { history ->
+            workoutVersions.firstOrNull { version ->
+                version.id == history.workoutId && version.globalId == history.globalId
+            }
+        }
+    }
     var kiloCaloriesBurned by remember { mutableDoubleStateOf(0.0) }
 
     val volumes = remember { mutableListOf<Pair<Int, Double>>() }
@@ -391,12 +424,11 @@ fun WorkoutHistoryScreen(
             }
             volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
             durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
-            workoutDurations.add(
-                Pair(
-                    workoutHistories.indexOf(workoutHistory),
-                    workoutHistory.duration.toFloat()
+            workoutHistory.knownDurationSecondsOrNull()?.let { durationSeconds ->
+                workoutDurations.add(
+                    Pair(workoutHistories.indexOf(workoutHistory), durationSeconds.toFloat())
                 )
-            )
+            }
         }
 
         if (volumes.any { it.second != 0.0 }) {
@@ -413,8 +445,11 @@ fun WorkoutHistoryScreen(
                 })
         }
 
-        workoutDurationEntryModel =
-            CartesianChartModel(LineCartesianLayerModel.build { series(*(workoutDurations.map { it.second }).toTypedArray()) })
+        workoutDurationEntryModel = workoutDurations.takeIf { it.isNotEmpty() }?.let { knownDurations ->
+            CartesianChartModel(LineCartesianLayerModel.build {
+                series(knownDurations.map { it.first }, knownDurations.map { it.second })
+            })
+        }
     }
 
     LaunchedEffect(workout, updateMessage) {
@@ -484,6 +519,20 @@ fun WorkoutHistoryScreen(
         }
     }
 
+    LaunchedEffect(
+        showImportedDateCorrectionPicker,
+        selectedWorkoutHistory?.id,
+        selectedWorkoutHistory?.origin,
+        selectedWorkoutHistory?.startTimeKnown,
+    ) {
+        if (showImportedDateCorrectionPicker &&
+            (selectedWorkoutHistory?.origin != WorkoutHistoryOrigin.USER_IMPORTED ||
+                selectedWorkoutHistory?.startTimeKnown != false)
+        ) {
+            showImportedDateCorrectionPicker = false
+        }
+    }
+
     LaunchedEffect(selectedWorkoutHistory, isActive) {
         if (!isActive) return@LaunchedEffect
         onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
@@ -497,7 +546,7 @@ fun WorkoutHistoryScreen(
         val loadedContent = withContext(Dispatchers.IO) {
             val loadedHeartRateAnalysis = analyzeHeartRateSession(
                 heartRateSeries = workoutHistory.heartBeatRecords,
-                durationSeconds = workoutHistory.duration,
+                durationSeconds = workoutHistory.knownDurationSecondsOrNull() ?: 0,
                 userAge = userAge,
                 measuredMaxHeartRate = measuredMaxHeartRate,
                 restingHeartRate = restingHeartRate,
@@ -554,15 +603,16 @@ fun WorkoutHistoryScreen(
                     if (pct != null && pct > 0) bw.relativeBodyWeightInKg / (pct / 100) else null
                 }
                 ?: appViewModel.workoutStore.weightKg
-            val durationMinutes = workoutHistory.duration.toDouble() / 60
-            val loadedKiloCaloriesBurned = calculateKiloCaloriesBurned(
-                age = age,
-                weightKg = weightForKcal,
-                averageHeartRate = avgHeartRate,
-                durationMinutes = durationMinutes,
-                female = appViewModel.workoutStore.sex,
-                vo2MaxMlKgMin = appViewModel.workoutStore.estimatedVo2MaxMlKgMin
-            )
+            val loadedKiloCaloriesBurned = workoutHistory.knownDurationSecondsOrNull()?.let { durationSeconds ->
+                calculateKiloCaloriesBurned(
+                    age = age,
+                    weightKg = weightForKcal,
+                    averageHeartRate = avgHeartRate,
+                    durationMinutes = durationSeconds.toDouble() / 60,
+                    female = appViewModel.workoutStore.sex,
+                    vo2MaxMlKgMin = appViewModel.workoutStore.estimatedVo2MaxMlKgMin
+                )
+            } ?: 0.0
 
             LoadedWorkoutHistoryContent(
                 heartRateAnalysis = loadedHeartRateAnalysis,
@@ -631,7 +681,7 @@ fun WorkoutHistoryScreen(
             isScrollEnabled = !isChartInteractionActive,
         ) {
             if (historiesToShow.isEmpty()) {
-                HistoryGraphEmptyState(text = "No history in this date range.")
+                HistoryGraphEmptyState(text = stringResource(R.string.history_no_history_in_range))
             }
 
             if (volumeEntryModel != null) {
@@ -639,7 +689,7 @@ fun WorkoutHistoryScreen(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
-                    title = "Total volume (kg)",
+                    title = stringResource(R.string.history_total_volume),
                     markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -652,7 +702,7 @@ fun WorkoutHistoryScreen(
                 StandardChart(
                     modifier = Modifier,
                     cartesianChartModel = durationEntryModel!!,
-                    title = "Total duration",
+                    title = stringResource(R.string.history_total_duration),
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -666,7 +716,7 @@ fun WorkoutHistoryScreen(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = workoutDurationEntryModel!!,
-                    title = "Workout duration",
+                    title = stringResource(R.string.history_workout_duration),
                     markerTextFormatter = { formatTimeHourMinutes(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -700,16 +750,33 @@ fun WorkoutHistoryScreen(
             },
             contentPadding = PaddingValues(horizontal = Spacing.xs),
         ) {
+                    val history = selectedWorkoutHistory!!
                     Text(
-                        text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " + selectedWorkoutHistory!!.time.format(
-                            timeFormatter
-                        ),
+                        text = workoutHistoryDateTimeLabel(history, dateFormatter, timeFormatter),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
                         style = MaterialTheme.typography.titleMedium,
                     )
+                    selectedHistoryWorkout
+                        ?.takeIf { prescriptionWorkout ->
+                            prescriptionWorkout.recurringSessionId != null &&
+                                (history.recurringSessionId == null ||
+                                    history.recurringSessionId == prescriptionWorkout.recurringSessionId)
+                        }
+                        ?.let { prescriptionWorkout ->
+                            Text(
+                                text = stringResource(
+                                    R.string.history_prescription_line,
+                                    prescriptionWorkout.name,
+                                    recurringPrescriptionDisplayLabel(prescriptionWorkout, stringResource(R.string.prescription)),
+                                ),
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                        }
                     workoutSessionDisplayLabel(
-                        workoutSessionStatuses[selectedWorkoutHistory!!.id]
+                        workoutSessionStatuses[history.id]
                     )?.let { statusLabel ->
                         Text(
                             text = statusLabel,
@@ -718,7 +785,7 @@ fun WorkoutHistoryScreen(
                             style = MaterialTheme.typography.labelMedium,
                         )
                     }
-                    completedWorkoutEndDisplayLabel(selectedWorkoutHistory!!)?.let { endLabel ->
+                    completedWorkoutEndDisplayLabel(history)?.let { endLabel ->
                         Text(
                             text = endLabel,
                             textAlign = TextAlign.Center,
@@ -837,6 +904,7 @@ fun WorkoutHistoryScreen(
             restingHeartRate
         ) {
             val history = selectedWorkoutHistory ?: return@remember emptyMap()
+            if (history.knownStartTimeOrNull() == null) return@remember emptyMap()
             setHistoriesForRendererByExerciseId.mapValues { (exerciseId, histories) ->
                 val exercise = exerciseById[exerciseId]
                 val hasTarget =
@@ -902,7 +970,7 @@ fun WorkoutHistoryScreen(
                             .let { runCatching { UUID.fromString(it) }.getOrNull() }
                             ?.let(exerciseById::get)
                             ?.let { it.nameOverride ?: it.name }
-                            ?: "Running",
+                            ?: stringResource(R.string.history_running_fallback),
                         result = result,
                         distanceUnit = appViewModel.workoutStore.distanceUnit
                     )
@@ -911,7 +979,7 @@ fun WorkoutHistoryScreen(
             if (heartRateAnalysis != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
                 item {
                     HeartRateSessionCard(
-                        title = "Heart rate during workout",
+                        title = stringResource(R.string.history_hr_during_workout),
                         analysis = heartRateAnalysis!!,
                         userAge = userAge,
                         measuredMaxHeartRate = measuredMaxHeartRate,
@@ -928,6 +996,7 @@ fun WorkoutHistoryScreen(
                         primarySourceLabel = HeartRateSource
                             .fromName(selectedWorkoutHistory!!.heartRateSource)
                             ?.displayName(),
+                        showDuration = selectedWorkoutHistory!!.knownDurationSecondsOrNull() != null,
                         onInteractionChange = { isChartInteractionActive = it },
                     )
                 }
@@ -937,7 +1006,7 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 10.dp),
-                    text = "Exercise and superset history",
+                    text = stringResource(R.string.history_exercise_superset_history),
                 )
             }
             items(
@@ -1001,7 +1070,19 @@ fun WorkoutHistoryScreen(
                                     },
                                     collapsedContent = {
                                         Text(
-                                            text = "${completedExercises.size} exercises · $completedSetCount completed sets",
+                                            text = stringResource(
+                                                R.string.history_superset_summary,
+                                                pluralStringResource(
+                                                    R.plurals.history_exercise_count,
+                                                    completedExercises.size,
+                                                    completedExercises.size,
+                                                ),
+                                                pluralStringResource(
+                                                    R.plurals.history_completed_sets,
+                                                    completedSetCount,
+                                                    completedSetCount,
+                                                ),
+                                            ),
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(start = 16.dp, end = 48.dp, bottom = 14.dp),
@@ -1037,9 +1118,14 @@ fun WorkoutHistoryScreen(
                         val restsForExercise = restHistoriesByExerciseId[key].orEmpty()
                         val setHistoriesForRenderer = setHistoriesForRendererByExerciseId[key].orEmpty()
                         val orderedSets = orderedSetsByExerciseId[key].orEmpty()
+                        val performedExerciseName = historyExerciseDisplayName(
+                            exercise.name,
+                            setHistoriesForRenderer,
+                        )
 
                         val hasTarget =
-                            exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
+                            selectedWorkoutHistory?.knownStartTimeOrNull() != null &&
+                                exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
                         val targetProgress = targetProgressByExerciseId[key]
                             ?: TargetHeartRateProgress(counter = 0, total = 0)
 
@@ -1053,7 +1139,11 @@ fun WorkoutHistoryScreen(
                             val completedSetCount = setHistoriesForRenderer.count {
                                 it.setData !is RestSetData
                             }
-                            val collapsedSummary = "$completedSetCount completed sets"
+                            val collapsedSummary = pluralStringResource(
+                                R.plurals.history_completed_sets,
+                                completedSetCount,
+                                completedSetCount,
+                            )
                             ExerciseHistoryRenderer(
                                 exercise = exerciseWithHistorySets,
                                 showRest = true,
@@ -1108,13 +1198,13 @@ fun WorkoutHistoryScreen(
                                                     }) {
                                                     Icon(
                                                         imageVector = Icons.Filled.Info,
-                                                        contentDescription = "View details",
+                                                        contentDescription = stringResource(R.string.history_view_details_cd),
                                                         tint = MaterialTheme.colorScheme.onBackground
                                                     )
                                                 }
                                             }
                                             ScrollableTextColumn(
-                                                text = exercise.name,
+                                                text = performedExerciseName,
                                                 modifier = Modifier.weight(1f),
                                                 maxLines = 2,
                                                 style = historyExerciseNameTextStyle(),
@@ -1162,8 +1252,7 @@ fun WorkoutHistoryScreen(
                 Spacer(modifier = Modifier.height(Spacing.md))
                 if (selectedWorkoutHistory != null) {
                     Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
-                        val sessionLabel = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
-                            selectedWorkoutHistory!!.time.format(timeFormatter)
+                        val sessionLabel = workoutHistoryDateTimeLabel(selectedWorkoutHistory!!, dateFormatter, timeFormatter)
                         HistoryFiltersBlock(
                             isExpanded = isHistoryFiltersExpanded,
                             onExpandedChange = onHistoryFiltersExpandedChange,
@@ -1172,6 +1261,20 @@ fun WorkoutHistoryScreen(
                             RangeDropdown(selectedRange, onHistoryRangeSelected)
                             Spacer(modifier = Modifier.height(Spacing.xs))
                             workoutSelector()
+                        }
+                        val history = selectedWorkoutHistory!!
+                        if (history.origin == WorkoutHistoryOrigin.USER_IMPORTED && !history.startTimeKnown) {
+                            TextButton(
+                                modifier = Modifier
+                                    .align(Alignment.End)
+                                    .testTag("correct_imported_history_date"),
+                                onClick = {
+                                    importedDateCorrectionProfileId = Profiles.activeProfileId(context)
+                                    showImportedDateCorrectionPicker = true
+                                },
+                            ) {
+                                Text(stringResource(R.string.history_correct_date))
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
@@ -1218,7 +1321,7 @@ fun WorkoutHistoryScreen(
                     PrimarySurface(modifier = Modifier.padding(Spacing.md)) {
                         Text(
                             modifier = Modifier.padding(Spacing.md),
-                            text = "No workout history yet.",
+                            text = stringResource(R.string.history_no_history_yet),
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
                         )
@@ -1237,7 +1340,87 @@ fun WorkoutHistoryScreen(
             }
         }
     }
+
+    if (showImportedDateCorrectionPicker &&
+        selectedWorkoutHistory?.origin == WorkoutHistoryOrigin.USER_IMPORTED &&
+        selectedWorkoutHistory?.startTimeKnown == false
+    ) {
+        val history = selectedWorkoutHistory!!
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = importedHistoryDatePickerMillis(history.date),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showImportedDateCorrectionPicker = false },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.testTag("save_imported_history_date"),
+                    onClick = {
+                        val selectedDate = datePickerState.selectedDateMillis?.let { millis ->
+                            importedHistoryDateFromPickerMillis(millis)
+                        } ?: history.date
+                        val targetProfileId = importedDateCorrectionProfileId
+                        if (targetProfileId == null) {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.history_error_no_profile),
+                                Toast.LENGTH_LONG,
+                            ).show()
+                            showImportedDateCorrectionPicker = false
+                        } else {
+                            appViewModel.viewModelScope.launch {
+                                runCatching {
+                                    WorkoutHistoryDateCorrectionService.correctImportedDate(
+                                        context = context,
+                                        profileId = targetProfileId,
+                                        historyId = history.id,
+                                        correctedDate = selectedDate,
+                                    )
+                                }.onSuccess { corrected ->
+                                    workoutHistories = workoutHistories
+                                        .map { current -> if (current.id == corrected.id) corrected else current }
+                                        .sortedWith(
+                                            compareBy<WorkoutHistory>(
+                                                { it.date },
+                                                { it.time },
+                                                { it.version.toLong() },
+                                            )
+                                        )
+                                    if (selectedWorkoutHistory?.id == corrected.id) {
+                                        selectedWorkoutHistory = corrected
+                                    }
+                                    appViewModel.loadWorkoutHistories(appViewModel.workouts)
+                                    showImportedDateCorrectionPicker = false
+                                }.onFailure { error ->
+                                    Toast.makeText(
+                                        context,
+                                        error.message
+                                            ?: context.getString(R.string.history_error_correct_date),
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            }
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.history_save_date))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportedDateCorrectionPicker = false }) {
+                    Text(stringResource(R.string.workout_cancel))
+                }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }
+
+internal fun importedHistoryDatePickerMillis(date: LocalDate): Long =
+    date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+internal fun importedHistoryDateFromPickerMillis(millis: Long): LocalDate =
+    Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
 
 @Composable
 private fun RunningHistoryCard(
@@ -1269,12 +1452,12 @@ private fun RunningHistoryCard(
             ) {
                 RunningHistoryMetric(
                     modifier = Modifier.weight(1f),
-                    label = "ELAPSED",
+                    label = stringResource(R.string.history_running_elapsed),
                     value = formatTime((result.elapsedTimeMillis / 1000).toInt()),
                 )
                 RunningHistoryMetric(
                     modifier = Modifier.weight(1f),
-                    label = "DISTANCE ($unitLabel)",
+                    label = stringResource(R.string.history_running_distance, unitLabel),
                     value = unitDistance?.let { "%.2f".format(it) } ?: "—",
                 )
             }
@@ -1284,18 +1467,18 @@ private fun RunningHistoryCard(
             ) {
                 RunningHistoryMetric(
                     modifier = Modifier.weight(1f),
-                    label = "AVG PACE ($unitLabel)",
+                    label = stringResource(R.string.history_running_avg_pace, unitLabel),
                     value = averagePace ?: "—",
                 )
                 RunningHistoryMetric(
                     modifier = Modifier.weight(1f),
-                    label = "HEART RATE (bpm)",
+                    label = stringResource(R.string.history_running_heart_rate),
                     value = result.averageHeartRateBpm?.let { average ->
                         "$average avg${result.minHeartRateBpm?.let { " · $it–${result.maxHeartRateBpm ?: it}" }.orEmpty()}"
                     } ?: "—",
                 )
             }
-            Text("Route map", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.history_route_map), style = MaterialTheme.typography.titleSmall)
             if (result.route.size >= 2) {
                 val routeColor = MaterialTheme.colorScheme.primary
                 val startColor = MaterialTheme.colorScheme.tertiary
@@ -1310,7 +1493,7 @@ private fun RunningHistoryCard(
                     labelColor = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = "Pinch to zoom · drag to move",
+                    text = stringResource(R.string.history_map_gesture_hint),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1318,13 +1501,16 @@ private fun RunningHistoryCard(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("Start", style = MaterialTheme.typography.labelSmall, color = startColor)
-                    Text("Finish", style = MaterialTheme.typography.labelSmall, color = finishColor)
+                    Text(stringResource(R.string.history_map_start), style = MaterialTheme.typography.labelSmall, color = startColor)
+                    Text(stringResource(R.string.history_map_finish), style = MaterialTheme.typography.labelSmall, color = finishColor)
                 }
             } else {
                 Text(
-                    text = if (result.route.isEmpty()) "No GPS route was recorded for this run."
-                    else "GPS route has only one point; a route line is unavailable.",
+                    text = if (result.route.isEmpty()) {
+                        stringResource(R.string.history_no_gps_route)
+                    } else {
+                        stringResource(R.string.history_gps_one_point)
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiaryContent,
                 )

@@ -26,7 +26,7 @@ class PhoneToWearWorkoutHistorySyncVerificationE2ETest {
         var failureDetail = "movement sync was not checked"
 
         while (System.currentTimeMillis() < deadline) {
-            val workoutStore = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
+            val workoutStore = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore()
             val syncedExercise = workoutStore.workouts
                 .asSequence()
                 .flatMap { workout ->

@@ -32,11 +32,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.AlertSoundPreferences
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -91,9 +93,9 @@ fun PageButtons(
     val keepScreenOnChecked = exerciseKeepsScreenOn || keepScreenOn
     val keepScreenOnEnabled = !exerciseKeepsScreenOn
     val keepScreenOnStatus = when {
-        exerciseKeepsScreenOn -> "On for this exercise"
-        keepScreenOn -> "On for this workout"
-        else -> "Can dim for this exercise"
+        exerciseKeepsScreenOn -> stringResource(R.string.workout_keep_screen_on_exercise)
+        keepScreenOn -> stringResource(R.string.workout_keep_screen_on_workout)
+        else -> stringResource(R.string.workout_can_dim_exercise)
     }
     val showNavigationSection = !isHistoryEmpty
     val showExerciseSection = isMovementSet
@@ -150,14 +152,14 @@ fun PageButtons(
     ) {
         if (showNavigationSection) {
             item {
-                PageButtonsSectionHeader("Navigation")
+                PageButtonsSectionHeader(stringResource(R.string.workout_section_navigation))
             }
         }
 
         if (!isHistoryEmpty) {
             item {
             ButtonWithText(
-                text = "Back",
+                text = stringResource(R.string.workout_back),
                 onClick = {
                     hapticsViewModel.doGentleVibration()
                     if (updatedState.isCalibrationSet) {
@@ -178,14 +180,14 @@ fun PageButtons(
 
         if (showExerciseSection) {
             item {
-                PageButtonsSectionHeader("Exercise")
+                PageButtonsSectionHeader(stringResource(R.string.workout_section_exercise))
             }
         }
 
         if (canChangeEquipment) {
             item {
                 ButtonWithText(
-                    text = "Change equipment",
+                    text = stringResource(R.string.workout_change_equipment),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         onChangeEquipmentClick()
@@ -198,7 +200,7 @@ fun PageButtons(
         if (isMovementSet && isLastSet) {
             item {
                 ButtonWithText(
-                    text = "Add rest-pause set",
+                    text = stringResource(R.string.workout_add_rest_pause_set),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         viewModel.storeSetData()
@@ -214,7 +216,7 @@ fun PageButtons(
         if (isMovementSet) {
             item {
                 ButtonWithText(
-                    text = "Add set",
+                    text = stringResource(R.string.workout_add_set),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         viewModel.storeSetData()
@@ -228,7 +230,7 @@ fun PageButtons(
         }
 
         item { Spacer(modifier = Modifier.height(10.dp)) }
-        item { PageButtonsSectionHeader("Preferences") }
+        item { PageButtonsSectionHeader(stringResource(R.string.workout_section_preferences)) }
 
         item {
             Card(
@@ -253,12 +255,15 @@ fun PageButtons(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Text("Alert sound", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            stringResource(R.string.workout_alert_sound),
+                            style = MaterialTheme.typography.titleMedium
+                        )
                         Text(
                             text = if (alertSoundEnabled) {
-                                "Critical alerts vibrate and beep"
+                                stringResource(R.string.workout_alert_sound_beep)
                             } else {
-                                "Critical alerts vibrate only"
+                                stringResource(R.string.workout_alert_sound_vibrate_only)
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
@@ -300,7 +305,7 @@ fun PageButtons(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
-                            text = "Keep screen on",
+                            text = stringResource(R.string.workout_keep_screen_on),
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
@@ -348,12 +353,12 @@ fun PageButtons(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Dim brightness",
+                            text = stringResource(R.string.workout_dim_brightness),
                             style = MaterialTheme.typography.titleMedium,
                         )
                     }
                     Text(
-                        text = "Brightness used after the screen becomes inactive",
+                        text = stringResource(R.string.workout_dim_brightness_description),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
                     )
@@ -413,12 +418,12 @@ fun PageButtons(
         }
 
         item { Spacer(modifier = Modifier.height(10.dp)) }
-        item { PageButtonsSectionHeader("Session") }
+        item { PageButtonsSectionHeader(stringResource(R.string.workout_section_session)) }
 
         if (isActiveSetPage) {
             item {
                 ButtonWithText(
-                    text = "Skip exercise",
+                    text = stringResource(R.string.workout_skip_exercise),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         showSkipExerciseDialog = true
@@ -430,7 +435,7 @@ fun PageButtons(
 
         item {
             ButtonWithText(
-                text = "Finish early",
+                text = stringResource(R.string.workout_finish_early),
                 onClick = {
                     hapticsViewModel.doGentleVibration()
                     showFinishEarlyDialog = true
@@ -441,7 +446,7 @@ fun PageButtons(
 
         item {
             ButtonWithText(
-                text = "Leave workout",
+                text = stringResource(R.string.workout_leave_workout),
                 onClick = {
                     hapticsViewModel.doGentleVibration()
                     onLeaveWorkout()
@@ -453,8 +458,8 @@ fun PageButtons(
 
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
-        title = "Go back one set",
-        message = "Do you want to proceed?",
+        title = stringResource(R.string.workout_go_back_one_set),
+        message = stringResource(R.string.workout_go_back_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.goToPreviousSet()
@@ -476,8 +481,8 @@ fun PageButtons(
 
     CustomDialogYesOnLongPress(
         show = showSkipExerciseDialog,
-        title = "Skip exercise",
-        message = "Skip all remaining sets for this exercise?",
+        title = stringResource(R.string.workout_skip_exercise),
+        message = stringResource(R.string.workout_skip_exercise_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             showSkipExerciseDialog = false
@@ -506,8 +511,8 @@ fun PageButtons(
 
     CustomDialogYesOnLongPress(
         show = showFinishEarlyDialog,
-        title = "Finish early",
-        message = "End the workout now? All remaining exercises and sets will be skipped.",
+        title = stringResource(R.string.workout_finish_early),
+        message = stringResource(R.string.workout_finish_early_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             showFinishEarlyDialog = false

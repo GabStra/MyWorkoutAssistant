@@ -46,6 +46,7 @@ fun HeartRateSessionCard(
     skinTempStartC: Float? = null,
     skinTempMaxC: Float? = null,
     primarySourceLabel: String? = null,
+    showDuration: Boolean = true,
     onInteractionChange: (Boolean) -> Unit = {},
 ) {
     val zoneBounds = getHeartRateZoneBounds(
@@ -112,11 +113,13 @@ fun HeartRateSessionCard(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Text(
-                            text = "Duration: ${formatTime(analysis.durationSeconds)}",
-                            color = MaterialTheme.colorScheme.onBackground,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        if (showDuration) {
+                            Text(
+                                text = "Duration: ${formatTime(analysis.durationSeconds)}",
+                                color = MaterialTheme.colorScheme.onBackground,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                         if (showSources) {
                             Text(
                                 text = "${primarySourceLabel ?: "Primary"}: " +

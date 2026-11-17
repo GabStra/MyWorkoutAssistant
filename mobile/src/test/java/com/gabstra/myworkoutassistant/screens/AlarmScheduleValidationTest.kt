@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -23,7 +24,7 @@ class AlarmScheduleValidationTest {
             now = LocalDateTime.of(2026, 3, 27, 8, 0)
         )
 
-        assertEquals("Select at least one day for recurring alarms.", message)
+        assertEquals(R.string.workout_form_alarm_error_select_day, message)
     }
 
     @Test
@@ -37,7 +38,7 @@ class AlarmScheduleValidationTest {
             now = LocalDateTime.of(2026, 3, 27, 9, 0)
         )
 
-        assertEquals("Pick a future date and time for one-time alarms.", message)
+        assertEquals(R.string.workout_form_alarm_error_future_date, message)
     }
 
     @Test

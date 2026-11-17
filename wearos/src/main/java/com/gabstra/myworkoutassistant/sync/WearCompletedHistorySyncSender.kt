@@ -3,10 +3,12 @@ package com.gabstra.myworkoutassistant.sync
 import android.content.Context
 import android.util.Log
 import com.gabstra.myworkoutassistant.MyApplication
+import com.gabstra.myworkoutassistant.data.prepareWorkoutHistoryBatchSend
 import com.gabstra.myworkoutassistant.data.sendWorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
 import com.google.android.gms.wearable.DataClient
 import kotlinx.coroutines.sync.withLock
@@ -26,25 +28,41 @@ internal object WearCompletedHistorySyncSender {
         dataClient: DataClient,
         historyIds: Set<UUID>,
         reason: WearWorkoutHistorySyncReason,
+        profileId: String,
         transactionRegistrar: ((transactionId: String, workoutHistoryId: UUID) -> Unit)? = null
     ): WearCompletedHistorySyncResult {
         if (historyIds.isEmpty()) {
             return WearCompletedHistorySyncResult(emptySet(), emptySet())
         }
 
-        val db = AppDatabase.getDatabase(context)
+        val db = AppDatabase.getDatabase(context, profileId)
         val workoutHistoryDao = db.workoutHistoryDao()
         val setHistoryDao = db.setHistoryDao()
         val restHistoryDao = db.restHistoryDao()
         val workoutRecordDao = db.workoutRecordDao()
         val exerciseInfoDao = db.exerciseInfoDao()
         val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
-        val workoutStore = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
-        val allCompleted = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(true)
-        val completedById = allCompleted.associateBy { it.id }
+        val workoutStore = WorkoutStoreRepository(
+            Profiles.directory(context, profileId),
+            context.filesDir,
+        ).getWorkoutStore()
+        val completedById = workoutHistoryDao
+            .getCompletedWorkoutHistoriesByIds(historyIds.toList())
+            .associateBy { it.id }
 
         val attemptedIds = linkedSetOf<UUID>()
         val failedIds = linkedSetOf<UUID>()
+
+        if (completedById.isEmpty()) {
+            return WearCompletedHistorySyncResult(
+                attemptedHistoryIds = attemptedIds,
+                failedHistoryIds = failedIds
+            )
+        }
+
+        val batchPreflight = WorkoutHistoryTransferCoordinator.sendMutex.withLock {
+            prepareWorkoutHistoryBatchSend(context, dataClient)
+        }
 
         for (historyId in historyIds) {
             val workoutHistory = completedById[historyId] ?: continue
@@ -57,15 +75,21 @@ internal object WearCompletedHistorySyncSender {
                 }
 
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(historyId)
-                val exerciseInfos = workout.workoutComponents
-                    .flatMap { component ->
-                        when (component) {
-                            is com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise -> listOf(component)
-                            is com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset -> component.exercises
-                            else -> emptyList()
-                        }
+                val exercises = workout.workoutComponents.flatMap { component ->
+                    when (component) {
+                        is com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise -> listOf(component)
+                        is com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset -> component.exercises
+                        else -> emptyList()
                     }
-                    .mapNotNull { exerciseInfoDao.getExerciseInfoById(it.id) }
+                }
+                val exerciseInfos = if (exercises.isEmpty()) {
+                    emptyList()
+                } else {
+                    val exerciseInfosById = exerciseInfoDao
+                        .getExerciseInfosByIds(exercises.map { it.id }.distinct())
+                        .associateBy { it.id }
+                    exercises.mapNotNull { exerciseInfosById[it.id] }
+                }
                 val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
                 val exerciseSessionProgressions =
                     exerciseSessionProgressionDao.getByWorkoutHistoryId(historyId)
@@ -84,6 +108,7 @@ internal object WearCompletedHistorySyncSender {
                 )
                 val success = sendWorkoutHistoryStore(
                     dataClient = dataClient,
+                    profileId = profileId,
                     workoutHistoryStore = WorkoutHistoryStore(
                         WorkoutHistory = workoutHistory,
                         SetHistories = setHistories,
@@ -94,7 +119,8 @@ internal object WearCompletedHistorySyncSender {
                         RestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(historyId)
                     ),
                     context = context,
-                    transactionId = transactionId
+                    transactionId = transactionId,
+                    batchPreflight = batchPreflight
                 ).first
 
                 if (!success) {

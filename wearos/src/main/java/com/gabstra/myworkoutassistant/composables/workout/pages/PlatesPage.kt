@@ -48,6 +48,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Density
@@ -59,6 +60,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.LoadedPlateConfigurationOption
 import com.gabstra.myworkoutassistant.composables.LoadedPlateConfigurationPickerOverlay
 import com.gabstra.myworkoutassistant.composables.LoadingText
@@ -525,7 +527,7 @@ fun PlatesPage(
         ) {
             CircularProgressIndicator()
             Spacer(Modifier.height(8.dp))
-            LoadingText(baseText = "Loading")
+            LoadingText(baseText = stringResource(R.string.page_loading))
         }
         return
     }
@@ -563,14 +565,14 @@ private fun PlatesPageContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 30.dp),
-            text = "Barbell guide",
+            text = stringResource(R.string.page_plates_title),
             style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )
 
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
-                text = "Not available",
+                text = stringResource(R.string.page_plates_not_available),
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center
             )
@@ -597,7 +599,7 @@ private fun PlatesPageContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Target ${formatWeight(currentWeightTotal)}",
+                    text = stringResource(R.string.page_plates_target, formatWeight(currentWeightTotal)),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
@@ -605,7 +607,7 @@ private fun PlatesPageContent(
                 if (loadedPlateConfigurations.size > 1) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = "Change loaded plates",
+                        contentDescription = stringResource(R.string.page_plates_cd_change_loaded_plates),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp),
                     )
@@ -903,7 +905,7 @@ private fun PlatesPageContent(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = "Barbell already loaded",
+                            text = stringResource(R.string.page_plates_already_loaded),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.tertiaryContent,
                         )
@@ -926,7 +928,7 @@ private fun PlatesPageContent(
                         iconSize = 32.dp,
                     ) {
                         Text(
-                            text = "Step ${userStepIndex + 1}/$totalFrames",
+                            text = stringResource(R.string.page_plates_step, userStepIndex + 1, totalFrames),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.tertiaryContent,
                             textAlign = TextAlign.Center,
@@ -937,13 +939,15 @@ private fun PlatesPageContent(
         }
     }
 
+    val barOnlyLabel = stringResource(R.string.page_plates_bar_only)
+
     LoadedPlateConfigurationPickerOverlay(
         show = showLoadedPlatePicker,
         options = loadedPlateConfigurations.map { plates ->
             val normalizedPlates = plates.sortedDescending()
             LoadedPlateConfigurationOption(
                 plates = normalizedPlates,
-                label = formatPlateConfigurationLabel(normalizedPlates),
+                label = formatPlateConfigurationLabel(normalizedPlates, barOnlyLabel),
                 isCurrent = normalizedPlates == updatedState.plateChangeResult
                     ?.previousPlates
                     ?.sortedDescending(),
@@ -958,9 +962,9 @@ private fun PlatesPageContent(
     )
 }
 
-internal fun formatPlateConfigurationLabel(plates: List<Double>): String =
+internal fun formatPlateConfigurationLabel(plates: List<Double>, barOnlyLabel: String): String =
     if (plates.isEmpty()) {
-        "Bar only"
+        barOnlyLabel
     } else {
         plates.sortedDescending()
             .groupBy { it }

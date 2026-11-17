@@ -9,12 +9,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.gabstra.myworkoutassistant.R
 
 @Composable
 fun WorkoutPlanNameDialog(
     show: Boolean,
     initialName: String = "",
-    confirmButtonText: String = "Import",
+    confirmButtonText: String = stringResource(R.string.dialog_import),
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
@@ -23,12 +25,12 @@ fun WorkoutPlanNameDialog(
         
         StandardDialog(
             onDismissRequest = onDismiss,
-            title = "Enter Workout Plan Name",
+            title = stringResource(R.string.dialog_enter_plan_name_title),
             body = {
                 OutlinedTextField(
                     value = planName,
                     onValueChange = { planName = it },
-                    label = { Text("Plan Name") },
+                    label = { Text(stringResource(R.string.dialog_plan_name_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -39,7 +41,7 @@ fun WorkoutPlanNameDialog(
                     onConfirm(planName.trim())
                 }
             },
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.common_cancel),
             onDismissButton = onDismiss,
             confirmEnabled = planName.isNotBlank()
         )

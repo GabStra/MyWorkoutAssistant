@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.google.android.gms.wearable.Wearable
 import java.util.concurrent.TimeUnit
 
@@ -21,11 +22,17 @@ class WorkoutHistorySyncWorker(
         return runCatching {
             val context = applicationContext
             val dataClient = Wearable.getDataClient(context)
-            val validPendingIds = AppDatabase.getDatabase(context)
-                .workoutHistoryDao()
-                .getAllWorkoutHistoriesByIsDone(true)
-                .map { it.id }
-                .toSet()
+            // Locate each queued history in whichever profile owns it. Validating against the
+            // active profile alone would prune, and so lose, uploads queued before a switch.
+            val profileByHistoryId = buildMap {
+                Profiles.profiles(context).forEach { profile ->
+                    AppDatabase.getDatabase(context, profile.id)
+                        .workoutHistoryDao()
+                        .getCompletedWorkoutHistoryIds()
+                        .forEach { put(it, profile.id) }
+                }
+            }
+            val validPendingIds = profileByHistoryId.keys
                 .intersect(PendingWorkoutHistorySyncTracker.getPendingIds(context))
             PendingWorkoutHistorySyncTracker.retain(context, validPendingIds)
 
@@ -45,24 +52,31 @@ class WorkoutHistorySyncWorker(
                 TAG,
                 "SYNC_TRACE event=worker_claim side=wear channel=history reason=${claim.reason.wireValue} claimedHistoryCount=${claim.claimedHistoryIds.size}"
             )
-            val result = WearCompletedHistorySyncSender.send(
-                context = context,
-                dataClient = dataClient,
-                historyIds = claim.claimedHistoryIds,
-                reason = claim.reason
-            )
-            val succeededHistoryIds = claim.claimedHistoryIds - result.failedHistoryIds
+            // A batch can span profiles; send each group through its own database.
+            val failedHistoryIds = claim.claimedHistoryIds
+                .groupBy { profileByHistoryId[it] ?: Profiles.activeProfileId(context) }
+                .flatMap { (profileId, ids) ->
+                    WearCompletedHistorySyncSender.send(
+                        context = context,
+                        dataClient = dataClient,
+                        historyIds = ids.toSet(),
+                        reason = claim.reason,
+                        profileId = profileId,
+                    ).failedHistoryIds
+                }
+                .toSet()
+            val succeededHistoryIds = claim.claimedHistoryIds - failedHistoryIds
             if (succeededHistoryIds.isNotEmpty()) {
                 PendingWorkoutHistorySyncTracker.dequeue(context, succeededHistoryIds)
             }
             val followUpDecision = WearOutboundWorkoutHistorySyncCoordinator.completeWorkerRetryBatch(
                 claim = claim,
-                failedHistoryIds = result.failedHistoryIds
+                failedHistoryIds = failedHistoryIds
             )
             if (followUpDecision is WearWorkoutHistorySyncDecision.EnqueueWorker) {
                 Log.w(
                     TAG,
-                    "SYNC_TRACE event=worker_retry side=wear channel=history reason=${followUpDecision.reason.wireValue} failedHistoryCount=${result.failedHistoryIds.size}"
+                    "SYNC_TRACE event=worker_retry side=wear channel=history reason=${followUpDecision.reason.wireValue} failedHistoryCount=${failedHistoryIds.size}"
                 )
                 Result.retry()
             } else {

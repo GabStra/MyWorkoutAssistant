@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncMappings
 import com.gabstra.myworkoutassistant.shared.datalayer.SensorSessionPayloadCodec
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureExportMetadata
@@ -115,6 +117,12 @@ class SensorSessionInboundReceiver(
     private var settleWindowJob: Job? = null
     private var processingJob: Job? = null
 
+    /** Profile the active sensor-session transaction belongs to; null means the active one. */
+    private var pendingSensorSessionProfileId: String? = null
+
+    private fun targetProfileId(): String? =
+        Profiles.resolvePayloadProfile(context, pendingSensorSessionProfileId)
+
     // region Event entry points
 
     fun handleStart(path: String, dataMap: DataMap) {
@@ -150,6 +158,9 @@ class SensorSessionInboundReceiver(
         currentTransactionId = transactionId
         latestRequestedRetryGeneration = 0
         currentState = SensorSessionInboundState.Receiving
+        // Sessions are filed under the profile the watch was training on. Kept raw here so an
+        // id for a profile deleted on this phone is dropped rather than misfiled.
+        pendingSensorSessionProfileId = dataMap.getString(PROFILE_ID_KEY)
         Log.d(
             TAG,
             "SYNC_TRACE event=start side=mobile direction=recv channel=sensorSession tx=$transactionId expectedChunks=$expected"
@@ -235,13 +246,17 @@ class SensorSessionInboundReceiver(
             return
         }
 
+        val discardProfileId = Profiles.resolvePayloadProfile(
+            context,
+            dataMap.getString(PROFILE_ID_KEY),
+        )
         scope.launch(Dispatchers.IO) {
             runCatching {
                 withContext(NonCancellable) {
-                    val db = AppDatabase.getDatabase(context)
-                    val session = db.motionCaptureSessionDao().getById(sessionId)
-                    db.motionCaptureSyncDao().deleteSegmentsBySessionId(sessionId)
-                    db.motionCaptureSyncDao().deleteSessionById(sessionId)
+                    val db = discardProfileId?.let { AppDatabase.getDatabase(context, it) }
+                    val session = db?.motionCaptureSessionDao()?.getById(sessionId)
+                    db?.motionCaptureSyncDao()?.deleteSegmentsBySessionId(sessionId)
+                    db?.motionCaptureSyncDao()?.deleteSessionById(sessionId)
                     session?.sessionDirectoryName?.let { deleteSessionDirectory(it) }
                 }
                 if (!transactionId.isNullOrBlank()) {
@@ -348,8 +363,13 @@ class SensorSessionInboundReceiver(
             ?: throw IllegalStateException("Sensor session metadata.json was empty (tx=$transactionId)")
         val sessionDirectory = resolveSessionDirectory(metadata.session.sessionDirectoryName)
 
+        val sessionProfileId = targetProfileId()
+            ?: throw IllegalStateException(
+                "Sensor session names a profile deleted on this phone (tx=$transactionId)"
+            )
+
         withContext(NonCancellable + Dispatchers.IO) {
-            val db = AppDatabase.getDatabase(context)
+            val db = AppDatabase.getDatabase(context, sessionProfileId)
             db.motionCaptureSessionDao().insert(MotionCaptureSyncMappings.sessionRecordToEntity(metadata.session))
             metadata.coarseReviewedSegments.forEach { segment ->
                 db.motionCaptureSegmentDao().insert(MotionCaptureSyncMappings.segmentRecordToEntity(segment))

@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -46,6 +47,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -147,8 +149,8 @@ fun WorkoutCompleteScreen(
 
     CustomDialogYesOnLongPress(
         show = showNextDialog,
-        title =  "Workout complete",
-        message = "Return to the main menu?",
+        title = stringResource(R.string.wear_workout_complete),
+        message = stringResource(R.string.wear_workout_complete_return_prompt),
         handleYesClick = ::returnToWorkoutSelection,
         handleNoClick = {
             viewModel.closeCustomDialog()
@@ -176,7 +178,7 @@ private fun WorkoutCompleteScreenContent(
     onDoneClick: () -> Unit,
     progressionContent: @Composable ColumnScope.() -> Unit
 ) {
-    val headerStyle = MaterialTheme.typography.bodyExtraSmall
+    val headerStyle = MaterialTheme.typography.bodySmall
 
     Column(
         verticalArrangement = Arrangement.SpaceBetween,
@@ -198,7 +200,7 @@ private fun WorkoutCompleteScreenContent(
             verticalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {
             Text(
-                text = "COMPLETED",
+                text = stringResource(R.string.wear_completed_label),
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
@@ -214,7 +216,7 @@ private fun WorkoutCompleteScreenContent(
             ) {
                 Icon(
                     imageVector = Icons.Default.Check,
-                    contentDescription = "Workout complete",
+                    contentDescription = stringResource(R.string.wear_workout_complete),
                     modifier = Modifier.size(48.dp),
                     tint = Green,
                 )
@@ -226,7 +228,7 @@ private fun WorkoutCompleteScreenContent(
         if (progressionDataCalculated) {
             WearPrimaryButton(
                 modifier = if (progressionIsEmpty) Modifier else Modifier.padding(top = 5.dp),
-                text = "Done",
+                text = stringResource(R.string.wear_done),
                 onClick = onDoneClick,
             )
         }

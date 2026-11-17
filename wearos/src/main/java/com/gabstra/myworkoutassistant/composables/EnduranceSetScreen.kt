@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -31,14 +32,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
@@ -166,7 +169,7 @@ fun EnduranceSetScreen (
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle = remember(typography) {
-        typography.numeralSmall.exerciseTimerValueStyle()
+        typography.numeralSmall
     }
 
     fun pauseRunningTimerForEditMode() {
@@ -350,6 +353,7 @@ fun EnduranceSetScreen (
         }
         Column(
             modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(7.5.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -376,13 +380,14 @@ fun EnduranceSetScreen (
             }
             if (showCalories && liveCaloriesKcal > 0) {
                 SetValueSection(
-                    label = "CALORIES",
+                    label = stringResource(R.string.set_label_calories),
                     headerStyle = MaterialTheme.typography.bodyExtraSmall,
                 ) {
-                    Text(
-                        text = "≈ $liveCaloriesKcal kcal · $liveCaloriesPerMinute/min",
-                        style = MaterialTheme.typography.bodyExtraSmall,
-                        color = MaterialTheme.colorScheme.tertiaryContent
+                    TightNumericText(
+                        text = stringResource(R.string.set_calories_value, liveCaloriesKcal, liveCaloriesPerMinute),
+                        style = MaterialTheme.typography.numeralMicro,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 }
             }
@@ -521,7 +526,7 @@ fun EnduranceSetScreen (
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp, alignment = Alignment.Top)
         ) {
-            SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+            SetValueSection(label = stringResource(R.string.set_label_timer), headerStyle = headerStyle) {
                 if (isTimerInEditMode) {
                     textComposable()
                 } else {
@@ -531,7 +536,7 @@ fun EnduranceSetScreen (
 
             val timedSetGoalLabel = buildTimedSetGoalLabel(state.set)
             if (timedSetGoalLabel != null) {
-                SetValueSection(label = "GOAL", headerStyle = headerStyle) {
+                SetValueSection(label = stringResource(R.string.set_label_goal), headerStyle = headerStyle) {
                     Text(
                         text = timedSetGoalLabel,
                         style = itemStyle,
@@ -560,24 +565,25 @@ fun EnduranceSetScreen (
                             autoStartJob?.cancel()
                         }
                     },
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
+                    colors = wearColoredIconButtonColors(containerColor = Green),
                 ) {
                     Icon(
                         modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Start",
+                        contentDescription = stringResource(R.string.set_cd_start),
                         tint = androidx.wear.compose.material3.LocalContentColor.current
                     )
                 }
             }
 
             if (showRepeatButton) {
+                val repeatSetDescription = stringResource(R.string.set_cd_repeat_set)
                 EnhancedIconButton(
                     modifier = Modifier
                         .size(WearStandardIconButtonSize)
-                        .semantics { contentDescription = "Repeat set" },
+                        .semantics { contentDescription = repeatSetDescription },
                     hitBoxScale = 1f,
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    colors = wearColoredIconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
                     onClick = {
                         autoStartJob?.cancel()
                         viewModel.workoutTimerService.unregisterTimer(set.id)
@@ -609,7 +615,7 @@ fun EnduranceSetScreen (
                     Icon(
                         modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Replay,
-                        contentDescription = "Repeat set",
+                        contentDescription = stringResource(R.string.set_cd_repeat_set),
                         tint = androidx.wear.compose.material3.LocalContentColor.current
                     )
                 }
@@ -648,8 +654,8 @@ fun EnduranceSetScreen (
                         state.currentSetData = currentSet
                     },
                     content = {
-                        SetValueSection(label = "LOAD", headerStyle = headerStyle) {
-                            Text(
+                        SetValueSection(label = stringResource(R.string.set_label_load), headerStyle = headerStyle) {
+                            TightNumericText(
                                 text = currentSet.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" } ?: "-",
                                 style = itemStyle,
                             )
@@ -682,7 +688,7 @@ fun EnduranceSetScreen (
                         hapticsViewModel.doGentleVibration()
                     },
                     content = {
-                        SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                        SetValueSection(label = stringResource(R.string.set_label_timer), headerStyle = headerStyle) {
                             textComposable()
                         }
                     }
@@ -699,8 +705,9 @@ fun EnduranceSetScreen (
                     ) {
                         exerciseTitleComposable()
                         currentSet.actualWeight?.let { weight ->
-                            Text(
-                                text = "Load ${equipment?.formatWeight(weight) ?: "$weight kg"}",
+                            LabeledNumericValue(
+                                label = stringResource(R.string.set_load_label),
+                                value = equipment?.formatWeight(weight) ?: "${weight} kg",
                                 style = MaterialTheme.typography.labelMedium,
                                 modifier = Modifier.combinedClickable(
                                     onClick = {},
@@ -721,7 +728,7 @@ fun EnduranceSetScreen (
                             extraInfo(state)
                         }
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(5.dp))
                     SetScreen(customModifier = Modifier.fillMaxWidth())
                 }
             }

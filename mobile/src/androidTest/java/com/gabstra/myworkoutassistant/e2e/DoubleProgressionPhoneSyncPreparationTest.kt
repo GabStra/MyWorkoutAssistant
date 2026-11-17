@@ -37,7 +37,7 @@ class DoubleProgressionPhoneSyncPreparationTest {
         db.exerciseInfoDao().deleteAll()
         db.exerciseSessionProgressionDao().deleteAll()
 
-        WorkoutStoreRepository(context.filesDir).saveWorkoutStore(
+        WorkoutStoreRepository.forActiveProfile(context).saveWorkoutStore(
             DoubleProgressionRoundTripBadgePhoneWorkoutStoreFixture.createWorkoutStore()
         )
         seedDeterministicPhoneHistory(db)

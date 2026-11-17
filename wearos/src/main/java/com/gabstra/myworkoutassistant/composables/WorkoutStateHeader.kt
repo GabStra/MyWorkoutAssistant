@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -29,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.SupersetCadenceMode
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -166,7 +169,7 @@ fun WorkoutStateHeader(
                 Icon(
                     modifier = Modifier.size(15.dp),
                     imageVector = Icons.Filled.AccessTimeFilled,
-                    contentDescription = "rest timer",
+                    contentDescription = stringResource(R.string.page_header_cd_rest_timer),
                 )
                 TimeViewer(
                     seconds = restTimerSeconds.coerceAtLeast(0),
@@ -183,7 +186,7 @@ fun WorkoutStateHeader(
                 Icon(
                     modifier = Modifier.size(15.dp),
                     imageVector = Icons.Filled.AccessTimeFilled,
-                    contentDescription = "set timer",
+                    contentDescription = stringResource(R.string.page_header_cd_set_timer),
                 )
                 TimeViewer(
                     seconds = setTimerSeconds.coerceAtLeast(0),
@@ -199,7 +202,11 @@ fun WorkoutStateHeader(
             ) {
                 if (activeSupersetTimer?.isCadence == true) {
                     val cadenceLabel =
-                        if (activeSupersetTimer?.cadenceMode == SupersetCadenceMode.MEMBER) "EMOM" else "ROUND"
+                        if (activeSupersetTimer?.cadenceMode == SupersetCadenceMode.MEMBER) {
+                            stringResource(R.string.page_header_emom)
+                        } else {
+                            stringResource(R.string.page_header_round)
+                        }
                     Text(
                         text = cadenceLabel,
                         color = MaterialTheme.colorScheme.onBackground,
@@ -209,7 +216,7 @@ fun WorkoutStateHeader(
                 Icon(
                     modifier = Modifier.size(15.dp),
                     imageVector = Icons.Filled.AccessTimeFilled,
-                    contentDescription = "superset timer",
+                    contentDescription = stringResource(R.string.page_header_cd_superset_timer),
                 )
                 TimeViewer(
                     seconds = (supersetTimerUiState?.displaySeconds ?: 0).coerceAtLeast(0),
@@ -258,11 +265,11 @@ fun WorkoutStateHeader(
                 Icon(
                     modifier = Modifier.size(15.dp),
                     imageVector = Icons.Filled.AccessTimeFilled,
-                    contentDescription = "clock",
+                    contentDescription = stringResource(R.string.page_header_cd_clock),
                 )
-                Text(
+                TightNumericText(
                     text = clockText,
-                    style = captionStyle,
+                    style = MaterialTheme.typography.numeralMicro,
                     textAlign = TextAlign.Center
                 )
             }

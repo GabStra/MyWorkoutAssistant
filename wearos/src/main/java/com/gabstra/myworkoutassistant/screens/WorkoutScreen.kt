@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -41,10 +42,12 @@ import androidx.navigation.NavController
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.HeartRateLive
+import com.gabstra.myworkoutassistant.composables.TightNumericText
 import com.gabstra.myworkoutassistant.composables.HeartRateStatus
 import com.gabstra.myworkoutassistant.composables.HrStatusBadge
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
@@ -70,6 +73,7 @@ import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.formatWeight
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -90,6 +94,8 @@ import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.google.android.horologist.compose.ambient.AmbientAwareTime
 import com.google.android.horologist.compose.ambient.AmbientState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
 
@@ -103,16 +109,18 @@ internal data class WorkoutPhaseRenderModel(
 
 internal fun resolveWorkoutPhaseRenderModel(
     sessionPhase: WorkoutSessionPhase,
-    isRefreshing: Boolean
+    isRefreshing: Boolean,
+    reloadingMessage: String,
+    resumingMessage: String
 ): WorkoutPhaseRenderModel {
     if (isRefreshing) {
-        return WorkoutPhaseRenderModel(loadingMessage = "Reloading your workout")
+        return WorkoutPhaseRenderModel(loadingMessage = reloadingMessage)
     }
 
     return when (sessionPhase) {
         WorkoutSessionPhase.PREPARING,
         WorkoutSessionPhase.READY -> WorkoutPhaseRenderModel(renderPreparing = true)
-        WorkoutSessionPhase.RESUMING -> WorkoutPhaseRenderModel(loadingMessage = "Resuming your workout")
+        WorkoutSessionPhase.RESUMING -> WorkoutPhaseRenderModel(loadingMessage = resumingMessage)
         WorkoutSessionPhase.ACTIVE -> WorkoutPhaseRenderModel(
             showHeader = true,
             renderActiveContent = true
@@ -156,14 +164,24 @@ fun WorkoutScreen(
     }
     val screenState by viewModel.screenState.collectAsState()
     val workoutState = screenState.workoutState
-    val timerUiStates by viewModel.workoutTimerService.timerUiStates.collectAsState()
-    val activeTimerUiState = when (workoutState) {
-        is WorkoutState.Rest -> timerUiStates[workoutState.set.id]
-        is WorkoutState.Set -> timerUiStates[workoutState.set.id]
+    val activeTimerSetId = when (workoutState) {
+        is WorkoutState.Rest -> workoutState.set.id
+        is WorkoutState.Set -> workoutState.set.id
         else -> null
     }
-    val notificationTimerUiState = activeTimerUiState?.copy(
-        isRunning = activeTimerUiState.isRunning && !screenState.isPaused,
+    // Only the active timer can affect this screen; selecting it keeps unrelated timer ticks
+    // (e.g. superset cap/cadence) from recomposing the whole workout subtree.
+    val activeTimerUiStateFlow = remember(viewModel.workoutTimerService, activeTimerSetId) {
+        viewModel.workoutTimerService.timerUiStates
+            .map { states -> activeTimerSetId?.let { states[it] } }
+            .distinctUntilChanged()
+    }
+    val activeTimerUiState by activeTimerUiStateFlow.collectAsState(
+        initial = viewModel.workoutTimerService.timerUiStates.value[activeTimerSetId],
+    )
+    val activeTimerUiStateValue = activeTimerUiState
+    val notificationTimerUiState = activeTimerUiStateValue?.copy(
+        isRunning = activeTimerUiStateValue.isRunning && !screenState.isPaused,
     )
     var hrStatus by remember(workoutState) { mutableStateOf<HeartRateStatus?>(null) }
     val selectedWorkout = screenState.selectedWorkout
@@ -190,10 +208,14 @@ fun WorkoutScreen(
         externalInitializedFlags[index].value && !externalSkippedFlags[index].value
     }
     val isRefreshing = screenState.isRefreshing
-    val renderModel = remember(sessionPhase, isRefreshing) {
+    val reloadingMessage = stringResource(R.string.wear_reloading_workout)
+    val resumingMessage = stringResource(R.string.wear_resuming_workout)
+    val renderModel = remember(sessionPhase, isRefreshing, reloadingMessage, resumingMessage) {
         resolveWorkoutPhaseRenderModel(
             sessionPhase = sessionPhase,
-            isRefreshing = isRefreshing
+            isRefreshing = isRefreshing,
+            reloadingMessage = reloadingMessage,
+            resumingMessage = resumingMessage
         )
     }
     val onBeforeGoHome = remember(selectedWorkout) {
@@ -303,7 +325,7 @@ fun WorkoutScreen(
 
     CustomDialogYesOnLongPress(
         show = showWorkoutInProgressDialog,
-        title = "Workout in progress",
+        title = stringResource(R.string.wear_workout_in_progress_dialog),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
 
@@ -382,13 +404,13 @@ fun WorkoutScreen(
                     viewModel.lightScreenUp()
                 }
                 is WorkoutState.CalibrationLoadSelection -> {
-                    Toast.makeText(context, "Double-press to confirm the weight.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.wear_double_press_confirm_weight), Toast.LENGTH_SHORT).show()
                 }
                 is WorkoutState.CalibrationRIRSelection -> {
-                    Toast.makeText(context, "Double-press to confirm RIR.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.wear_double_press_confirm_rir), Toast.LENGTH_SHORT).show()
                 }
                 is WorkoutState.AutoRegulationRIRSelection -> {
-                    Toast.makeText(context, "Double-press to confirm RIR.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.wear_double_press_confirm_rir), Toast.LENGTH_SHORT).show()
                 }
                 else -> {
                     // Keep existing behavior for other states
@@ -503,9 +525,9 @@ fun WorkoutScreen(
                         TutorialOverlay(
                             visible = true,
                             steps = listOf(
-                                TutorialStep("Heart rate", "Tap the number on the left to switch between views like BPM and zone."),
-                                TutorialStep("Workout progress", "The right side shows where you are in the workout so you can check the current exercise and set at a glance."),
-                                TutorialStep("Finish the set", "Swipe to the buttons page and tap Complete Set. You can also press Back once and hold the checkmark.")
+                                TutorialStep(stringResource(R.string.wear_tutorial_heart_rate_title), stringResource(R.string.wear_tutorial_heart_rate_desc)),
+                                TutorialStep(stringResource(R.string.wear_tutorial_workout_progress_title), stringResource(R.string.wear_tutorial_workout_progress_desc)),
+                                TutorialStep(stringResource(R.string.wear_tutorial_complete_set_title), stringResource(R.string.wear_tutorial_complete_set_hint))
                             ),
                             onDismiss = onDismissHeartRateTutorial,
                             hapticsViewModel = hapticsViewModel
@@ -678,10 +700,10 @@ fun WorkoutScreen(
                                             TutorialOverlay(
                                                 visible = true,
                                                 steps = listOf(
-                                                    TutorialStep("Edit the set", "Long press reps, weight, or time to edit that value, then use + and - to adjust it."),
-                                                    TutorialStep("More views", "Swipe left or right for extra pages like notes, progression, plates, and other set details."),
-                                                    TutorialStep("Restore quickly", "While editing, double tap a value to restore the previous value when available."),
-                                                    TutorialStep("Save the set", "Swipe to the buttons page and tap Complete Set. You can also press Back once and hold the checkmark.")
+                                                    TutorialStep(stringResource(R.string.wear_tutorial_edit_set_title), stringResource(R.string.wear_tutorial_edit_set_desc)),
+                                                    TutorialStep(stringResource(R.string.wear_tutorial_more_views_title), stringResource(R.string.wear_tutorial_more_views_desc)),
+                                                    TutorialStep(stringResource(R.string.wear_tutorial_restore_title), stringResource(R.string.wear_tutorial_restore_desc)),
+                                                    TutorialStep(stringResource(R.string.wear_tutorial_save_set_title), stringResource(R.string.wear_tutorial_complete_set_hint))
                                                 ),
                                                 onDismiss = onDismissSetScreenTutorial,
                                                 hapticsViewModel = hapticsViewModel
@@ -734,10 +756,10 @@ fun WorkoutScreen(
                                             TutorialOverlay(
                                                 visible = true,
                                                 steps = listOf(
-                                                    TutorialStep("Rest timer", "Rest starts automatically. Long press the timer, then use + and - to adjust it."),
-                                                    TutorialStep("Preview exercises", "Tap the left or right side to check the previous or next exercise without leaving rest."),
-                                                    TutorialStep("Wake-up cue", "The watch turns the screen on when 5 seconds remain so you do not miss the next set."),
-                                                    TutorialStep("Skip early", "Press Back once, then hold the checkmark to end the rest early.")
+                                                    TutorialStep(stringResource(R.string.wear_tutorial_rest_timer_title), stringResource(R.string.wear_tutorial_rest_timer_desc)),
+                                                    TutorialStep(stringResource(R.string.wear_tutorial_preview_exercises_title), stringResource(R.string.wear_tutorial_preview_exercises_desc)),
+                                                    TutorialStep(stringResource(R.string.wear_tutorial_wake_up_title), stringResource(R.string.wear_tutorial_wake_up_desc)),
+                                                    TutorialStep(stringResource(R.string.wear_tutorial_skip_early_title), stringResource(R.string.wear_tutorial_skip_early_desc))
                                                 ),
                                                 onDismiss = onDismissRestScreenTutorial,
                                                 hapticsViewModel = hapticsViewModel
@@ -765,8 +787,8 @@ fun WorkoutScreen(
                                                 showTimerCompletedNotification(
                                                     context = context,
                                                     workoutGlobalId = selectedWorkout.globalId,
-                                                    title = "Rest finished",
-                                                    message = "Time for your next set"
+                                                    title = context.getString(R.string.notif_rest_finished),
+                                                    message = context.getString(R.string.notif_time_for_next_set)
                                                 )
                                             }
                                             viewModel.storeSetData()
@@ -950,11 +972,10 @@ private fun AmbientWorkoutOverlayContent(
 
             if (!model.progressText.isNullOrBlank()) {
                 Spacer(Modifier.size(10.dp))
-                Text(
+                TightNumericText(
                     text = "${model.progressText}",
                     color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
+                    style = MaterialTheme.typography.numeralMicro,
                     textAlign = TextAlign.Center
                 )
             }
@@ -981,7 +1002,7 @@ private fun AmbientWorkoutMetricsRow(metrics: List<AmbientWorkoutMetric>) {
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Text(
+                TightNumericText(
                     modifier = Modifier.semantics {
                         contentDescription = "Ambient workout ${metric.label.lowercase()}: ${metric.value}"
                     },
@@ -989,8 +1010,6 @@ private fun AmbientWorkoutMetricsRow(metrics: List<AmbientWorkoutMetric>) {
                     color = Color.White,
                     style = MaterialTheme.typography.numeralSmall.copy(fontWeight = FontWeight.Medium),
                     textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

@@ -29,8 +29,8 @@ internal object DataLayerSyncForegroundHelper {
     fun startFromServiceCreated(service: Service) {
         postForeground(
             service,
-            title = "Listening for phone",
-            text = "Ready to receive workout updates…"
+            title = service.getString(R.string.sync_notif_listening_title),
+            text = service.getString(R.string.sync_notif_listening_text)
         )
     }
 
@@ -40,8 +40,8 @@ internal object DataLayerSyncForegroundHelper {
     fun startIfNeeded(service: Service) {
         postForeground(
             service,
-            title = "Syncing with phone",
-            text = "Updating workout data…"
+            title = service.getString(R.string.sync_notif_syncing_title),
+            text = service.getString(R.string.sync_notif_syncing_text)
         )
     }
 
@@ -49,10 +49,10 @@ internal object DataLayerSyncForegroundHelper {
         val nm = service.getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Phone sync",
+            service.getString(R.string.sync_notif_channel_phone_sync),
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Keeps Wear Data Layer active while the phone syncs"
+            description = service.getString(R.string.sync_notif_channel_phone_sync_desc)
             setShowBadge(false)
         }
         nm.createNotificationChannel(channel)

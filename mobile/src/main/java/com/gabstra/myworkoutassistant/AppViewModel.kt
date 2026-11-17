@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
 import com.gabstra.myworkoutassistant.shared.WorkoutObjectiveVersionResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
+import com.gabstra.myworkoutassistant.shared.RecurringWorkoutAuthoring
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
@@ -39,19 +40,23 @@ import com.gabstra.myworkoutassistant.shared.deleteExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.effectiveFamilyId
 import com.gabstra.myworkoutassistant.shared.addExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.normalizeExerciseFamilyMovements
+import com.gabstra.myworkoutassistant.shared.normalizedForImport
 import com.gabstra.myworkoutassistant.shared.normalizeExerciseFamilyMovementOwnership
 import com.gabstra.myworkoutassistant.shared.updateExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommandKeys
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommandType
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
@@ -72,6 +77,8 @@ import java.util.UUID
 
 sealed class ScreenData() {
     class Workouts(val selectedTabIndex : Int) : ScreenData()
+    class Plans() : ScreenData()
+    class SessionPrescriptions(val sessionId: UUID) : ScreenData()
     class Settings() : ScreenData()
     class ErrorLogs() : ScreenData()
     class NewWorkout(val workoutPlanId: UUID? = null) : ScreenData()
@@ -146,6 +153,8 @@ sealed class ScreenData() {
     fun toSaveableKey(): String {
         return when (this) {
             is Workouts -> "Workouts_${selectedTabIndex}"
+            is Plans -> "Plans"
+            is SessionPrescriptions -> "SessionPrescriptions_${sessionId}"
             is Settings -> "Settings"
             is ErrorLogs -> "ErrorLogs"
             is NewWorkout -> "NewWorkout_${workoutPlanId?.toString() ?: "null"}"
@@ -186,6 +195,8 @@ sealed class ScreenData() {
     fun screenIdentityKey(): String {
         return when (this) {
             is Workouts -> "Workouts"
+            is Plans -> "Plans"
+            is SessionPrescriptions -> "SessionPrescriptions_${sessionId}"
             is Settings -> "Settings"
             is ErrorLogs -> "ErrorLogs"
             is NewWorkout -> "NewWorkout_${workoutPlanId?.toString() ?: "null"}"
@@ -268,7 +279,7 @@ class AppViewModel(
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
-                val repo = WorkoutStoreRepository(app.filesDir)
+                val repo = WorkoutStoreRepository.forActiveProfile(app)
                 val store = withContext(Dispatchers.IO) { repo.getWorkoutStore() }
                 validateWorkoutStoreForRuntimeUse(store)
                 _workoutStoreValidationError.value = null
@@ -304,6 +315,8 @@ class AppViewModel(
                 )
                 dataMap.putString(WorkoutSessionCommandKeys.WORKOUT_ID, workoutId.toString())
                 dataMap.putBoolean(WorkoutSessionCommandKeys.ENABLED, enabled)
+                // Every connected watch receives this item; only the one on this profile acts.
+                dataMap.putString(PROFILE_ID_KEY, Profiles.activeProfileId(application))
                 dataMap.putLong(
                     WorkoutSessionCommandKeys.SENT_AT_EPOCH_MS,
                     System.currentTimeMillis()
@@ -582,9 +595,7 @@ class AppViewModel(
             { EquipmentType.ACCESSORY.name },
             "Accessory equipment",
         )
-        val importedDefinitions = exerciseLibrary.exerciseDefinitions.map { definition ->
-            definition.copy(exerciseFamilyId = definition.effectiveFamilyId())
-        }.normalizeExerciseFamilyMovements()
+        val importedDefinitions = exerciseLibrary.exerciseDefinitions.normalizedForImport()
         val importedDefinitionsById = importedDefinitions.associateBy { it.id }
         importedDefinitions.forEach { importedDefinition ->
             val existingDefinition = workoutStore.exerciseDefinitions
@@ -1237,6 +1248,33 @@ class AppViewModel(
 
     fun updateWorkoutVersioned(oldWorkout: Workout, updatedWorkout: Workout, hasHistory: Boolean) {
         workouts = applyWorkoutUpdate(workouts, oldWorkout, updatedWorkout, hasHistory)
+    }
+
+    suspend fun startRecurringSession(workoutId: UUID) {
+        val currentWorkouts = workouts
+        val workout = currentWorkouts.singleOrNull { it.id == workoutId }
+            ?: error("The selected workout is no longer available.")
+        val updatedWorkout = RecurringWorkoutAuthoring.startFamily(
+            workout = workout,
+            defaultLoadPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD,
+        )
+        val hasHistory = withContext(Dispatchers.IO) {
+            val dao = AppDatabase.getDatabase(getApplication()).workoutHistoryDao()
+            WorkoutManager.workoutVersionIds(workout, currentWorkouts)
+                .any { versionId -> dao.workoutHistoryExistsByWorkoutId(versionId) }
+        }
+        check(workouts == currentWorkouts) {
+            "The workout list changed while starting the recurring session. Try again."
+        }
+        val updatedWorkouts = if (hasHistory) {
+            WorkoutManager.updateWorkout(currentWorkouts, workout, updatedWorkout)
+        } else {
+            WorkoutManager.updateWorkoutOld(currentWorkouts, workout, updatedWorkout)
+        }
+        val candidateStore = workoutStore.copy(workouts = updatedWorkouts)
+        validateWorkoutStoreForRuntimeUse(candidateStore)
+        updateWorkoutStore(candidateStore)
+        scheduleWorkoutSave(getApplication())
     }
 
     fun updateWorkoutComponentVersioned(

@@ -14,6 +14,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -83,7 +84,7 @@ class WorkoutAlarmActivity : ComponentActivity() {
             MyWorkoutAssistantTheme {
                 AlarmScreen(
                     title = title,
-                    subtitle = label ?: "Time for your workout", //getString(R.string.alarm_time_for_your_workout),
+                    subtitle = label ?: stringResource(R.string.wear_alarm_time_for_your_workout),
                     onStart = { startWorkoutAndDismiss() },
                     onDismiss = { stopAlertAndFinish() }
                 )
@@ -179,7 +180,7 @@ class WorkoutAlarmActivity : ComponentActivity() {
         val name = runCatching {
             if (workoutIdStr.isNullOrBlank()) null
             else {
-                val repo = WorkoutStoreRepository(filesDir)
+                val repo = WorkoutStoreRepository.forActiveProfile(this)
                 val ws = repo.getWorkoutStore()
                 val uuid = UUID.fromString(workoutIdStr)
                 ws.workouts.find { it.globalId == uuid }?.name

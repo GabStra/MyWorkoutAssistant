@@ -57,6 +57,9 @@ import com.gabstra.myworkoutassistant.composables.HistoryGraphTabColumn
 import com.gabstra.myworkoutassistant.composables.HistoryFiltersBlock
 import com.gabstra.myworkoutassistant.composables.HistoryNavigationCard
 import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
+import com.gabstra.myworkoutassistant.composables.historyExerciseDisplayName
+import com.gabstra.myworkoutassistant.composables.WorkoutHistoryOriginDetails
+import com.gabstra.myworkoutassistant.composables.workoutHistoryDateTimeLabel
 import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
 import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibility
 import com.gabstra.myworkoutassistant.composables.historyDisplayLabel
@@ -80,6 +83,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -244,6 +248,11 @@ fun ExerciseHistoryScreen(
                     else -> 0.0
                 }
             }
+            val hasIncompatibleSnapshot = completedExerciseSetHistories.any { history ->
+                history.exerciseNameSnapshot?.takeIf { it.isNotBlank() }
+                    ?.let { it != exercise.name } == true ||
+                    history.equipmentIdSnapshot?.let { it != exercise.equipmentId } == true
+            }
 
             val selectedSupersetId = setHistories.firstNotNullOfOrNull { it.supersetId }
                 ?: supersetByExerciseId[exercise.id]
@@ -294,10 +303,11 @@ fun ExerciseHistoryScreen(
                 }
             }
 
-            volumes.add(Pair(pointIndex, volume))
-            durations.add(Pair(pointIndex, duration))
-
-            oneRepMaxes.add(Pair(pointIndex, oneRepMax.round(2)))
+            if (!hasIncompatibleSnapshot) {
+                volumes.add(Pair(pointIndex, volume))
+                durations.add(Pair(pointIndex, duration))
+                oneRepMaxes.add(Pair(pointIndex, oneRepMax.round(2)))
+            }
         }
 
         val resolvedSelection = resolveSelectedWorkoutHistory(
@@ -459,8 +469,7 @@ fun ExerciseHistoryScreen(
             contentPadding = PaddingValues(horizontal = Spacing.xs),
         ) {
             Text(
-                text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
-                    selectedWorkoutHistory!!.time.format(timeFormatter),
+                text = workoutHistoryDateTimeLabel(selectedWorkoutHistory!!, dateFormatter, timeFormatter),
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.titleMedium,
@@ -496,8 +505,7 @@ fun ExerciseHistoryScreen(
                     setHistoriesByWorkoutHistoryId.isNotEmpty()
                 ) {
                     Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
-                        val sessionLabel = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
-                            selectedWorkoutHistory!!.time.format(timeFormatter)
+                        val sessionLabel = workoutHistoryDateTimeLabel(selectedWorkoutHistory!!, dateFormatter, timeFormatter)
                         HistoryFiltersBlock(
                             isExpanded = isHistoryFiltersExpanded,
                             onExpandedChange = onHistoryFiltersExpandedChange,
@@ -507,6 +515,7 @@ fun ExerciseHistoryScreen(
                             Spacer(modifier = Modifier.height(Spacing.xs))
                             workoutSelector()
                         }
+                        WorkoutHistoryOriginDetails(selectedWorkoutHistory!!)
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                 }
@@ -610,7 +619,8 @@ fun ExerciseHistoryScreen(
                             setHistoriesByWorkoutHistoryId[selectedWorkoutHistory!!.id]!!
 
                         val hasTarget =
-                            exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
+                            selectedWorkoutHistory!!.knownStartTimeOrNull() != null &&
+                                exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
 
                         val (targetCounter, targetTotal) = remember(
                             hasTarget,
@@ -683,6 +693,10 @@ fun ExerciseHistoryScreen(
                                             .padding(16.dp),
                                         verticalArrangement = Arrangement.spacedBy(Spacing.lg),
                                     ) {
+                                        val performedExerciseName = historyExerciseDisplayName(
+                                            exercise.name,
+                                            setHistories.selectedExerciseSetHistories,
+                                        )
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -705,6 +719,13 @@ fun ExerciseHistoryScreen(
                                                 style = MaterialTheme.typography.titleMedium,
                                                 fontWeight = FontWeight.SemiBold,
                                                 color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                        }
+                                        if (performedExerciseName != exercise.name) {
+                                            Text(
+                                                text = "Performed: $performedExerciseName",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                         }
 

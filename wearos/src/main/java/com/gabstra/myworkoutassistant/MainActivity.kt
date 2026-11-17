@@ -89,6 +89,9 @@ import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
+import com.gabstra.myworkoutassistant.sync.publishProfileBinding
+import com.gabstra.myworkoutassistant.sync.requestProfileIndex
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.model.IncompleteWorkout
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOptions
@@ -113,7 +116,7 @@ class MainActivity : ComponentActivity() {
 
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
-    private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
+    private val workoutStoreRepository get() = WorkoutStoreRepository.forActiveProfile(this)
 
     private val appViewModel: AppViewModel by viewModels()
 
@@ -182,6 +185,35 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalHorologistApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Follow the profile selected on the phone. Only safe here, before any profile-scoped
+        // state is loaded; see Profiles.applyRemoteIndexJson.
+        Profiles.alignActiveProfileWithPhone(applicationContext)
+        // Keep the phone's binding for this watch current (covers a switch made off-screen).
+        // Waits for the phone's published index: binding before it arrives would claim this
+        // watch's default profile, which on a fresh install is not the one the phone is showing.
+        lifecycleScope.launch(Dispatchers.IO) {
+            val remoteProfileId = Profiles.remoteActiveProfileId(applicationContext)
+            if (remoteProfileId == null) {
+                // Never been told which profiles exist (fresh install): ask before claiming one.
+                android.util.Log.d("ProfileBind", "No remote profile known; requesting the index")
+                requestProfileIndex(applicationContext)
+                return@launch
+            }
+            // Nothing stored yet: follow the phone rather than claiming our own empty default.
+            if (!Profiles.hasStoredData(
+                    applicationContext,
+                    Profiles.activeProfileId(applicationContext),
+                )
+            ) {
+                Profiles.alignActiveProfileWithPhone(applicationContext)
+            }
+            val localProfileId = Profiles.activeProfileId(applicationContext)
+            val hasData = Profiles.hasStoredData(applicationContext, localProfileId)
+            if (!hasData || localProfileId != remoteProfileId) {
+                publishProfileBinding(applicationContext, localProfileId)
+            }
+        }
 
         appViewModel.initApplicationContext(applicationContext)
 
@@ -304,13 +336,15 @@ fun WearApp(
             )
         }
 
-        appViewModel.initExerciseHistoryDao(localContext)
-        appViewModel.initRestHistoryDao(localContext)
-        appViewModel.initWorkoutHistoryDao(localContext)
-        appViewModel.initWorkoutScheduleDao(localContext)
-        appViewModel.initWorkoutRecordDao(localContext)
-        appViewModel.initExerciseInfoDao(localContext)
-        appViewModel.initExerciseSessionProgressionDao(localContext)
+        remember(localContext) {
+            appViewModel.initExerciseHistoryDao(localContext)
+            appViewModel.initRestHistoryDao(localContext)
+            appViewModel.initWorkoutHistoryDao(localContext)
+            appViewModel.initWorkoutScheduleDao(localContext)
+            appViewModel.initWorkoutRecordDao(localContext)
+            appViewModel.initExerciseInfoDao(localContext)
+            appViewModel.initExerciseSessionProgressionDao(localContext)
+        }
 
         var initialized by remember { mutableStateOf(false) }
 
@@ -323,7 +357,6 @@ fun WearApp(
         var showRestScreenTutorial by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
-            val startTime = System.currentTimeMillis()
             try {
                 val workoutStore = withContext(Dispatchers.IO) {
                     workoutStoreRepository.getWorkoutStore()
@@ -355,11 +388,6 @@ fun WearApp(
                 }
 
                 appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
-
-                val now = System.currentTimeMillis()
-                if (now - startTime < 2000) {
-                    delay(2000 - (now - startTime))
-                }
 
                 initialized = true
 
@@ -468,7 +496,7 @@ fun WearApp(
                         (localContext.applicationContext as? MyApplication)?.getErrorLogs()
                             ?: emptyList()
                     if (errorLogs.isNotEmpty()) {
-                        val success = sendErrorLogsToMobile(dataClient, errorLogs)
+                        val success = sendErrorLogsToMobile(localContext, dataClient, errorLogs)
                         if (success) {
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
@@ -493,7 +521,11 @@ fun WearApp(
             val enableDimming by appViewModel.enableDimming
             KeepOn(
                 appViewModel = appViewModel,
-                keepInteractive = true,
+                // Screen-on/wake-lock handling only while a workout is running; browsing
+                // selection/detail screens must not hold a full wake lock indefinitely.
+                // All workout execution screens (preparing/set/rest/timer/complete) live
+                // under Screen.Workout, so this keeps the screen on for the whole workout.
+                keepInteractive = currentRoute == Screen.Workout.route,
                 enableDimming = enableDimming
             ) {
                 EdgeSwipeBackHandler(

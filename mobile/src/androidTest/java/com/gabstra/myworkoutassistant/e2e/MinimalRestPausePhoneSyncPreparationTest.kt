@@ -31,7 +31,7 @@ class MinimalRestPausePhoneSyncPreparationTest {
         db.exerciseInfoDao().deleteAll()
         db.exerciseSessionProgressionDao().deleteAll()
 
-        WorkoutStoreRepository(context.filesDir)
+        WorkoutStoreRepository.forActiveProfile(context)
             .saveWorkoutStore(MinimalCrossDeviceRestPausePhoneWorkoutStoreFixture.createWorkoutStore())
 
         val request = OneTimeWorkRequestBuilder<MobileSyncToWatchWorker>().build()

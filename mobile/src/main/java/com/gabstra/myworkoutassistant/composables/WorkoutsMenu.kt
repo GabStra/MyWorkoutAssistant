@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -64,6 +65,7 @@ fun WorkoutsMenu(
     onRestoreClick: () -> Unit,
     onImportWorkoutsClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
+    onOpenPlansClick: () -> Unit,
     onClearAllHistories: () -> Unit,
     onSyncWithHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
@@ -119,6 +121,13 @@ fun WorkoutsMenu(
                     onClick = { handleMenuItemClick(onOpenSettingsClick) },
                 )
                 MenuDestinationCard(
+                    icon = Icons.Default.Storage,
+                    title = "Plans",
+                    subtitle = "Edit workout plan settings",
+                    modifier = Modifier.testTag("navigation_plans"),
+                    onClick = { handleMenuItemClick(onOpenPlansClick) },
+                )
+                MenuDestinationCard(
                     icon = Icons.Default.Link,
                     title = "Connections",
                     subtitle = "Watch and Health Connect",
@@ -162,7 +171,7 @@ fun WorkoutsMenu(
                         )
                         MinimalMenuDivider()
                         MinimalMenuAction(
-                            label = "Import workout plan",
+                            label = "Import plan or history",
                             onClick = { handleMenuItemClick(onImportWorkoutsClick) },
                         )
                         MinimalMenuDivider()
@@ -439,10 +448,11 @@ private fun MenuDestinationCard(
     icon: ImageVector,
     title: String,
     subtitle: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     StyledCard(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(bottom = 10.dp)
             .clickable(onClick = onClick),

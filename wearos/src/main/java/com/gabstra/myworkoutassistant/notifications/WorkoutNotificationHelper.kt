@@ -25,8 +25,8 @@ class WorkoutNotificationHelper(private val context: Context) {
     }
     
     private fun createNotificationChannel() {
-        val name = "Workout Reminders"
-        val descriptionText = "Notifications for scheduled workouts"
+        val name = context.getString(R.string.notif_channel_workout_reminders)
+        val descriptionText = context.getString(R.string.notif_channel_workout_reminders_desc)
         val importance = NotificationManager.IMPORTANCE_HIGH
 
         val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
@@ -58,7 +58,7 @@ class WorkoutNotificationHelper(private val context: Context) {
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_workout_icon)
             .setContentTitle(workout.name)
-            .setContentText(if (schedule.label.isNotEmpty()) schedule.label else "Time for your workout!")
+            .setContentText(if (schedule.label.isNotEmpty()) schedule.label else context.getString(R.string.notif_time_for_workout))
             .setCategory(NotificationCompat.CATEGORY_ALARM)          // <- alarm category
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setOngoing(true)                                        // keep it ongoing in shade

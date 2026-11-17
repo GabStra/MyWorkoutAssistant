@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 
 data class WorkoutPlanPackage(
     val name: String,
+    val suggestNextPrescription: Boolean = true,
     val schemaVersion: Int = WorkoutStore.CURRENT_SCHEMA_VERSION,
     val exerciseDefinitions: List<ExerciseDefinition> = emptyList(),
     val workouts: List<Workout> = emptyList(),

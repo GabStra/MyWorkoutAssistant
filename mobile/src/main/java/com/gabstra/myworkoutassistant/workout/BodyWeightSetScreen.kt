@@ -408,6 +408,23 @@ fun BodyWeightSetScreen(
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
                     }
+                    (state.historicalSetData as? BodyWeightSetData)?.let { historical ->
+                        val historicalText = when {
+                            historical.relativeBodyWeightInKg == 0.0 && historical.additionalWeight == 0.0 ->
+                                "Last time: ${historical.actualReps} reps"
+                            historical.relativeBodyWeightInKg == 0.0 ->
+                                "Last used: + ${equipment?.formatWeight(historical.additionalWeight) ?: historical.additionalWeight} kg × ${historical.actualReps} reps"
+                            historical.additionalWeight == 0.0 ->
+                                "Last used: BW × ${historical.actualReps} reps"
+                            else ->
+                                "Last used: BW + ${equipment?.formatWeight(historical.additionalWeight) ?: historical.additionalWeight} kg × ${historical.actualReps} reps"
+                        }
+                        Text(
+                            text = historicalText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     SetScreen(customModifier = Modifier)
                     targetRepRange?.let { TargetRepRangeLabel(it) }
                     state.set.note?.let { SetNoteLabel(it) }

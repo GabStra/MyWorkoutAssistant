@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
 import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.google.gson.JsonDeserializationContext
@@ -75,7 +76,15 @@ class WorkoutHistoryAdapter : JsonDeserializer<WorkoutHistory> {
                 ?: emptyMap(),
             heartRateStreamsStartEpochMs = jsonObject.get("heartRateStreamsStartEpochMs")
                 ?.takeUnless { it.isJsonNull }
-                ?.asLong
+                ?.asLong,
+            recurringSessionId = jsonObject.get("recurringSessionId")
+                ?.takeUnless { it.isJsonNull }?.asString?.let(UUID::fromString),
+            origin = jsonObject.get("origin")
+                ?.takeUnless { it.isJsonNull }?.asString
+                ?.let { runCatching { WorkoutHistoryOrigin.valueOf(it) }.getOrNull() }
+                ?: WorkoutHistoryOrigin.RECORDED,
+            startTimeKnown = jsonObject.get("startTimeKnown")?.asBoolean ?: true,
+            durationKnown = jsonObject.get("durationKnown")?.asBoolean ?: true
         )
     }
 

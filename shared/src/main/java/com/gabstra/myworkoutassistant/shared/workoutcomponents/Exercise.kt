@@ -11,6 +11,9 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
 import java.util.UUID
 
+/** Explicit load behavior. NONE preserves legacy history/progression behavior. */
+enum class LoadHistoryPolicy { NONE, LAST_WORKING_LOAD, PRESCRIBED_WEIGHT }
+
 data class Exercise (
     override val id: UUID,
     override val enabled: Boolean,
@@ -55,7 +58,14 @@ data class Exercise (
     val runningPrescription: RunningPrescription? = null,
     val durationProgression: DurationProgressionConfig? = null,
     val trainingMuscles: Map<String, List<String>>? = null,
+    /** Stable identity of this slot within a recurring session, independent of library identity. */
+    val recurringExerciseId: UUID? = null,
+    val loadHistoryPolicy: LoadHistoryPolicy = LoadHistoryPolicy.NONE,
     ): WorkoutComponent(id,enabled) {
+
+    /** Null is bilateral; zero selects paired sides without an inter-side rest. */
+    val hasPairedSideExecution: Boolean
+        get() = intraSetRestInSeconds?.let { it >= 0 } == true
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds
     // (which can occur when Gson sets it to null via reflection)
@@ -94,6 +104,8 @@ data class Exercise (
         result = 31 * result + (movementRef?.hashCode() ?: 0)
         result = 31 * result + (runningPrescription?.hashCode() ?: 0)
         result = 31 * result + (durationProgression?.hashCode() ?: 0)
+        result = 31 * result + (recurringExerciseId?.hashCode() ?: 0)
+        result = 31 * result + loadHistoryPolicy.hashCode()
         return result
     }
     
@@ -135,6 +147,8 @@ data class Exercise (
         if (movementRef != other.movementRef) return false
         if (runningPrescription != other.runningPrescription) return false
         if (durationProgression != other.durationProgression) return false
+        if (recurringExerciseId != other.recurringExerciseId) return false
+        if (loadHistoryPolicy != other.loadHistoryPolicy) return false
         
         return true
     }

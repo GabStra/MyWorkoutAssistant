@@ -44,9 +44,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
@@ -95,7 +98,7 @@ fun BarbellForm(
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
-                        text = if (barbell == null) "Insert Barbell" else "Edit Barbell",
+                        text = if (barbell == null) stringResource(R.string.equipment_insert_barbell) else stringResource(R.string.equipment_edit_barbell),
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.titleLarge
                     )
@@ -104,7 +107,7 @@ fun BarbellForm(
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 },
@@ -112,7 +115,7 @@ fun BarbellForm(
                     IconButton(modifier = Modifier.alpha(0f), onClick = { }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 }
@@ -128,7 +131,7 @@ fun BarbellForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            EquipmentFormSection(title = "Details") {
+            EquipmentFormSection(title = stringResource(R.string.equipment_details)) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -136,7 +139,7 @@ fun BarbellForm(
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_name_label), style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -147,7 +150,7 @@ fun BarbellForm(
                                 sleeveLengthState.value = it
                             }
                         },
-                        label = { Text("Sleeve length (mm)", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_sleeve_length_mm), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -159,16 +162,20 @@ fun BarbellForm(
                                 barWeightState.value = it
                             }
                         },
-                        label = { Text("Bar weight (kg)", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_bar_weight_kg), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
 
-            val platesSummary = "${availablePlatesState.value.size} plate pair${if (availablePlatesState.value.size == 1) "" else "s"}"
+            val platesSummary = pluralStringResource(
+                R.plurals.equipment_plate_pair_count,
+                availablePlatesState.value.size,
+                availablePlatesState.value.size
+            )
             CollapsibleSection(
-                title = "Available plate pairs",
+                title = stringResource(R.string.equipment_available_plate_pairs),
                 summary = platesSummary,
                 expanded = expandedPlates,
                 onToggle = { expandedPlates = !expandedPlates },
@@ -190,7 +197,7 @@ fun BarbellForm(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "${index + 1}) ${plate.weight} kg • ${plate.thickness} mm",
+                                stringResource(R.string.equipment_plate_entry, index + 1, plate.weight, plate.thickness),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             IconButton(
@@ -199,7 +206,7 @@ fun BarbellForm(
                                     availablePlatesState.value = availablePlatesState.value - plate
                                 }
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove plate")
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.equipment_remove_plate_lowercase))
                             }
                         }
                     }
@@ -228,7 +235,7 @@ fun BarbellForm(
     if (showAvailablePlateDialog.value) {
         StandardDialog(
             onDismissRequest = { showAvailablePlateDialog.value = false },
-            title = "Add plate",
+            title = stringResource(R.string.equipment_add_plate),
             body = {
                 Column {
                     OutlinedTextField(
@@ -238,7 +245,7 @@ fun BarbellForm(
                                 newPlateWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (kg)", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_weight_kg_lowercase), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -250,13 +257,13 @@ fun BarbellForm(
                                 newPlateThicknessState.value = it
                             }
                         },
-                        label = { Text("Thickness (mm)", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_thickness_mm), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
-            confirmText = "Add",
+            confirmText = stringResource(R.string.equipment_add),
             onConfirm = {
                 val weight = newPlateWeightState.value.toDoubleOrNull()
                 val thickness = newPlateThicknessState.value.toDoubleOrNull()
@@ -270,7 +277,7 @@ fun BarbellForm(
             },
             confirmEnabled = newPlateWeightState.value.isNotEmpty() &&
                     newPlateThicknessState.value.isNotEmpty(),
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.equipment_cancel),
             onDismissButton = { showAvailablePlateDialog.value = false }
         )
     }

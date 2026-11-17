@@ -7,6 +7,8 @@ import com.gabstra.myworkoutassistant.composables.workout.pages.buildExercisesPa
 import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageActiveState
 import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageCurrentItemIndex
 import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageDisplayCounter
+import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageFirstSetListItemIndex
+import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageScrollTargetIndex
 import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageItemIndex
 import com.gabstra.myworkoutassistant.shared.workout.display.toExerciseSetDisplayRowOrNull
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -32,6 +34,28 @@ import org.junit.Test
 import java.util.UUID
 
 class ExercisesPageStateResolutionTest {
+
+    @Test
+    fun `superset member item shifts first set list index`() {
+        assertEquals(1, resolveExercisesPageFirstSetListItemIndex(hasSupersetMemberNamesItem = false))
+        assertEquals(2, resolveExercisesPageFirstSetListItemIndex(hasSupersetMemberNamesItem = true))
+        assertEquals(
+            1,
+            resolveExercisesPageScrollTargetIndex(
+                firstSetListItemIndex = 2,
+                selectedSetIndex = 0,
+                hasSupersetMemberNamesItem = true,
+            ),
+        )
+        assertEquals(
+            3,
+            resolveExercisesPageScrollTargetIndex(
+                firstSetListItemIndex = 2,
+                selectedSetIndex = 1,
+                hasSupersetMemberNamesItem = true,
+            ),
+        )
+    }
 
     @Test
     fun `intra exercise rest state resolves to next executable state for exercises page`() {

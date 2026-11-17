@@ -64,7 +64,7 @@ class GenericPlanPackageImportE2ETest {
         db.exerciseInfoDao().deleteAll()
         db.exerciseSessionProgressionDao().deleteAll()
 
-        val repository = WorkoutStoreRepository(context.filesDir)
+        val repository = WorkoutStoreRepository.forActiveProfile(context)
         val baseStore = CrossDeviceSyncPhoneWorkoutStoreFixture.createWorkoutStore()
         repository.saveWorkoutStore(baseStore)
         com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage.writeMovementJson(

@@ -10,10 +10,70 @@ import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import java.time.LocalDate
 import java.util.UUID
 
 class WorkoutStoreAdapterTest {
+
+    @Test
+    fun workoutPlanSuggestionOption_defaultsTrueAndRoundTripsFalse() {
+        val planId = UUID.randomUUID()
+        val legacyJson = """{"birthDateYear":1990,"weightKg":80,"progressionPercentageAmount":0,"workoutPlans":[{"id":"$planId","name":"Cycle","workoutIds":[],"order":0}]}"""
+        val legacyPlan = fromJSONToWorkoutStore(legacyJson).workoutPlans.single()
+        assertTrue(legacyPlan.suggestNextPrescription)
+
+        val store = storeWith(ExerciseDefinition(id = UUID.randomUUID(), name = "Press", exerciseType = ExerciseType.WEIGHT), legacyExercise(UUID.randomUUID(), UUID.randomUUID())).copy(
+            workoutPlans = listOf(legacyPlan.copy(suggestNextPrescription = false)),
+        )
+        val restored = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(store))
+        assertEquals(false, restored.workoutPlans.single().suggestNextPrescription)
+    }
+
+    @Test
+    fun recurringPrescriptionFields_surviveStoreRoundTrip() {
+        val definitionId = UUID.randomUUID()
+        val sessionId = UUID.randomUUID()
+        val trackId = UUID.randomUUID()
+        val definition = ExerciseDefinition(id = definitionId, name = "Press", exerciseType = ExerciseType.WEIGHT)
+        val exercise = legacyExercise(UUID.randomUUID(), UUID.randomUUID()).copy(
+            exerciseDefinitionId = definitionId,
+            recurringExerciseId = trackId,
+            loadHistoryPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD,
+        )
+        val workout = storeWith(definition, exercise).workouts.single().copy(
+            recurringSessionId = sessionId,
+            prescriptionOrdinal = 2,
+            prescriptionLabel = "Week 2",
+        )
+
+        val restored = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(storeWith(definition, exercise).copy(workouts = listOf(workout))))
+
+        assertEquals(sessionId, restored.workouts.single().recurringSessionId)
+        assertEquals(2, restored.workouts.single().prescriptionOrdinal)
+        assertEquals("Week 2", restored.workouts.single().prescriptionLabel)
+        assertEquals(trackId, restored.allExercisePrescriptions().single().recurringExerciseId)
+        assertEquals(LoadHistoryPolicy.LAST_WORKING_LOAD, restored.allExercisePrescriptions().single().loadHistoryPolicy)
+    }
+
+    @Test
+    fun prescribedWeightPolicy_roundTripsWithoutTrackAndAllowsEmptyNewWeightExercise() {
+        val exercise = legacyExercise(UUID.randomUUID(), UUID.randomUUID()).copy(
+            loadHistoryPolicy = LoadHistoryPolicy.PRESCRIBED_WEIGHT,
+        )
+        val store = storeWith(
+            ExerciseDefinition(id = UUID.randomUUID(), name = "Press", exerciseType = ExerciseType.WEIGHT),
+            exercise,
+        )
+
+        validateWorkoutStoreForRuntimeUse(store)
+        val restored = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(store))
+        val restoredExercise = restored.allExercisePrescriptions().single()
+
+        assertNull(restoredExercise.recurringExerciseId)
+        assertEquals(LoadHistoryPolicy.PRESCRIBED_WEIGHT, restoredExercise.loadHistoryPolicy)
+        assertTrue(restoredExercise.sets.isEmpty())
+    }
 
     @Test
     fun trainingMuscles_surviveSerializationAndDefinitionUpdates() {
@@ -412,6 +472,7 @@ class WorkoutStoreAdapterTest {
     fun workoutPlanPackage_roundTripsThroughJson() {
         val original = WorkoutPlanPackage(
             name = "Push Pull Legs",
+            suggestNextPrescription = false,
             workouts = emptyList(),
             equipments = emptyList(),
             accessoryEquipments = emptyList()
@@ -420,6 +481,9 @@ class WorkoutStoreAdapterTest {
         val roundTripped = fromJSONToWorkoutPlanPackage(fromWorkoutPlanPackageToJSON(original))
 
         assertEquals(original, roundTripped)
+
+        val legacy = fromJSONToWorkoutPlanPackage("""{"name":"Legacy","workouts":[]}""")
+        assertTrue(legacy.suggestNextPrescription)
     }
 
     @Test

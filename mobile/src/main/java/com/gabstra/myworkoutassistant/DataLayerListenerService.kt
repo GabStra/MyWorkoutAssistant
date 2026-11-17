@@ -32,6 +32,8 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncProgressUpdate
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
@@ -60,6 +62,9 @@ import com.gabstra.myworkoutassistant.shared.workout.model.decideWorkoutRecordIn
 import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.sync.BackupCoordinator
+import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
+import com.gabstra.myworkoutassistant.sync.pushProfileIndexToWatches
+import com.gabstra.myworkoutassistant.sync.WatchProfileBindings
 import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
 import com.gabstra.myworkoutassistant.sync.PhoneSyncToWatchSuppressor
 import com.gabstra.myworkoutassistant.sync.SensorSessionInboundReceiver
@@ -78,6 +83,8 @@ import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -226,7 +233,8 @@ class DataLayerListenerService : WearableListenerService() {
     @Volatile
     private var localNodeId: String? = null
 
-    private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
+    // Resolved per use: a profile switch must not leave the service on the old profile's data.
+    private val workoutStoreRepository get() = WorkoutStoreRepository.forActiveProfile(this)
     private val phoneLlmOperationExecutor by lazy { PhoneLlmOperationExecutor(this) }
     private val sensorSessionInboundReceiver by lazy {
         SensorSessionInboundReceiver(this, dataClient, scope)
@@ -276,6 +284,27 @@ class DataLayerListenerService : WearableListenerService() {
     private lateinit var workoutRecordDao: WorkoutRecordDao
     private lateinit var exerciseSessionProgressionDao: ExerciseSessionProgressionDao
     private lateinit var errorLogDao: ErrorLogDao
+
+    /** Profile the inbound workout-history transaction belongs to; null means the active one. */
+    private var inboundHistoryProfileId: String? = null
+
+    private val historyProcessingMutex = Mutex()
+
+    /**
+     * Rebinds the DAOs to one profile's database. Inbound history is applied with these, so a
+     * session uploaded by a watch on another profile is stored with that profile.
+     * History transactions are processed one at a time, so this is safe to swap.
+     */
+    private fun bindDaosToProfile(profileId: String) {
+        val db = AppDatabase.getDatabase(this, profileId)
+        workoutHistoryDao = db.workoutHistoryDao()
+        setHistoryDao = db.setHistoryDao()
+        restHistoryDao = db.restHistoryDao()
+        exerciseInfoDao = db.exerciseInfoDao()
+        workoutRecordDao = db.workoutRecordDao()
+        exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+        errorLogDao = db.errorLogDao()
+    }
 
     private val sharedPreferences by lazy {
         getSharedPreferences(
@@ -601,8 +630,36 @@ class DataLayerListenerService : WearableListenerService() {
         )
     }
 
+    /**
+     * Serialises history application.
+     *
+     * The apply rebinds the service's DAO handles for the session's profile, so two overlapping
+     * transactions could otherwise write one profile's session into another's database.
+     */
     private suspend fun processReceivedWorkoutHistory(transactionId: String?) {
+        historyProcessingMutex.withLock {
+            processReceivedWorkoutHistoryLocked(transactionId)
+        }
+    }
+
+    private suspend fun processReceivedWorkoutHistoryLocked(transactionId: String?) {
         PhoneSyncToWatchSuppressor.enterWearInboundApply()
+        // Resolve the session's profile once: the store and the DAOs must agree for the whole run.
+        val sessionProfileId = Profiles.resolvePayloadProfile(this, inboundHistoryProfileId)
+        if (sessionProfileId == null) {
+            Log.w(
+                "WorkoutSync",
+                "Dropping workout history for a profile deleted on this phone, tx=$transactionId"
+            )
+            inboundHistoryProfileId = null
+            clearActiveWorkoutHistoryTransactionState()
+            transactionId?.let { sendSyncComplete(it, "profile no longer exists") }
+            PhoneSyncToWatchSuppressor.exitWearInboundApply()
+            return
+        }
+        bindDaosToProfile(sessionProfileId)
+        val sessionWorkoutStoreRepository =
+            WorkoutStoreRepository(Profiles.directory(this, sessionProfileId), filesDir)
         try {
             currentTransactionState = WorkoutHistoryInboundState.Processing
             var processingStep = "initialization"
@@ -758,7 +815,7 @@ class DataLayerListenerService : WearableListenerService() {
                     "Processing workout history for transaction: $transactionId"
                 )
 
-                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                val workoutStore = sessionWorkoutStoreRepository.getWorkoutStore()
                 val workout = workoutStore.findWorkoutForHistory(workoutHistoryStore.WorkoutHistory)
 
                 if (workout == null) {
@@ -873,7 +930,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 newWorkout
                             )
                         )
-                        workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+                        sessionWorkoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
                     }
 
                     if (workoutHistoryStore.ErrorLogs.isNotEmpty()) {
@@ -1003,6 +1060,8 @@ class DataLayerListenerService : WearableListenerService() {
                 clearActiveWorkoutHistoryTransactionState()
             }
         } finally {
+            // Leave the DAOs pointing at the active profile for every other caller.
+            bindDaosToProfile(Profiles.activeProfileId(this))
             PhoneSyncToWatchSuppressor.exitWearInboundApply()
         }
     }
@@ -1353,8 +1412,12 @@ class DataLayerListenerService : WearableListenerService() {
 
     private suspend fun applyWorkoutSessionHeartbeat(
         heartbeat: WorkoutSessionHeartbeat,
-        packageName: String
+        packageName: String,
+        db: AppDatabase,
     ) {
+        // Local handles so a background profile rebind elsewhere cannot redirect this write.
+        val workoutRecordDao = db.workoutRecordDao()
+        val workoutHistoryDao = db.workoutHistoryDao()
         val existingRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(heartbeat.workoutId)
         val existingHistory = existingRecord
             ?.workoutHistoryId
@@ -1399,6 +1462,36 @@ class DataLayerListenerService : WearableListenerService() {
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         try {
+            if (DataLayerPaths.matchesPrefix(
+                    messageEvent.path,
+                    DataLayerPaths.PROFILE_REQUEST_PATH
+                )
+            ) {
+                Log.d("ProfileBind", "A watch asked for the profile list")
+                scope.launch { pushProfileIndexToWatches(this@DataLayerListenerService) }
+                return
+            }
+            if (DataLayerPaths.matchesPrefix(
+                    messageEvent.path,
+                    DataLayerPaths.PROFILE_BIND_PREFIX
+                )
+            ) {
+                val nodeId = messageEvent.sourceNodeId ?: return
+                val profileId = messageEvent.data?.toString(Charsets.UTF_8)?.takeIf { it.isNotBlank() }
+                val knownProfileIds = Profiles.profiles(this).map { it.id }
+                if (profileId != null && profileId in knownProfileIds) {
+                    val previousProfileId = WatchProfileBindings.all(this)[nodeId]
+                    WatchProfileBindings.bind(this, nodeId, profileId)
+                    Log.d("ProfileBind", "Watch $nodeId now follows profile $profileId")
+                    if (previousProfileId != profileId) {
+                        // Send that profile's data to the watch that just claimed it.
+                        MobileSyncToWatchWorker.enqueueForProfile(this, profileId)
+                    }
+                } else {
+                    Log.w("ProfileBind", "Ignoring bind to unknown profile $profileId from $nodeId")
+                }
+                return
+            }
             if (DataLayerPaths.matchesPrefix(
                     messageEvent.path,
                     DataLayerPaths.SYNC_PROGRESS_PREFIX
@@ -1643,7 +1736,26 @@ class DataLayerListenerService : WearableListenerService() {
                                 val workoutStoreJson = decompressToString(compressedJson)
                                 val incomingWorkoutStore = fromJSONToWorkoutStore(workoutStoreJson)
                                 validateWorkoutStoreForRuntimeUse(incomingWorkoutStore)
-                                workoutStoreRepository.saveWorkoutStore(incomingWorkoutStore)
+                                // Apply to the profile the watch named, not whichever one is open here.
+                                val targetProfileId = Profiles.resolvePayloadProfile(
+                                    this@DataLayerListenerService,
+                                    dataMap.getString(PROFILE_ID_KEY),
+                                )
+                                if (targetProfileId == null) {
+                                    Log.w(
+                                        "DataLayerSync",
+                                        "Dropping workout store for a profile deleted on this phone"
+                                    )
+                                } else if (targetProfileId !=
+                                    Profiles.activeProfileId(this@DataLayerListenerService)
+                                ) {
+                                    WorkoutStoreRepository(
+                                        Profiles.directory(this@DataLayerListenerService, targetProfileId),
+                                        this@DataLayerListenerService.filesDir,
+                                    ).saveWorkoutStore(incomingWorkoutStore)
+                                } else {
+                                    workoutStoreRepository.saveWorkoutStore(incomingWorkoutStore)
+                                }
 
                                 val intent = Intent(INTENT_ID).apply {
                                     putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
@@ -1685,9 +1797,25 @@ class DataLayerListenerService : WearableListenerService() {
                     path == DataLayerPaths.WORKOUT_SESSION_HEARTBEAT_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val heartbeat = parseWorkoutSessionHeartbeat(dataMap) ?: return@forEach
+                        // The session belongs to the profile the watch is training on.
+                        val heartbeatProfileId = Profiles.resolvePayloadProfile(
+                            this@DataLayerListenerService,
+                            dataMap.getString(PROFILE_ID_KEY),
+                        )
+                        if (heartbeatProfileId == null) {
+                            Log.w(
+                                "WorkoutSessionHeartbeat",
+                                "Dropping heartbeat for a profile deleted on this phone"
+                            )
+                            return@forEach
+                        }
                         scope.launch(Dispatchers.IO) {
                             runCatching {
-                                applyWorkoutSessionHeartbeat(heartbeat, packageName)
+                                applyWorkoutSessionHeartbeat(
+                                    heartbeat,
+                                    packageName,
+                                    AppDatabase.getDatabase(this@DataLayerListenerService, heartbeatProfileId),
+                                )
                             }.onFailure { exception ->
                                 Log.e(
                                     "WorkoutSessionHeartbeat",
@@ -1777,12 +1905,28 @@ class DataLayerListenerService : WearableListenerService() {
                             return@forEach
                         }
 
+                        val discardProfileId = Profiles.resolvePayloadProfile(
+                            this@DataLayerListenerService,
+                            dataMap.getString(PROFILE_ID_KEY),
+                        )
                         scope.launch(Dispatchers.IO) {
                             runCatching {
-                                withContext(NonCancellable) {
-                                    setHistoryDao.deleteByWorkoutHistoryId(workoutHistoryId)
-                                    workoutRecordDao.deleteByWorkoutId(workoutId)
-                                    workoutHistoryDao.deleteById(workoutHistoryId)
+                                if (discardProfileId == null) {
+                                    Log.w(
+                                        "WorkoutSync",
+                                        "Discard for a profile deleted on this phone; acknowledging only"
+                                    )
+                                } else {
+                                    withContext(NonCancellable) {
+                                        // Local handles: the discard belongs to the profile that sent it.
+                                        val db = AppDatabase.getDatabase(
+                                            this@DataLayerListenerService,
+                                            discardProfileId,
+                                        )
+                                        db.setHistoryDao().deleteByWorkoutHistoryId(workoutHistoryId)
+                                        db.workoutRecordDao().deleteByWorkoutId(workoutId)
+                                        db.workoutHistoryDao().deleteById(workoutHistoryId)
+                                    }
                                 }
                                 if (!transactionId.isNullOrBlank()) {
                                     sendSyncComplete(
@@ -1943,6 +2087,9 @@ class DataLayerListenerService : WearableListenerService() {
                                 if (dataMap.containsKey("chunksCount")) {
                                     expectedChunks = dataMap.getInt("chunksCount", 0)
                                 }
+                                // Session profile travels with the start item; absent means the
+                                // watch predates profiles. Kept raw; resolved when processing.
+                                inboundHistoryProfileId = dataMap.getString(PROFILE_ID_KEY)
 
                                 Log.d(
                                     "WorkoutSync",
@@ -2099,7 +2246,9 @@ class DataLayerListenerService : WearableListenerService() {
                     path == CLEAR_ERROR_LOGS_PATH -> {
                         scope.launch(Dispatchers.IO) {
                             try {
-                                errorLogDao.deleteAll()
+                                // Diagnostics stay on the active profile and must not follow a
+                                // history transaction's temporary profile binding.
+                                AppDatabase.getDatabase(this@DataLayerListenerService).errorLogDao().deleteAll()
                                 Log.d("DataLayerListenerService", "Error logs cleared from mobile")
                             } catch (e: Exception) {
                                 Log.e("DataLayerListenerService", "Error clearing error logs", e)
@@ -2127,8 +2276,14 @@ class DataLayerListenerService : WearableListenerService() {
                                     Array<ErrorLog>::class.java
                                 ).toList()
 
-                                if (errorLogs.isNotEmpty()) {
-                                    errorLogDao.insertAll(*errorLogs.toTypedArray())
+                                val logProfileId = Profiles.resolvePayloadProfile(
+                                    this@DataLayerListenerService,
+                                    dataMap.getString(PROFILE_ID_KEY),
+                                )
+                                if (logProfileId != null && errorLogs.isNotEmpty()) {
+                                    AppDatabase.getDatabase(this@DataLayerListenerService, logProfileId)
+                                        .errorLogDao()
+                                        .insertAll(*errorLogs.toTypedArray())
                                     Log.d(
                                         "DataLayerListenerService",
                                         "Synced ${errorLogs.size} error logs from watch"

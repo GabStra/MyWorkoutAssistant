@@ -4,7 +4,7 @@ import androidx.activity.compose.BackHandler
 import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -19,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
@@ -53,7 +52,7 @@ import kotlinx.coroutines.launch
 
 private const val EXTERNAL_HR_SKIP_DELAY_MS = 30_000
 
-/** Fixed slot so a longer/shorter status never moves the spinner or the buttons. */
+/** Minimum slot height keeps the status compact while allowing larger type to wrap. */
 private val STATUS_LINE_HEIGHT = 66.dp
 
 @Composable
@@ -158,34 +157,86 @@ fun PreparingExternalHeartRateScreen(
         }
     }
 
-    val statusSource = pendingIndices.firstOrNull()?.let { externalHeartRateControllers[it] }
-    val statusState = statusSource?.let { connectionStates[externalHeartRateControllers.indexOf(it)].value }
-        ?: ExternalHeartRateConnectionState.Idle
-    val statusMessage = when (statusState) {
-        is ExternalHeartRateConnectionState.Connecting -> statusState.message
-        is ExternalHeartRateConnectionState.Connected -> statusState.message
-        is ExternalHeartRateConnectionState.Streaming -> statusState.message
-        is ExternalHeartRateConnectionState.MissingConfiguration -> statusState.message
-        is ExternalHeartRateConnectionState.Error -> statusState.message
-        is ExternalHeartRateConnectionState.Skipped -> statusState.message
-        ExternalHeartRateConnectionState.Idle ->
-            "Waiting for ${statusSource?.source?.displayName() ?: "heart rate"}"
-    }.trimEnd('.')
-
-    if (!canSkip || isStreaming) {
-        // One stable line while connecting: the per-state messages flashed through
-        // scanning/connecting/connected in well under a second on a fast link. Errors and
-        // the skip hint still appear in the buttons view below.
-        val pendingName = statusSource?.source?.displayName()
-        val loadingText = when {
-            isStreaming && !watchHeartRateReady -> "Waiting for watch heart rate"
-            pendingName != null -> "Waiting for $pendingName heart rate"
-            else -> "Waiting for heart rate"
-        }
-        FullScreenLoadingIndicator(text = loadingText)
-        return
+    val pendingName = pendingIndices.firstOrNull()?.let {
+        externalHeartRateControllers[it].source.displayName()
     }
+    val loadingText = when {
+        isStreaming && !watchHeartRateReady -> "Checking your heart rate"
+        isStreaming -> "Getting your workout ready"
+        pendingName != null -> "Connecting to $pendingName"
+        else -> "Connecting to your sensor"
+    }
+    PreparingHeartRateContent(
+        canSkip = canSkip,
+        loadingText = loadingText,
+        needsSensorSetup = pendingIndices.any {
+            connectionStates[it].value is ExternalHeartRateConnectionState.MissingConfiguration
+        },
+        onSkip = skip@{
+            if (hasTriggeredNextState || isSessionHydrationInFlight) {
+                return@skip
+            }
+            hasTriggeredNextState = true
+            externalHeartRateControllers.forEach { it.skipConnectionForSession() }
+            hapticsViewModel.doGentleVibration()
 
+            if (hasWorkoutRecord) {
+                if (viewModel.consumeSkipNextResumeLastState()) {
+                    viewModel.finishPreparedResume()
+                } else {
+                    viewModel.resumeLastState()
+                }
+            } else {
+                viewModel.setWorkoutStart()
+            }
+
+            viewModel.lightScreenUp()
+            onReady()
+        },
+        onBack = back@{
+            if (hasTriggeredNextState) return@back
+            hapticsViewModel.doGentleVibration()
+            externalHeartRateControllers.forEach { it.disconnectFromDevice() }
+            navController.navigate(Screen.WorkoutSelection.route) {
+                popUpTo(0) { inclusive = true }
+            }
+        },
+    )
+}
+
+@Composable
+internal fun PreparingHeartRateContent(
+    canSkip: Boolean,
+    loadingText: String,
+    needsSensorSetup: Boolean = false,
+    onSkip: () -> Unit,
+    onBack: () -> Unit,
+) {
+    var connectionHelp by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(canSkip, needsSensorSetup) {
+        // Once a choice is offered, retry callbacks must not replace it or move its controls.
+        if (canSkip && connectionHelp == null) {
+            connectionHelp = if (needsSensorSetup) {
+                "Set up your heart-rate sensor in the phone app, or skip for now."
+            } else {
+                "No heart rate yet.\nCheck your sensor or skip for now."
+            }
+        }
+    }
+    val message = connectionHelp
+    if (message == null) {
+        FullScreenLoadingIndicator(text = loadingText)
+    } else {
+        ExternalHeartRateConnectionFallback(message, onSkip, onBack)
+    }
+}
+
+@Composable
+internal fun ExternalHeartRateConnectionFallback(
+    statusMessage: String,
+    onSkip: () -> Unit,
+    onBack: () -> Unit,
+) {
     val transformingLazyColumnState = rememberTransformingLazyColumnState()
     val spec = rememberTransformationSpec(
         ResponsiveTransformationSpec.smallScreen(
@@ -213,17 +264,17 @@ fun PreparingExternalHeartRateScreen(
         }
     ) { contentPadding ->
         TransformingLazyColumn(
+            modifier = Modifier.padding(horizontal = 20.dp),
             contentPadding = contentPadding,
             state = transformingLazyColumnState,
         ) {
             item {
-                // Single status line in a fixed-height slot: no duplicate header, and the
-                // buttons below stay put while the message changes length.
+                // Reserve room for short statuses; longer errors can wrap and scroll in full.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .transformedHeight(this, spec)
-                        .height(STATUS_LINE_HEIGHT),
+                        .heightIn(min = STATUS_LINE_HEIGHT),
                     contentAlignment = Alignment.Center
                 ) {
                     StatusText(statusMessage)
@@ -231,49 +282,22 @@ fun PreparingExternalHeartRateScreen(
             }
             item {
                 WearPrimaryButton(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, spec),
-                        transformation = SurfaceTransformation(spec),
-                        text = "Skip",
-                        onClick = {
-                            if (hasTriggeredNextState || isSessionHydrationInFlight) {
-                                return@WearPrimaryButton
-                            }
-                            hasTriggeredNextState = true
-                            externalHeartRateControllers.forEach { it.skipConnectionForSession() }
-                            hapticsViewModel.doGentleVibration()
-
-                            if (hasWorkoutRecord) {
-                                if (viewModel.consumeSkipNextResumeLastState()) {
-                                    viewModel.finishPreparedResume()
-                                } else {
-                                    viewModel.resumeLastState()
-                                }
-                            } else {
-                                viewModel.setWorkoutStart()
-                            }
-
-                            viewModel.lightScreenUp()
-                            onReady()
-                        },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec),
+                    transformation = SurfaceTransformation(spec),
+                    text = "Skip",
+                    onClick = onSkip,
                 )
             }
             item {
                 ButtonWithText(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, spec),
-                        transformation = SurfaceTransformation(spec),
-                        text = "Back",
-                        onClick = {
-                            if (hasTriggeredNextState) return@ButtonWithText
-                            hapticsViewModel.doGentleVibration()
-                            externalHeartRateControllers.forEach { it.disconnectFromDevice() }
-                            navController.navigate(Screen.WorkoutSelection.route) {
-                                popUpTo(0) { inclusive = true }
-                            }
-                        }
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec),
+                    transformation = SurfaceTransformation(spec),
+                    text = "Back",
+                    onClick = onBack,
                 )
             }
         }
@@ -283,12 +307,10 @@ fun PreparingExternalHeartRateScreen(
 @Composable
 private fun StatusText(message: String) {
     Text(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.5.dp),
         text = message,
-        style = MaterialTheme.typography.bodyMedium,
+        style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.tertiaryContent,
         textAlign = TextAlign.Center,
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
     )
 }

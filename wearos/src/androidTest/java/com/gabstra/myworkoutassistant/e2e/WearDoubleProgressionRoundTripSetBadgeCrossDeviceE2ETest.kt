@@ -85,7 +85,7 @@ class WearDoubleProgressionRoundTripSetBadgeCrossDeviceE2ETest : WearBaseE2ETest
         expectedTemplateReps: Int,
         timeoutMs: Long
     ) {
-        val repository = WorkoutStoreRepository(context.filesDir)
+        val repository = WorkoutStoreRepository.forActiveProfile(context)
         val db = AppDatabase.getDatabase(context)
         val deadline = System.currentTimeMillis() + timeoutMs
 

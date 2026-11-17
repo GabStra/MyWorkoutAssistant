@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceOps
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -21,6 +22,8 @@ import java.util.UUID
 fun WorkoutViewModel.applyAutoRegulationRIR(rir: Double, formBreaks: Boolean = false) {
     val machine = stateMachine ?: return
     val currentState = machine.currentState as? WorkoutState.AutoRegulationRIRSelection ?: return
+    val exercise = exercisesById[currentState.exerciseId] ?: return
+    if (exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return
 
     launchIO {
         currentState.currentSetData = currentState.currentSetData.withRIR(rir, forAutoRegulation = true)
@@ -28,7 +31,6 @@ fun WorkoutViewModel.applyAutoRegulationRIR(rir: Double, formBreaks: Boolean = f
         val workWeight = extractWorkWeight(currentState.currentSetData)
         val adjustedWeight = CalibrationHelper.applyCalibrationAdjustment(workWeight, rir, formBreaks)
 
-        val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
         val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
         val availableWeights = getWeightByEquipment(equipment)
 

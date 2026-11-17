@@ -29,6 +29,11 @@ data class WorkoutStore(
     val vo2MaxEstimatedAtEpochDay: Long? = null,
     val deloadConfig: DeloadConfig = DeloadConfig(),
     val distanceUnit: DistanceUnit = defaultDistanceUnit(),
+    /**
+     * Plans this profile does. Null means every plan; a list limits what the paired watch offers
+     * as "workouts to do". Personal, so each profile controls its own watch.
+     */
+    val visibleWorkoutPlanIds: List<UUID>? = null,
 ) {
     companion object {
         const val CURRENT_SCHEMA_VERSION = 4

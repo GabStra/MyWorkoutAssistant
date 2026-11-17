@@ -42,9 +42,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
@@ -96,14 +99,14 @@ fun PlateLoadedCableForm(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = if(plateLoadedCable == null) "Insert Plate-Loaded Cable" else "Edit Plate-Loaded Cable"
+                        text = if(plateLoadedCable == null) stringResource(R.string.equipment_insert_plate_loaded_cable) else stringResource(R.string.equipment_edit_plate_loaded_cable)
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 },
@@ -113,7 +116,7 @@ fun PlateLoadedCableForm(
                     }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 }
@@ -130,7 +133,7 @@ fun PlateLoadedCableForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            EquipmentFormSection(title = "Details") {
+            EquipmentFormSection(title = stringResource(R.string.equipment_details)) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -138,7 +141,7 @@ fun PlateLoadedCableForm(
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_name_label), style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -148,7 +151,7 @@ fun PlateLoadedCableForm(
                                 sleeveLengthState.value = it
                             }
                         },
-                        label = { Text("Sleeve length (mm)", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_sleeve_length_mm), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -156,8 +159,12 @@ fun PlateLoadedCableForm(
             }
 
             CollapsibleSection(
-                title = "Available Plates",
-                summary = "${availablePlatesState.value.size} plate pair${if (availablePlatesState.value.size == 1) "" else "s"}",
+                title = stringResource(R.string.equipment_available_plates),
+                summary = pluralStringResource(
+                    R.plurals.equipment_plate_pair_count,
+                    availablePlatesState.value.size,
+                    availablePlatesState.value.size
+                ),
                 expanded = expandedPlates,
                 onToggle = { expandedPlates = !expandedPlates },
                 expandedContentSpacing = Spacing.sm,
@@ -175,14 +182,14 @@ fun PlateLoadedCableForm(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.equipment_plate_entry_compact, index + 1, plate.weight, plate.thickness), style = MaterialTheme.typography.bodyMedium)
                         IconButton(
                             modifier = Modifier.size(32.dp),
                             onClick = {
                                 availablePlatesState.value = availablePlatesState.value - plate
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.equipment_remove_plate))
                         }
                     }
                 }
@@ -196,7 +203,7 @@ fun PlateLoadedCableForm(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.equipment_cancel),
                     onClick = {
                         onCancel()
                     },
@@ -204,7 +211,7 @@ fun PlateLoadedCableForm(
                 )
 
                 AppPrimaryButton(
-                    text = "Save",
+                    text = stringResource(R.string.equipment_save),
                     onClick = {
                         val newPlateLoadedCable = PlateLoadedCable(
                             id = plateLoadedCable?.id ?: UUID.randomUUID(),
@@ -227,7 +234,7 @@ fun PlateLoadedCableForm(
     if (showAvailablePlateDialog.value) {
         StandardDialog(
             onDismissRequest = { showAvailablePlateDialog.value = false },
-            title = "Add Available Plate",
+            title = stringResource(R.string.equipment_add_available_plate),
             body = {
                 Column {
                     OutlinedTextField(
@@ -237,7 +244,7 @@ fun PlateLoadedCableForm(
                                 newPlateWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (KG)") },
+                        label = { Text(stringResource(R.string.equipment_weight_kg_label)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -249,13 +256,13 @@ fun PlateLoadedCableForm(
                                 newPlateThicknessState.value = it
                             }
                         },
-                        label = { Text("Thickness (mm)") },
+                        label = { Text(stringResource(R.string.equipment_thickness_mm)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
-            confirmText = "Add",
+            confirmText = stringResource(R.string.equipment_add),
             onConfirm = {
                 val weight = newPlateWeightState.value.toDoubleOrNull()
                 val thickness = newPlateThicknessState.value.toDoubleOrNull()
@@ -268,7 +275,7 @@ fun PlateLoadedCableForm(
             },
             confirmEnabled = newPlateWeightState.value.isNotEmpty() &&
                     newPlateThicknessState.value.isNotEmpty(),
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.equipment_cancel),
             onDismissButton = { showAvailablePlateDialog.value = false }
         )
     }

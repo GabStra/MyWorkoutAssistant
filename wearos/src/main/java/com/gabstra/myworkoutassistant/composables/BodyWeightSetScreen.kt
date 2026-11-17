@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Red
@@ -223,9 +225,7 @@ fun BodyWeightSetScreen(
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle = remember(typography) {
-        typography.numeralSmall
-            .compactExerciseSetValueStyle()
-            .copy(fontWeight = FontWeight.Medium)
+        typography.numeralSmall.copy(fontWeight = FontWeight.Medium)
     }
 
     LaunchedEffect(currentSetData) {
@@ -300,6 +300,8 @@ fun BodyWeightSetScreen(
     fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
         val repsText = "${currentSetData.actualReps}"
         val repsDeltaText = historicalSetDifference.repsText
+        val focusRepsLabel = stringResource(R.string.set_action_focus_reps)
+        val editRepsLabel = stringResource(R.string.set_action_edit_reps)
         fun toggleRepsEditMode() {
             if (forceStopEditMode) return
             if (shouldLockCalibrationEdits) return
@@ -339,18 +341,18 @@ fun BodyWeightSetScreen(
                     contentDescription = buildString {
                         append("${SetValueSemantics.RepsValueDescription}: $repsText")
                         if (repsDeltaText != null) {
-                            append(", delta $repsDeltaText")
+                            append(context.getString(R.string.set_delta_suffix, repsDeltaText))
                         }
                     }
                     role = Role.Button
                     onClick(
-                        label = "Focus reps"
+                        label = focusRepsLabel
                     ) {
                         updateInteractionTime()
                         true
                     }
                     onLongClick(
-                        label = "Edit reps"
+                        label = editRepsLabel
                     ) {
                         toggleRepsEditMode()
                         true
@@ -358,8 +360,8 @@ fun BodyWeightSetScreen(
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            ScalableText(
-                modifier = Modifier.height(32.dp),
+            FadingText(
+                modifier = Modifier,
                 text = repsText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -373,9 +375,11 @@ fun BodyWeightSetScreen(
         val weightText = if (currentSetData.additionalWeight != 0.0) {
             equipment!!.formatWeight(currentSetData.additionalWeight)
         } else {
-            "BW"
+            stringResource(R.string.set_body_weight_abbrev)
         }
         val weightDeltaText = historicalSetDifference.weightText
+        val focusWeightLabel = stringResource(R.string.set_action_focus_weight)
+        val editWeightLabel = stringResource(R.string.set_action_edit_weight)
         fun toggleWeightEditMode() {
             if (forceStopEditMode) return
             if (shouldLockCalibrationEdits) return
@@ -415,18 +419,18 @@ fun BodyWeightSetScreen(
                     contentDescription = buildString {
                         append("${SetValueSemantics.WeightValueDescription}: $weightText")
                         if (weightDeltaText != null) {
-                            append(", delta $weightDeltaText")
+                            append(context.getString(R.string.set_delta_suffix, weightDeltaText))
                         }
                     }
                     role = Role.Button
                     onClick(
-                        label = "Focus weight"
+                        label = focusWeightLabel
                     ) {
                         updateInteractionTime()
                         true
                     }
                     onLongClick(
-                        label = "Edit weight"
+                        label = editWeightLabel
                     ) {
                         toggleWeightEditMode()
                         true
@@ -434,8 +438,8 @@ fun BodyWeightSetScreen(
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            ScalableText(
-                modifier = Modifier.height(32.dp),
+            FadingText(
+                modifier = Modifier,
                 text = weightText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -456,7 +460,7 @@ fun BodyWeightSetScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(
@@ -464,11 +468,11 @@ fun BodyWeightSetScreen(
                     horizontalArrangement = Arrangement.spacedBy(15.dp,Alignment.CenterHorizontally)
                 ) {
                     if(shouldShowWeights) {
-                        SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
+                        SetValueSection(label = stringResource(R.string.set_label_weight_kg), headerStyle = headerStyle, modifier = Modifier.weight(1f, fill = false)) {
                             WeightRow(style = itemStyle)
                         }
                     }
-                    SetValueSection(label = "REPS", headerStyle = headerStyle) {
+                    SetValueSection(label = stringResource(R.string.set_label_reps), headerStyle = headerStyle, modifier = Modifier.weight(1f, fill = false)) {
                         RepsRow(style = itemStyle)
                     }
                 }
@@ -516,13 +520,13 @@ fun BodyWeightSetScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Warning,
-                                contentDescription = "Warning",
+                                contentDescription = stringResource(R.string.set_cd_warning),
                                 tint = if (showRed) Red else MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Plateau Detected",
+                                text = stringResource(R.string.set_plateau_detected),
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
@@ -532,7 +536,7 @@ fun BodyWeightSetScreen(
                             Spacer(modifier = Modifier.width(5.dp))
                             Icon(
                                 imageVector = Icons.Filled.Info,
-                                contentDescription = "Info",
+                                contentDescription = stringResource(R.string.set_cd_info),
                                 tint = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -596,12 +600,12 @@ fun BodyWeightSetScreen(
                             horizontalArrangement = Arrangement.spacedBy(15.dp, Alignment.CenterHorizontally)
                         ) {
                             if (isWeightInEditMode) {
-                                SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
+                                SetValueSection(label = stringResource(R.string.set_label_weight_kg), headerStyle = headerStyle, modifier = Modifier.weight(1f, fill = false)) {
                                     WeightRow(style = itemStyle)
                                 }
                             }
                             if (isRepsInEditMode) {
-                                SetValueSection(label = "REPS", headerStyle = headerStyle) {
+                                SetValueSection(label = stringResource(R.string.set_label_reps), headerStyle = headerStyle, modifier = Modifier.weight(1f, fill = false)) {
                                     RepsRow(style = itemStyle)
                                 }
                             }

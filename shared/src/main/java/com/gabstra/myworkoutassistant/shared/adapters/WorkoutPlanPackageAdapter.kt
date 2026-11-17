@@ -52,6 +52,9 @@ class WorkoutPlanPackageAdapter : JsonDeserializer<WorkoutPlanPackage> {
 
         return WorkoutPlanPackage(
             name = name,
+            suggestNextPrescription = jsonObject.get("suggestNextPrescription")
+                ?.takeUnless { it.isJsonNull }
+                ?.asBoolean ?: true,
             schemaVersion = if (schemaVersion < 1) 1 else schemaVersion,
             exerciseDefinitions = exerciseDefinitions,
             workouts = workouts,

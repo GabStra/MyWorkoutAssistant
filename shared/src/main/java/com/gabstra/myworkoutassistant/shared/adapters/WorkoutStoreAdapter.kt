@@ -34,9 +34,18 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         val workoutsType = object : TypeToken<List<Workout>>() {}.type
         val equipmentsType = object : TypeToken<List<WeightLoadedEquipment>>() {}.type
         val accessoryEquipmentsType = object : TypeToken<List<AccessoryEquipment>>() {}.type
-        val workoutPlansType = object : TypeToken<List<WorkoutPlan>>() {}.type
+        val workoutPlans = jsonObject.get("workoutPlans")?.let { element ->
+            if (element.isJsonNull) emptyList() else element.asJsonArray.mapNotNull { planElement ->
+                if (planElement.isJsonNull) null else {
+                    val plan = context.deserialize<WorkoutPlan>(planElement, WorkoutPlan::class.java)
+                    if (planElement.asJsonObject.has("suggestNextPrescription")) plan
+                    else plan.copy(suggestNextPrescription = true)
+                }
+            }
+        } ?: emptyList()
         val weeklyProgressOverridesType = object : TypeToken<List<WeeklyProgressOverride>>() {}.type
         val externalHeartRateConfigsType = object : TypeToken<List<ExternalHeartRateConfig>>() {}.type
+        val visibleWorkoutPlanIdsType = object : TypeToken<List<java.util.UUID>>() {}.type
         val exerciseDefinitionsType = object : TypeToken<List<ExerciseDefinition>>() {}.type
         
         // Safely get list fields, defaulting to empty lists if null or missing
@@ -52,10 +61,6 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             if (it.isJsonNull) emptyList<AccessoryEquipment>() else context.deserialize(it, accessoryEquipmentsType)
         } ?: emptyList()
         
-        val workoutPlans = jsonObject.get("workoutPlans")?.let {
-            if (it.isJsonNull) emptyList<WorkoutPlan>() else context.deserialize(it, workoutPlansType)
-        } ?: emptyList()
-
         val weeklyProgressOverrides = jsonObject.get("weeklyProgressOverrides")?.let {
             if (it.isJsonNull) {
                 emptyList<WeeklyProgressOverride>()
@@ -128,6 +133,9 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         val estimatedVo2MaxMlKgMin = jsonObject.get("estimatedVo2MaxMlKgMin")?.takeUnless { it.isJsonNull }?.asDouble
         val vo2MaxSource = jsonObject.get("vo2MaxSource")?.takeUnless { it.isJsonNull }?.asString
         val vo2MaxEstimatedAtEpochDay = jsonObject.get("vo2MaxEstimatedAtEpochDay")?.takeUnless { it.isJsonNull }?.asLong
+        val visibleWorkoutPlanIds: List<java.util.UUID>? = jsonObject.get("visibleWorkoutPlanIds")?.let {
+            if (it.isJsonNull) null else context.deserialize(it, visibleWorkoutPlanIdsType)
+        }
 
         return WorkoutStore(
             schemaVersion = schemaVersion,
@@ -150,6 +158,7 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             estimatedVo2MaxMlKgMin = estimatedVo2MaxMlKgMin,
             vo2MaxSource = vo2MaxSource,
             vo2MaxEstimatedAtEpochDay = vo2MaxEstimatedAtEpochDay,
+            visibleWorkoutPlanIds = visibleWorkoutPlanIds,
             distanceUnit = jsonObject.get("distanceUnit")?.takeUnless { it.isJsonNull }?.asString
                 ?.let { runCatching { DistanceUnit.valueOf(it) }.getOrNull() }
                 ?: defaultDistanceUnit()

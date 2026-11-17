@@ -22,7 +22,7 @@ class MinimalPhoneToWearWorkoutStoreSyncVerificationE2ETest {
     @Test
     fun phoneSync_sendsMinimalWorkoutDefinitionToWear() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val repository = WorkoutStoreRepository(context.filesDir)
+        val repository = WorkoutStoreRepository.forActiveProfile(context)
         val deadline = System.currentTimeMillis() + resolvedSyncTimeoutMs()
         var exercise: Exercise? = null
 

@@ -37,7 +37,17 @@ fun NavigationBreadcrumbs(
     }
     if (stack.size <= 1) return
     val store = appViewModel.workoutStore
-    val items = remember(stack, store) { buildBreadcrumbItems(stack, store).dropLast(1) }
+    val showCurrentRecurringPath = when (currentScreen) {
+        is ScreenData.SessionPrescriptions -> true
+        is ScreenData.WorkoutDetail -> store.workouts
+            .firstOrNull { it.id == currentScreen.workoutId }
+            ?.recurringSessionId != null
+        else -> false
+    }
+    val items = remember(stack, store, showCurrentRecurringPath) {
+        val breadcrumbs = buildBreadcrumbItems(stack, store)
+        if (showCurrentRecurringPath) breadcrumbs else breadcrumbs.dropLast(1)
+    }
     if (items.isEmpty()) return
     val scrollState = rememberScrollState()
 
@@ -69,7 +79,11 @@ private fun buildBreadcrumbItems(
     var insertedPlanId: UUID? = null
     stack.forEach { screen ->
         val workoutId = screen.workoutIdOrNull()
-        val plan = if (screen is ScreenData.NewWorkout) {
+        val plan = if (screen is ScreenData.SessionPrescriptions) {
+            store.workouts.firstOrNull {
+                it.isActive && it.recurringSessionId == screen.sessionId
+            }?.workoutPlanId?.let { planId -> store.workoutPlans.firstOrNull { it.id == planId } }
+        } else if (screen is ScreenData.NewWorkout) {
             screen.workoutPlanId?.let { planId ->
                 store.workoutPlans.firstOrNull { it.id == planId }
             }
@@ -120,12 +134,24 @@ private fun ScreenData.breadcrumbLabel(
 ): String = when (this) {
     is ScreenData.Workouts -> listOf("Status", "Workouts", "Exercise Library", "Alarms", "Gear")
         .getOrElse(selectedTabIndex) { "Home" }
+    is ScreenData.Plans -> "Plans"
+    is ScreenData.SessionPrescriptions -> store.workouts.firstOrNull {
+        it.isActive && it.recurringSessionId == sessionId
+    }?.name ?: "Recurring session"
     is ScreenData.Settings -> "Settings"
     is ScreenData.ErrorLogs -> "Error logs"
     is ScreenData.NewWorkout -> "New workout"
     is ScreenData.Workout -> store.workouts.firstOrNull { it.id == workoutId }?.name ?: "Workout"
     is ScreenData.EditWorkout -> "Edit workout"
-    is ScreenData.WorkoutDetail -> store.workouts.firstOrNull { it.id == workoutId }?.name ?: "Workout"
+    is ScreenData.WorkoutDetail -> store.workouts.firstOrNull { it.id == workoutId }?.let { workout ->
+        if (workout.recurringSessionId != null) {
+            workout.prescriptionLabel
+                ?: workout.prescriptionOrdinal?.let { "Prescription $it" }
+                ?: "Prescription"
+        } else {
+            workout.name
+        }
+    } ?: "Workout"
     is ScreenData.WorkoutHistory -> "History"
     is ScreenData.ExternalWorkoutSession -> "External session"
     is ScreenData.SensorSessions -> "Sensor sessions"

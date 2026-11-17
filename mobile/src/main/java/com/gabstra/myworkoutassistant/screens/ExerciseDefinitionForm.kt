@@ -42,10 +42,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
@@ -102,22 +104,27 @@ fun ExerciseDefinitionForm(
     var musclesExpanded by rememberSaveable { mutableStateOf(false) }
     var movementExpanded by rememberSaveable { mutableStateOf(false) }
 
+    val noneLabel = stringResource(R.string.common_none)
     val typeItems = remember {
         ExerciseType.entries.map {
             StandardFilterDropdownItem(it, it.name.replace('_', ' ').lowercase())
         }
     }
     val equipmentItems = remember(equipments, exerciseType) {
-        listOf(StandardFilterDropdownItem<UUID?>(null, "None")) +
+        listOf(StandardFilterDropdownItem<UUID?>(null, noneLabel)) +
             equipments.filter { it.isCompatibleWith(exerciseType) }
                 .map { StandardFilterDropdownItem<UUID?>(it.id, it.name) }
     }
+    val notSetLabel = stringResource(R.string.common_not_set)
+    val heavyCompoundLabel = stringResource(R.string.exercise_category_heavy_compound)
+    val moderateCompoundLabel = stringResource(R.string.exercise_category_moderate_compound)
+    val isolationLabel = stringResource(R.string.exercise_category_isolation)
     val categoryItems: List<StandardFilterDropdownItem<ExerciseCategory?>> = remember {
         listOf(
-            StandardFilterDropdownItem<ExerciseCategory?>(null, "Not set"),
-            StandardFilterDropdownItem<ExerciseCategory?>(ExerciseCategory.HEAVY_COMPOUND, "Heavy compound"),
-            StandardFilterDropdownItem<ExerciseCategory?>(ExerciseCategory.MODERATE_COMPOUND, "Moderate compound"),
-            StandardFilterDropdownItem<ExerciseCategory?>(ExerciseCategory.ISOLATION, "Isolation"),
+            StandardFilterDropdownItem<ExerciseCategory?>(null, notSetLabel),
+            StandardFilterDropdownItem<ExerciseCategory?>(ExerciseCategory.HEAVY_COMPOUND, heavyCompoundLabel),
+            StandardFilterDropdownItem<ExerciseCategory?>(ExerciseCategory.MODERATE_COMPOUND, moderateCompoundLabel),
+            StandardFilterDropdownItem<ExerciseCategory?>(ExerciseCategory.ISOLATION, isolationLabel),
         )
     }
     Scaffold(
@@ -127,7 +134,11 @@ fun ExerciseDefinitionForm(
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {
                         Text(
-                            text = if (definition == null) "Create exercise" else "Edit exercise",
+                            text = if (definition == null) {
+                                stringResource(R.string.exercise_form_create_title)
+                            } else {
+                                stringResource(R.string.exercise_form_edit_title)
+                            },
                             modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.titleLarge,
@@ -135,7 +146,7 @@ fun ExerciseDefinitionForm(
                     },
                     navigationIcon = {
                         IconButton(onClick = onCancel) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                         }
                     },
                     actions = {
@@ -157,7 +168,7 @@ fun ExerciseDefinitionForm(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = Spacing.md),
         ) {
-            FormSectionTitle("Essentials")
+            FormSectionTitle(stringResource(R.string.exercise_essentials))
             StyledCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(Spacing.md),
@@ -166,12 +177,12 @@ fun ExerciseDefinitionForm(
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Exercise name") },
+                        label = { Text(stringResource(R.string.exercise_name_label)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     StandardFilterDropdown<ExerciseType>(
-                        label = "Exercise type",
+                        label = stringResource(R.string.exercise_type_label),
                         selectedText = exerciseType.name.replace('_', ' ').lowercase(),
                         items = typeItems,
                         onItemSelected = {
@@ -187,7 +198,7 @@ fun ExerciseDefinitionForm(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     StandardFilterDropdown<ExerciseCategory?>(
-                        label = "Exercise category",
+                        label = stringResource(R.string.exercise_exercise_category),
                         selectedText = categoryItems.first { it.value == exerciseCategory }.label,
                         items = categoryItems,
                         onItemSelected = { exerciseCategory = it },
@@ -203,14 +214,14 @@ fun ExerciseDefinitionForm(
                                     bodyWeightPercentage = input
                                 }
                             },
-                            label = { Text("Bodyweight load (%)") },
+                            label = { Text(stringResource(R.string.exercise_bodyweight_load_label)) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     if (isReferenced) {
                         ContentSubtitle(
-                            "Type and default equipment cannot change while this exercise is used in a workout.",
+                            stringResource(R.string.exercise_referenced_hint),
                         )
                     }
                 }
@@ -225,16 +236,20 @@ fun ExerciseDefinitionForm(
             ) {
                 Spacer(Modifier.height(Spacing.md))
                 val selectedEquipmentName = equipmentItems
-                    .firstOrNull { it.value == equipmentId }?.label ?: "None"
+                    .firstOrNull { it.value == equipmentId }?.label ?: noneLabel
                 CollapsibleSection(
-                    title = "Equipment",
-                    summary = "Equipment: $selectedEquipmentName\nAccessories: ${selectedAccessoryIds.size}",
+                    title = stringResource(R.string.exercise_equipment),
+                    summary = stringResource(
+                        R.string.exercise_equipment_summary,
+                        selectedEquipmentName,
+                        selectedAccessoryIds.size
+                    ),
                     expanded = equipmentExpanded,
                     onToggle = { equipmentExpanded = !equipmentExpanded },
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                         StandardFilterDropdown(
-                            label = "Default equipment",
+                            label = stringResource(R.string.exercise_default_equipment),
                             selectedText = selectedEquipmentName,
                             items = equipmentItems,
                             onItemSelected = { equipmentId = it },
@@ -243,9 +258,9 @@ fun ExerciseDefinitionForm(
                             enabled = !isReferenced,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        Text("Required accessories", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.exercise_required_accessories), style = MaterialTheme.typography.titleMedium)
                         if (accessories.isEmpty()) {
-                            ContentSubtitle("No accessories are available in the Gear section.")
+                            ContentSubtitle(stringResource(R.string.exercise_no_accessories_gear))
                         } else {
                             accessories.forEach { accessory ->
                                 Row(
@@ -276,15 +291,19 @@ fun ExerciseDefinitionForm(
 
             Spacer(Modifier.height(Spacing.md))
             CollapsibleSection(
-                title = "Target muscles",
-                summary = "Primary: ${selectedMuscles.size}\nSecondary: ${selectedSecondaryMuscles.size}",
+                title = stringResource(R.string.exercise_target_muscles),
+                summary = stringResource(
+                    R.string.exercise_muscles_summary_short,
+                    selectedMuscles.size,
+                    selectedSecondaryMuscles.size
+                ),
                 expanded = musclesExpanded,
                 onToggle = { musclesExpanded = !musclesExpanded },
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         AppPrimaryOutlinedButton(
-                            text = "Reset zoom & center",
+                            text = stringResource(R.string.exercise_reset_zoom),
                             onClick = { resetMuscleMapTrigger++ },
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -308,23 +327,23 @@ fun ExerciseDefinitionForm(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                     ) {
                         if (!isSelectingSecondary) AppPrimaryButton(
-                            text = "Primary",
+                            text = stringResource(R.string.exercise_primary),
                             onClick = { isSelectingSecondary = false },
                             modifier = Modifier.weight(1f),
                             textAlign = TextAlign.Center,
                         ) else AppSecondaryButton(
-                            text = "Primary",
+                            text = stringResource(R.string.exercise_primary),
                             onClick = { isSelectingSecondary = false },
                             modifier = Modifier.weight(1f),
                             textAlign = TextAlign.Center,
                         )
                         if (isSelectingSecondary) AppPrimaryButton(
-                            text = "Secondary",
+                            text = stringResource(R.string.exercise_secondary),
                             onClick = { isSelectingSecondary = true },
                             modifier = Modifier.weight(1f),
                             textAlign = TextAlign.Center,
                         ) else AppSecondaryButton(
-                            text = "Secondary",
+                            text = stringResource(R.string.exercise_secondary),
                             onClick = { isSelectingSecondary = true },
                             modifier = Modifier.weight(1f),
                             textAlign = TextAlign.Center,
@@ -335,9 +354,9 @@ fun ExerciseDefinitionForm(
 
             Spacer(Modifier.height(Spacing.md))
             CollapsibleSection(
-                title = "Movement",
-                summary = definition?.movementRef?.movementId?.let { "Movement: $it" }
-                    ?: "No movement in exercise library",
+                title = stringResource(R.string.exercise_movement),
+                summary = definition?.movementRef?.movementId?.let { stringResource(R.string.exercise_movement_summary_with_id, it) }
+                    ?: stringResource(R.string.exercise_no_movement),
                 expanded = movementExpanded,
                 onToggle = { movementExpanded = !movementExpanded },
             ) {
@@ -353,12 +372,12 @@ fun ExerciseDefinitionForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     onClick = onCancel,
                     modifier = Modifier.weight(1f),
                 )
                 AppPrimaryButton(
-                    text = "Save",
+                    text = stringResource(R.string.common_save),
                     enabled = name.isNotBlank(),
                     modifier = Modifier.weight(1f),
                     onClick = {

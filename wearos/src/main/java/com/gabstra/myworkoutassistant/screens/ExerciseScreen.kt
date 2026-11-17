@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -30,7 +29,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
@@ -46,13 +44,14 @@ import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
-import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.MusclesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.NotesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.PlatesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.ProgressionComparisonPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.PREVIEW_RUN_ROUTE
+import com.gabstra.myworkoutassistant.composables.workout.pages.RunningMapPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.TitledLinesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.TitledLinesSection
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
@@ -62,6 +61,7 @@ import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
@@ -72,6 +72,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
 import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
+import com.gabstra.myworkoutassistant.shared.running.RunningRoutePoint
 import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -90,7 +91,10 @@ import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.preview.createPreviewWorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.services.RunningTrackingService
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.lang.reflect.Field
 import java.time.LocalDateTime
@@ -103,6 +107,7 @@ private enum class ExerciseHorizontalPage {
     BUTTONS,
     PLATES,
     EXERCISE_DETAIL,
+    RUNNING_MAP,
     ANIMATION,
     INFO,
     MUSCLES,
@@ -122,6 +127,7 @@ fun ExerciseScreen(
     navController: NavController,
     onBeforeGoHome: (() -> Unit)? = null,
     initialPageOverride: Int? = null,
+    previewRunRoute: List<RunningRoutePoint>? = null,
 ) {
     val isPreviewInspection = LocalInspectionMode.current
     var isEditModeEnabled by remember { mutableStateOf(false) }
@@ -188,8 +194,11 @@ fun ExerciseScreen(
         !exercise.muscleGroups.isNullOrEmpty() || !exercise.secondaryMuscleGroups.isNullOrEmpty()
     }
     val showProgressionComparisonPage = remember(exercise) {
+        val hasResolvedSetHistory = viewModel.getAllExerciseWorkoutStates(exercise.id).any {
+            !it.hasNoHistory && it.historicalSetData != null
+        }
         !exercise.requiresLoadCalibration &&
-            viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
+            (viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) || hasResolvedSetHistory) &&
             viewModel.lastSessionWorkout != null &&
             ((viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Exercise>() +
                 viewModel.lastSessionWorkout!!.workoutComponents
@@ -197,18 +206,30 @@ fun ExerciseScreen(
                     .flatMap { it.exercises }).any { it.id == exercise.id })
     }
 
+    // Only flips when a tracked route appears or ends, so the live tracker does not
+    // recompose this screen every second. stop() keeps the route, so gate on running too.
+    val runRoutePresent by remember {
+        RunningTrackingService.state
+            .map { (it.running || it.paused) && it.route.isNotEmpty() }
+            .distinctUntilChanged()
+    }.collectAsState(initial = false)
+    val showRunningMapPage = exercise.runningPrescription != null &&
+        (runRoutePresent || previewRunRoute != null)
+
     val pageTypes = remember(
         showPlatesPage,
         showMovementPage,
         hasMuscleInfo,
         showProgressionComparisonPage,
-        showNotesPage
+        showNotesPage,
+        showRunningMapPage,
     ) {
         mutableListOf<ExerciseHorizontalPage>().apply {
             add(ExerciseHorizontalPage.BUTTONS)
             add(ExerciseHorizontalPage.INFO)
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
+            if (showRunningMapPage) add(ExerciseHorizontalPage.RUNNING_MAP)
             if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
             if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
             //if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
@@ -332,7 +353,7 @@ fun ExerciseScreen(
                 text = exercise.name,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 45.dp),
+                    .padding(horizontal = 50.dp),
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 textAlign = TextAlign.Center
             )
@@ -345,16 +366,15 @@ fun ExerciseScreen(
             ) {
                 exerciseNameComposable()
                 activeExerciseContext?.let { context ->
-                    ScalableText(
+                    Text(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 30.dp)
-                            .height(16.dp),
+                            .padding(horizontal = 30.dp),
                         text = context,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.tertiaryContent,
                         textAlign = TextAlign.Center,
-                        minTextSize = 8.sp,
+                        softWrap = true,
                     )
                 }
             }
@@ -386,7 +406,11 @@ fun ExerciseScreen(
                 val pageModifier = Modifier
                     .fillMaxSize()
                     .padding(WorkoutPagerPageSafeAreaPadding)
-                    .clipToBounds()
+                    // Circular clip keeps content from rendering over the indicator ring:
+                    // arcs occupy ~10-14dp inset, mask leaves a 2dp gap inside them.
+                    // Edge fades land on the node boundary = the scroll clip line; the bottom
+                    // band is wider so dark blocks (route map) visibly dissolve instead of cutting.
+                    .circleMask(radiusOffset = 16.dp, fadeWidth = 5.dp)
                 when (pageTypes[pageIndex]) {
                     ExerciseHorizontalPage.BUTTONS -> {
                         ControlsPage(
@@ -429,6 +453,17 @@ fun ExerciseScreen(
                                     .takeUnless { state.isWarmupSet },
                                 onEditModeEnabled = { isEditModeEnabled = true },
                                 onEditModeDisabled = { isEditModeEnabled = false }
+                            )
+                        }
+                    }
+
+                    ExerciseHorizontalPage.RUNNING_MAP -> {
+                        // Subscribed here so only this page recomposes as the route grows.
+                        val runningTracker by RunningTrackingService.state.collectAsState()
+                        Box(modifier = pageModifier) {
+                            RunningMapPage(
+                                route = previewRunRoute ?: runningTracker.route,
+                                modifier = Modifier.fillMaxSize(),
                             )
                         }
                     }
@@ -673,6 +708,7 @@ internal enum class ExercisePreviewPage {
     INFO,
     PLATES,
     DETAIL,
+    RUNNING_MAP,
     ANIMATION,
     EXERCISES
 }
@@ -697,6 +733,8 @@ internal data class ExercisePreviewScenario(
     val openPageIndex: Int? = null,
     val timedIsRunning: Boolean = false,
     val enduranceOverLimit: Boolean = false,
+    /** Preview-only route; stands in for the live tracker so the map page can be inspected. */
+    val previewRunRoute: List<RunningRoutePoint>? = null,
 )
 
 internal data class ExercisePreviewFixture(
@@ -718,6 +756,9 @@ private fun ExercisePreviewScenario.resolveOpenPageIndex(): Int? {
         pages.add(ExercisePreviewPage.PLATES)
     }
     pages.add(ExercisePreviewPage.DETAIL)
+    if (previewRunRoute != null) {
+        pages.add(ExercisePreviewPage.RUNNING_MAP)
+    }
     pages.add(ExercisePreviewPage.EXERCISES)
     if (includeMovementPage) {
         pages.add(ExercisePreviewPage.ANIMATION)
@@ -1121,7 +1162,8 @@ private fun ExerciseScreenPreviewScenarioContent(
                     )
                 },
                 navController = navController,
-                initialPageOverride = scenario.resolveOpenPageIndex()
+                initialPageOverride = scenario.resolveOpenPageIndex(),
+                previewRunRoute = scenario.previewRunRoute,
             )
         }
     }
@@ -1172,6 +1214,24 @@ private fun ExerciseScreenPreviewRunningSet() {
             name = "running_set",
             setType = ExercisePreviewSetType.RUNNING,
             openPage = ExercisePreviewPage.DETAIL,
+        )
+    )
+}
+
+@Preview(
+    name = "Running Set Map Page",
+    group = "ExerciseScreen/States",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun ExerciseScreenPreviewRunningMap() {
+    ExerciseScreenPreviewScenario(
+        ExercisePreviewScenario(
+            name = "running_map",
+            setType = ExercisePreviewSetType.RUNNING,
+            openPage = ExercisePreviewPage.RUNNING_MAP,
+            previewRunRoute = PREVIEW_RUN_ROUTE,
         )
     )
 }

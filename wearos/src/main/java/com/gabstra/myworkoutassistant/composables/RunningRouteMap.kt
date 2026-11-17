@@ -6,7 +6,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,8 +28,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.running.formatRunningMapScaleDistance
 import com.gabstra.myworkoutassistant.shared.running.niceRunningMapScaleDistance
 import com.gabstra.myworkoutassistant.shared.running.RunningRoutePoint
@@ -54,11 +55,11 @@ internal fun WearRunningRouteMap(
     var zoom by remember { mutableFloatStateOf(MIN_ZOOM) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
+    val routeMapDescription = stringResource(R.string.run_cd_route_map, route.size)
 
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(88.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(backgroundColor)
             .onSizeChanged { mapSize = it }
@@ -72,7 +73,7 @@ internal fun WearRunningRouteMap(
                 }
             }
             .semantics {
-                contentDescription = "Zoomable live GPS route map, ${route.size} route points"
+                contentDescription = routeMapDescription
             },
     ) {
         if (route.isEmpty() || mapSize.width <= 0 || mapSize.height <= 0) return@Canvas

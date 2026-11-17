@@ -374,16 +374,16 @@ private fun appendExerciseDetails(
         markdown.append("  - **Sets**:\n")
         var workSetNumber = 0
         val intraSetRestInSeconds = exercise.intraSetRestInSeconds
-        val hasIntraSetRest = intraSetRestInSeconds != null && intraSetRestInSeconds > 0
+        val hasUnilateralExecution = exercise.hasPairedSideExecution
         
         exercise.sets.forEachIndexed { index, set ->
             if (set !is RestSet) {
                 workSetNumber++
                 val setStr = formatSetInline(set, equipment)
                 
-                if (hasIntraSetRest) {
+                if (hasUnilateralExecution) {
                     markdown.append("    Set $workSetNumber (Side A): $setStr\n")
-                    markdown.append("\tRest: ${exercise.intraSetRestInSeconds} seconds\n")
+                    intraSetRestInSeconds?.takeIf { it > 0 }?.let { markdown.append("\tRest: $it seconds\n") }
                     markdown.append("    Set $workSetNumber (Side B): $setStr\n")
                 } else {
                     markdown.append("    Set $workSetNumber: $setStr\n")
@@ -441,11 +441,11 @@ private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, i
                 }
                 val setStr = formatSetInline(set, equipment)
                 val intraSetRestInSeconds = exercise.intraSetRestInSeconds
-                val hasIntraSetRest = intraSetRestInSeconds != null && intraSetRestInSeconds > 0
+                val hasUnilateralExecution = exercise.hasPairedSideExecution
                 
-                if (hasIntraSetRest) {
+                if (hasUnilateralExecution) {
                     markdown.append("    ${exercise.name} (Side A): $setStr\n")
-                    markdown.append("\tRest: ${exercise.intraSetRestInSeconds} seconds\n")
+                    intraSetRestInSeconds?.takeIf { it > 0 }?.let { markdown.append("\tRest: $it seconds\n") }
                     markdown.append("    ${exercise.name} (Side B): $setStr\n")
                 } else {
                     markdown.append("    ${exercise.name}: $setStr\n")

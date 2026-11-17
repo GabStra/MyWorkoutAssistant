@@ -62,7 +62,7 @@ class MinimalWorkoutSyncVerificationTest {
         assertTrue(setHistories[3].setData is RestSetData)
         assertTrue(setHistories[4].setData is WeightSetData)
 
-        val workoutStore = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
+        val workoutStore = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull {
             it.id == MinimalCrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID &&
                 it.globalId == MinimalCrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_GLOBAL_ID

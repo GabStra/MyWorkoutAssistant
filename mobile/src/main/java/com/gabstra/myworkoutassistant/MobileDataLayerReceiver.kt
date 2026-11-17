@@ -74,6 +74,7 @@ internal class MobileDataLayerReceiver(
 
             try {
                 sendWorkoutsToHealthConnect(
+                    context = activity,
                     healthConnectClient = healthConnectClient,
                     workouts = latestWorkoutStore.workouts,
                     workoutHistoryDao = workoutHistoryDao,

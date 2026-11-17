@@ -29,7 +29,7 @@ class ResumePhoneSyncPreparationTest {
         db.exerciseInfoDao().deleteAll()
         db.exerciseSessionProgressionDao().deleteAll()
 
-        WorkoutStoreRepository(context.filesDir)
+        WorkoutStoreRepository.forActiveProfile(context)
             .saveWorkoutStore(ResumeCrossDevicePhoneWorkoutStoreFixture.createWorkoutStore())
         db.workoutHistoryDao().insert(ResumeCrossDevicePhoneWorkoutStoreFixture.createIncompleteHistory())
         db.setHistoryDao().insertAll(

@@ -14,8 +14,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 
 object TimeConverter {
     /**
@@ -81,7 +83,7 @@ fun CustomTimePicker(
                     updateTime()
                 }
             },
-            label = "Hour",
+            label = stringResource(R.string.picker_hour),
             modifier = Modifier.weight(1f)
         )
         Text(":", style = MaterialTheme.typography.headlineMedium)
@@ -94,7 +96,7 @@ fun CustomTimePicker(
                     updateTime()
                 }
             },
-            label = "Minute",
+            label = stringResource(R.string.picker_minute),
             modifier = Modifier.weight(1f)
         )
         Text(":", style = MaterialTheme.typography.headlineMedium)
@@ -107,7 +109,7 @@ fun CustomTimePicker(
                     updateTime()
                 }
             },
-            label = "Second",
+            label = stringResource(R.string.picker_second),
             modifier = Modifier.weight(1f)
         )
     }

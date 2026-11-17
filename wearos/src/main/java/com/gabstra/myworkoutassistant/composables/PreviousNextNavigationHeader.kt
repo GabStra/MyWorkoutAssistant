@@ -9,10 +9,12 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButtonDefaults
+import com.gabstra.myworkoutassistant.R
 
 @Composable
 fun PreviousNextNavigationHeader(
@@ -48,7 +50,7 @@ fun PreviousNextNavigationHeader(
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                contentDescription = "Previous",
+                contentDescription = stringResource(R.string.page_nav_cd_previous),
                 modifier = Modifier.size(iconSize),
             )
         }
@@ -65,7 +67,7 @@ fun PreviousNextNavigationHeader(
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = "Next",
+                contentDescription = stringResource(R.string.page_nav_cd_next),
                 modifier = Modifier.size(iconSize),
             )
         }

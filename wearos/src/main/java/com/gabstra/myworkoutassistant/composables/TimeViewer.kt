@@ -11,7 +11,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
-import androidx.wear.compose.material3.Text
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -67,10 +66,9 @@ fun TimeViewer(
         }
     }
 
-    Text(
+    TightNumericText(
         modifier = modifier,
         text = annotatedText,
         style = style,
-        maxLines = 1
     )
 }

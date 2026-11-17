@@ -44,9 +44,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
@@ -140,7 +142,11 @@ fun SupersetForm(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = if (superset == null) "Add Superset" else "Edit Superset",
+                        text = if (superset == null) {
+                            stringResource(R.string.workout_superset_add_title)
+                        } else {
+                            stringResource(R.string.workout_superset_edit_title)
+                        },
                         color = MaterialTheme.colorScheme.onBackground
                     )
                 },
@@ -153,7 +159,7 @@ fun SupersetForm(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.workout_back_cd)
                         )
                     }
                 },
@@ -169,7 +175,7 @@ fun SupersetForm(
                                 }
                             }
                         ) {
-                            Icon(Icons.Filled.ArrowUpward, contentDescription = "Move up")
+                            Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.workout_move_up_cd))
                         }
                         IconButton(
                             enabled = selectedIndex < selectedExercises.lastIndex,
@@ -180,7 +186,7 @@ fun SupersetForm(
                                 }
                             }
                         ) {
-                            Icon(Icons.Filled.ArrowDownward, contentDescription = "Move down")
+                            Icon(Icons.Filled.ArrowDownward, contentDescription = stringResource(R.string.workout_move_down_cd))
                         }
                         IconButton(
                             enabled = selectedExercises.size > 2,
@@ -189,7 +195,7 @@ fun SupersetForm(
                                 selectedExerciseId = null
                             }
                         ) {
-                            Icon(Icons.Filled.Delete, contentDescription = "Remove exercise")
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.workout_remove_exercise_cd))
                         }
                     } else {
                         // Balance the navigation icon so the normal title remains centered.
@@ -214,7 +220,7 @@ fun SupersetForm(
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md),
         ) {
-            FormSectionTitle(text = "Superset exercises")
+            FormSectionTitle(text = stringResource(R.string.workout_superset_section_exercises))
             StyledCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(Spacing.md)
@@ -281,7 +287,7 @@ fun SupersetForm(
                                                 Icon(
                                                     modifier = Modifier.align(Alignment.CenterEnd),
                                                     imageVector = Icons.Filled.Edit,
-                                                    contentDescription = "Edit ${exercise.name}",
+                                                    contentDescription = stringResource(R.string.workout_edit_exercise_cd, exercise.name),
                                                     tint = if (isSelected) {
                                                         MaterialTheme.colorScheme.primary
                                                     } else {
@@ -299,7 +305,7 @@ fun SupersetForm(
 
                         AppPrimaryOutlinedButton(
                             modifier = Modifier.align(Alignment.CenterHorizontally),
-                            text = "Add exercise",
+                            text = stringResource(R.string.workout_superset_add_exercise),
                             onClick = {
                                 pendingExerciseIds = emptySet()
                                 showAddExerciseDialog = true
@@ -312,7 +318,7 @@ fun SupersetForm(
             if (areSetCountsMismatched) {
                 Spacer(modifier = Modifier.height(Spacing.md))
                 Text(
-                    text = "Selected exercises have different numbers of sets. The superset will use the lowest set count.",
+                    text = stringResource(R.string.workout_superset_set_count_mismatch),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.fillMaxWidth(),
@@ -322,7 +328,7 @@ fun SupersetForm(
 
             if (selectedExercises.size >= 2) {
                 Spacer(Modifier.height(Spacing.md))
-                FormSectionTitle(text = "Rest")
+                FormSectionTitle(text = stringResource(R.string.workout_superset_section_rest))
                 StyledCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.padding(Spacing.md),
@@ -331,9 +337,9 @@ fun SupersetForm(
                         val lastExerciseName = selectedExercises.last().name
                         Text(
                             if (selectedExercises.size == 2) {
-                                "After ${selectedExercises.first().name}"
+                                stringResource(R.string.workout_superset_after_exercise, selectedExercises.first().name)
                             } else {
-                                "After each exercise except $lastExerciseName"
+                                stringResource(R.string.workout_superset_after_each_except, lastExerciseName)
                             },
                             style = MaterialTheme.typography.titleMedium
                         )
@@ -344,7 +350,7 @@ fun SupersetForm(
                             onTimeChange = { h, m, s -> restBetweenExercisesHms = Triple(h, m, s) }
                         )
                         Text(
-                            "After $lastExerciseName, before next round",
+                            stringResource(R.string.workout_superset_after_last_before_round, lastExerciseName),
                             style = MaterialTheme.typography.titleMedium
                         )
                         CustomTimePicker(
@@ -357,7 +363,7 @@ fun SupersetForm(
                 }
 
                 Spacer(Modifier.height(Spacing.md))
-                FormSectionTitle(text = "Execution preview")
+                FormSectionTitle(text = stringResource(R.string.workout_superset_section_preview))
                 val previewSuperset = remember(
                     selectedExercises,
                     restBetweenExercisesHms,
@@ -396,7 +402,7 @@ fun SupersetForm(
             val exercisesWithMovements = selectedExercises.filter { it.movementRef != null }
             if (exercisesWithMovements.isNotEmpty()) {
                 Spacer(Modifier.height(Spacing.md))
-                FormSectionTitle(text = "Exercise movements")
+                FormSectionTitle(text = stringResource(R.string.workout_superset_section_movements))
                 Column {
                     exercisesWithMovements.forEach { exercise ->
                         ExerciseMovementAction(
@@ -417,7 +423,7 @@ fun SupersetForm(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.workout_cancel),
                     onClick = onCancel,
                     modifier = Modifier.weight(1f)
                 )
@@ -454,7 +460,7 @@ fun SupersetForm(
                         )
                         onSupersetUpsert(newOrUpdatedSuperset)
                     },
-                    text = "Save",
+                    text = stringResource(R.string.workout_save),
                     enabled = selectedExercises.size >= 2,
                     modifier = Modifier.weight(1f),
                 )
@@ -463,7 +469,7 @@ fun SupersetForm(
             Spacer(Modifier.height(Spacing.md))
         }
     }
-    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = stringResource(R.string.workout_superset_saving))
     }
 
     if (showAddExerciseDialog) {
@@ -472,13 +478,13 @@ fun SupersetForm(
         }
         StandardDialog(
             onDismissRequest = { showAddExerciseDialog = false },
-            title = "Add exercises",
+            title = stringResource(R.string.workout_superset_add_exercises),
             body = {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
                     if (unselectedExercises.isEmpty()) {
-                        Text("All available exercises are already in this superset.")
+                        Text(stringResource(R.string.workout_superset_all_exercises_added))
                     } else {
                         unselectedExercises.forEach { exercise ->
                             val checked = exercise.id in pendingExerciseIds
@@ -515,7 +521,7 @@ fun SupersetForm(
                     }
                 }
             },
-            confirmText = "Add",
+            confirmText = stringResource(R.string.workout_superset_add),
             confirmEnabled = pendingExerciseIds.isNotEmpty(),
             onConfirm = {
                 selectedExercises = selectedExercises + unselectedExercises.filter {
@@ -523,7 +529,7 @@ fun SupersetForm(
                 }
                 showAddExerciseDialog = false
             },
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.workout_cancel),
             onDismissButton = { showAddExerciseDialog = false },
         )
     }
@@ -601,7 +607,7 @@ private fun SupersetExecutionPreview(
     StyledCard(modifier = Modifier.fillMaxWidth()) {
         if (rows.isEmpty()) {
             Text(
-                text = "Add working sets to preview this superset.",
+                text = stringResource(R.string.workout_superset_preview_empty),
                 modifier = Modifier.padding(Spacing.md),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

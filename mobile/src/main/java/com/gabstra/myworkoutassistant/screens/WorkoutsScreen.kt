@@ -7,17 +7,30 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.platform.testTag
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import com.gabstra.myworkoutassistant.MainActivity
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +38,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material.icons.filled.Watch
@@ -39,24 +53,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
-import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
+import com.gabstra.myworkoutassistant.composables.RecurringSessionDialog
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
@@ -67,19 +86,25 @@ import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibili
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.healthconnect.external.ExternalHealthConnectSessionDatabase
+import com.gabstra.myworkoutassistant.healthconnect.external.ExternalHealthConnectSessionEntity
 import com.gabstra.myworkoutassistant.healthconnect.external.ExternalHealthConnectSessionSyncService
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import com.gabstra.myworkoutassistant.shared.RecurringWorkoutAuthoring
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
+import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.fromJSONToExerciseLibraryPackage
+import com.gabstra.myworkoutassistant.shared.normalizedForImport
 import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
 import com.gabstra.myworkoutassistant.shared.motion.requireExerciseMovementPayloads
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -127,7 +152,8 @@ fun WorkoutsScreen(
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
     onViewSensorSessions: () -> Unit,
-    selectedTabIndex: Int
+    selectedTabIndex: Int,
+    focusedRecurringSessionId: UUID? = null,
 ) {
     val animatedSyncProgress by animateFloatAsState(
         targetValue = syncProgress ?: 0f,
@@ -137,6 +163,20 @@ fun WorkoutsScreen(
     val watchReachable by WatchConnectionMonitor.watchReachable.collectAsState()
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
     val context = LocalContext.current
+    // Profile names come from a disk-backed index; resolve them once per screen entry and
+    // only when the install actually has several profiles.
+    val profilesForSwitcher = remember(context) {
+        Profiles.profiles(context).takeIf { it.size > 1 }.orEmpty()
+    }
+    val activeProfileId = remember(context) { Profiles.activeProfileId(context) }
+    val activeProfileName = remember(context) {
+        profilesForSwitcher.firstOrNull { it.id == activeProfileId }?.name
+    }
+    var profileMenuExpanded by remember { mutableStateOf(false) }
+    val workoutInProgress = remember(context) {
+        context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            .getBoolean("isWorkoutInProgress", false)
+    }
     val externalSessionDatabase = remember(context) {
         ExternalHealthConnectSessionDatabase.getDatabase(context)
     }
@@ -145,11 +185,22 @@ fun WorkoutsScreen(
         .observeAllSessions()
         .collectAsState(initial = emptyList())
 
+    // Health Connect sessions belong to the profile that owns Health Connect; other profiles
+    // must not see them in the calendar.
+    val showsExternalSessions = remember(context) { Profiles.isHealthConnectProfile(context) }
+    val visibleExternalSessions =
+        if (showsExternalSessions) externalSessions else emptyList<ExternalHealthConnectSessionEntity>()
+
     var isDaySelectionLoading by remember { mutableStateOf(false) }
     var hasInitializedSelectedDate by remember { mutableStateOf(false) }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val workoutStore by appViewModel.workoutStoreFlow.collectAsState()
+    val focusedSessionWorkout = remember(workouts, focusedRecurringSessionId) {
+        focusedRecurringSessionId?.let { sessionId ->
+            workouts.firstOrNull { it.isActive && it.recurringSessionId == sessionId }
+        }
+    }
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
     val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
@@ -162,12 +213,16 @@ fun WorkoutsScreen(
     val selectedPlanFilter by appViewModel.effectiveSelectedWorkoutPlanIdFlow.collectAsState()
 
     // Filter workouts by selected plan
-    val filteredWorkouts = remember(workouts, selectedPlanFilter) {
-        val planId = selectedPlanFilter
-        if (planId != null) {
-            appViewModel.getWorkoutsByPlan(planId)
+    val filteredWorkouts = remember(workouts, selectedPlanFilter, focusedRecurringSessionId) {
+        if (focusedRecurringSessionId != null) {
+            workouts.filter { it.isActive && it.recurringSessionId == focusedRecurringSessionId }
         } else {
-            workouts.filter { it.workoutPlanId == null }
+            val planId = selectedPlanFilter
+            if (planId != null) {
+                appViewModel.getWorkoutsByPlan(planId)
+            } else {
+                workouts.filter { it.workoutPlanId == null }
+            }
         }
     }
 
@@ -252,6 +307,9 @@ fun WorkoutsScreen(
 
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isWorkoutSelectionModeActive by remember { mutableStateOf(false) }
+    var recurringFamilyToManage by remember { mutableStateOf<List<Workout>?>(null) }
+    val selectedRecurringSessionId = selectedWorkouts.firstOrNull()?.recurringSessionId
+        ?.takeIf { sessionId -> selectedWorkouts.all { it.recurringSessionId == sessionId } }
 
     fun selectWorkoutPlan(planId: UUID) {
         selectedWorkouts = emptyList()
@@ -259,8 +317,27 @@ fun WorkoutsScreen(
         appViewModel.setSelectedWorkoutPlanId(planId)
     }
 
-    LaunchedEffect(visibleActiveWorkouts.map { it.id }) {
-        val visibleIds = visibleActiveWorkouts.mapTo(mutableSetOf()) { it.id }
+    val selectionVisibleIds = remember(visibleActiveWorkouts, activeWorkouts, focusedRecurringSessionId) {
+        if (focusedRecurringSessionId != null) {
+            activeWorkouts.asSequence()
+                .filter { it.recurringSessionId == focusedRecurringSessionId }
+                .map { it.id }
+                .toSet()
+        } else {
+            visibleActiveWorkouts.asSequence().flatMap { visible ->
+                if (visible.recurringSessionId == null) {
+                    sequenceOf(visible.id)
+                } else {
+                    activeWorkouts.asSequence()
+                        .filter { it.recurringSessionId == visible.recurringSessionId }
+                        .map { it.id }
+                }
+            }.toSet()
+        }
+    }
+
+    LaunchedEffect(selectionVisibleIds) {
+        val visibleIds = selectionVisibleIds
         val visibleSelection = selectedWorkouts.filter { it.id in visibleIds }
         if (visibleSelection.size != selectedWorkouts.size) {
             selectedWorkouts = visibleSelection
@@ -276,8 +353,6 @@ fun WorkoutsScreen(
     var selectedAccessories by remember { mutableStateOf(listOf<AccessoryEquipment>()) }
     var isAccessorySelectionModeActive by remember { mutableStateOf(false) }
 
-    var showEditPlanNameDialog by remember { mutableStateOf(false) }
-    var planToEdit by remember { mutableStateOf<WorkoutPlan?>(null) }
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
     var showCreateNewPlanDialog by remember { mutableStateOf(false) }
 
@@ -334,7 +409,7 @@ fun WorkoutsScreen(
     val selectedWeekSessionsByDate =
         remember(
             groupedWorkoutsHistories,
-            externalSessions,
+            visibleExternalSessions,
             selectedWeekStart,
             selectedWeekEnd,
             workoutById,
@@ -359,7 +434,7 @@ fun WorkoutsScreen(
                             }
                         }
                         .orEmpty()
-                    val dayExternalSessions = externalSessions
+                    val dayExternalSessions = visibleExternalSessions
                         .filter { it.date == date }
                         .map(::ExternalWorkoutStatusSessionEntry)
                     val daySessions = deduplicateWorkoutStatusSessions(dayWorkouts + dayExternalSessions)
@@ -371,17 +446,17 @@ fun WorkoutsScreen(
             }
         }
 
-    val activityDates = remember(groupedWorkoutsHistories, externalSessions) {
+    val activityDates = remember(groupedWorkoutsHistories, visibleExternalSessions) {
         buildSet {
             groupedWorkoutsHistories?.keys?.forEach(::add)
-            externalSessions.forEach { add(it.date) }
+            visibleExternalSessions.forEach { add(it.date) }
         }
     }
 
-    val activityKindByDate = remember(groupedWorkoutsHistories, externalSessions, activityDates) {
+    val activityKindByDate = remember(groupedWorkoutsHistories, visibleExternalSessions, activityDates) {
         activityDates.associateWith { date ->
             val hasAppOwned = groupedWorkoutsHistories?.get(date)?.isNotEmpty() == true
-            val hasExternal = externalSessions.any { it.date == date }
+            val hasExternal = visibleExternalSessions.any { it.date == date }
             when {
                 !hasAppOwned && hasExternal -> WorkoutCalendarActivityKind.EXTERNAL_ONLY
                 hasAppOwned || hasExternal -> WorkoutCalendarActivityKind.APP_OR_MIXED
@@ -455,6 +530,8 @@ fun WorkoutsScreen(
             appViewModel.setHealthPermissions(false)
             return@LaunchedEffect
         }
+        // A profile that does not own Health Connect has nothing to show, so skip importing too.
+        if (!showsExternalSessions) return@LaunchedEffect
         try {
             withContext(Dispatchers.IO) {
                 ExternalHealthConnectSessionSyncService(
@@ -523,6 +600,97 @@ fun WorkoutsScreen(
     }
     var isSaving by remember { mutableStateOf(false) }
 
+    fun commitRecurringWorkoutChanges(
+        replacements: List<Pair<Workout, Workout>> = emptyList(),
+        addedWorkout: Workout? = null,
+    ) {
+        if (isSaving) return
+        isSaving = true
+        appViewModel.viewModelScope.launch {
+            try {
+                val versionsWithHistory = withContext(Dispatchers.IO) {
+                    replacements.associate { (original, _) ->
+                        original.id to WorkoutManager.workoutVersionIds(original, appViewModel.workouts)
+                            .any { versionId -> workoutHistoryDao.workoutHistoryExistsByWorkoutId(versionId) }
+                    }
+                }
+                var candidateWorkouts = appViewModel.workouts
+                replacements.forEach { (original, updated) ->
+                    candidateWorkouts = if (versionsWithHistory[original.id] == true) {
+                        WorkoutManager.updateWorkout(candidateWorkouts, original, updated)
+                    } else {
+                        WorkoutManager.updateWorkoutOld(candidateWorkouts, original, updated)
+                    }
+                }
+                if (addedWorkout != null) candidateWorkouts = candidateWorkouts + addedWorkout
+                val candidateStore = appViewModel.workoutStore.copy(workouts = candidateWorkouts)
+                validateWorkoutStoreForRuntimeUse(candidateStore)
+                withContext(Dispatchers.Main) {
+                    appViewModel.updateWorkoutStore(candidateStore)
+                    appViewModel.scheduleWorkoutSave(context)
+                    addedWorkout?.let { appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id)) }
+                }
+            } catch (exception: Exception) {
+                Log.e("RecurringWorkoutSave", "Could not save recurring workout changes.", exception)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        exception.message ?: "Could not save recurring workout changes.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            } finally {
+                isSaving = false
+            }
+        }
+    }
+
+    fun renameRecurringSession(family: List<Workout>, newName: String) {
+        runCatching { RecurringWorkoutAuthoring.renameFamily(family, newName) }
+            .onSuccess { replacements ->
+                commitRecurringWorkoutChanges(family.zip(replacements))
+            }
+            .onFailure { exception -> Toast.makeText(context, exception.message, Toast.LENGTH_LONG).show() }
+    }
+
+    fun updateRecurringPrescriptionLabel(workout: Workout, family: List<Workout>, label: String?) {
+        runCatching { RecurringWorkoutAuthoring.updatePrescriptionLabel(workout, label, family) }
+            .onSuccess { updated -> commitRecurringWorkoutChanges(listOf(workout to updated)) }
+            .onFailure { exception -> Toast.makeText(context, exception.message, Toast.LENGTH_LONG).show() }
+    }
+
+    fun reorderRecurringSession(family: List<Workout>, orderedWorkoutIds: List<UUID>) {
+        runCatching {
+            RecurringWorkoutAuthoring.reorderFamily(family, orderedWorkoutIds)
+        }.onSuccess { reordered ->
+            val reorderedById = reordered.associateBy { it.id }
+            val replacements = family.mapNotNull { original ->
+                reorderedById[original.id]?.takeIf { it.prescriptionOrdinal != original.prescriptionOrdinal }
+                    ?.let { original to it }
+            }
+            if (replacements.isNotEmpty()) commitRecurringWorkoutChanges(replacements)
+        }.onFailure { exception ->
+            Toast.makeText(context, exception.message ?: "Could not reorder prescriptions.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun attachRecurringWorkout(workout: Workout, family: List<Workout>) {
+        runCatching { RecurringWorkoutAuthoring.attach(workout, family) }
+            .onSuccess { updated -> commitRecurringWorkoutChanges(listOf(workout to updated)) }
+            .onFailure { exception -> Toast.makeText(context, exception.message, Toast.LENGTH_LONG).show() }
+    }
+
+    fun detachRecurringWorkout(workout: Workout) {
+        val updated = RecurringWorkoutAuthoring.detach(workout)
+        commitRecurringWorkoutChanges(listOf(workout to updated))
+    }
+
+    fun addNextRecurringPrescription(source: Workout, family: List<Workout>) {
+        runCatching { RecurringWorkoutAuthoring.cloneNext(source, family, label = null) }
+            .onSuccess { clone -> commitRecurringWorkoutChanges(addedWorkout = clone) }
+            .onFailure { exception -> Toast.makeText(context, exception.message, Toast.LENGTH_LONG).show() }
+    }
+
     fun updateWorkoutsEnabledState(enabled: Boolean) {
         val workoutsToUpdate = selectedWorkouts.toList()
         if (workoutsToUpdate.isEmpty()) return
@@ -574,6 +742,20 @@ fun WorkoutsScreen(
     fun onMoveWorkoutUp() {
         if (selectedWorkouts.size != 1) return
         val selected = selectedWorkouts.first()
+        if (focusedRecurringSessionId != null) {
+            val family = activeWorkouts
+                .filter { it.recurringSessionId == focusedRecurringSessionId }
+                .sortedBy { it.prescriptionOrdinal ?: Int.MAX_VALUE }
+            val index = family.indexOfFirst { it.id == selected.id }
+            if (index <= 0) return
+            val reordered = family.toMutableList().apply {
+                val previous = this[index - 1]
+                this[index - 1] = this[index]
+                this[index] = previous
+            }
+            reorderRecurringSession(family, reordered.map { it.id })
+            return
+        }
         val index = visibleActiveWorkouts.indexOfFirst { it.id == selected.id }
         if (index <= 0 || index >= visibleActiveWorkouts.size) return
         val newVisibleList = visibleActiveWorkouts.toMutableList().apply {
@@ -591,6 +773,20 @@ fun WorkoutsScreen(
     fun onMoveWorkoutDown() {
         if (selectedWorkouts.size != 1) return
         val selected = selectedWorkouts.first()
+        if (focusedRecurringSessionId != null) {
+            val family = activeWorkouts
+                .filter { it.recurringSessionId == focusedRecurringSessionId }
+                .sortedBy { it.prescriptionOrdinal ?: Int.MAX_VALUE }
+            val index = family.indexOfFirst { it.id == selected.id }
+            if (index < 0 || index >= family.lastIndex) return
+            val reordered = family.toMutableList().apply {
+                val next = this[index + 1]
+                this[index + 1] = this[index]
+                this[index] = next
+            }
+            reorderRecurringSession(family, reordered.map { it.id })
+            return
+        }
         val index = visibleActiveWorkouts.indexOfFirst { it.id == selected.id }
         if (index < 0 || index >= visibleActiveWorkouts.size - 1) return
         val newVisibleList = visibleActiveWorkouts.toMutableList().apply {
@@ -605,6 +801,57 @@ fun WorkoutsScreen(
         appViewModel.scheduleWorkoutSave(context)
     }
 
+    @Composable
+    fun workoutsListContent(showPlanPicker: Boolean) {
+        val sessionWorkouts = if (focusedRecurringSessionId == null) {
+            visibleActiveWorkouts
+        } else {
+            activeWorkouts.filter { it.recurringSessionId == focusedRecurringSessionId }
+        }
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (showPlanPicker) {
+                WorkoutPlanFilterPicker(
+                    allPlans = allPlans,
+                    selectedPlanFilter = selectedPlanFilter,
+                    onPlanSelected = ::selectWorkoutPlan,
+                )
+            }
+            WorkoutsListTab(
+                workouts = sessionWorkouts,
+                selectedWorkouts = selectedWorkouts,
+                isSelectionModeActive = isWorkoutSelectionModeActive,
+                appViewModel = appViewModel,
+                hideDisabledWorkouts = if (focusedRecurringSessionId == null) hideDisabledWorkouts else false,
+                disabledWorkoutCount = if (focusedRecurringSessionId == null) disabledActiveWorkoutCount else 0,
+                emptyMessage = if (
+                    focusedRecurringSessionId == null &&
+                    hideDisabledWorkouts &&
+                    disabledActiveWorkoutCount > 0 &&
+                    activeWorkouts.isNotEmpty()
+                ) {
+                    "No enabled workouts in this plan."
+                } else {
+                    "No workouts in this plan yet."
+                },
+                onHideDisabledWorkoutsChange = { hideDisabledWorkouts = it },
+                onReorderRecurring = ::reorderRecurringSession,
+                onAddNextPrescription = ::addNextRecurringPrescription,
+                workoutHistories = groupedWorkoutsHistories?.values?.flatten(),
+                suggestionEnabledByPlan = allPlans.associate { it.id to it.suggestNextPrescription },
+                onWorkoutClick = { workout ->
+                    appViewModel.setScreenData(ScreenData.WorkoutDetail(workout.id))
+                },
+                onSelectionChange = { selectedWorkouts = it },
+                onSelectionModeChange = { isWorkoutSelectionModeActive = it },
+                selectedPlanId = selectedPlanFilter,
+                focusedRecurringSessionId = focusedRecurringSessionId,
+                onOpenRecurringSession = { sessionId ->
+                    appViewModel.setScreenData(ScreenData.SessionPrescriptions(sessionId))
+                },
+            )
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -616,6 +863,7 @@ fun WorkoutsScreen(
                         isDrawerOpen = drawerState.isOpen,
                         onSyncClick = onSyncClick,
                         onOpenSettingsClick = onOpenSettingsClick,
+                        onOpenPlansClick = { appViewModel.setScreenData(ScreenData.Plans()) },
                         onBackupClick = onBackupClick,
                         onRestoreClick = onRestoreClick,
                         onImportWorkoutsClick = onImportWorkoutsClick,
@@ -652,25 +900,110 @@ fun WorkoutsScreen(
                             Text(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .basicMarquee(iterations = Int.MAX_VALUE),
-                                text = "My Workout Assistant", textAlign = TextAlign.Center,
+                                    .clipToBounds(),
+                                text = focusedSessionWorkout?.name
+                                    ?: if (focusedRecurringSessionId != null) "Prescriptions" else "My Workout Assistant",
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         },
                         navigationIcon = {
-                            IconButton(onClick = {
-                                scope.launch {
-                                    drawerState.apply {
-                                        if (isClosed) open() else close()
-                                    }
+                            if (focusedRecurringSessionId != null) {
+                                IconButton(
+                                    modifier = Modifier.testTag("session_back_to_workouts"),
+                                    onClick = {
+                                        if (!appViewModel.goBack()) {
+                                            appViewModel.setScreenData(ScreenData.Workouts(1))
+                                        }
+                                    },
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        contentDescription = "Back to workouts",
+                                    )
                                 }
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Default.Menu,
-                                    contentDescription = "Menu"
-                                )
+                            } else {
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        drawerState.apply {
+                                            if (isClosed) open() else close()
+                                        }
+                                    }
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Menu,
+                                        contentDescription = "Menu"
+                                    )
+                                }
                             }
                         },
                         actions = {
+                            activeProfileName?.let { profileName ->
+                                // Every tab shows per-profile data, so the active profile is
+                                // named here and can be switched without leaving the screen.
+                                Box {
+                                    Row(
+                                        modifier = Modifier
+                                            .padding(end = Spacing.xs)
+                                            .clip(RoundedCornerShape(percent = 50))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            .clickable { profileMenuExpanded = true }
+                                            .padding(start = Spacing.sm, end = 4.dp, top = 4.dp, bottom = 4.dp)
+                                            .semantics { contentDescription = "Switch profile: $profileName" },
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = profileName,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        // Explicit affordance: without it the chip reads as a label.
+                                        Icon(
+                                            imageVector = Icons.Filled.ArrowDropDown,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = profileMenuExpanded,
+                                        onDismissRequest = { profileMenuExpanded = false }
+                                    ) {
+                                        profilesForSwitcher.forEach { profile ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        text = profile.name,
+                                                        color = if (profile.id == activeProfileId) {
+                                                            MaterialTheme.colorScheme.primary
+                                                        } else {
+                                                            MaterialTheme.colorScheme.onSurface
+                                                        }
+                                                    )
+                                                },
+                                                onClick = {
+                                                    profileMenuExpanded = false
+                                                    if (profile.id == activeProfileId) return@DropdownMenuItem
+                                                    if (workoutInProgress) {
+                                                        Toast.makeText(
+                                                            context,
+                                                            "Finish or discard the workout before switching profile.",
+                                                            Toast.LENGTH_LONG
+                                                        ).show()
+                                                        return@DropdownMenuItem
+                                                    }
+                                                    Profiles.setActiveProfile(context, profile.id)
+                                                    restartApp(context)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             if (watchReachable) {
                                 // Visible only while the watch is detected; tapping
                                 // starts the same manual sync as the settings entry.
@@ -693,10 +1026,12 @@ fun WorkoutsScreen(
                     )
                 },
                 bottomBar = {
-                    when (selectedTabIndex) {
-                        1 -> WorkoutsBottomBar(
+                    if (focusedRecurringSessionId != null || selectedTabIndex == 1) {
+                        WorkoutsBottomBar(
                             selectedWorkouts = selectedWorkouts,
-                            activeWorkouts = visibleActiveWorkouts,
+                            activeWorkouts = if (focusedRecurringSessionId != null) {
+                                activeWorkouts.sortedBy { it.prescriptionOrdinal ?: Int.MAX_VALUE }
+                            } else visibleActiveWorkouts,
                             appViewModel = appViewModel,
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
@@ -713,9 +1048,20 @@ fun WorkoutsScreen(
                             onGroupedWorkoutsHistoriesChange = { appViewModel.loadWorkoutHistories(workouts) },
                             onMoveWorkoutUp = { onMoveWorkoutUp() },
                             onMoveWorkoutDown = { onMoveWorkoutDown() },
-                            isSelectionModeActive = isWorkoutSelectionModeActive
+                            isSelectionModeActive = isWorkoutSelectionModeActive,
+                            canManageRecurringSession = selectedRecurringSessionId != null,
+                            onManageRecurringSession = {
+                                selectedRecurringSessionId?.let { sessionId ->
+                                    workouts.filter { it.isActive && it.recurringSessionId == sessionId }
+                                        .sortedBy { it.prescriptionOrdinal }
+                                        .takeIf { it.isNotEmpty() }
+                                        ?.let { recurringFamilyToManage = it }
+                                }
+                                selectedWorkouts = emptyList()
+                                isWorkoutSelectionModeActive = false
+                            },
                         )
-
+                    } else if (focusedRecurringSessionId == null) when (selectedTabIndex) {
                         4 -> {
                             EquipmentsBottomBar(
                                 selectedEquipments = selectedEquipments,
@@ -748,6 +1094,9 @@ fun WorkoutsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
 
+                    if (focusedRecurringSessionId != null) {
+                        workoutsListContent(showPlanPicker = false)
+                    } else {
                     SwipeableTabs(
                         tabTitles = tabTitles,
                         selectedTabIndex = selectedTabIndex,
@@ -803,43 +1152,7 @@ fun WorkoutsScreen(
                                     }
 
                                     1 -> {
-                                        Column(modifier = Modifier.fillMaxSize()) {
-                                            WorkoutPlanFilterPicker(
-                                                allPlans = allPlans,
-                                                selectedPlanFilter = selectedPlanFilter,
-                                                onPlanSelected = ::selectWorkoutPlan,
-                                            )
-                                            WorkoutsListTab(
-                                                workouts = visibleActiveWorkouts,
-                                                selectedWorkouts = selectedWorkouts,
-                                                isSelectionModeActive = isWorkoutSelectionModeActive,
-                                                appViewModel = appViewModel,
-                                                hideDisabledWorkouts = hideDisabledWorkouts,
-                                                disabledWorkoutCount = disabledActiveWorkoutCount,
-                                                emptyMessage = if (
-                                                    hideDisabledWorkouts &&
-                                                    disabledActiveWorkoutCount > 0 &&
-                                                    activeWorkouts.isNotEmpty()
-                                                ) {
-                                                    "No enabled workouts in this plan."
-                                                } else {
-                                                    "No workouts in this plan yet."
-                                                },
-                                                onHideDisabledWorkoutsChange = {
-                                                    hideDisabledWorkouts = it
-                                                },
-                                                onWorkoutClick = { workout ->
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.WorkoutDetail(workout.id)
-                                                    )
-                                                },
-                                                onSelectionChange = { selectedWorkouts = it },
-                                                onSelectionModeChange = {
-                                                    isWorkoutSelectionModeActive = it
-                                                },
-                                                selectedPlanId = selectedPlanFilter
-                                            )
-                                        }
+                                        workoutsListContent(showPlanPicker = true)
                                     }
 
                                     4 -> {
@@ -906,7 +1219,9 @@ fun WorkoutsScreen(
                                                             requireExerciseMovementPayloads(
                                                                 context,
                                                                 workoutStore.copy(
-                                                                    exerciseDefinitions = importedLibrary.exerciseDefinitions,
+                                                                    // Validate exactly what the import will commit.
+                                                                    exerciseDefinitions =
+                                                                        importedLibrary.exerciseDefinitions.normalizedForImport(),
                                                                     workouts = emptyList(),
                                                                 ),
                                                             )
@@ -952,27 +1267,29 @@ fun WorkoutsScreen(
                             }
                         }
                     }
+                    }
                 }
             }
         }
 
-        // Edit Plan Name Dialog
-        EditPlanNameDialog(
-            show = showEditPlanNameDialog,
-            currentName = planToEdit?.name ?: "",
-            onDismiss = {
-                showEditPlanNameDialog = false
-                planToEdit = null
-            },
-            onConfirm = { newName ->
-                planToEdit?.let { plan ->
-                    appViewModel.updateWorkoutPlanName(plan.id, newName)
-                    appViewModel.scheduleWorkoutSave(context)
-                }
-                showEditPlanNameDialog = false
-                planToEdit = null
+        recurringFamilyToManage?.let { family ->
+            val attachableWorkouts = workouts.filter { candidate ->
+                candidate.isActive && candidate.recurringSessionId == null &&
+                    candidate.workoutPlanId == family.firstOrNull()?.workoutPlanId
             }
-        )
+            RecurringSessionDialog(
+                family = family,
+                attachableWorkouts = attachableWorkouts,
+                onRename = { name -> renameRecurringSession(family, name); recurringFamilyToManage = null },
+                onUpdatePrescriptionLabel = { workout, label ->
+                    updateRecurringPrescriptionLabel(workout, family, label)
+                    recurringFamilyToManage = null
+                },
+                onAttach = { workout -> attachRecurringWorkout(workout, family); recurringFamilyToManage = null },
+                onDetach = { workout -> detachRecurringWorkout(workout); recurringFamilyToManage = null },
+                onDismiss = { recurringFamilyToManage = null },
+            )
+        }
 
         // Move Workout Dialog
         val currentPlanId = if (
@@ -1075,9 +1392,9 @@ fun WorkoutsScreen(
 private fun WorkoutPlanFilterPicker(
     allPlans: List<WorkoutPlan>,
     selectedPlanFilter: UUID?,
-    onPlanSelected: (UUID) -> Unit
+    onPlanSelected: (UUID) -> Unit,
 ) {
-    if (allPlans.size <= 1) {
+    if (allPlans.isEmpty()) {
         return
     }
 
@@ -1093,18 +1410,44 @@ private fun WorkoutPlanFilterPicker(
             ?: "Select workout plan"
     }
 
-    StandardFilterDropdown(
-        label = "Workout Plan:",
-        selectedText = selectedPlanLabel,
-        items = planItems,
-        onItemSelected = onPlanSelected,
-        selectedValue = selectedPlanFilter,
+    val selectedPlan = allPlans.firstOrNull { it.id == selectedPlanFilter }
+        ?: allPlans.singleOrNull()
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 15.dp, vertical = 8.dp),
-        isItemSelected = { it == selectedPlanFilter },
-        marqueeSelectedText = false,
-        marqueeItems = false,
-        itemMaxLines = 3,
-    )
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (allPlans.size > 1) {
+            StandardFilterDropdown(
+                label = "Workout Plan:",
+                selectedText = selectedPlanLabel,
+                items = planItems,
+                onItemSelected = onPlanSelected,
+                selectedValue = selectedPlanFilter,
+                modifier = Modifier.weight(1f),
+                isItemSelected = { it == selectedPlanFilter },
+                marqueeSelectedText = false,
+                marqueeItems = false,
+                itemMaxLines = 3,
+            )
+        } else {
+            Text(
+                text = selectedPlan?.name ?: "Workout Plan",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** The profile's data roots all change, so every cached screen state must be rebuilt. */
+private fun restartApp(context: Context) {
+    val intent = Intent(context, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+    (context as? Activity)?.finish()
+    context.startActivity(intent)
 }

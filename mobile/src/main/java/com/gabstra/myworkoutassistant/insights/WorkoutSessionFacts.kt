@@ -1,8 +1,10 @@
 package com.gabstra.myworkoutassistant.insights
 
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
 import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutDurationSecondsForDisplay
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -49,9 +51,14 @@ internal object WorkoutSessionFactsBuilder {
     ): WorkoutSessionFacts {
         val lines = mutableListOf<String>()
         val previous = previousSessionsNewestFirst.take(MAX_PREVIOUS_SESSIONS)
-        val durationSeconds = workoutHistory.duration
-        val durationMinutes = durationSeconds / 60.0
-        lines += "FACT Session duration: ${formatWorkoutDurationSecondsForDisplay(durationSeconds)} (${durationMinutes.roundToInt()} minutes)"
+        val durationSeconds = workoutHistory.knownDurationSecondsOrNull()
+        val durationMinutes = durationSeconds?.let { it / 60.0 }
+        if (durationSeconds != null && durationSeconds > 0 && durationMinutes != null) {
+            lines += "FACT Session duration: ${formatWorkoutDurationSecondsForDisplay(durationSeconds)} (${durationMinutes.roundToInt()} minutes)"
+        }
+        if (workoutHistory.origin == WorkoutHistoryOrigin.USER_IMPORTED) {
+            lines += "FACT Session source: user-reported/imported history, not measured by this watch"
+        }
 
         val heartRates = workoutHistory.heartBeatRecords.filter { it > 0 }
         var currentAverageBpm: Double? = null
@@ -107,8 +114,15 @@ internal object WorkoutSessionFactsBuilder {
             }
         }
 
-        if (previous.isNotEmpty()) {
-            val recentDurationMinutes = previous.map { it.duration / 60.0 }.average()
+        val recentDurationMinutes = previous
+            .mapNotNull { it.knownDurationSecondsOrNull() }
+            .filter { it > 0 }
+            .map { it / 60.0 }
+            .takeIf { it.isNotEmpty() }
+            ?.average()
+        if (durationSeconds != null && durationSeconds > 0 && durationMinutes != null &&
+            recentDurationMinutes != null
+        ) {
             lines += "FACT Session duration versus recent sessions of this workout: ${durationMinutes.roundToInt()} minutes versus ${recentDurationMinutes.roundToInt()} minutes typical"
         }
         if (currentAverageBpm != null) {

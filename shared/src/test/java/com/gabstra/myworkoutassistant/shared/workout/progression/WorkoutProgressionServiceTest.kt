@@ -10,6 +10,10 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
+import com.gabstra.myworkoutassistant.shared.SessionSetSnapshot
+import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.buildExerciseSessionSnapshot
@@ -23,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -149,6 +154,60 @@ class WorkoutProgressionServiceTest {
             progressedSet.additionalWeight,
             0.0001
         )
+    }
+
+    @Test
+    fun prescribedWeightIgnoresProgressionAndLastSuccessfulTargets() = kotlinx.coroutines.runBlocking {
+        val target = WeightSet(UUID.randomUUID(), reps = 9, weight = 32.5)
+        val exercise = testExercise(equipmentId = null).copy(
+            sets = listOf(target),
+            loadHistoryPolicy = LoadHistoryPolicy.PRESCRIBED_WEIGHT,
+            progressionMode = ProgressionMode.DOUBLE_PROGRESSION,
+            requiresLoadCalibration = false,
+        )
+        val higherHistory = SetHistory(
+            id = UUID.randomUUID(), setId = target.id, order = 0u,
+            startTime = null, endTime = null,
+            setData = WeightSetData(actualReps = 12, actualWeight = 60.0, volume = 720.0),
+            skipped = false,
+        )
+        val previousTarget = WeightSet(target.id, reps = 12, weight = 60.0)
+        val service = testService()
+        val preprocessed = service.buildPreProcessedSets(
+            exercise,
+            mapOf((exercise.id to target.id) to higherHistory),
+            SessionDecision(
+                progressionState = ProgressionState.DELOAD,
+                shouldLoadLastSuccessfulSession = true,
+                lastSuccessfulSession = ExerciseSessionSnapshot(
+                    sets = listOf(SessionSetSnapshot(target.id, previousTarget)),
+                ),
+            ),
+        )
+        val progressed = service.buildExerciseWithProgression(
+            exercise,
+            DoubleProgressionHelper.Plan(
+                sets = listOf(SimpleSet(weight = 60.0, reps = 12)),
+                newVolume = 720.0,
+                previousVolume = 0.0,
+            ),
+            bodyWeightKg = 80.0,
+        )
+        val generated = service.generateProgressions(
+            selectedWorkout = Workout(
+                id = UUID.randomUUID(), name = "Fixed", description = "",
+                workoutComponents = listOf(exercise), order = 0, creationDate = LocalDate.now(),
+                globalId = UUID.randomUUID(), type = 0,
+            ),
+            bodyWeightKg = 80.0,
+            getEquipmentById = { null },
+            getWeightByEquipment = { emptySet() },
+            weightsByEquipment = mutableMapOf(),
+        )
+
+        assertEquals(listOf(target), preprocessed)
+        assertEquals(listOf(target), progressed.sets)
+        assertTrue(generated.progressionByExerciseId.isEmpty())
     }
 
     @Test

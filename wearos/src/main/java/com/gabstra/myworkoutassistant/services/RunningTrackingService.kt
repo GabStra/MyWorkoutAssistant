@@ -28,6 +28,7 @@ import androidx.health.services.client.getCapabilities
 import androidx.health.services.client.pauseExercise
 import androidx.health.services.client.resumeExercise
 import androidx.health.services.client.startExercise
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.running.RunningRoutePoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -108,7 +109,7 @@ class RunningTrackingService : Service() {
         override fun onLapSummaryReceived(lapSummary: ExerciseLapSummary) = Unit
         override fun onRegistered() = Unit
         override fun onRegistrationFailed(throwable: Throwable) {
-            _state.value = _state.value.copy(errorMessage = throwable.message ?: "Health tracking failed")
+            _state.value = _state.value.copy(errorMessage = throwable.message ?: getString(R.string.run_health_tracking_failed))
         }
         override fun onAvailabilityChanged(dataType: DataType<*, *>, availability: androidx.health.services.client.data.Availability) = Unit
     }
@@ -195,7 +196,7 @@ class RunningTrackingService : Service() {
             _state.value = RunningTrackingState(running = true)
         } catch (exception: Exception) {
             Log.e(TAG, "Unable to start Health Services run", exception)
-            _state.value = _state.value.copy(running = false, errorMessage = exception.message ?: "Could not start run tracking")
+            _state.value = _state.value.copy(running = false, errorMessage = exception.message ?: getString(R.string.run_start_tracking_failed))
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -268,14 +269,14 @@ class RunningTrackingService : Service() {
 
     private fun createNotification(): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.ic_media_play)
-        .setContentTitle("Run in progress")
-        .setContentText("Tracking run metrics")
+        .setContentTitle(getString(R.string.notif_run_in_progress))
+        .setContentText(getString(R.string.notif_run_tracking_metrics))
         .setOngoing(true)
         .build()
 
     private fun createNotificationChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Run tracking", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ID, getString(R.string.notif_channel_run_tracking), NotificationManager.IMPORTANCE_LOW)
         )
     }
 

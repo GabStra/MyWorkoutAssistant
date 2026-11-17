@@ -17,7 +17,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -52,7 +54,7 @@ fun EnduranceSetForm(
                 .fillMaxWidth()
                 .padding(8.dp),
         ) {
-            Text("Duration")
+            Text(stringResource(R.string.form_duration))
             Spacer(modifier = Modifier.height(15.dp))
             CustomTimePicker(
                 initialHour = hours,
@@ -78,7 +80,7 @@ fun EnduranceSetForm(
                     uncheckedBorderColor = MaterialTheme.colorScheme.primary
                 )
             )
-            Text(text = "Auto start")
+            Text(text = stringResource(R.string.form_auto_start))
         }
 
         Row(
@@ -95,7 +97,7 @@ fun EnduranceSetForm(
                     uncheckedBorderColor = MaterialTheme.colorScheme.primary
                 )
             )
-            Text(text = "Auto stop")
+            Text(text = stringResource(R.string.form_auto_stop))
         }
 
         TimedSetLoadField(
@@ -107,7 +109,7 @@ fun EnduranceSetForm(
         SetHistoryReapplySetting(
             checked = shouldReapplyHistoryState.value,
             onCheckedChange = { shouldReapplyHistoryState.value = it },
-            subtitle = "When enabled, the last completed execution can prefill this programmed set in future sessions."
+            subtitle = stringResource(R.string.form_reapply_history_subtitle)
         )
 
         // Submit button
@@ -119,13 +121,13 @@ fun EnduranceSetForm(
             verticalAlignment = Alignment.CenterVertically
         ) {
             AppSecondaryButton(
-                text = "Cancel",
+                text = stringResource(R.string.common_cancel),
                 onClick = onCancel,
                 modifier = Modifier.weight(1f)
             )
 
             AppPrimaryButton(
-                text = "Save",
+                text = stringResource(R.string.common_save),
                 onClick = {
                     val newEnduranceSet = EnduranceSet(
                         id = enduranceSet?.id ?: UUID.randomUUID(),

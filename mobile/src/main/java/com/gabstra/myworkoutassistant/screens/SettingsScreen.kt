@@ -28,6 +28,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -39,12 +41,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -54,6 +58,7 @@ import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.HeightRecord
 import androidx.health.connect.client.records.WeightRecord
 import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
@@ -71,9 +76,11 @@ import com.gabstra.myworkoutassistant.insights.RemoteOpenAiConfig
 import com.gabstra.myworkoutassistant.insights.RemoteModelCatalog
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
 import com.gabstra.myworkoutassistant.shared.DeloadConfig
+import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
 import com.gabstra.myworkoutassistant.shared.findPolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.findWhoopHeartRateConfig
@@ -112,6 +119,12 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    // Health Connect belongs to one profile, so another profile must not read its values.
+    // The owner can be changed from the profiles card below, hence the revision key.
+    var healthConnectRevision by remember { mutableStateOf(0) }
+    val canUseHealthConnect = remember(healthConnectRevision) {
+        Profiles.isHealthConnectProfile(context)
+    }
     val defaultRestingHeartRate = getEffectiveRestingHeartRate()
     val polarConfig = remember(workoutStore.externalHeartRateConfigs) { workoutStore.findPolarHeartRateConfig() }
     val whoopConfig = remember(workoutStore.externalHeartRateConfigs) { workoutStore.findWhoopHeartRateConfig() }
@@ -120,6 +133,9 @@ fun SettingsScreen(
     val polarDisplayNameState = remember { mutableStateOf(polarConfig?.displayName ?: "") }
     val whoopDeviceIdState = remember { mutableStateOf(whoopConfig?.deviceId ?: "") }
     val whoopDisplayNameState = remember { mutableStateOf(whoopConfig?.displayName ?: "") }
+    val visiblePlanIdsState = remember {
+        mutableStateOf(workoutStore.visibleWorkoutPlanIds?.toSet())
+    }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear.toString()) }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
     val heightState = remember { mutableStateOf(workoutStore.heightCm?.toString() ?: "") }
@@ -165,7 +181,7 @@ fun SettingsScreen(
         if (isFetchingRemoteModels) return
         val baseUrl = remoteBaseUrlState.value.trim()
         if (baseUrl.isBlank()) {
-            remoteModelsError = "Enter the remote base URL first."
+            remoteModelsError = context.getString(R.string.settings_enter_base_url)
             return
         }
         isFetchingRemoteModels = true
@@ -177,7 +193,7 @@ fun SettingsScreen(
                     remoteModelsMenuExpanded = models.isNotEmpty()
                 }
                 .onFailure { error ->
-                    remoteModelsError = error.message ?: "Unable to load the model list."
+                    remoteModelsError = error.message ?: context.getString(R.string.settings_model_list_failed)
                 }
             isFetchingRemoteModels = false
         }
@@ -242,7 +258,7 @@ fun SettingsScreen(
             if (HealthConnectClient.getSdkStatus(context) != HealthConnectClient.SDK_AVAILABLE) {
                 Toast.makeText(
                     context,
-                    "Health Connect is not available on this device.",
+                    context.getString(R.string.settings_hc_unavailable),
                     Toast.LENGTH_SHORT
                 ).show()
                 return
@@ -257,7 +273,7 @@ fun SettingsScreen(
             if (!canReadHeight && !canReadWeight) {
                 Toast.makeText(
                     context,
-                    "Height and weight permissions were not granted.",
+                    context.getString(R.string.settings_hc_permissions_missing),
                     Toast.LENGTH_SHORT
                 ).show()
                 return
@@ -276,16 +292,16 @@ fun SettingsScreen(
             Toast.makeText(
                 context,
                 if (filledAny) {
-                    "Height and weight loaded from Health Connect. Press Save to keep them."
+                    context.getString(R.string.settings_body_loaded)
                 } else {
-                    "No height or weight records were found in Health Connect."
+                    context.getString(R.string.settings_body_not_found)
                 },
                 Toast.LENGTH_SHORT
             ).show()
         } catch (_: Exception) {
             Toast.makeText(
                 context,
-                "Couldn't read measurements from Health Connect.",
+                context.getString(R.string.settings_body_read_failed),
                 Toast.LENGTH_SHORT
             ).show()
         } finally {
@@ -315,7 +331,10 @@ fun SettingsScreen(
     }
     
     LaunchedEffect(Unit) {
-        if (workoutStore.restingHeartRate == null) {
+        if (workoutStore.restingHeartRate == null && !canUseHealthConnect) {
+            // Not this profile's provider: show the default instead of another person's value.
+            restingHeartRateState.value = defaultRestingHeartRate.toString()
+        } else if (workoutStore.restingHeartRate == null) {
             isLoadingRestingHeartRate = true
             try {
                 val historicalRestingHeartRate =
@@ -329,22 +348,6 @@ fun SettingsScreen(
                 restingHeartRateState.value = defaultRestingHeartRate.toString()
             } finally {
                 isLoadingRestingHeartRate = false
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        if (workoutStore.estimatedVo2MaxMlKgMin == null && vo2MaxState.value.isBlank()) {
-            isLoadingVo2Max = true
-            try {
-                val historicalVo2Max = loadVo2MaxWithMinimumLoadingTime()
-                if (historicalVo2Max != null) {
-                    vo2MaxState.value = historicalVo2Max.toString()
-                }
-            } catch (_: Exception) {
-                // leave the field blank; the manual button and Save remain available
-            } finally {
-                isLoadingVo2Max = false
             }
         }
     }
@@ -365,14 +368,14 @@ fun SettingsScreen(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = "Settings",
+                        text = stringResource(R.string.settings_title),
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
@@ -398,7 +401,15 @@ fun SettingsScreen(
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md)
         ) {
-            FormSectionTitle("Profile")
+            FormSectionTitle(stringResource(R.string.settings_user_profiles))
+            UserProfilesCard(onHealthConnectOwnerChanged = { healthConnectRevision++ })
+
+            FormSectionTitle(stringResource(R.string.settings_body_metrics), modifier = Modifier.padding(top = Spacing.lg))
+            val activeProfileName = remember(context) { Profiles.activeProfile(context).name }
+            ContentSubtitle(
+                text = stringResource(R.string.settings_profile_values_only, activeProfileName),
+                modifier = Modifier.padding(bottom = Spacing.md)
+            )
             StyledCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -410,7 +421,7 @@ fun SettingsScreen(
                                 birthDateYearState.value = input
                             }
                         },
-                        label = { Text("User Year of Birth") },
+                        label = { Text(stringResource(R.string.settings_year_of_birth)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -424,7 +435,7 @@ fun SettingsScreen(
                                 weightState.value = input
                             }
                         },
-                        label = { Text("Weight (kg)") },
+                        label = { Text(stringResource(R.string.settings_weight_kg)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -438,7 +449,7 @@ fun SettingsScreen(
                                 heightState.value = input
                             }
                         },
-                        label = { Text("Height (cm, optional)") },
+                        label = { Text(stringResource(R.string.settings_height_cm)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -446,7 +457,7 @@ fun SettingsScreen(
                     )
 
                     ContentSubtitle(
-                        text = "Gender (used for calorie estimates; Unspecified for an averaged estimate).",
+                        text = stringResource(R.string.settings_height_hint),
                         modifier = Modifier.padding(vertical = Spacing.xs)
                     )
                     Row(
@@ -456,33 +467,51 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
                     ) {
                         AppPrimaryOutlinedButton(
-                            text = if (genderState.value == 0) "Male ✓" else "Male",
+                            text = if (genderState.value == 0) {
+                                stringResource(R.string.settings_male_checked)
+                            } else {
+                                stringResource(R.string.settings_male)
+                            },
                             onClick = {
                                 genderState.value = if (genderState.value == 0) null else 0
                             },
+                            textAlign = TextAlign.Center,
                             modifier = Modifier.weight(1f)
                         )
                         AppPrimaryOutlinedButton(
-                            text = if (genderState.value == 1) "Female ✓" else "Female",
+                            text = if (genderState.value == 1) {
+                                stringResource(R.string.settings_female_checked)
+                            } else {
+                                stringResource(R.string.settings_female)
+                            },
                             onClick = {
                                 genderState.value = if (genderState.value == 1) null else 1
                             },
-                            modifier = Modifier.weight(1f)
-                        )
-                        AppPrimaryOutlinedButton(
-                            text = if (genderState.value == null) "Unspecified ✓" else "Unspecified",
-                            onClick = {
-                                genderState.value = null
-                            },
+                            textAlign = TextAlign.Center,
                             modifier = Modifier.weight(1f)
                         )
                     }
-
+                    // Full width on its own row: three buttons in one row left no room for the
+                    // label and wrapped it onto multiple lines.
                     AppPrimaryOutlinedButton(
-                        text = if (isLoadingBodyMeasurements) {
-                            "Loading from Health Connect..."
+                        text = if (genderState.value == null) {
+                            stringResource(R.string.settings_unspecified_checked)
                         } else {
-                            "Populate from Health Connect"
+                            stringResource(R.string.settings_unspecified)
+                        },
+                        onClick = {
+                            genderState.value = null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = Spacing.xs)
+                    )
+
+                    if (canUseHealthConnect) AppPrimaryOutlinedButton(
+                        text = if (isLoadingBodyMeasurements) {
+                            stringResource(R.string.settings_loading_hc)
+                        } else {
+                            stringResource(R.string.settings_fill_from_hc)
                         },
                         onClick = {
                             if (isLoadingBodyMeasurements) {
@@ -509,13 +538,54 @@ fun SettingsScreen(
                             .padding(vertical = Spacing.xs)
                     )
                     ContentSubtitle(
-                        text = "Fills height and weight from your latest Health Connect measurements; press Save to keep them. Gender is not stored in Health Connect and must be set manually.",
+                        text = stringResource(R.string.settings_fill_hc_hint),
                         modifier = Modifier.padding(vertical = Spacing.xs)
                     )
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
-            FormSectionTitle("Heart Rate")
+            FormSectionTitle(stringResource(R.string.settings_plans_on_watch), modifier = Modifier.padding(top = Spacing.lg))
+            StyledCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(Spacing.md)) {
+                    ContentSubtitle(
+                        text = stringResource(R.string.settings_plans_hint),
+                        modifier = Modifier.padding(bottom = Spacing.xs)
+                    )
+                    workoutStore.workoutPlans
+                        .sortedWith(compareBy({ it.name == UNASSIGNED_PLAN_NAME }, { it.order }, { it.name }))
+                        .forEach { plan ->
+                            val selectedIds = visiblePlanIdsState.value
+                            val checked = selectedIds == null || plan.id in selectedIds
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val current = visiblePlanIdsState.value ?: workoutStore.workoutPlans.map { it.id }.toSet()
+                                        val next = if (plan.id in current) current - plan.id else current + plan.id
+                                        // An empty selection would leave the watch with nothing to do.
+                                        visiblePlanIdsState.value = next.ifEmpty { null }
+                                    }
+                                    .padding(vertical = Spacing.xs),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = null
+                                )
+                                Text(
+                                    text = plan.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                }
+            }
+
+            FormSectionTitle(stringResource(R.string.settings_heart_rate))
             StyledCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -527,7 +597,7 @@ fun SettingsScreen(
                                 measuredMaxHeartRateState.value = input
                             }
                         },
-                        label = { Text("Measured HR Max (optional)") },
+                        label = { Text(stringResource(R.string.settings_measured_hr_max)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -535,9 +605,9 @@ fun SettingsScreen(
                     )
                     ContentSubtitle(
                         text = if (fallbackAge != null && fallbackMaxHeartRate != null) {
-                            "If left blank, the app uses the default formula:\n211 - 0.64 × age ($fallbackAge) = $fallbackMaxHeartRate bpm"
+                            stringResource(R.string.settings_hr_max_formula_with_age, fallbackAge, fallbackMaxHeartRate)
                         } else {
-                            "If left blank, the app uses the default formula:\n211 - 0.64 × age. Enter a valid birth year to preview the fallback result."
+                            stringResource(R.string.settings_hr_max_formula)
                         },
                         modifier = Modifier.padding(vertical = Spacing.xs)
                     )
@@ -549,18 +619,18 @@ fun SettingsScreen(
                                 restingHeartRateState.value = input
                             }
                         },
-                        label = { Text("Resting HR (bpm)") },
+                        label = { Text(stringResource(R.string.settings_resting_hr)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
                     )
 
-                    AppPrimaryOutlinedButton(
+                    if (canUseHealthConnect) AppPrimaryOutlinedButton(
                         text = if (isLoadingRestingHeartRate) {
-                            "Loading Resting HR..."
+                            stringResource(R.string.settings_loading_rhr)
                         } else {
-                            "Use Health Connect Resting HR"
+                            stringResource(R.string.settings_use_hc_value)
                         },
                         onClick = {
                             if (isLoadingRestingHeartRate) {
@@ -575,14 +645,14 @@ fun SettingsScreen(
                                         restingHeartRateState.value = historicalRestingHeartRate.toString()
                                         Toast.makeText(
                                             context,
-                                            "Resting heart rate loaded from Health Connect.",
+                                            context.getString(R.string.settings_rhr_loaded),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     } else {
                                         restingHeartRateState.value = defaultRestingHeartRate.toString()
                                         Toast.makeText(
                                             context,
-                                            "No resting heart rate was found in Health Connect. Using $defaultRestingHeartRate bpm instead.",
+                                            context.getString(R.string.settings_rhr_not_found, defaultRestingHeartRate),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -590,7 +660,7 @@ fun SettingsScreen(
                                     restingHeartRateState.value = defaultRestingHeartRate.toString()
                                     Toast.makeText(
                                         context,
-                                        "Couldn't read your resting heart rate from Health Connect. Using $defaultRestingHeartRate bpm instead.",
+                                        context.getString(R.string.settings_rhr_read_failed, defaultRestingHeartRate),
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 } finally {
@@ -610,22 +680,22 @@ fun SettingsScreen(
                                 vo2MaxState.value = input
                             }
                         },
-                        label = { Text("VO2max (ml/kg/min, optional)") },
+                        label = { Text(stringResource(R.string.settings_vo2max_label)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
                     )
                     ContentSubtitle(
-                        text = "Sharpens calorie estimates (from a lab test, another device, or Health Connect). Leave blank to use the standard formula.",
+                        text = stringResource(R.string.settings_vo2max_hint),
                         modifier = Modifier.padding(vertical = Spacing.xs)
                     )
 
-                    AppPrimaryOutlinedButton(
+                    if (canUseHealthConnect) AppPrimaryOutlinedButton(
                         text = if (isLoadingVo2Max) {
-                            "Loading VO2max..."
+                            stringResource(R.string.settings_loading_vo2max)
                         } else {
-                            "Use Health Connect VO2max"
+                            stringResource(R.string.settings_use_hc_value)
                         },
                         onClick = {
                             if (isLoadingVo2Max) {
@@ -639,20 +709,20 @@ fun SettingsScreen(
                                         vo2MaxState.value = historicalVo2Max.toString()
                                         Toast.makeText(
                                             context,
-                                            "VO2max loaded from Health Connect.",
+                                            context.getString(R.string.settings_vo2max_loaded),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     } else {
                                         Toast.makeText(
                                             context,
-                                            "No VO2max was found in Health Connect.",
+                                            context.getString(R.string.settings_vo2max_not_found),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
                                 } catch (_: Exception) {
                                     Toast.makeText(
                                         context,
-                                        "Couldn't read VO2max from Health Connect.",
+                                        context.getString(R.string.settings_vo2max_read_failed),
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 } finally {
@@ -667,18 +737,18 @@ fun SettingsScreen(
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
-            FormSectionTitle("Training & Progression")
+            FormSectionTitle(stringResource(R.string.settings_training_progression))
             StyledCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(Spacing.md)) {
                     ContentSubtitle(
-                        text = "Distance units for running targets and results.",
+                        text = stringResource(R.string.settings_distance_units_hint),
                         modifier = Modifier.padding(vertical = Spacing.xs)
                     )
                     listOf(
-                        DistanceUnit.KILOMETERS to "Kilometers (km)",
-                        DistanceUnit.MILES to "Miles (mi)"
+                        DistanceUnit.KILOMETERS to stringResource(R.string.settings_km),
+                        DistanceUnit.MILES to stringResource(R.string.settings_mi)
                     ).forEach { (unit, label) ->
                         Row(
                             modifier = Modifier
@@ -697,7 +767,7 @@ fun SettingsScreen(
                         }
                     }
                     ContentSubtitle(
-                        text = "Global deload defaults apply when an exercise keeps a field on \"use global\". Leave both trigger thresholds blank to disable automatic deload by default.",
+                        text = stringResource(R.string.settings_deload_defaults_hint),
                         modifier = Modifier.padding(vertical = Spacing.xs)
                     )
 
@@ -708,7 +778,7 @@ fun SettingsScreen(
                                 deloadFailedSessionsThresholdState.value = input
                             }
                         },
-                        label = { Text("Failed sessions threshold") },
+                        label = { Text(stringResource(R.string.settings_failed_sessions_threshold)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -722,7 +792,7 @@ fun SettingsScreen(
                                 deloadCompletedSessionsIntervalState.value = input
                             }
                         },
-                        label = { Text("Completed sessions interval") },
+                        label = { Text(stringResource(R.string.settings_completed_sessions_interval)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -741,7 +811,7 @@ fun SettingsScreen(
                                 deloadWeightFactorState.value = input
                             }
                         },
-                        label = { Text("Deload weight factor") },
+                        label = { Text(stringResource(R.string.settings_deload_weight_factor)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -755,7 +825,7 @@ fun SettingsScreen(
                                 deloadRepsDropState.value = input
                             }
                         },
-                        label = { Text("Deload reps drop") },
+                        label = { Text(stringResource(R.string.settings_deload_reps_drop)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -769,7 +839,7 @@ fun SettingsScreen(
                                 deloadCutSetsToState.value = input
                             }
                         },
-                        label = { Text("Cut sets to (optional)") },
+                        label = { Text(stringResource(R.string.settings_cut_sets_to)) },
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -778,7 +848,7 @@ fun SettingsScreen(
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
-            FormSectionTitle("External Sensors")
+            FormSectionTitle(stringResource(R.string.settings_external_sensors))
             StyledCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -786,7 +856,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = polarDeviceIdState.value,
                         onValueChange = { polarDeviceIdState.value = it },
-                        label = { Text("Polar Device ID") },
+                        label = { Text(stringResource(R.string.settings_polar_device_id)) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
@@ -795,7 +865,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = polarDisplayNameState.value,
                         onValueChange = { polarDisplayNameState.value = it },
-                        label = { Text("Polar Display Name (optional)") },
+                        label = { Text(stringResource(R.string.settings_polar_display_name)) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
@@ -804,7 +874,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = whoopDeviceIdState.value,
                         onValueChange = { whoopDeviceIdState.value = it },
-                        label = { Text("WHOOP Device ID (optional)") },
+                        label = { Text(stringResource(R.string.settings_whoop_device_id)) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
@@ -813,7 +883,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = whoopDisplayNameState.value,
                         onValueChange = { whoopDisplayNameState.value = it },
-                        label = { Text("WHOOP Display Name (optional)") },
+                        label = { Text(stringResource(R.string.settings_whoop_display_name)) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
@@ -821,7 +891,7 @@ fun SettingsScreen(
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
-            FormSectionTitle("AI")
+            FormSectionTitle(stringResource(R.string.settings_ai))
             StyledCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -833,11 +903,11 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Enable AI features",
+                            text = stringResource(R.string.settings_enable_ai),
                             style = MaterialTheme.typography.bodyLarge
                         )
                         ContentSubtitle(
-                            text = "Controls workout insights and other mobile AI entry points globally."
+                            text = stringResource(R.string.settings_enable_ai_hint)
                         )
                     }
                     Switch(
@@ -849,13 +919,13 @@ fun SettingsScreen(
             }
             if (mobileLlmEnabledState.value) {
                 Spacer(modifier = Modifier.height(Spacing.sm))
-                FormSectionTitle("Workout Insights")
+                FormSectionTitle(stringResource(R.string.settings_workout_insights))
                 StyledCard(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(Spacing.md)) {
                         ContentSubtitle(
-                            text = "Choose whether workout insights run with the on-device LiteRT-LM model or your hosted OpenAI-compatible API.",
+                            text = stringResource(R.string.settings_insights_mode_hint),
                             modifier = Modifier.padding(vertical = Spacing.xs)
                         )
                         WorkoutInsightsMode.entries.forEach { mode ->
@@ -882,9 +952,9 @@ fun SettingsScreen(
                                     )
                                     ContentSubtitle(
                                         text = if (mode == WorkoutInsightsMode.LOCAL) {
-                                            "Run insight generation fully on-device with LiteRT-LM."
+                                            stringResource(R.string.settings_mode_local_desc)
                                         } else {
-                                            "Call your hosted OpenAI-compatible API on demand."
+                                            stringResource(R.string.settings_mode_remote_desc)
                                         }
                                     )
                                 }
@@ -896,15 +966,15 @@ fun SettingsScreen(
                                 value = liteRtModelName.orEmpty(),
                                 onValueChange = {},
                                 readOnly = true,
-                                label = { Text("LiteRT-LM model") },
-                                placeholder = { Text("No local model selected") },
+                                label = { Text(stringResource(R.string.settings_litert_model)) },
+                                placeholder = { Text(stringResource(R.string.settings_no_model_selected)) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
                             )
 
                             ContentSubtitle(
-                                text = "Use GPU for faster on-device insights when available, or CPU for broader device compatibility.",
+                                text = stringResource(R.string.settings_backend_hint),
                                 modifier = Modifier.padding(vertical = Spacing.xs)
                             )
 
@@ -936,9 +1006,9 @@ fun SettingsScreen(
 
                             AppPrimaryOutlinedButton(
                                 text = if (liteRtModelPath == null) {
-                                    "Import LiteRT-LM model"
+                                    stringResource(R.string.settings_import_model)
                                 } else {
-                                    "Replace LiteRT-LM model"
+                                    stringResource(R.string.settings_replace_model)
                                 },
                                 onClick = onImportLiteRtModel,
                                 enabled = !isImportingLiteRtModel,
@@ -948,7 +1018,7 @@ fun SettingsScreen(
                             )
 
                             AppSecondaryButton(
-                                text = "Clear LiteRT-LM model",
+                                text = stringResource(R.string.settings_clear_model),
                                 onClick = onClearLiteRtModel,
                                 enabled = liteRtModelPath != null && !isImportingLiteRtModel,
                                 modifier = Modifier
@@ -959,8 +1029,8 @@ fun SettingsScreen(
                             OutlinedTextField(
                                 value = remoteBaseUrlState.value,
                                 onValueChange = { remoteBaseUrlState.value = it },
-                                label = { Text("Remote base URL") },
-                                placeholder = { Text("https://your-host.example.com/v1") },
+                                label = { Text(stringResource(R.string.settings_remote_base_url)) },
+                                placeholder = { Text(stringResource(R.string.settings_remote_url_placeholder)) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
@@ -969,8 +1039,8 @@ fun SettingsScreen(
                             OutlinedTextField(
                                 value = remoteApiKeyState.value,
                                 onValueChange = { remoteApiKeyState.value = it },
-                                label = { Text("Remote API key (optional)") },
-                                placeholder = { Text("Leave empty for servers without authentication") },
+                                label = { Text(stringResource(R.string.settings_remote_api_key)) },
+                                placeholder = { Text(stringResource(R.string.settings_api_key_placeholder)) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
@@ -983,9 +1053,9 @@ fun SettingsScreen(
                             ) {
                                 AppSecondaryButton(
                                     text = when {
-                                        isFetchingRemoteModels -> "Loading models…"
-                                        remoteModels.isEmpty() -> "Load model list from server"
-                                        else -> "Choose model (${remoteModels.size} available)"
+                                        isFetchingRemoteModels -> stringResource(R.string.settings_loading_models)
+                                        remoteModels.isEmpty() -> stringResource(R.string.settings_load_models)
+                                        else -> stringResource(R.string.settings_choose_model, remoteModels.size)
                                     },
                                     onClick = {
                                         if (remoteModels.isEmpty()) {
@@ -1002,7 +1072,7 @@ fun SettingsScreen(
                                     onDismissRequest = { remoteModelsMenuExpanded = false },
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text("Reload list") },
+                                        text = { Text(stringResource(R.string.settings_reload_models)) },
                                         onClick = {
                                             remoteModelsMenuExpanded = false
                                             loadRemoteModels()
@@ -1034,15 +1104,15 @@ fun SettingsScreen(
                             OutlinedTextField(
                                 value = remoteModelState.value,
                                 onValueChange = { remoteModelState.value = it },
-                                label = { Text("Remote model") },
-                                placeholder = { Text("Pick from the server list or type the model id") },
+                                label = { Text(stringResource(R.string.settings_remote_model)) },
+                                placeholder = { Text(stringResource(R.string.settings_remote_model_placeholder)) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
                             )
 
                             ContentSubtitle(
-                                text = "The list is loaded from the server's /v1/models endpoint. You can also type the model id manually.",
+                                text = stringResource(R.string.settings_models_endpoint_hint),
                                 modifier = Modifier.padding(vertical = Spacing.xs)
                             )
                         }
@@ -1050,8 +1120,8 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = workoutInsightsCustomInstructionsState.value,
                             onValueChange = { workoutInsightsCustomInstructionsState.value = it },
-                            label = { Text("Insight instructions") },
-                            placeholder = { Text("Example: Focus on strength progression and keep advice brief.") },
+                            label = { Text(stringResource(R.string.settings_insight_instructions)) },
+                            placeholder = { Text(stringResource(R.string.settings_insight_instructions_placeholder)) },
                             minLines = 3,
                             maxLines = 6,
                             modifier = Modifier
@@ -1059,7 +1129,7 @@ fun SettingsScreen(
                             .padding(vertical = Spacing.xs)
                         )
                         ContentSubtitle(
-                            text = "These instructions are added to workout and exercise insight requests when they do not conflict with the app's evidence and safety rules.",
+                            text = stringResource(R.string.settings_insight_instructions_hint),
                             modifier = Modifier.padding(vertical = Spacing.xs)
                         )
                     }
@@ -1073,7 +1143,7 @@ fun SettingsScreen(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     onClick = onCancel,
                     enabled = !isSaving,
                     modifier = Modifier.weight(1f)
@@ -1085,13 +1155,13 @@ fun SettingsScreen(
                         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
 
                         if (birthDateYear == null || birthDateYear < 1900 || birthDateYear > currentYear) {
-                            Toast.makeText(context, "Enter a valid birth year.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_birth_year), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
                         val weight = weightState.value.toDoubleOrNull()
                         if (weight == null || weight !in 20.0..400.0) {
-                            Toast.makeText(context, "Enter a body weight between 20 and 400 kg.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_weight), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
@@ -1099,7 +1169,7 @@ fun SettingsScreen(
                         if (heightState.value.isNotBlank() &&
                             (heightCm == null || heightCm !in 80..250)
                         ) {
-                            Toast.makeText(context, "Enter a height between 80 and 250 cm.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_height), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
@@ -1107,14 +1177,14 @@ fun SettingsScreen(
                         if (measuredMaxHeartRateState.value.isNotBlank() &&
                             (measuredMaxHeartRate == null || measuredMaxHeartRate !in 120..260)
                         ) {
-                            Toast.makeText(context, "Enter a valid measured max heart rate.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_hr_max), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
                         val restingHeartRate = restingHeartRateState.value.toIntOrNull()
                             ?: getEffectiveRestingHeartRate()
                         if (restingHeartRate !in 30..120) {
-                            Toast.makeText(context, "Enter a valid resting heart rate.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_rhr), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
@@ -1122,7 +1192,7 @@ fun SettingsScreen(
                         if (vo2MaxState.value.isNotBlank() &&
                             (vo2Max == null || vo2Max !in 10.0..95.0)
                         ) {
-                            Toast.makeText(context, "Enter a valid VO2max between 10 and 95.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_vo2max), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
                         val vo2MaxChanged = vo2Max != workoutStore.estimatedVo2MaxMlKgMin
@@ -1141,7 +1211,7 @@ fun SettingsScreen(
                         if (deloadFailedSessionsThresholdState.value.isNotBlank() &&
                             (deloadFailedSessionsThreshold == null || deloadFailedSessionsThreshold < 1)
                         ) {
-                            Toast.makeText(context, "Enter a valid failed sessions threshold.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_failed_threshold), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
                         val deloadCompletedSessionsInterval =
@@ -1149,24 +1219,24 @@ fun SettingsScreen(
                         if (deloadCompletedSessionsIntervalState.value.isNotBlank() &&
                             (deloadCompletedSessionsInterval == null || deloadCompletedSessionsInterval < 1)
                         ) {
-                            Toast.makeText(context, "Enter a valid completed sessions interval.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_completed_interval), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
                         val deloadWeightFactor = deloadWeightFactorState.value.toDoubleOrNull()
                         if (deloadWeightFactor == null || deloadWeightFactor <= 0.0 || deloadWeightFactor > 1.0) {
-                            Toast.makeText(context, "Enter a deload weight factor between 0 and 1.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_weight_factor), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
                         val deloadRepsDrop = deloadRepsDropState.value.toIntOrNull()
                         if (deloadRepsDrop == null || deloadRepsDrop < 0) {
-                            Toast.makeText(context, "Enter a valid deload reps drop.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_reps_drop), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
                         val deloadCutSetsTo = deloadCutSetsToState.value.toIntOrNull()
                         if (deloadCutSetsToState.value.isNotBlank() &&
                             (deloadCutSetsTo == null || deloadCutSetsTo < 1)
                         ) {
-                            Toast.makeText(context, "Enter a valid cut sets value.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.settings_invalid_cut_sets), Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
@@ -1214,7 +1284,8 @@ fun SettingsScreen(
                             estimatedVo2MaxMlKgMin = vo2Max,
                             vo2MaxSource = newVo2MaxSource,
                             vo2MaxEstimatedAtEpochDay = newVo2MaxEstimatedAtEpochDay,
-                            distanceUnit = distanceUnitState.value
+                            distanceUnit = distanceUnitState.value,
+                            visibleWorkoutPlanIds = visiblePlanIdsState.value?.toList()
                         )
                         onSaveInsightsSettings(
                             mobileLlmEnabledState.value,
@@ -1229,7 +1300,7 @@ fun SettingsScreen(
                         )
                         onSave(newWorkoutStore)
                     },
-                    text = "Save",
+                    text = stringResource(R.string.common_save),
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -1238,6 +1309,10 @@ fun SettingsScreen(
 
     LoadingOverlay(
         isVisible = rememberDebouncedSavingVisible(isSaving || isImportingLiteRtModel),
-        text = if (isImportingLiteRtModel) "Importing model..." else "Saving..."
+        text = if (isImportingLiteRtModel) {
+            context.getString(R.string.settings_importing_model)
+        } else {
+            context.getString(R.string.common_saving)
+        }
     )
 }

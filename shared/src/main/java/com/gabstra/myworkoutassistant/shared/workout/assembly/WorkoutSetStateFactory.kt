@@ -34,8 +34,7 @@ class WorkoutSetStateFactory {
     }
 
     fun isUnilateralExercise(exercise: Exercise): Boolean {
-        val rest = exercise.intraSetRestInSeconds
-        return rest != null && rest > 0
+        return exercise.hasPairedSideExecution
     }
 
     fun buildCalibrationLoadSelectionState(
@@ -116,6 +115,7 @@ class WorkoutSetStateFactory {
         setState: WorkoutState.Set,
         setIndex: Int
     ): ExerciseChildItem.UnilateralSetBlock? {
+        if (!exercise.hasPairedSideExecution) return null
         val restDuration = exercise.intraSetRestInSeconds ?: return null
         val firstSideSetState = setState.copy(
             isUnilateral = true,
@@ -127,17 +127,21 @@ class WorkoutSetStateFactory {
             intraSetTotal = 2u,
             intraSetCounter = 2u
         )
-        val restSet = RestSet(UUID.randomUUID(), restDuration)
-        val restState = WorkoutState.Rest(
-            set = restSet,
-            order = setIndex.toUInt(),
-            currentSetDataState = mutableStateOf(initializeSetData(restSet)),
-            nextState = secondSideSetState,
-            exerciseId = exercise.id,
-            isIntraSetRest = true
-        )
+        val childStates = mutableListOf<WorkoutState>(firstSideSetState)
+        if (restDuration > 0) {
+            val restSet = RestSet(UUID.randomUUID(), restDuration)
+            childStates += WorkoutState.Rest(
+                set = restSet,
+                order = setIndex.toUInt(),
+                currentSetDataState = mutableStateOf(initializeSetData(restSet)),
+                nextState = secondSideSetState,
+                exerciseId = exercise.id,
+                isIntraSetRest = true
+            )
+        }
+        childStates += secondSideSetState
         return ExerciseChildItem.UnilateralSetBlock(
-            mutableListOf(firstSideSetState, restState, secondSideSetState)
+            childStates
         )
     }
 }

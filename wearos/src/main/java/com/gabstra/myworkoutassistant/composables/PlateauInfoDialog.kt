@@ -81,7 +81,7 @@ fun PlateauInfoDialog(
                         Text(
                             text = "Plateau Detection Details",
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                             textAlign = TextAlign.Center
                         )
@@ -89,7 +89,7 @@ fun PlateauInfoDialog(
                         Text(
                             text = reason,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                             textAlign = TextAlign.Center
                         )

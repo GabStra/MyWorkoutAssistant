@@ -26,7 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 import com.gabstra.myworkoutassistant.R
 
 private fun getInitialBatteryPercentage(context: Context): Int {
@@ -80,10 +80,10 @@ fun CurrentBattery(){
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onBackground
         )
-        Text(
+        TightNumericText(
             textAlign = TextAlign.Center,
             text = String.format("%d%%", batteryPercentage),
-            style = captionStyle
+            style = MaterialTheme.typography.numeralMicro
         )
     }
 }

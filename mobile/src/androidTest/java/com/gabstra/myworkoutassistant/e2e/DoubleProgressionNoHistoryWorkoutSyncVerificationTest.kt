@@ -29,7 +29,7 @@ class DoubleProgressionNoHistoryWorkoutSyncVerificationTest {
     fun crossDeviceSync_noHistoryThenThreeWearSessionsArriveOnPhone() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val db = AppDatabase.getDatabase(context)
-        val repository = WorkoutStoreRepository(context.filesDir)
+        val repository = WorkoutStoreRepository.forActiveProfile(context)
         val deadline = System.currentTimeMillis() + resolvedSyncTimeoutMs()
 
         while (System.currentTimeMillis() < deadline) {
@@ -78,7 +78,7 @@ class DoubleProgressionNoHistoryWorkoutSyncVerificationTest {
                 )?.setData as? WeightSetData ?: return@mapNotNull null
                 "${history.id}:${setData.actualReps}@${setData.actualWeight}"
             }
-        val exercise = WorkoutStoreRepository(context.filesDir).getWorkoutStore().workouts
+        val exercise = WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore().workouts
             .firstOrNull { it.id == DoubleProgressionRoundTripBadgePhoneWorkoutStoreFixture.WORKOUT_ID }
             ?.workoutComponents
             ?.singleOrNull() as? Exercise

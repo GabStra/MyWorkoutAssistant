@@ -17,11 +17,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
@@ -38,6 +41,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.datalayer.DEFAULT_WORKOUT_SESSION_HEARTBEAT_INTERVAL_MS
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
@@ -75,6 +79,8 @@ import com.gabstra.myworkoutassistant.sync.WorkoutHistoryTransferCoordinator
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureExerciseCandidate
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureDetailLevel
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSampleRate
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.DecodedRecoveryRuntimeSnapshot
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
@@ -149,10 +155,13 @@ open class AppViewModel : WorkoutViewModel() {
         private const val WORKOUT_SYNC_LOG_TAG = "WorkoutSync"
         private const val SYNC_TIMEOUT_MS = 10_000L
         private const val DEFAULT_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS = 1_000L
+        private const val RUNTIME_SNAPSHOT_TIMER_DEBOUNCE_MS = 5_000L
     }
 
     private var applicationContext: android.content.Context? = null
     private var lastCheckpointFingerprint: String? = null
+    private var lastRuntimeSnapshotFingerprintBase: String? = null
+    private var lastRuntimeSnapshotPersistedAtMs = 0L
     private var forceSyncRecoveryWrite = false
     private var pendingPostRecoveryTimerReanchor = false
     private var pendingRecoveryCheckpoint: WorkoutRecoveryCheckpoint? = null
@@ -247,6 +256,14 @@ open class AppViewModel : WorkoutViewModel() {
 
     fun setMotionCaptureEnabledForSession(enabled: Boolean) {
         motionCaptureCoordinator?.setSessionCollectionEnabled(enabled)
+    }
+
+    fun setMotionCaptureDetailLevelForSession(level: MotionCaptureDetailLevel) {
+        motionCaptureCoordinator?.setSessionDetailLevel(level)
+    }
+
+    fun setMotionCaptureSampleRateForSession(rate: MotionCaptureSampleRate) {
+        motionCaptureCoordinator?.setSessionSampleRate(rate)
     }
 
     suspend fun pauseMotionCaptureForBackground() {
@@ -433,7 +450,7 @@ open class AppViewModel : WorkoutViewModel() {
         _recoveryPromptUiState.value = RecoveryPromptUiState(
             workoutName = incompleteWorkout.workoutName,
             exerciseName = exerciseName.orEmpty(),
-            workoutStartTime = incompleteWorkout.workoutHistory.startTime,
+            workoutStartTime = incompleteWorkout.workoutHistory.knownStartTimeOrNull(),
             showTimerOptions = showTimerOptions,
             showCalibrationOptions = showCalibrationOptions
         )
@@ -485,6 +502,7 @@ open class AppViewModel : WorkoutViewModel() {
     fun clearRecoveryCheckpoint() {
         checkpointStore()?.clear()
         lastCheckpointFingerprint = null
+        clearRuntimeSnapshotPersistenceTracking()
         clearRecoveryPromptState()
     }
 
@@ -536,7 +554,10 @@ open class AppViewModel : WorkoutViewModel() {
 
         prioritizedRecords.forEach { record ->
             val workoutHistory = db.workoutHistoryDao().getWorkoutHistoryById(record.workoutHistoryId)
-            if (workoutHistory == null || workoutHistory.isDone) {
+            if (workoutHistory == null ||
+                workoutHistory.isDone ||
+                workoutHistory.origin == WorkoutHistoryOrigin.USER_IMPORTED
+            ) {
                 db.workoutRecordDao().deleteById(record.id)
                 return@forEach
             }
@@ -703,6 +724,7 @@ open class AppViewModel : WorkoutViewModel() {
             dataMap.putString("workoutId", workoutId.toString())
             dataMap.putString("workoutHistoryId", workoutHistoryId.toString())
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            context?.let { dataMap.putString(PROFILE_ID_KEY, Profiles.activeProfileId(it)) }
         }.asPutDataRequest().setUrgent()
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
         val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
@@ -1019,6 +1041,10 @@ open class AppViewModel : WorkoutViewModel() {
     private suspend fun sendWorkoutSessionHeartbeat(heartbeat: WorkoutSessionHeartbeat) {
         val client = dataClient ?: return
         val request = PutDataMapRequest.create(DataLayerPaths.WORKOUT_SESSION_HEARTBEAT_PATH).apply {
+            // Which profile is training, so the phone updates that profile's session record.
+            applicationContext?.let {
+                dataMap.putString(PROFILE_ID_KEY, Profiles.activeProfileId(it))
+            }
             dataMap.putString(WorkoutSessionHeartbeatKeys.WORKOUT_ID, heartbeat.workoutId.toString())
             dataMap.putString(
                 WorkoutSessionHeartbeatKeys.WORKOUT_HISTORY_ID,
@@ -1062,6 +1088,7 @@ open class AppViewModel : WorkoutViewModel() {
         if (screenState.workoutState is WorkoutState.Completed) {
             checkpointStore()?.clear(synchronous = true)
             lastCheckpointFingerprint = null
+            clearRuntimeSnapshotPersistenceTracking()
             return
         }
 
@@ -1072,6 +1099,7 @@ open class AppViewModel : WorkoutViewModel() {
             if (!isWorkoutInProgress) {
                 checkpointStore()?.clear()
                 lastCheckpointFingerprint = null
+                clearRuntimeSnapshotPersistenceTracking()
             }
             return
         }
@@ -1131,6 +1159,20 @@ open class AppViewModel : WorkoutViewModel() {
             }
         }
 
+        val timerProgress = getTimerProgressKey(currentState)
+        // The state-machine export is cheap, but encoding the full runtime snapshot is not.
+        // Resolve the sequence index first so an unchanged fingerprint can return without encoding.
+        val stateMachineSnapshot = exportRecoveryStateMachine()
+        val sequenceIndex = stateMachineSnapshot?.second ?: -1
+        val fingerprintBase =
+            "$selectedWorkoutId:$stateType:$exerciseId:$setId:$setIndex:$restOrder:$setStartEpochMs:$sequenceIndex"
+        val fingerprint = "$fingerprintBase:$timerProgress"
+
+        if (fingerprint == lastCheckpointFingerprint) {
+            return
+        }
+
+        val nowMs = System.currentTimeMillis()
         val checkpoint = WorkoutRecoveryCheckpoint(
             workoutId = selectedWorkoutId,
             workoutHistoryId = currentWorkoutHistory?.id,
@@ -1141,11 +1183,22 @@ open class AppViewModel : WorkoutViewModel() {
             setIndex = setIndex,
             restOrder = restOrder,
             setStartEpochMs = setStartEpochMs,
-            updatedAtEpochMs = System.currentTimeMillis()
+            updatedAtEpochMs = nowMs
         )
 
         val checkpointStore = WorkoutRecoveryCheckpointStore(context)
-        val runtimeSnapshot = exportRecoveryStateMachine()?.let { (sequence, currentIndex) ->
+        // Only force a synchronous commit when explicitly requested; timer ticks use apply().
+        checkpointStore.save(checkpoint, synchronous = forceSyncRecoveryWrite)
+        lastCheckpointFingerprint = fingerprint
+
+        val isTimerOnlyChange = lastRuntimeSnapshotFingerprintBase == fingerprintBase &&
+            lastRuntimeSnapshotPersistedAtMs > 0L &&
+            nowMs - lastRuntimeSnapshotPersistedAtMs < RUNTIME_SNAPSHOT_TIMER_DEBOUNCE_MS
+        if (!forceSyncRecoveryWrite && isTimerOnlyChange) {
+            return
+        }
+
+        stateMachineSnapshot?.let { (sequence, currentIndex) ->
             val runtimeSnapshotJson = WorkoutRecoverySnapshotCodec.encode(
                 workoutId = selectedWorkoutId,
                 workoutHistoryId = currentWorkoutHistory?.id,
@@ -1153,34 +1206,18 @@ open class AppViewModel : WorkoutViewModel() {
                 sequenceItems = sequence,
                 rotationOrders = cadenceRotationOrdersSnapshot()
             )
-            currentIndex to runtimeSnapshotJson
-        }
-        val timerProgress = getTimerProgressKey(currentState)
-        val sequenceIndex = runtimeSnapshot?.first ?: -1
-        val isTimerActivelyRunning = when (currentState) {
-            is WorkoutState.Set -> currentState.startTime != null &&
-                (
-                    currentState.currentSetData is TimedDurationSetData ||
-                        currentState.currentSetData is EnduranceSetData
-                    )
-            is WorkoutState.Rest -> currentState.startTime != null
-            else -> false
-        }
-        val shouldWriteSynchronously = forceSyncRecoveryWrite || isTimerActivelyRunning
-        val fingerprint =
-            "${checkpoint.workoutId}:${checkpoint.stateType}:${checkpoint.exerciseId}:${checkpoint.setId}:${checkpoint.setIndex}:${checkpoint.restOrder}:${checkpoint.setStartEpochMs}:$sequenceIndex:$timerProgress"
-
-        if (fingerprint != lastCheckpointFingerprint) {
-            checkpointStore.save(checkpoint, synchronous = shouldWriteSynchronously)
-            lastCheckpointFingerprint = fingerprint
-        }
-
-        runtimeSnapshot?.second?.let { runtimeSnapshotJson ->
             checkpointStore.saveRuntimeSnapshotJson(
                 snapshotJson = runtimeSnapshotJson,
-                synchronous = shouldWriteSynchronously
+                synchronous = forceSyncRecoveryWrite
             )
+            lastRuntimeSnapshotFingerprintBase = fingerprintBase
+            lastRuntimeSnapshotPersistedAtMs = nowMs
         }
+    }
+
+    private fun clearRuntimeSnapshotPersistenceTracking() {
+        lastRuntimeSnapshotFingerprintBase = null
+        lastRuntimeSnapshotPersistedAtMs = 0L
     }
 
     private fun getTimerProgressKey(state: WorkoutState): Int {
@@ -1288,8 +1325,7 @@ open class AppViewModel : WorkoutViewModel() {
     fun sendUnsyncedHistories(context: Context) {
         launchIO {
             val validPendingIds = workoutHistoryDao
-                .getAllWorkoutHistoriesByIsDone(true)
-                .map { it.id }
+                .getCompletedWorkoutHistoryIds()
                 .toSet()
                 .intersect(getPendingWorkoutHistoryIds(context))
             retainPendingWorkoutHistoryIds(context, validPendingIds)
@@ -1416,7 +1452,11 @@ open class AppViewModel : WorkoutViewModel() {
     private suspend fun loadExerciseInfos(workout: com.gabstra.myworkoutassistant.shared.Workout): List<ExerciseInfo> {
         val exercises = workout.workoutComponents.filterIsInstance<Exercise>() +
             workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-        return exercises.mapNotNull { getExerciseInfoDao().getExerciseInfoById(it.id) }
+        if (exercises.isEmpty()) return emptyList()
+        val exerciseInfosById = getExerciseInfoDao()
+            .getExerciseInfosByIds(exercises.map { it.id }.distinct())
+            .associateBy { it.id }
+        return exercises.mapNotNull { exerciseInfosById[it.id] }
     }
 
     private fun createSyncTransactionIdIfNeeded(
@@ -1659,6 +1699,7 @@ open class AppViewModel : WorkoutViewModel() {
             if (shouldRestartCalibration) {
                 resetCurrentCalibrationLoadSelectionState()
                 checkpointStore()?.clearRuntimeSnapshot()
+                clearRuntimeSnapshotPersistenceTracking()
             }
             applyTimerRecoveryChoice(recoveryOptions.timerChoice)
             recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded()
@@ -1868,10 +1909,11 @@ open class AppViewModel : WorkoutViewModel() {
     override suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) {
         Log.d(WORKOUT_SYNC_LOG_TAG, "Syncing workout definition change to phone")
         val client = dataClient ?: return
+        val context = applicationContext ?: return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 WorkoutHistoryTransferCoordinator.sendMutex.withLock {
-                    sendWorkoutStore(client, updatedWorkoutStore)
+                    sendWorkoutStore(client, updatedWorkoutStore, Profiles.activeProfileId(context))
                 }
             }.onFailure { exception ->
                 Log.e(WORKOUT_SYNC_LOG_TAG, "Failed to sync updated workout store after equipment change", exception)
@@ -2001,6 +2043,7 @@ open class AppViewModel : WorkoutViewModel() {
                             dataClient = client,
                             historyIds = claim.claimedHistoryIds,
                             reason = claim.reason,
+                            profileId = Profiles.activeProfileId(syncContext),
                             transactionRegistrar = ::registerPendingSyncTransaction
                         )
                         dequeueSuccessfullySyncedWorkoutHistories(syncContext, result)
@@ -2022,6 +2065,7 @@ open class AppViewModel : WorkoutViewModel() {
                             dataClient = client,
                             historyIds = claim.claimedHistoryIds,
                             reason = claim.reason,
+                            profileId = Profiles.activeProfileId(syncContext),
                             transactionRegistrar = ::registerPendingSyncTransaction
                         )
                         dequeueSuccessfullySyncedWorkoutHistories(syncContext, result)

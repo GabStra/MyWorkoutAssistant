@@ -48,11 +48,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
 import com.gabstra.myworkoutassistant.insights.InsightTokenCounter
 import com.gabstra.myworkoutassistant.insights.HistoryChatLimits
@@ -180,10 +182,10 @@ private sealed class HistoryChatPrepareUi {
     data class Error(val message: String) : HistoryChatPrepareUi()
 }
 
-private fun buildHistoryChatIntroMessage(): HistoryChatMessage =
+private fun buildHistoryChatIntroMessage(context: Context): HistoryChatMessage =
     HistoryChatMessage(
         role = HistoryChatMessageRole.Assistant,
-        content = "Ask anything about this history — sessions, sets, reps, load, rest, timing, heart-rate context, labels, and progression. I'll look up the recorded data before answering.",
+        content = context.getString(R.string.history_intro_message),
         isUiOnly = true,
     )
 
@@ -208,7 +210,7 @@ fun HistoryChatScreen(
     }
 
     var prepareUi by remember(mode) { mutableStateOf<HistoryChatPrepareUi>(HistoryChatPrepareUi.Loading) }
-    var messages by remember(mode) { mutableStateOf(listOf(buildHistoryChatIntroMessage())) }
+    var messages by remember(mode) { mutableStateOf(listOf(buildHistoryChatIntroMessage(context))) }
     var composerText by remember(mode) { mutableStateOf("") }
     var sendError by remember(mode) { mutableStateOf<String?>(null) }
     var isSending by remember(mode) { mutableStateOf(false) }
@@ -246,7 +248,7 @@ fun HistoryChatScreen(
     LaunchedEffect(mode) {
         generationJob?.cancel()
         generationJob = null
-        messages = listOf(buildHistoryChatIntroMessage())
+        messages = listOf(buildHistoryChatIntroMessage(context))
     }
 
     DisposableEffect(Unit) {
@@ -262,9 +264,13 @@ fun HistoryChatScreen(
             when (mode) {
                 is HistoryChatScreenMode.Exercise -> {
                     val workout = workouts.find { it.id == mode.workoutId }
-                        ?: return@withContext WorkoutHistoryChatPrepareResult.Failure("Workout not found.")
+                        ?: return@withContext WorkoutHistoryChatPrepareResult.Failure(
+                            context.getString(R.string.history_workout_not_found)
+                        )
                     val exercise = appViewModel.getExerciseById(workout, mode.exerciseId)
-                        ?: return@withContext WorkoutHistoryChatPrepareResult.Failure("Exercise not found.")
+                        ?: return@withContext WorkoutHistoryChatPrepareResult.Failure(
+                            context.getString(R.string.history_exercise_not_found)
+                        )
                     prepareExerciseHistoryChatContext(
                         exercise = exercise,
                         workoutHistoryDao = workoutHistoryDao,
@@ -348,7 +354,7 @@ fun HistoryChatScreen(
                     // reply below replaces this with the full post-processed text.
                     streamedReply = settledMarkdownPrefix(chunk.text)
                 }
-                val reply = lastText.ifBlank { "No reply was generated." }
+                val reply = lastText.ifBlank { context.getString(R.string.history_no_reply) }
                 HistoryChatScreenLog.assistantMarkdown(
                     appContext = context.applicationContext,
                     interactionId = interactionId,
@@ -360,9 +366,9 @@ fun HistoryChatScreen(
             } catch (e: CancellationException) {
                 val partial = lastText.trim()
                 val stoppedContent = if (partial.isNotBlank()) {
-                    "$partial\n\n_(Stopped.)_"
+                    partial + "\n\n" + context.getString(R.string.history_stopped)
                 } else {
-                    "_(Stopped.)_"
+                    context.getString(R.string.history_stopped)
                 }
                 HistoryChatScreenLog.assistantMarkdown(
                     appContext = context.applicationContext,
@@ -382,7 +388,7 @@ fun HistoryChatScreen(
                     interactionId = interactionId,
                     e = e,
                 )
-                sendError = e.message ?: "Unable to generate a reply."
+                sendError = e.message ?: context.getString(R.string.history_unable_to_reply)
             } finally {
                 isSending = false
                 generationJob = null
@@ -402,13 +408,13 @@ fun HistoryChatScreen(
                 ),
                 title = {
                     Text(
-                        text = "Ask your history",
+                        text = stringResource(R.string.history_title),
                         style = MaterialTheme.typography.titleLarge,
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -435,7 +441,7 @@ fun HistoryChatScreen(
                 ) {
                     Text(text = p.message, style = MaterialTheme.typography.bodyLarge)
                     TextButton(onClick = onGoBack, modifier = Modifier.padding(top = 16.dp)) {
-                        Text("Go back")
+                        Text(stringResource(R.string.history_go_back))
                     }
                 }
             }
@@ -486,12 +492,12 @@ fun HistoryChatScreen(
                         ) {
                             LinearProgressIndicator(modifier = Modifier.weight(1f))
                             TextButton(onClick = { stopGeneration() }) {
-                                Icon(
-                                    Icons.Default.Stop,
-                                    contentDescription = "Stop generating",
-                                    modifier = Modifier.padding(end = 4.dp),
-                                )
-                                Text("Stop")
+                            Icon(
+                                Icons.Default.Stop,
+                                contentDescription = stringResource(R.string.history_stop_generating),
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                            Text(stringResource(R.string.history_stop))
                             }
                         }
                     }
@@ -517,7 +523,7 @@ fun HistoryChatScreen(
                                 },
                                 enabled = !isSending && messages.lastOrNull()?.role == HistoryChatMessageRole.User,
                             ) {
-                                Text("Retry")
+                                Text(stringResource(R.string.history_retry))
                             }
                         }
                     }
@@ -533,7 +539,7 @@ fun HistoryChatScreen(
                             onValueChange = { composerText = it },
                             modifier = Modifier.weight(1f),
                             enabled = !isSending,
-                            placeholder = { Text("Ask about this history…") },
+                            placeholder = { Text(stringResource(R.string.history_composer_placeholder)) },
                             minLines = 1,
                             maxLines = 5,
                         )
@@ -541,7 +547,7 @@ fun HistoryChatScreen(
                             onClick = { submitCurrentUserTurn(p) },
                             enabled = !isSending && composerText.isNotBlank(),
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.history_send))
                         }
                     }
                 }
@@ -563,7 +569,7 @@ private fun HistoryChatBubble(
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
     ) {
         Text(
-            text = if (isUser) "You" else "Assistant",
+            text = if (isUser) stringResource(R.string.history_role_user) else stringResource(R.string.history_role_assistant),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Medium,
             color = scheme.primary,

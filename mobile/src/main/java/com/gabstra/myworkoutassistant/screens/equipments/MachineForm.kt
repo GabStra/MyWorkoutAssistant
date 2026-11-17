@@ -42,9 +42,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
@@ -102,14 +104,14 @@ fun MachineForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
-                        text = if(machine == null) "Insert Machine" else "Edit Machine"
+                        text = if(machine == null) stringResource(R.string.equipment_insert_machine) else stringResource(R.string.equipment_edit_machine)
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 },
@@ -119,7 +121,7 @@ fun MachineForm(
                     }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 }
@@ -136,7 +138,7 @@ fun MachineForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            EquipmentFormSection(title = "Details") {
+            EquipmentFormSection(title = stringResource(R.string.equipment_details)) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -144,7 +146,7 @@ fun MachineForm(
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_name_label), style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -155,7 +157,7 @@ fun MachineForm(
                                 maxExtraWeightsPerLoadingPointState.value = it
                             }
                         },
-                        label = { Text("Maximum Additional Weights", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_max_additional_weights), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -163,8 +165,8 @@ fun MachineForm(
             }
 
             CollapsibleSection(
-                title = "Available Weights",
-                summary = "${availableWeightsState.value.size} weights",
+                title = stringResource(R.string.equipment_available_weights),
+                summary = stringResource(R.string.equipment_weights_count, availableWeightsState.value.size),
                 expanded = expandedAvailableWeights,
                 onToggle = { expandedAvailableWeights = !expandedAvailableWeights },
                 expandedContentSpacing = Spacing.sm,
@@ -182,22 +184,22 @@ fun MachineForm(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${index+1}) ${weight.weight}kg", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.equipment_weight_entry, index + 1, weight.weight), style = MaterialTheme.typography.bodyMedium)
                         IconButton(
                             modifier = Modifier.size(32.dp),
                             onClick = {
                                 availableWeightsState.value = availableWeightsState.value - weight
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.equipment_remove_plate))
                         }
                     }
                 }
             }
 
             CollapsibleSection(
-                title = "Extra Weights",
-                summary = "${extraWeightsState.value.size} weights",
+                title = stringResource(R.string.equipment_extra_weights),
+                summary = stringResource(R.string.equipment_weights_count, extraWeightsState.value.size),
                 expanded = expandedExtraWeights,
                 onToggle = { expandedExtraWeights = !expandedExtraWeights },
                 expandedContentSpacing = Spacing.sm,
@@ -215,7 +217,7 @@ fun MachineForm(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${index+1}) ${plate.weight}kg",
+                        Text(stringResource(R.string.equipment_weight_entry, index + 1, plate.weight),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         IconButton(
@@ -225,7 +227,7 @@ fun MachineForm(
                                     extraWeightsState.value - plate
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Weight")
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.equipment_remove_weight))
                         }
                     }
                 }
@@ -239,7 +241,7 @@ fun MachineForm(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.equipment_cancel),
                     onClick = {
                         onCancel()
                     },
@@ -247,7 +249,7 @@ fun MachineForm(
                 )
 
                 AppPrimaryButton(
-                    text = "Save",
+                    text = stringResource(R.string.equipment_save),
                     onClick = {
                         val newMachine = Machine(
                             id = machine?.id ?: UUID.randomUUID(),
@@ -269,7 +271,7 @@ fun MachineForm(
     if (showAvailableWeightsDialog.value) {
         StandardDialog(
             onDismissRequest = { showAvailableWeightsDialog.value = false },
-            title = "Add Weight",
+            title = stringResource(R.string.equipment_add_weight),
             body = {
                 Column {
                     OutlinedTextField(
@@ -279,13 +281,13 @@ fun MachineForm(
                                 newWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (KG)") },
+                        label = { Text(stringResource(R.string.equipment_weight_kg_label)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
-            confirmText = "Add",
+            confirmText = stringResource(R.string.equipment_add),
             onConfirm = {
                 val weight = newWeightState.value.toDoubleOrNull()
                 if (weight != null && weight > 0) {
@@ -296,7 +298,7 @@ fun MachineForm(
                 }
             },
             confirmEnabled = newWeightState.value.isNotEmpty(),
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.equipment_cancel),
             onDismissButton = { showAvailableWeightsDialog.value = false }
         )
     }
@@ -304,7 +306,7 @@ fun MachineForm(
     if (showExtraWeightDialog.value) {
         StandardDialog(
             onDismissRequest = { showExtraWeightDialog.value = false },
-            title = "Add Extra Weight",
+            title = stringResource(R.string.equipment_add_extra_weight),
             body = {
                 Column {
                     OutlinedTextField(
@@ -314,13 +316,13 @@ fun MachineForm(
                                 newExtraWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (KG)") },
+                        label = { Text(stringResource(R.string.equipment_weight_kg_label)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
-            confirmText = "Add",
+            confirmText = stringResource(R.string.equipment_add),
             onConfirm = {
                 val weight = newExtraWeightState.value.toDoubleOrNull()
                 if (weight != null && weight > 0) {
@@ -330,7 +332,7 @@ fun MachineForm(
                 }
             },
             confirmEnabled = newExtraWeightState.value.isNotEmpty(),
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.equipment_cancel),
             onDismissButton = { showExtraWeightDialog.value = false }
         )
     }

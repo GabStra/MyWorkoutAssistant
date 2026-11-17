@@ -33,7 +33,7 @@ class StartupRestoreFromDownloadsVerificationTest {
 
         assertTrue(
             "Expected fresh app data before startup restore.",
-            WorkoutStoreRepository(context.filesDir).getWorkoutStore().workouts.isEmpty()
+            WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore().workouts.isEmpty()
         )
         val stagedBackup = loadLatestBackupFromDownloads(context)
             ?: error("Expected a valid manual backup to be discoverable from Downloads before first launch.")
@@ -65,7 +65,7 @@ class StartupRestoreFromDownloadsVerificationTest {
     }
 
     private suspend fun waitForRestoredWorkout(context: Context): com.gabstra.myworkoutassistant.shared.Workout {
-        val repository = WorkoutStoreRepository(context.filesDir)
+        val repository = WorkoutStoreRepository.forActiveProfile(context)
         val deadline = System.currentTimeMillis() + RESTORE_TIMEOUT_MS
 
         while (System.currentTimeMillis() < deadline) {

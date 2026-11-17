@@ -6,9 +6,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -17,11 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.colorspace.ColorSpaces
-import androidx.compose.ui.text.PlatformTextStyle
-import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonColors
 import androidx.wear.compose.material3.ButtonDefaults
@@ -52,7 +47,7 @@ fun WearPrimaryButton(
     text: String,
     enabled: Boolean = true,
     onClick: () -> Unit,
-    colors: ButtonColors = ButtonDefaults.buttonColors(),
+    colors: ButtonColors = ButtonDefaults.buttonColors(iconColor = Color.White),
 ) {
     val (pressedColors, interactionSource) = rememberPressedButtonColors(
         colors = colors,
@@ -70,7 +65,7 @@ fun WearPrimaryButton(
             modifier = Modifier.fillMaxWidth(),
             text = text,
             textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.labelMedium,
         )
     }
 }
@@ -81,7 +76,7 @@ fun WearPrimaryContentButton(
     transformation: SurfaceTransformation? = null,
     enabled: Boolean = true,
     onClick: () -> Unit,
-    colors: ButtonColors = ButtonDefaults.buttonColors(),
+    colors: ButtonColors = ButtonDefaults.buttonColors(iconColor = Color.White),
     content: @Composable RowScope.() -> Unit,
 ) {
     val (pressedColors, interactionSource) = rememberPressedButtonColors(
@@ -105,7 +100,6 @@ fun WearTonalButton(
     transformation: SurfaceTransformation? = null,
     text: String,
     enabled: Boolean = true,
-    scaleTextToFit: Boolean = false,
     supportingText: String? = null,
     onClick: () -> Unit,
     colors: ButtonColors = ButtonDefaults.filledTonalButtonColors(),
@@ -122,53 +116,34 @@ fun WearTonalButton(
         interactionSource = interactionSource,
         onClick = onClick,
     ) {
-        if (scaleTextToFit) {
-            val labelColor = if (enabled) {
-                pressedColors.secondaryContentColor
-            } else {
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            }
+        if (supportingText != null) {
+            val labelColor = if (enabled) pressedColors.secondaryContentColor
+            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Wear buttons query intrinsic width; subcomposed text cannot answer that query.
-                BasicText(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(20.dp),
+                Text(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 20.dp),
                     text = text,
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        color = labelColor,
-                        textAlign = TextAlign.Center,
-                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                        lineHeightStyle = LineHeightStyle(
-                            alignment = LineHeightStyle.Alignment.Center,
-                            trim = LineHeightStyle.Trim.Both,
-                        ),
-                    ),
-                    maxLines = 1,
-                    softWrap = false,
-                    autoSize = TextAutoSize.StepBased(
-                        minFontSize = 8.sp,
-                        maxFontSize = MaterialTheme.typography.labelMedium.fontSize,
-                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = labelColor,
+                    textAlign = TextAlign.Center,
                 )
-                supportingText?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = labelColor,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                    )
-                }
+                Text(
+                    text = supportingText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = labelColor,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
             }
         } else {
             Text(
                 modifier = Modifier.fillMaxWidth(),
                 text = text,
                 textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.labelMedium,
             )
         }
     }

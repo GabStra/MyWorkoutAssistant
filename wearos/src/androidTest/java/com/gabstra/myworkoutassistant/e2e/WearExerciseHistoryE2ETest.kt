@@ -192,7 +192,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         val workoutRecordDao = db.workoutRecordDao()
         
         // Get workout name and find workout
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: return null
@@ -318,7 +318,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         )
         require(setScreenVisible) { "Weight set screen did not appear" }
 
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: error("Workout not found: $workoutName")
@@ -400,7 +400,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         )
         require(setScreenVisible) { "Weight set screen did not appear" }
 
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: error("Workout not found: $workoutName")
@@ -436,7 +436,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         )
         require(setScreenVisible) { "Weight set screen did not appear" }
 
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: error("Workout not found: $workoutName")
@@ -494,7 +494,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         )
         require(setScreenVisible) { "Body weight set screen did not appear" }
 
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: error("Workout not found: $workoutName")
@@ -588,7 +588,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         )
         require(setScreenVisible) { "Timed duration set screen did not appear" }
 
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: error("Workout not found: $workoutName")
@@ -641,7 +641,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         )
         require(setScreenVisible) { "Endurance set screen did not appear" }
 
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: error("Workout not found: $workoutName")
@@ -701,7 +701,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         // Query database and verify
         val workoutName = ComprehensiveHistoryWorkoutStoreFixture.getWorkoutName()
         // Read workout store from file (it was seeded by the fixture)
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: error("Workout not found: $workoutName")
@@ -745,7 +745,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         // Query database and verify
         // Read workout store from file (it was seeded by the fixture)
-        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStoreRepository = WorkoutStoreRepository.forActiveProfile(context)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
             ?: error("Workout not found: $workoutName")

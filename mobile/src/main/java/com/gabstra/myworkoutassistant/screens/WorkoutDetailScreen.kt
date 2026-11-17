@@ -74,13 +74,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
+import androidx.lifecycle.viewModelScope
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
@@ -147,6 +150,7 @@ private fun FilterRange.displayLabel(): String = when (this) {
 @Composable
 fun Menu(
     onEditWorkout: () -> Unit,
+    onStartRecurring: (() -> Unit)?,
     onDeleteSelectedSession: () -> Unit,
     deleteSelectedSessionEnabled: Boolean,
     onExportSessionAsMarkdown: () -> Unit,
@@ -171,6 +175,19 @@ fun Menu(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
+            onStartRecurring?.let { startRecurring ->
+                AppDropdownMenuItem(
+                    modifier = Modifier.testTag("start_recurring_session"),
+                    text = { Text(text = "Start recurring session", fontWeight = FontWeight.Normal) },
+                    onClick = {
+                        startRecurring()
+                        expanded = false
+                    },
+                )
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                )
+            }
             AppDropdownMenuItem(
                 text = { Text(text = "Edit workout", fontWeight = FontWeight.Normal) },
                 onClick = {
@@ -1158,7 +1175,11 @@ fun WorkoutDetailScreen(
                         Text(
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center,
-                            text = workout.name,
+                            text = if (workout.recurringSessionId == null) {
+                                workout.name
+                            } else {
+                                "${recurringPrescriptionDisplayLabel(workout, context.getString(R.string.prescription))} · ${workout.name}"
+                            },
                             maxLines = 2,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleLarge,
@@ -1210,6 +1231,22 @@ fun WorkoutDetailScreen(
                             onEditWorkout = {
                                 appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
                             },
+                            onStartRecurring = if (
+                                workout.recurringSessionId == null && initialWorkoutHistoryId == null
+                            ) {
+                                {
+                                    appViewModel.viewModelScope.launch {
+                                        runCatching { appViewModel.startRecurringSession(workout.id) }
+                                            .onFailure { error ->
+                                                Toast.makeText(
+                                                    context,
+                                                    error.message ?: "Could not start recurring session.",
+                                                    Toast.LENGTH_LONG,
+                                                ).show()
+                                            }
+                                    }
+                                }
+                            } else null,
                             onDeleteSelectedSession = {
                                 showDeleteSelectedSessionDialog = true
                             },
@@ -1479,7 +1516,7 @@ fun WorkoutDetailScreen(
                                     .filterBy(historyFilterRange)
 
                                 try {
-                                    deleteWorkoutHistoriesFromHealthConnect(histories, healthConnectClient)
+                                    deleteWorkoutHistoriesFromHealthConnect(context, histories, healthConnectClient)
                                 } catch (_: Exception) {
                                     withContext(Dispatchers.Main) {
                                         Toast.makeText(
@@ -1561,6 +1598,7 @@ fun WorkoutDetailScreen(
                                 }
                                 try {
                                     deleteWorkoutHistoriesFromHealthConnect(
+                                        context,
                                         histories,
                                         healthConnectClient
                                     )
@@ -1645,6 +1683,7 @@ fun WorkoutDetailScreen(
                                 if (history != null) {
                                     try {
                                         deleteWorkoutHistoriesFromHealthConnect(
+                                            context,
                                             listOf(history),
                                             healthConnectClient
                                         )

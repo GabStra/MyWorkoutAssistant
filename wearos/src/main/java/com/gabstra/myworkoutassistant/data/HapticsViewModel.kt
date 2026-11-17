@@ -12,8 +12,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.MyApplication
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.coroutines.EmptyCoroutineContext
@@ -144,7 +146,8 @@ class HapticsHelper(context: Context) {
             .apply { write(pcm, 0, pcm.size) }
     }.getOrNull()
 
-    private fun chimeSourcePcm(): ShortArray {
+    // Deterministic, pure synthesis: build it once instead of re-running the DSP on every alert.
+    private val chimeSourcePcm: ShortArray by lazy {
         val wav = buildAlertChimeWav()
         val chime = ShortArray((wav.size - WAV_HEADER_SIZE) / Short.SIZE_BYTES)
         ByteBuffer.wrap(wav)
@@ -152,13 +155,13 @@ class HapticsHelper(context: Context) {
             .apply { position(WAV_HEADER_SIZE) }
             .asShortBuffer()
             .get(chime)
-        return chime
+        chime
     }
 
     // One preroll followed by every pulse at its final spacing: the whole cue is a single track,
     // so pulses cannot cut each other off and their offsets are sample-exact.
     private fun chimePatternPcm(pulseCount: Int): ShortArray {
-        val chime = chimeSourcePcm()
+        val chime = chimeSourcePcm
         val preRollSamples = CHIME_SAMPLE_RATE_HZ * AUDIO_PREROLL_MS / 1_000
         val periodSamples = CHIME_SAMPLE_RATE_HZ * ALERT_PERIOD_MS.toInt() / 1_000
         return ShortArray(preRollSamples + periodSamples * (pulseCount - 1) + chime.size).also {
@@ -216,17 +219,19 @@ class HapticsHelper(context: Context) {
     // first audible sample. playbackHeadPosition is useless here: it advances while the HAL is
     // still buffering, ~200 ms before the DAC starts. getTimestamp reports presentation time.
     private suspend fun awaitChimeOnset(track: AudioTrack): Long? {
-        val timestamp = AudioTimestamp()
-        val deadline = System.nanoTime() + AUDIO_START_TIMEOUT_MS * 1_000_000L
-        while (System.nanoTime() < deadline) {
-            if (track.getTimestamp(timestamp)) {
-                val firstFrameNanos = timestamp.nanoTime -
-                    timestamp.framePosition * 1_000_000_000L / CHIME_SAMPLE_RATE_HZ
-                return firstFrameNanos + AUDIO_PREROLL_MS * 1_000_000L
+        return withContext(Dispatchers.Default) {
+            val timestamp = AudioTimestamp()
+            val deadline = System.nanoTime() + AUDIO_START_TIMEOUT_MS * 1_000_000L
+            while (System.nanoTime() < deadline) {
+                if (track.getTimestamp(timestamp)) {
+                    val firstFrameNanos = timestamp.nanoTime -
+                        timestamp.framePosition * 1_000_000_000L / CHIME_SAMPLE_RATE_HZ
+                    return@withContext firstFrameNanos + AUDIO_PREROLL_MS * 1_000_000L
+                }
+                delay(20)
             }
-            delay(2)
+            null
         }
-        return null
     }
 
     private suspend fun delayUntil(targetNanos: Long) {

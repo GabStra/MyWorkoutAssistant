@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import java.util.UUID
 
 class WorkoutSetPreparationService {
@@ -22,9 +23,18 @@ class WorkoutSetPreparationService {
     ): List<Set> {
         val exerciseAllSets = mutableListOf<Set>()
         val exerciseSets = exercise.sets
+        val shouldReapplyHistoryToWarmup = exerciseSets.firstOrNull { set ->
+            when (set) {
+                is BodyWeightSet -> set.subCategory != SetSubCategory.WarmupSet &&
+                    set.subCategory != SetSubCategory.RestPauseSet
+                is WeightSet -> set.subCategory != SetSubCategory.WarmupSet &&
+                    set.subCategory != SetSubCategory.RestPauseSet
+                else -> false
+            }
+        }?.shouldReapplyHistoryToSet ?: true
 
         if (exercise.generateWarmUpSets &&
-            !exercise.requiresLoadCalibration &&
+            (!exercise.requiresLoadCalibration || exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) &&
             equipment != null &&
             (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)
         ) {
@@ -61,9 +71,11 @@ class WorkoutSetPreparationService {
             fun makeWarmupSet(id: UUID, total: Double, reps: Int): Set {
                 val internalWeight = toSetInternalWeight(total)
                 return if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
-                    BodyWeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
+                    BodyWeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet,
+                        shouldReapplyHistoryToSet = shouldReapplyHistoryToWarmup)
                 } else {
-                    WeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
+                    WeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet,
+                        shouldReapplyHistoryToSet = shouldReapplyHistoryToWarmup)
                 }
             }
 
@@ -128,7 +140,7 @@ class WorkoutSetPreparationService {
         equipment: WeightLoadedEquipment?,
         exerciseAllSets: MutableList<Set>
     ) {
-        if (!exercise.requiresLoadCalibration) return
+        if (!exercise.requiresLoadCalibration || exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return
         val supportsCalibration =
             exercise.exerciseType == ExerciseType.WEIGHT ||
                 (exercise.exerciseType == ExerciseType.BODY_WEIGHT && equipment != null)

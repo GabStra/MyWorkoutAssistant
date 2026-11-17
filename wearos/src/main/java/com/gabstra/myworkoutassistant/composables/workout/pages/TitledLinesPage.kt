@@ -1,6 +1,6 @@
 package com.gabstra.myworkoutassistant.composables.workout.pages
 
-import com.gabstra.myworkoutassistant.composables.workoutPagerTitleTextStyle
+import com.gabstra.myworkoutassistant.composables.workoutSectionLabelTextStyle
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 
 import androidx.compose.foundation.layout.Arrangement
@@ -43,7 +43,7 @@ private fun TitledLinesSectionItem(
         Text(
             text = section.title.uppercase(LocalLocale.current.platformLocale),
             modifier = Modifier.fillMaxWidth(),
-            style = workoutPagerTitleTextStyle(),
+            style = workoutSectionLabelTextStyle(),
             color = MaterialTheme.colorScheme.onBackground,
             textAlign = TextAlign.Center
         )

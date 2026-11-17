@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared
 
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightedEffortSet
@@ -44,6 +45,14 @@ fun List<ExerciseDefinition>.normalizeExerciseFamilyMovements(): List<ExerciseDe
         )
     }
 }
+
+/**
+ * The definitions an import actually commits, with family ids resolved and family movements
+ * assigned. Movement-payload validation must run on this set, not on the raw package: otherwise
+ * it checks refs that are about to be replaced and misses the ones being written.
+ */
+fun List<ExerciseDefinition>.normalizedForImport(): List<ExerciseDefinition> =
+    normalizeExerciseFamilyMovements()
 
 fun WorkoutStore.normalizeExerciseFamilyMovementOwnership(): WorkoutStore {
     val normalizedDefinitions = exerciseDefinitions.normalizeExerciseFamilyMovements()
@@ -164,6 +173,8 @@ fun WorkoutStore.deleteExerciseDefinition(definitionId: UUID): WorkoutStore {
 fun Exercise.duplicatePrescription(): Exercise = copy(
     id = UUID.randomUUID(),
     sets = sets.map(Set::withFreshId),
+    recurringExerciseId = null,
+    loadHistoryPolicy = LoadHistoryPolicy.NONE,
 )
 
 fun WorkoutStore.resolveExerciseVariation(

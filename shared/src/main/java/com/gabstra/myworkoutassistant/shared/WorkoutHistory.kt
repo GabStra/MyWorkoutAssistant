@@ -47,5 +47,13 @@ data class WorkoutHistory(
     val globalId: UUID,
     val version: UInt = 0u,
     val endReason: WorkoutSessionEndReason = WorkoutSessionEndReason.COMPLETED,
-    val runningResults: List<RunningResult> = emptyList()
+    val runningResults: List<RunningResult> = emptyList(),
+    val recurringSessionId: UUID? = null,
+    val origin: WorkoutHistoryOrigin = WorkoutHistoryOrigin.RECORDED,
+    /** False when the source only identifies the calendar date, not a session start time. */
+    val startTimeKnown: Boolean = true,
+    /** False when session duration was not measured or reported. */
+    val durationKnown: Boolean = true
 )
+
+enum class WorkoutHistoryOrigin { RECORDED, USER_IMPORTED }

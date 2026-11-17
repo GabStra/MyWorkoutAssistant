@@ -24,8 +24,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -84,7 +86,11 @@ fun WeightSetForm(
     )) || (isCalibrationExercise && (weightSet == null || weightSet.subCategory == SetSubCategory.WorkSet))
     val isWeightSelectionReady = !isLoadingCombinations
     val selectedWeight = weightState.value.toDoubleOrNull() ?: 0.0
-    val weightLabel = if (equipment is Barbell) "Total Weight (KG)" else "Weight (KG)"
+    val weightLabel = if (equipment is Barbell) {
+        stringResource(R.string.form_total_weight_kg)
+    } else {
+        stringResource(R.string.form_weight_kg)
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -96,7 +102,10 @@ fun WeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            Text(text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = stringResource(R.string.form_equipment_name, equipment.name),
+                style = MaterialTheme.typography.bodyMedium
+            )
         }
 
         Box {
@@ -141,7 +150,7 @@ fun WeightSetForm(
 
         if (shouldLockWeightSelection) {
             Text(
-                text = "This exercise is waiting to be calibrated.",
+                text = stringResource(R.string.form_waiting_calibration),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.tertiaryContent,
                 modifier = Modifier
@@ -181,7 +190,7 @@ fun WeightSetForm(
                     repsState.value = input
                 }
             },
-            label = { Text("Repetitions") },
+            label = { Text(stringResource(R.string.form_repetitions)) },
             keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
             modifier = Modifier
                 .fillMaxWidth()
@@ -190,7 +199,7 @@ fun WeightSetForm(
         SetHistoryReapplySetting(
             checked = shouldReapplyHistoryState.value,
             onCheckedChange = { shouldReapplyHistoryState.value = it },
-            subtitle = "When enabled, the last completed execution can prefill this programmed set in future sessions."
+            subtitle = stringResource(R.string.form_reapply_history_subtitle)
         )
         Row(
             modifier = Modifier
@@ -200,13 +209,13 @@ fun WeightSetForm(
             verticalAlignment = Alignment.CenterVertically
         ) {
             AppSecondaryButton(
-                text = "Cancel",
+                text = stringResource(R.string.common_cancel),
                 onClick = onCancel,
                 modifier = Modifier.weight(1f)
             )
 
             AppPrimaryButton(
-                text = "Save",
+                text = stringResource(R.string.common_save),
                 onClick = {
                     val reps = repsState.value.toIntOrNull() ?: 0
                     val weight = weightState.value.toDoubleOrNull() ?: 0.0

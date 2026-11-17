@@ -178,6 +178,88 @@ class WorkoutHistoryLayoutTest {
     }
 
     @Test
+    fun buildWorkoutHistoryLayout_keepsChildExerciseHistoryWhenSupersetKeyIsMissing() {
+        val supersetId = UUID.fromString("35000000-0000-0000-0000-000000000001")
+        val exerciseAId = UUID.fromString("35000000-0000-0000-0000-000000000002")
+        val exerciseBId = UUID.fromString("35000000-0000-0000-0000-000000000003")
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "Imported workout",
+            description = "",
+            workoutComponents = listOf(minimalSuperset(supersetId, exerciseAId, exerciseBId)),
+            order = 0,
+            creationDate = LocalDate.of(2026, 3, 22),
+            globalId = UUID.randomUUID(),
+            type = 0,
+        )
+        val exerciseAHistory = sampleSetHistory(exerciseAId, id = 1, seq = null).copy(
+            startTime = null,
+            endTime = null,
+            supersetId = null,
+            supersetRound = null,
+            supersetExerciseIndex = null,
+        )
+        val exerciseBHistory = sampleSetHistory(exerciseBId, id = 2, seq = null).copy(
+            startTime = null,
+            endTime = null,
+            supersetId = null,
+            supersetRound = null,
+            supersetExerciseIndex = null,
+        )
+
+        val layout = buildWorkoutHistoryLayout(
+            workout = workout,
+            setHistoriesByExerciseId = mapOf(
+                exerciseAId to listOf(exerciseAHistory),
+                exerciseBId to listOf(exerciseBHistory),
+            ),
+            sessionRestHistories = emptyList(),
+        )
+
+        assertEquals(
+            listOf(
+                WorkoutHistoryLayoutItem.ExerciseSection(exerciseAId),
+                WorkoutHistoryLayoutItem.ExerciseSection(exerciseBId),
+            ),
+            layout,
+        )
+    }
+
+    @Test
+    fun buildWorkoutHistoryLayout_keepsSupersetGroupedSetsWithUnknownTimingAndRound() {
+        val supersetId = UUID.fromString("36000000-0000-0000-0000-000000000001")
+        val exerciseAId = UUID.fromString("36000000-0000-0000-0000-000000000002")
+        val exerciseBId = UUID.fromString("36000000-0000-0000-0000-000000000003")
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "Imported workout",
+            description = "",
+            workoutComponents = listOf(minimalSuperset(supersetId, exerciseAId, exerciseBId)),
+            order = 0,
+            creationDate = LocalDate.of(2026, 3, 22),
+            globalId = UUID.randomUUID(),
+            type = 0,
+        )
+        val groupedSetHistories = listOf(exerciseAId, exerciseBId).mapIndexed { index, exerciseId ->
+            sampleSetHistory(exerciseId, id = index + 1, seq = null).copy(
+                startTime = null,
+                endTime = null,
+                supersetId = supersetId,
+                supersetRound = null,
+                supersetExerciseIndex = null,
+            )
+        }
+
+        val layout = buildWorkoutHistoryLayout(
+            workout = workout,
+            setHistoriesByExerciseId = mapOf(supersetId to groupedSetHistories),
+            sessionRestHistories = emptyList(),
+        )
+
+        assertEquals(listOf(WorkoutHistoryLayoutItem.SupersetSection(supersetId)), layout)
+    }
+
+    @Test
     fun buildWorkoutHistoryLayout_throwsWhenDuplicateRestHistoryForSameTemplateRest() {
         val ex1 = UUID.fromString("10000000-0000-0000-0000-000000000001")
         val restMid = UUID.fromString("10000000-0000-0000-0000-000000000002")

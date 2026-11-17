@@ -6,6 +6,7 @@ data class WorkoutPlan(
     val id: UUID,
     val name: String,
     val workoutIds: List<UUID>,
-    val order: Int
+    val order: Int,
+    val suggestNextPrescription: Boolean = true,
 )
 

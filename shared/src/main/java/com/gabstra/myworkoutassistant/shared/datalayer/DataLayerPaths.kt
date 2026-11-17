@@ -1,5 +1,12 @@
 package com.gabstra.myworkoutassistant.shared.datalayer
 
+/** DataMap key naming the profile a payload belongs to. */
+const val PROFILE_ID_KEY = "profileId"
+/** Profile name paired with [PROFILE_ID_KEY] when a phone pushes a full backup. */
+const val PROFILE_NAME_KEY = "profileName"
+/** Current phone profile index sent with a backup start so the target is selectable after restore. */
+const val PROFILE_INDEX_JSON_KEY = "profileIndexJson"
+
 /**
  * Shared utilities for building and parsing DataLayer paths.
  * All paths are transaction-scoped to enable concurrent transfers.
@@ -30,6 +37,14 @@ object DataLayerPaths {
     const val EXERCISE_MOVEMENT_START_PREFIX = "/exerciseMovement/start"
     const val EXERCISE_MOVEMENT_CHUNK_PREFIX = "/exerciseMovement/chunk"
     const val WORKOUT_STORE_PREFIX = "/workoutStore"
+    /** Small idempotent payload carrying the phone's profile list and its active profile. */
+    const val PROFILE_INDEX_PATH = "/profiles/index"
+
+    /** Watch -> phone: "this watch is using profile X". */
+    const val PROFILE_BIND_PREFIX = "/profiles/bind"
+
+    /** Watch -> phone: "I have never been told which profiles exist". */
+    const val PROFILE_REQUEST_PATH = "/profiles/request"
     const val PHONE_LLM_OPERATION_REQUEST_PREFIX = "/phoneLlm/request"
     const val PHONE_LLM_OPERATION_RESULT_PREFIX = "/phoneLlm/result"
 

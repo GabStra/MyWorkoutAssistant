@@ -7,6 +7,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import android.net.Uri
 import com.gabstra.myworkoutassistant.checkWearSyncEndpoint
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.utils.sync.WatchConnectionMonitor
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
@@ -118,14 +119,23 @@ object PhoneToWatchSyncCoordinator {
 
     private suspend fun calculatePersistedWorkoutStoreFingerprint(context: Context): String {
         return withContext(Dispatchers.IO) {
-            val workoutStore = WorkoutStoreRepository(context.applicationContext.filesDir).getWorkoutStore()
-            calculateWorkoutStoreHash(workoutStore)
+            val appContext = context.applicationContext
+            Profiles.profiles(appContext).joinToString(separator = "|") { profile ->
+                val hash = runCatching {
+                    val repository = WorkoutStoreRepository(
+                        Profiles.directory(appContext, profile.id),
+                        appContext.filesDir,
+                    )
+                    calculateWorkoutStoreHash(repository.getWorkoutStore())
+                }.getOrDefault("unreadable")
+                "${profile.id}:$hash"
+            }
         }
     }
 
     private suspend fun hasRunningSyncWork(context: Context): Boolean =
         WorkManager.getInstance(context.applicationContext)
-            .getWorkInfosForUniqueWorkFlow(MobileSyncToWatchWorker.UNIQUE_WORK_NAME)
+            .getWorkInfosByTagFlow(MobileSyncToWatchWorker.SYNC_TAG)
             .first()
             .any { workInfo -> workInfo.state == WorkInfo.State.RUNNING }
 
@@ -140,7 +150,7 @@ object PhoneToWatchSyncCoordinator {
         restoreAutomaticFingerprintState(appContext)
         scope.launch {
             WorkManager.getInstance(appContext)
-                .getWorkInfosForUniqueWorkFlow(MobileSyncToWatchWorker.UNIQUE_WORK_NAME)
+                .getWorkInfosByTagFlow(MobileSyncToWatchWorker.SYNC_TAG)
                 .collect { infos ->
                     val running = infos.any { it.state == WorkInfo.State.RUNNING }
                     isWorkerRunning.set(running)
@@ -156,10 +166,13 @@ object PhoneToWatchSyncCoordinator {
                     clearPendingSyncFlags(appContext)
                 }
                 if (hadPendingManualOverride) {
-                    MobileSyncToWatchWorker.enqueueManual(appContext)
+                    MobileSyncToWatchWorker.enqueueManual(
+                        appContext,
+                        calculatePersistedWorkoutStoreFingerprint(appContext),
+                    )
                     Log.d(TAG, "install: had persisted manual override, enqueued immediate mobile sync to watch")
                 } else if (automaticSyncState.hasUnsentAutomaticState()) {
-                    MobileSyncToWatchWorker.enqueue(appContext)
+                    MobileSyncToWatchWorker.enqueue(appContext, automaticSyncState.lastRequestedFingerprint)
                     Log.d(TAG, "install: had persisted pending follow-up, enqueued mobile sync to watch")
                 } else {
                     Log.d(TAG, "install: dropped stale pending follow-up because latest automatic state was already sent")
@@ -173,11 +186,16 @@ object PhoneToWatchSyncCoordinator {
      * single replaceable pending follow-up if a sync is already running.
      */
     suspend fun onPhoneDataPersisted(context: Context) {
+        // Publish the profile list first and unconditionally: it is tiny, idempotent, and a
+        // watch that has never seen it cannot show which profile it is following.
+        pushProfileIndexToWatches(context)
         if (PhoneSyncToWatchSuppressor.shouldSuppressPhoneToWatchSync()) {
             Log.d(TAG, "onPhoneDataPersisted: skipped (Wear-inbound apply)")
             return
         }
         val appContext = context.applicationContext
+        // The global automatic sync below carries every phone profile. Watches that explicitly
+        // claim a profile still get their targeted push from the data-layer listener.
         val latestFingerprint = calculatePersistedWorkoutStoreFingerprint(appContext)
         mutex.withLock {
             if (automaticSyncState.shouldSkipNewAutomaticRequest(latestFingerprint)) {
@@ -212,7 +230,7 @@ object PhoneToWatchSyncCoordinator {
                             setPendingFollowUp(appContext, true)
                             Log.d(TAG, "debounce completed while sync running, pending follow-up set for fingerprint=$requestedFingerprint")
                         } else {
-                            MobileSyncToWatchWorker.enqueue(appContext)
+                            MobileSyncToWatchWorker.enqueue(appContext, requestedFingerprint)
                             Log.d(TAG, "debounce completed, enqueued mobile sync to watch for fingerprint=$requestedFingerprint")
                         }
                     } finally {
@@ -236,6 +254,7 @@ object PhoneToWatchSyncCoordinator {
             return
         }
         val appContext = context.applicationContext
+        val fingerprint = calculatePersistedWorkoutStoreFingerprint(appContext)
         mutex.withLock {
             val hadPendingDebounce = debounceJob != null
             debounceJob?.cancel()
@@ -251,7 +270,7 @@ object PhoneToWatchSyncCoordinator {
                 setPendingFollowUp(appContext, true)
                 Log.d(TAG, "flush: sync running, pending follow-up set")
             } else {
-                MobileSyncToWatchWorker.enqueue(appContext)
+                MobileSyncToWatchWorker.enqueue(appContext, fingerprint)
                 Log.d(TAG, "flush: enqueued mobile sync to watch")
             }
         }
@@ -289,7 +308,10 @@ object PhoneToWatchSyncCoordinator {
             if (workerStartedDuringEndpointProbe || isWorkerRunning.get()) {
                 Log.d(TAG, "manual sync: attached foreground state to worker started during endpoint probe")
             } else {
-                MobileSyncToWatchWorker.enqueueManual(appContext)
+                MobileSyncToWatchWorker.enqueueManual(
+                    appContext,
+                    calculatePersistedWorkoutStoreFingerprint(appContext),
+                )
                 Log.d(TAG, "manual sync: replaced delayed pending work and enqueued immediate mobile sync to watch")
             }
         }
@@ -298,6 +320,9 @@ object PhoneToWatchSyncCoordinator {
 
     internal fun onTransactionStarted(transactionId: String) {
         activeTransactionId.set(transactionId)
+        // Each profile is its own transaction. Reset phase ordering so the next profile's
+        // CONNECTING step is accepted instead of being treated as an out-of-order regression.
+        activeWorkerSyncState.set(null)
         updateManualSyncState(transactionId, SyncPhase.CONNECTING, 0f)
     }
 
@@ -347,7 +372,7 @@ object PhoneToWatchSyncCoordinator {
 
     internal fun onWorkerSyncAttemptSucceeded(
         appContext: Context,
-        sentWorkoutStoreFingerprint: String,
+        sentWorkoutStoreFingerprint: String?,
         wasManualSync: Boolean
     ) {
         _isSyncingToWatch.value = false
@@ -358,15 +383,23 @@ object PhoneToWatchSyncCoordinator {
         scope.launch {
             delay(COMPLETED_PHASE_HOLD_MS)
             mutex.withLock {
-                setLastCompletedAutomaticFingerprint(appContext, sentWorkoutStoreFingerprint)
+                if (sentWorkoutStoreFingerprint != null) {
+                    setLastCompletedAutomaticFingerprint(appContext, sentWorkoutStoreFingerprint)
+                }
                 if (pendingManualOverride.compareAndSet(true, false)) {
                     setPendingManualOverride(appContext, false)
-                    MobileSyncToWatchWorker.enqueueManual(appContext)
+                    MobileSyncToWatchWorker.enqueueManual(
+                        appContext,
+                        calculatePersistedWorkoutStoreFingerprint(appContext),
+                    )
                     Log.d(TAG, "after successful sync, enqueued immediate manual override")
                 } else if (pendingFollowUp.compareAndSet(true, false)) {
                     setPendingFollowUp(appContext, false)
                     if (automaticSyncState.hasUnsentAutomaticState()) {
-                        MobileSyncToWatchWorker.enqueue(appContext)
+                        MobileSyncToWatchWorker.enqueue(
+                            appContext,
+                            automaticSyncState.lastRequestedFingerprint,
+                        )
                         Log.d(TAG, "after successful sync, enqueued follow-up from pending")
                     } else {
                         Log.d(TAG, "after successful sync, skipped pending follow-up because latest automatic state was already sent")
@@ -385,7 +418,10 @@ object PhoneToWatchSyncCoordinator {
             setPendingManualOverride(appContext, false)
             scope.launch {
                 delay(FOLLOW_UP_ENQUEUE_DELAY_MS)
-                MobileSyncToWatchWorker.enqueueManual(appContext)
+                MobileSyncToWatchWorker.enqueueManual(
+                    appContext,
+                    calculatePersistedWorkoutStoreFingerprint(appContext),
+                )
                 Log.d(TAG, "worker failed; replaced retry backoff with immediate manual override")
             }
             return false

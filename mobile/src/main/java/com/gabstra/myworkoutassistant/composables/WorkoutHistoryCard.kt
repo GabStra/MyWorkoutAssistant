@@ -20,16 +20,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.completedWorkoutEndDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
 import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 @Composable
 fun WorkoutHistoryCard(
@@ -74,30 +79,38 @@ fun WorkoutHistoryCard(
                 style = MaterialTheme.typography.bodyLarge,
             )
 
+            val startTime = workoutHistory.knownStartTimeOrNull()
+            val durationSeconds = workoutHistory.knownDurationSecondsOrNull()
+            val dateFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+                .withLocale(timeFormatter.locale)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (workoutHistory.isDone) {
-                        buildString {
-                            append(workoutHistory.startTime.toLocalTime().format(timeFormatter))
-                            append("–")
-                            append(
-                                workoutHistory.startTime
-                                    .plusSeconds(workoutHistory.duration.toLong())
-                                    .toLocalTime()
-                                    .format(timeFormatter)
-                            )
+                    text = buildString {
+                        append(workoutHistory.date.format(dateFormatter))
+                        startTime?.let { start ->
+                            append(" · ")
+                            append(start.toLocalTime().format(timeFormatter))
+                            if (workoutHistory.isDone && durationSeconds != null) {
+                                append("–")
+                                append(start.plusSeconds(durationSeconds.toLong()).toLocalTime().format(timeFormatter))
+                            }
                         }
-                    } else {
-                        "Started ${workoutHistory.startTime.toLocalTime().format(timeFormatter)}"
                     },
                     modifier = Modifier.weight(1f),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                durationSeconds?.takeIf { startTime == null }?.let { duration ->
+                    SessionInfoPill(
+                        text = "Duration ${formatTime(duration)}",
+                        backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 workoutSessionDisplayLabel(sessionStatus)?.let { label ->
                     SessionInfoPill(
                         text = label,
@@ -120,7 +133,36 @@ fun WorkoutHistoryCard(
                     )
                 }
             }
+            WorkoutHistoryOriginDetails(workoutHistory)
         }
+    }
+}
+
+fun workoutHistoryDateTimeLabel(
+    workoutHistory: WorkoutHistory,
+    dateFormatter: DateTimeFormatter,
+    timeFormatter: DateTimeFormatter,
+): String = buildString {
+    append(workoutHistory.date.format(dateFormatter))
+    workoutHistory.knownStartTimeOrNull()?.let { startTime ->
+        append(" ")
+        append(startTime.toLocalTime().format(timeFormatter))
+    }
+}
+
+@Composable
+fun WorkoutHistoryOriginDetails(
+    workoutHistory: WorkoutHistory,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SessionInfoPill(
+            text = when (workoutHistory.origin) {
+                WorkoutHistoryOrigin.RECORDED -> "Recorded"
+                WorkoutHistoryOrigin.USER_IMPORTED -> "User imported"
+            },
+            backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

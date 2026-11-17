@@ -202,3 +202,9 @@ dependencies {
 
 
 
+
+// StringResourcesParityTest reads res XML at runtime; res files are not task
+// inputs, so without this Gradle skips the test when only resources change.
+tasks.withType<Test>().configureEach {
+    outputs.upToDateWhen { false }
+}

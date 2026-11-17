@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
@@ -65,6 +66,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.getEffectiveMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
 import com.gabstra.myworkoutassistant.shared.utils.estimateCaloriesKcal
@@ -78,6 +80,8 @@ import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.export.equipmentToJSON
 import com.gabstra.myworkoutassistant.shared.export.extractEquipmentFromWorkoutPlan
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
@@ -218,6 +222,7 @@ fun calculateKiloCaloriesBurned(
 
 @SuppressLint("RestrictedApi")
 suspend fun sendWorkoutsToHealthConnect(
+    context: Context,
     workouts: List<Workout>,
     healthConnectClient: HealthConnectClient,
     workoutHistoryDao: WorkoutHistoryDao,
@@ -227,6 +232,8 @@ suspend fun sendWorkoutsToHealthConnect(
     female: Boolean? = null,
     vo2MaxMlKgMin: Double? = null,
 ) {
+    // Health Connect is bound to one profile; other profiles must not write there.
+    if (!Profiles.isHealthConnectProfile(context)) return
     if (workouts.isEmpty()) return
 
     val requiredPermissions = setOf(
@@ -245,11 +252,15 @@ suspend fun sendWorkoutsToHealthConnect(
 
     val workoutsById = workouts.associateBy { it.id }
 
-    val workoutHistories = if(updateAll){
+    val workoutHistories = (if(updateAll){
         workoutHistoryDao.getAllWorkoutHistoriesByIsDone()
     }else {
         workoutHistoryDao.getWorkoutHistoriesByHasBeenSentToHealth(false)
-    }.filter { workoutsById.containsKey(it.workoutId) }
+    }).filter { workoutsById.containsKey(it.workoutId) }
+        // A Health Connect activity/calorie record needs a real start and end.
+        // User-imported sessions may only have a calendar date and no duration;
+        // their placeholder midnight/zero values must never become measured records.
+        .filter { it.hasHealthConnectTiming() }
 
     if (workoutHistories.isEmpty()) return
 
@@ -286,10 +297,7 @@ suspend fun sendWorkoutsToHealthConnect(
                 endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
                 exerciseType = workoutsById[it.workoutId]!!.type,
                 title = workoutsById[it.workoutId]!!.name,
-                metadata = Metadata.activelyRecorded(
-                    Device(type = Device.TYPE_WATCH),
-                    clientRecordId = it.id.toString()
-                ),
+                metadata = it.toHealthConnectMetadata(),
             )
         }
 
@@ -326,10 +334,7 @@ suspend fun sendWorkoutsToHealthConnect(
                     startZoneOffset = zoneOffset,
                     endZoneOffset = zoneOffset,
                     samples = samples,
-                    metadata = Metadata.activelyRecorded(
-                        Device(type = Device.TYPE_WATCH),
-                        clientRecordId =   workoutHistory.id.toString()
-                    )
+                    metadata = workoutHistory.toHealthConnectMetadata()
                 )
             }
 
@@ -369,10 +374,7 @@ suspend fun sendWorkoutsToHealthConnect(
                     endTime = endTime,
                     endZoneOffset = zoneOffset,
                     energy = Energy.kilocalories(kiloCaloriesBurned),
-                    metadata =  Metadata.activelyRecorded(
-                        Device(type = Device.TYPE_WATCH),
-                        clientRecordId = workoutHistory.id.toString()
-                    )
+                    metadata = workoutHistory.toHealthConnectMetadata()
                 )
             }
 
@@ -388,11 +390,32 @@ suspend fun sendWorkoutsToHealthConnect(
     }
 }
 
+/**
+ * True when this session has the measured timing Health Connect activity and
+ * calorie records require. Imported sessions with unknown start/duration are
+ * excluded at the write boundary, not merely hidden in the UI.
+ */
+internal fun WorkoutHistory.hasHealthConnectTiming(): Boolean {
+    val start = knownStartTimeOrNull() ?: return false
+    val durationSeconds = knownDurationSecondsOrNull() ?: return false
+    return durationSeconds > 0 && start.plusSeconds(durationSeconds.toLong()).isAfter(start)
+}
+
+internal fun WorkoutHistory.toHealthConnectMetadata(): Metadata = when (origin) {
+    WorkoutHistoryOrigin.RECORDED -> Metadata.activelyRecorded(
+        Device(type = Device.TYPE_WATCH),
+        clientRecordId = id.toString(),
+    )
+    WorkoutHistoryOrigin.USER_IMPORTED -> Metadata.manualEntry(clientRecordId = id.toString())
+}
+
 @SuppressLint("RestrictedApi")
 suspend fun deleteWorkoutHistoriesFromHealthConnect(
+    context: Context,
     workoutHistories: List<WorkoutHistory>,
     healthConnectClient: HealthConnectClient
 ) {
+    if (!Profiles.isHealthConnectProfile(context)) return
     if (workoutHistories.isEmpty()) return
 
     val requiredPermissions = setOf(

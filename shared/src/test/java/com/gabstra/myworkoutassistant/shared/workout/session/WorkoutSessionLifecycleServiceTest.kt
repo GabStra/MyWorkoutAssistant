@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
+import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -15,6 +16,7 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -42,6 +44,10 @@ class WorkoutSessionLifecycleServiceTest {
     private val currentSetId: UUID = UUID.fromString("f654a2f0-c5c1-4e89-b839-e4f15a3eb6dc")
     private val olderMatchingSetId: UUID = UUID.fromString("db30f6a6-aafd-4f52-b58e-783e92c5b1d7")
     private val newerChangedSetId: UUID = UUID.fromString("ab0ff4b2-a34b-45b0-96fe-25d9c6a3d8c7")
+    private val recurringSessionId = UUID.fromString("e1b47c64-8d21-4483-8a68-0f3e2735a4bf")
+    private val recurringExerciseId = UUID.fromString("d561b119-bff0-42ad-a4e4-40e3e519a1dc")
+    private val exerciseDefinitionId = UUID.fromString("433cbf63-bb55-4b6a-9938-4a19a9254b78")
+    private val recurringEquipmentId = UUID.fromString("56f9d8c1-9fd1-4aa7-87b2-4189a047d78e")
 
     @Before
     fun setup() {
@@ -123,6 +129,154 @@ class WorkoutSessionLifecycleServiceTest {
             newerChangedSetId,
             loaded.latestSetHistoriesByExerciseId[exerciseId].orEmpty().single().setId
         )
+    }
+
+    @Test
+    fun loadWorkoutHistory_recurringTrackFindsLatestCompletedOccurrenceAndRepeatsLastLoadForAddedSet() = runBlocking {
+        seedRecurringHistory(
+            historyId = UUID.fromString("6bdd4a65-41c6-4d45-b320-e764b2a51630"),
+            time = LocalTime.of(9, 0), trackId = recurringExerciseId, weight = 80.0
+        )
+        seedRecurringHistory(
+            historyId = UUID.fromString("7825d7d3-8f29-4214-9dc0-e31b1996c2c9"),
+            time = LocalTime.of(10, 0), trackId = UUID.randomUUID(), weight = 120.0
+        )
+        seedRecurringHistory(
+            historyId = UUID.fromString("21e1506d-7740-41ef-afde-dc7026eaf85b"),
+            time = LocalTime.of(11, 0), trackId = recurringExerciseId, weight = 150.0, isDone = false
+        )
+        val firstSetId = UUID.randomUUID()
+        val secondSetId = UUID.randomUUID()
+        val exercise = createWorkout().workoutComponents.single() as Exercise
+        val current = createWorkout().copy(
+            recurringSessionId = recurringSessionId,
+            workoutComponents = listOf(exercise.copy(
+                exerciseDefinitionId = exerciseDefinitionId,
+                equipmentId = recurringEquipmentId,
+                recurringExerciseId = recurringExerciseId,
+                loadHistoryPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD,
+                sets = listOf(WeightSet(firstSetId, 12, 65.0), WeightSet(secondSetId, 10, 70.0))
+            ))
+        )
+
+        val loaded = service.loadWorkoutHistory(current)
+        val firstHistory = loaded.latestSetHistoryByExerciseAndSetId[exerciseId to firstSetId]!!
+        val secondHistory = loaded.latestSetHistoryByExerciseAndSetId[exerciseId to secondSetId]!!
+        assertEquals(80.0, (firstHistory.setData as WeightSetData).actualWeight, 0.0)
+        assertEquals(80.0, (secondHistory.setData as WeightSetData).actualWeight, 0.0)
+    }
+
+    @Test
+    fun loadWorkoutHistory_recurringTrackCanUseExactMemberLegacyHistoryUntilNewHistoryExists() = runBlocking {
+        seedHistory(
+            historyId = UUID.fromString("173c0735-24b1-41b6-92eb-b4dcd34e0e80"),
+            date = LocalDate.of(2026, 3, 25),
+            time = LocalTime.of(9, 0),
+            setId = olderMatchingSetId,
+            reps = 8,
+            weight = 55.0,
+        )
+        val source = createWorkout().copy(
+            recurringSessionId = recurringSessionId,
+            prescriptionOrdinal = 1,
+            workoutComponents = listOf((createWorkout().workoutComponents.single() as Exercise).copy(
+                exerciseDefinitionId = exerciseDefinitionId,
+                equipmentId = recurringEquipmentId,
+                recurringExerciseId = recurringExerciseId,
+            )),
+        )
+        val currentExerciseId = UUID.randomUUID()
+        val currentSet = WeightSet(UUID.randomUUID(), reps = 9, weight = 40.0)
+        val current = createWorkout().copy(
+            id = UUID.randomUUID(),
+            globalId = UUID.randomUUID(),
+            recurringSessionId = recurringSessionId,
+            prescriptionOrdinal = 2,
+            workoutComponents = listOf((createWorkout().workoutComponents.single() as Exercise).copy(
+                id = currentExerciseId,
+                exerciseDefinitionId = exerciseDefinitionId,
+                equipmentId = recurringEquipmentId,
+                recurringExerciseId = recurringExerciseId,
+                loadHistoryPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD,
+                sets = listOf(currentSet),
+            )),
+        )
+
+        val loaded = service.loadWorkoutHistory(current, listOf(source, current))
+        assertEquals(55.0, (loaded.latestSetHistoryByExerciseAndSetId[currentExerciseId to currentSet.id]!!.setData as WeightSetData).actualWeight, 0.0)
+
+        val detachedSourceExcluded = service.loadWorkoutHistory(current, listOf(current))
+        assertEquals(emptyMap<Pair<UUID, UUID>, SetHistory>(), detachedSourceExcluded.latestSetHistoryByExerciseAndSetId)
+
+        val changedOriginal = source.copy(workoutComponents = listOf(
+            (source.workoutComponents.single() as Exercise).copy(exerciseDefinitionId = UUID.randomUUID()),
+        ))
+        val changedDefinitionRejected = service.loadWorkoutHistory(
+            current,
+            familyWorkouts = listOf(changedOriginal, current),
+            allWorkoutVersions = listOf(changedOriginal, current),
+        )
+        assertEquals(emptyMap<Pair<UUID, UUID>, SetHistory>(), changedDefinitionRejected.latestSetHistoryByExerciseAndSetId)
+    }
+
+    @Test
+    fun loadWorkoutHistory_recurringTrackRejectsChangedDefinitionEquipmentAndSetType() = runBlocking {
+        seedRecurringHistory(
+            historyId = UUID.fromString("cb183c60-653b-4f2a-89df-4f4cc2c84380"),
+            time = LocalTime.of(9, 0), trackId = recurringExerciseId, weight = 80.0
+        )
+        val original = createWorkout().workoutComponents.single() as Exercise
+        val current = createWorkout().copy(
+            recurringSessionId = recurringSessionId,
+            workoutComponents = listOf(original.copy(
+                exerciseDefinitionId = UUID.randomUUID(),
+                equipmentId = UUID.randomUUID(),
+                recurringExerciseId = recurringExerciseId,
+                loadHistoryPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD
+            ))
+        )
+
+        val loaded = service.loadWorkoutHistory(current)
+
+        assertEquals(emptyMap<Pair<UUID, UUID>, SetHistory>(), loaded.latestSetHistoryByExerciseAndSetId)
+    }
+
+    private suspend fun seedRecurringHistory(
+        historyId: UUID,
+        time: LocalTime,
+        trackId: UUID,
+        weight: Double,
+        isDone: Boolean = true
+    ) {
+        val date = LocalDate.of(2026, 3, 24)
+        database.workoutHistoryDao().insert(WorkoutHistory(
+            id = historyId,
+            workoutId = UUID.randomUUID(),
+            date = date,
+            time = time,
+            startTime = LocalDateTime.of(date, time),
+            duration = 300,
+            heartBeatRecords = emptyList(),
+            isDone = isDone,
+            hasBeenSentToHealth = false,
+            globalId = UUID.randomUUID(),
+            recurringSessionId = recurringSessionId
+        ))
+        database.setHistoryDao().insert(SetHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = historyId,
+            exerciseId = UUID.randomUUID(),
+            equipmentIdSnapshot = recurringEquipmentId,
+            setId = UUID.randomUUID(),
+            order = 0u,
+            startTime = LocalDateTime.of(date, time),
+            endTime = LocalDateTime.of(date, time).plusMinutes(1),
+            setData = WeightSetData(8, weight, 8 * weight),
+            skipped = false,
+            recurringExerciseId = trackId,
+            exerciseDefinitionIdSnapshot = exerciseDefinitionId,
+            exerciseTypeSnapshot = ExerciseType.WEIGHT.name
+        ))
     }
 
     private suspend fun seedHistory(

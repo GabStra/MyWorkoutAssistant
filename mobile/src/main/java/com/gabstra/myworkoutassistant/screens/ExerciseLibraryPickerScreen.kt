@@ -28,7 +28,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
@@ -61,12 +63,12 @@ fun ExerciseLibraryPickerScreen(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
                 ),
-                title = { Text("Exercise library") },
+                title = { Text(stringResource(R.string.library_title)) },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.common_back),
                         )
                     }
                 },
@@ -80,7 +82,7 @@ fun ExerciseLibraryPickerScreen(
                 .padding(horizontal = Spacing.md)
         ) {
             Text(
-                text = "Pick an exercise from your library to add it to the workout, or create a new one.",
+                text = stringResource(R.string.library_picker_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.tertiaryContent,
                 modifier = Modifier.padding(top = Spacing.md),
@@ -88,7 +90,7 @@ fun ExerciseLibraryPickerScreen(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                label = { Text("Search exercises") },
+                label = { Text(stringResource(R.string.library_search_exercises)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.md),
             )
@@ -99,7 +101,7 @@ fun ExerciseLibraryPickerScreen(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
-                        text = "No exercises found",
+                        text = stringResource(R.string.library_no_exercises),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.tertiaryContent,
                         textAlign = TextAlign.Center,
@@ -119,7 +121,7 @@ fun ExerciseLibraryPickerScreen(
                                 val typeLabel = definition.exerciseType.name.replace('_', ' ').lowercase()
                                 val equipmentLabel = definition.equipmentId
                                     ?.let { equipmentNameById[it] }
-                                    ?.let { " · $it" } ?: " · no equipment"
+                                    ?.let { " · $it" } ?: stringResource(R.string.library_no_equipment_suffix)
                                 val accessoryLabels = definition.requiredAccessoryEquipmentIds
                                     ?.mapNotNull { accessoryName -> equipmentNameById[accessoryName] }
                                     .orEmpty()
@@ -127,8 +129,12 @@ fun ExerciseLibraryPickerScreen(
                                     append(typeLabel)
                                     append(equipmentLabel)
                                     if (accessoryLabels.isNotEmpty()) {
-                                        append(" · with ")
-                                        append(accessoryLabels.joinToString(", "))
+                                        append(
+                                            stringResource(
+                                                R.string.library_with_accessories_suffix,
+                                                accessoryLabels.joinToString(", ")
+                                            )
+                                        )
                                     }
                                 }
                                 Text(
@@ -147,13 +153,13 @@ fun ExerciseLibraryPickerScreen(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     onClick = onCancel,
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,
                 )
                 AppPrimaryButton(
-                    text = "Create new",
+                    text = stringResource(R.string.library_create_new),
                     onClick = onCreate,
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,

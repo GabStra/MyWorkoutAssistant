@@ -42,9 +42,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
@@ -100,14 +102,14 @@ fun DumbbellForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center,
-                        text = if(dumbbell == null) "Insert Dumbbell" else "Edit Dumbbell"
+                        text = if(dumbbell == null) stringResource(R.string.equipment_insert_dumbbell) else stringResource(R.string.equipment_edit_dumbbell)
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 },
@@ -115,7 +117,7 @@ fun DumbbellForm(
                     IconButton(modifier = Modifier.alpha(0f), onClick = { onCancel() }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 }
@@ -131,7 +133,7 @@ fun DumbbellForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            EquipmentFormSection(title = "Details") {
+            EquipmentFormSection(title = stringResource(R.string.equipment_details)) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -139,7 +141,7 @@ fun DumbbellForm(
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_name_label), style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -150,7 +152,7 @@ fun DumbbellForm(
                                 maxExtraWeightsPerLoadingPointState.value = it
                             }
                         },
-                        label = { Text("Maximum Additional Weights", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.equipment_max_additional_weights), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -158,8 +160,8 @@ fun DumbbellForm(
             }
 
             CollapsibleSection(
-                title = "Available Dumbbells",
-                summary = "${availableDumbbellsState.value.size} weights",
+                title = stringResource(R.string.equipment_available_dumbbells),
+                summary = stringResource(R.string.equipment_weights_count, availableDumbbellsState.value.size),
                 expanded = expandedDumbbells,
                 onToggle = { expandedDumbbells = !expandedDumbbells },
                 expandedContentSpacing = Spacing.sm,
@@ -177,7 +179,7 @@ fun DumbbellForm(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${index+1}) ${dumbbell.weight}kg", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.equipment_weight_entry, index + 1, dumbbell.weight), style = MaterialTheme.typography.bodyMedium)
                         IconButton(
                             modifier = Modifier.size(32.dp),
                             onClick = {
@@ -185,15 +187,15 @@ fun DumbbellForm(
                                     availableDumbbellsState.value - dumbbell
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Dumbbell")
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.equipment_remove_dumbbell))
                         }
                     }
                 }
             }
 
             CollapsibleSection(
-                title = "Extra Weights",
-                summary = "${extraWeightsState.value.size} weights",
+                title = stringResource(R.string.equipment_extra_weights),
+                summary = stringResource(R.string.equipment_weights_count, extraWeightsState.value.size),
                 expanded = expandedExtraWeights,
                 onToggle = { expandedExtraWeights = !expandedExtraWeights },
                 expandedContentSpacing = Spacing.sm,
@@ -211,7 +213,7 @@ fun DumbbellForm(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${index+1}) ${plate.weight}kg",
+                        Text(stringResource(R.string.equipment_weight_entry, index + 1, plate.weight),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         IconButton(
@@ -221,7 +223,7 @@ fun DumbbellForm(
                                     extraWeightsState.value - plate
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Weight")
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.equipment_remove_weight))
                         }
                     }
                 }
@@ -235,7 +237,7 @@ fun DumbbellForm(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.equipment_cancel),
                     onClick = {
                         onCancel()
                     },
@@ -243,7 +245,7 @@ fun DumbbellForm(
                 )
 
                 AppPrimaryButton(
-                    text = "Save",
+                    text = stringResource(R.string.equipment_save),
                     onClick = {
                         val newDumbbell = Dumbbell(
                             id = dumbbell?.id ?: UUID.randomUUID(),
@@ -264,7 +266,7 @@ fun DumbbellForm(
     if (showDumbbellDialog.value) {
         StandardDialog(
             onDismissRequest = { showDumbbellDialog.value = false },
-            title = "Add Dumbbell",
+            title = stringResource(R.string.equipment_add_dumbbell),
             body = {
                 Column {
                     OutlinedTextField(
@@ -274,13 +276,13 @@ fun DumbbellForm(
                                 newDumbbellWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (KG)") },
+                        label = { Text(stringResource(R.string.equipment_weight_kg_label)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
-            confirmText = "Add",
+            confirmText = stringResource(R.string.equipment_add),
             onConfirm = {
                 val weight = newDumbbellWeightState.value.toDoubleOrNull()
                 if (weight != null && weight > 0) {
@@ -292,7 +294,7 @@ fun DumbbellForm(
                 }
             },
             confirmEnabled = newDumbbellWeightState.value.isNotEmpty(),
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.equipment_cancel),
             onDismissButton = { showDumbbellDialog.value = false }
         )
     }
@@ -300,7 +302,7 @@ fun DumbbellForm(
     if (showExtraWeightDialog.value) {
         StandardDialog(
             onDismissRequest = { showExtraWeightDialog.value = false },
-            title = "Add Extra Weight",
+            title = stringResource(R.string.equipment_add_extra_weight),
             body = {
                 Column {
                     OutlinedTextField(
@@ -310,13 +312,13 @@ fun DumbbellForm(
                                 newExtraWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (KG)") },
+                        label = { Text(stringResource(R.string.equipment_weight_kg_label)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
-            confirmText = "Add",
+            confirmText = stringResource(R.string.equipment_add),
             onConfirm = {
                 val weight = newExtraWeightState.value.toDoubleOrNull()
                 if (weight != null && weight > 0) {
@@ -326,7 +328,7 @@ fun DumbbellForm(
                 }
             },
             confirmEnabled = newExtraWeightState.value.isNotEmpty(),
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.equipment_cancel),
             onDismissButton = { showExtraWeightDialog.value = false }
         )
     }

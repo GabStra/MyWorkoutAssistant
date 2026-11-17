@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.content.Context
 import android.content.res.Configuration
 import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import android.widget.Toast
@@ -58,8 +59,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppAddButton
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
@@ -108,17 +111,23 @@ private fun String.toDisplayLabel(): String = lowercase()
 private fun ExerciseDefinition.variationLabel(): String = exerciseType.name.toDisplayLabel()
 
 private fun ExerciseDefinition.metaChipLabels(
+    context: Context,
     equipmentNamesById: Map<UUID, String>,
     accessoryNamesById: Map<UUID, String>,
 ): List<String> = buildList {
     if (exerciseType == ExerciseType.COUNTUP || exerciseType == ExerciseType.COUNTDOWN) {
-        add("Timed")
+        add(context.getString(R.string.library_chip_timed))
     }
     if (exerciseType == ExerciseType.BODY_WEIGHT) {
-        bodyWeightPercentage?.let { percentage -> add("$percentage% body weight") }
+        bodyWeightPercentage?.let { percentage ->
+            add(context.getString(R.string.library_chip_body_weight, percentage.toString()))
+        }
     }
     requiredAccessoryEquipmentIds.orEmpty().forEach { id ->
-        add(accessoryNamesById[id] ?: equipmentNamesById[id] ?: "Unknown accessory")
+        add(
+            accessoryNamesById[id] ?: equipmentNamesById[id]
+                ?: context.getString(R.string.library_unknown_accessory)
+        )
     }
 }
 
@@ -175,11 +184,11 @@ fun ExerciseLibraryScreen(
         uri ?: return@rememberLauncherForActivityResult
         runCatching {
             context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                ?: error("The selected file could not be opened.")
+                ?: error(context.getString(R.string.library_file_open_failed))
         }.onSuccess(onImport).onFailure { error ->
             Toast.makeText(
                 context,
-                error.message ?: "The exercise library could not be opened.",
+                error.message ?: context.getString(R.string.library_import_failed),
                 Toast.LENGTH_LONG,
             ).show()
         }
@@ -193,13 +202,15 @@ fun ExerciseLibraryScreen(
     val usagesByDefinitionId = remember(workouts, plans) {
         buildExerciseDefinitionUsages(workouts, plans)
     }
+    val unknownEquipmentLabel = stringResource(R.string.library_unknown_equipment)
+    val noEquipmentLabel = stringResource(R.string.library_no_equipment)
     val equipmentGroups = remember(definitions, equipmentNamesById) {
         definitions
             .groupBy { it.equipmentId }
             .map { (equipmentId, equipmentDefinitions) ->
                 val equipmentLabel = equipmentId?.let { id ->
-                    equipmentNamesById[id] ?: "Unknown equipment"
-                } ?: "No equipment"
+                    equipmentNamesById[id] ?: unknownEquipmentLabel
+                } ?: noEquipmentLabel
                 ExerciseEquipmentGroup(
                     label = equipmentLabel,
                     families = equipmentDefinitions
@@ -218,7 +229,7 @@ fun ExerciseLibraryScreen(
                 )
             }
             .sortedWith(
-                compareBy<ExerciseEquipmentGroup> { it.label == "No equipment" }
+                compareBy<ExerciseEquipmentGroup> { it.label == noEquipmentLabel }
                     .thenBy { it.label.lowercase() },
             )
     }
@@ -256,12 +267,12 @@ fun ExerciseLibraryScreen(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                label = { Text("Search exercise library") },
+                label = { Text(stringResource(R.string.library_search_label)) },
                 singleLine = true,
                 modifier = Modifier.weight(1f).padding(vertical = 12.dp),
             )
             IconButton(onClick = { importLauncher.launch(arrayOf("application/json")) }) {
-                Icon(Icons.Default.FileOpen, contentDescription = "Import exercise library")
+                Icon(Icons.Default.FileOpen, contentDescription = stringResource(R.string.library_import_cd))
             }
         }
         // The list is a LazyColumn: eagerly composing every family card for
@@ -274,7 +285,11 @@ fun ExerciseLibraryScreen(
             if (filteredGroups.isEmpty()) {
                 item(key = "empty") {
                     Text(
-                        if (definitions.isEmpty()) "No exercise definitions yet." else "No matching exercises.",
+                        if (definitions.isEmpty()) {
+                            stringResource(R.string.library_empty)
+                        } else {
+                            stringResource(R.string.library_no_matches)
+                        },
                         modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xl),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -386,7 +401,7 @@ fun ExerciseLibraryScreen(
             ) {
                 LibrarySelectionAction(
                     icon = Icons.Default.Close,
-                    label = "Close",
+                    label = stringResource(R.string.common_close),
                     tint = Red,
                 ) {
                     selectedFamilies = emptyList()
@@ -394,25 +409,25 @@ fun ExerciseLibraryScreen(
                 }
                 LibrarySelectionAction(
                     icon = Icons.Default.CheckBox,
-                    label = "Select all",
+                    label = stringResource(R.string.library_select_all),
                 ) {
                     selectedFamilies = filteredFamilies
                 }
                 LibrarySelectionAction(
                     icon = Icons.Default.CheckBoxOutlineBlank,
-                    label = "Deselect all",
+                    label = stringResource(R.string.library_deselect_all),
                 ) {
                     selectedFamilies = emptyList()
                 }
                 LibrarySelectionAction(
                     icon = Icons.Default.Delete,
-                    label = "Delete unused",
+                    label = stringResource(R.string.library_delete_unused),
                     enabled = selectedDefinitions.isNotEmpty(),
                 ) {
                     if (unusedSelections.isEmpty()) {
                         Toast.makeText(
                             context,
-                            "Selected exercises are used by workouts and can't be deleted.",
+                            context.getString(R.string.library_delete_used_toast),
                             Toast.LENGTH_LONG,
                         ).show()
                     } else {
@@ -433,7 +448,7 @@ fun ExerciseLibraryScreen(
                     modifier = Modifier.fillMaxWidth().aspectRatio(1f),
                 )
             },
-            dismissText = "Close",
+            dismissText = stringResource(R.string.common_close),
             onDismissButton = { movementPreviewFamily = null },
             showConfirm = false,
         )
@@ -441,13 +456,13 @@ fun ExerciseLibraryScreen(
 
     ConfirmationDialog(
         show = definitionsPendingDelete.isNotEmpty(),
-        title = "Delete selected exercises?",
+        title = stringResource(R.string.library_delete_confirm_title),
         message = if (definitionsPendingDelete.size == 1) {
-            "${definitionsPendingDelete.single().name} will be removed from the library."
+            stringResource(R.string.library_delete_confirm_one, definitionsPendingDelete.single().name)
         } else {
-            "${definitionsPendingDelete.size} unused exercises will be removed from the library."
+            stringResource(R.string.library_delete_confirm_many, definitionsPendingDelete.size)
         },
-        confirmText = "Delete",
+        confirmText = stringResource(R.string.common_delete),
         isDestructive = true,
         onConfirm = {
             definitionsPendingDelete.forEach(onDelete)
@@ -504,7 +519,7 @@ private fun ExerciseFamilyCard(
                     )
                     if (family.variations.size > 1) {
                         Text(
-                            text = "${family.variations.size} variations",
+                            text = stringResource(R.string.library_variations_count, family.variations.size),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.tertiaryContent,
                         )
@@ -523,9 +538,9 @@ private fun ExerciseFamilyCard(
                             Icons.Default.ExpandMore
                         },
                         contentDescription = if (expanded) {
-                            "Collapse exercise details"
+                            stringResource(R.string.library_collapse_details)
                         } else {
-                            "Expand exercise details"
+                            stringResource(R.string.library_expand_details)
                         },
                         modifier = Modifier.size(20.dp),
                     )
@@ -555,7 +570,7 @@ private fun ExerciseFamilyCard(
                                 tint = MaterialTheme.colorScheme.primary,
                             )
                             Text(
-                                text = "View movement",
+                                text = stringResource(R.string.library_view_movement),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary,
                             )
@@ -577,7 +592,7 @@ private fun ExerciseFamilyCard(
                             } else {
                                 Toast.makeText(
                                     context,
-                                    "This variation is used by a workout and can't be deleted.",
+                                    context.getString(R.string.library_variation_used_toast),
                                     Toast.LENGTH_LONG,
                                 ).show()
                             }
@@ -605,7 +620,7 @@ private fun ExerciseFamilyCard(
                                     )
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                        contentDescription = "Edit ${definition.variationLabel()} variation",
+                                        contentDescription = stringResource(R.string.library_edit_variation_cd, definition.variationLabel()),
                                         modifier = Modifier.size(16.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -663,10 +678,11 @@ private fun DetailChipsSection(
     equipmentNamesById: Map<UUID, String>,
     accessoryNamesById: Map<UUID, String>,
 ) {
+    val context = LocalContext.current
     val category = definition.exerciseCategory
     val primaryMuscles = definition.muscleGroups.orEmpty()
     val secondaryMuscles = definition.secondaryMuscleGroups.orEmpty()
-    val metaLabels = definition.metaChipLabels(equipmentNamesById, accessoryNamesById)
+    val metaLabels = definition.metaChipLabels(context, equipmentNamesById, accessoryNamesById)
     if (category == null && primaryMuscles.isEmpty() && secondaryMuscles.isEmpty() && metaLabels.isEmpty()) return
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -731,7 +747,7 @@ private fun UsageSection(
 ) {
     if (usages.isEmpty()) {
         Text(
-            text = "This exercise isn't part of any workout yet",
+            text = stringResource(R.string.library_not_used),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.tertiaryContent,
         )
@@ -748,7 +764,7 @@ private fun UsageSection(
     val visibleUsages = if (showAll) sortedUsages else sortedUsages.take(visibleCount)
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Used in",
+            text = stringResource(R.string.library_used_in),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -781,21 +797,24 @@ private fun UsageSection(
                         )
                         if (usage.placementCount > 1) {
                             Text(
-                                text = "${usage.placementCount} uses",
+                                text = stringResource(R.string.library_uses_count, usage.placementCount),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.tertiaryContent,
                             )
                         }
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Open workout",
+                            contentDescription = stringResource(R.string.library_open_workout),
                             modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     if (usage.placementNameOverrides.isNotEmpty()) {
                         Text(
-                            text = usage.placementNameOverrides.joinToString(prefix = "Shown as: "),
+                            text = stringResource(
+                                R.string.library_shown_as,
+                                usage.placementNameOverrides.joinToString()
+                            ),
                             modifier = Modifier.padding(start = Spacing.md),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.tertiaryContent,
@@ -806,7 +825,7 @@ private fun UsageSection(
         }
         if (sortedUsages.size > visibleCount && !showAll) {
             Text(
-                text = "Show all ${sortedUsages.size}",
+                text = stringResource(R.string.library_show_all, sortedUsages.size),
                 modifier = Modifier
                     .clip(MaterialTheme.shapes.small)
                     .clickable { showAll = true }

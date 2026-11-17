@@ -24,7 +24,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
@@ -46,7 +48,7 @@ fun CardioMachineForm(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 title = {
                     Text(
-                        text = if (cardioMachine == null) "Create Cardio Machine" else "Edit Cardio Machine",
+                        text = if (cardioMachine == null) stringResource(R.string.equipment_create_cardio_machine) else stringResource(R.string.equipment_edit_cardio_machine),
                         modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center,
@@ -54,7 +56,7 @@ fun CardioMachineForm(
                 },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.equipment_back))
                     }
                 },
                 actions = {
@@ -74,11 +76,11 @@ fun CardioMachineForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            EquipmentFormSection(title = "Details") {
+            EquipmentFormSection(title = stringResource(R.string.equipment_details)) {
                 OutlinedTextField(
                     value = nameState.value,
                     onValueChange = { nameState.value = it },
-                    label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
+                    label = { Text(stringResource(R.string.equipment_name_label), style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

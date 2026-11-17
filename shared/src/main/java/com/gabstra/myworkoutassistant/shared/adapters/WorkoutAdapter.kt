@@ -74,6 +74,12 @@ class WorkoutAdapter : JsonDeserializer<Workout> {
                 ?.takeUnless { it.isJsonNull }
                 ?.asString
                 ?.let(UUID::fromString),
+            recurringSessionId = jsonObject.get("recurringSessionId")
+                ?.takeUnless { it.isJsonNull }?.asString?.let(UUID::fromString),
+            prescriptionOrdinal = jsonObject.get("prescriptionOrdinal")
+                ?.takeUnless { it.isJsonNull }?.asInt?.takeIf { it > 0 },
+            prescriptionLabel = jsonObject.get("prescriptionLabel")
+                ?.takeUnless { it.isJsonNull }?.asString,
         )
     }
 }

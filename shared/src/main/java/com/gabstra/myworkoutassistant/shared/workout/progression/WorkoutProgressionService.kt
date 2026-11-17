@@ -28,6 +28,7 @@ import com.gabstra.myworkoutassistant.shared.utils.PlateauDetectionHelper
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workout.model.isNormallyCompleted
 import java.util.UUID
@@ -88,7 +89,8 @@ class WorkoutProgressionService(
             .filter {
                 it.enabled &&
                     it.progressionMode != ProgressionMode.OFF &&
-                    !it.requiresLoadCalibration
+                    !it.requiresLoadCalibration &&
+                    it.loadHistoryPolicy != LoadHistoryPolicy.PRESCRIBED_WEIGHT
             }
             .filter { it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT }
 
@@ -115,6 +117,7 @@ class WorkoutProgressionService(
         plan: DoubleProgressionHelper.Plan,
         bodyWeightKg: Double
     ): Exercise {
+        if (exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return exercise
         val validSets = removeRestAndRestPause(
             sets = exercise.sets,
             isRestPause = {
@@ -173,6 +176,7 @@ class WorkoutProgressionService(
         latestSetHistoryByKey: Map<Pair<UUID, UUID>, SetHistory>,
         sessionDecision: SessionDecision
     ): List<WorkoutSet> {
+        if (exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return exercise.sets
         val derivedSets = exercise.sets.map { set ->
             applySetHistoryToProgrammedSet(set, latestSetHistoryByKey[exercise.id to set.id])
         }

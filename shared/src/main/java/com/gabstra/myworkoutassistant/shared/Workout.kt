@@ -24,7 +24,12 @@ data class Workout(
     val timesCompletedInAWeek: Int? = null,
     val globalId: UUID,
     val type: Int,
-    val workoutPlanId: UUID? = null
+    val workoutPlanId: UUID? = null,
+    /** Opt-in identity shared only by versions of one recurring session template. */
+    val recurringSessionId: UUID? = null,
+    /** Positive ordinal for explicitly prescribed sequence; never inferred from calendar time. */
+    val prescriptionOrdinal: Int? = null,
+    val prescriptionLabel: String? = null
 ) {
     val usePolarDevice: Boolean
         get() = heartRateSource == HeartRateSource.POLAR_BLE

@@ -23,7 +23,7 @@ class EquipmentChangeCrossDeviceVerificationTest {
     @Test
     fun wearEquipmentChange_updatesPhoneWorkoutDefinition() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val repository = WorkoutStoreRepository(context.filesDir)
+        val repository = WorkoutStoreRepository.forActiveProfile(context)
         val deadline = System.currentTimeMillis() + SYNC_TIMEOUT_MS
 
         var observedEquipmentName: String? = null

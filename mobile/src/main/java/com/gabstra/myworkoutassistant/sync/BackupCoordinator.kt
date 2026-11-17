@@ -108,7 +108,7 @@ object BackupCoordinator {
         runCatching {
             val db = AppDatabase.getDatabase(context)
             val workoutStore = withContext(Dispatchers.IO) {
-                WorkoutStoreRepository(context.filesDir).getWorkoutStore()
+                WorkoutStoreRepository.forActiveProfile(context).getWorkoutStore()
             }
             saveWorkoutStoreToExternalStorage(context, workoutStore, db)
             Log.d(TAG, "Completed backup for trigger=$trigger")

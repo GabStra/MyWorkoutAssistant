@@ -30,7 +30,7 @@ internal class WearErrorLogSyncReceiver(
                     return@launch
                 }
 
-                val success = sendErrorLogsToMobile(dataClient, errorLogs)
+                val success = sendErrorLogsToMobile(context, dataClient, errorLogs)
                 if (!success) {
                     Log.e("WearErrorLogSyncReceiver", "Failed to sync error logs to mobile")
                     return@launch

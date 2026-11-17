@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables.workout.pages
 
 import com.gabstra.myworkoutassistant.composables.*
+import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -14,7 +15,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -81,17 +85,21 @@ internal fun buildHistoricalComparisonStates(
     templateStates: List<WorkoutState.Set>,
     histories: List<SetHistory>,
 ): List<WorkoutState.Set> {
-    val templateStateBySetId = templateStates.associateBy { it.set.id }
-    return histories.mapNotNull { history ->
-        templateStateBySetId[history.setId]?.copy(
+    val historyBySetId = histories.associateBy { it.setId }
+    return templateStates.mapNotNull { templateState ->
+        val history = historyBySetId[templateState.set.id]
+        val historicalSetData = history?.setData ?: templateState
+            .takeIf { !it.hasNoHistory }
+            ?.historicalSetData
+            ?: return@mapNotNull null
+        templateState.copy(
             previousSetData = null,
-            currentSetDataState = mutableStateOf(history.setData),
-            historicalSetData = history.setData,
+            currentSetDataState = mutableStateOf(historicalSetData),
+            historicalSetData = historicalSetData,
             hasNoHistory = false,
-            startTime = history.startTime,
-            skipped = history.skipped,
-            equipmentId = history.equipmentIdSnapshot
-                ?: templateStateBySetId[history.setId]?.equipmentId,
+            startTime = history?.startTime ?: templateState.startTime,
+            skipped = history?.skipped ?: templateState.skipped,
+            equipmentId = history?.equipmentIdSnapshot ?: templateState.equipmentId,
             hasBeenExecuted = true,
         )
     }
@@ -104,30 +112,30 @@ fun PlaceholderSetRow(
     rowLabel: String,
     textColor: Color = MaterialTheme.colorScheme.onBackground
 ) {
-    val itemStyle = MaterialTheme.typography.numeralSmall
+    val itemStyle = MaterialTheme.typography.labelLarge
 
     Box(modifier = modifier) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(2.dp),
+                .fillMaxWidth()
+                .padding(horizontal = 5.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ScalableText(
+            Text(
                 modifier = Modifier.weight(1f),
                 text = rowLabel,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.bodySmall,
                 color = textColor
             )
             when (exercise.exerciseType) {
                 ExerciseType.WEIGHT, ExerciseType.BODY_WEIGHT -> {
-                    ScalableText(
+                    Text(
                         modifier = Modifier.weight(2f),
                         text = "-",
                         style = itemStyle,
                         color = textColor
                     )
-                    ScalableText(
+                    Text(
                         modifier = Modifier.weight(1f),
                         text = "-",
                         style = itemStyle,
@@ -136,7 +144,7 @@ fun PlaceholderSetRow(
                 }
 
                 ExerciseType.COUNTUP, ExerciseType.COUNTDOWN, ExerciseType.RUNNING -> {
-                    ScalableText(
+                    Text(
                         modifier = Modifier.weight(3f),
                         text = "-",
                         style = itemStyle,
@@ -297,10 +305,11 @@ fun ProgressionComparisonPage(
                     )
                     Spacer(modifier = Modifier.width(5.dp))
                 }
-                Text(
-                    text = "Set: ${currentSetIndex + 1}/$maxSets",
+                LabeledNumericValue(
+                    label = "Set:",
+                    value = "${currentSetIndex + 1}/$maxSets",
                     style = baseStyle,
-                    color = secondaryTextColor
+                    color = secondaryTextColor,
                 )
             }
         }
@@ -390,11 +399,14 @@ fun ProgressionComparisonPage(
         val previousRowAccentColor = colorScheme.onBackground
         val shape = remember { RoundedCornerShape(25) }
 
+        val comparisonValueStyle = MaterialTheme.typography.labelLarge
+        val comparisonRowHeight = with(LocalDensity.current) { comparisonValueStyle.lineHeight.toDp() } + 8.dp
+
         // Previous set row or placeholder
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(25.dp)
+                .height(comparisonRowHeight)
                 .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -413,12 +425,13 @@ fun ProgressionComparisonPage(
                     setIdentifier = "LAST",
                     index = currentSetIndex,
                     isCurrentSet = false,
+                    itemStyle = comparisonValueStyle,
                     textColor = previousRowAccentColor
                 )
             } else {
                 Box(modifier = previousRowModifier) {
                     PlaceholderSetRow(
-                        modifier = Modifier.fillMaxSize().padding(3.dp),
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 30.dp).padding(2.dp),
                         exercise = exercise,
                         rowLabel = "LAST",
                         textColor = previousRowAccentColor
@@ -432,7 +445,7 @@ fun ProgressionComparisonPage(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(30.dp)
-                .padding(horizontal = 20.dp, vertical = 5.dp),
+                .padding(horizontal = 20.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -458,7 +471,7 @@ fun ProgressionComparisonPage(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(25.dp)
+                .height(comparisonRowHeight)
                 .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -477,12 +490,13 @@ fun ProgressionComparisonPage(
                     setIdentifier = "NOW",
                     index = currentSetIndex,
                     isCurrentSet = false,
+                    itemStyle = comparisonValueStyle,
                     textColor = rowAccentColor
                 )
             } else {
                 Box(modifier = currentRowModifier) {
                     PlaceholderSetRow(
-                        modifier = Modifier.fillMaxSize().padding(3.dp),
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 30.dp).padding(2.dp),
                         exercise = exercise,
                         rowLabel = "NOW",
                         textColor = rowAccentColor

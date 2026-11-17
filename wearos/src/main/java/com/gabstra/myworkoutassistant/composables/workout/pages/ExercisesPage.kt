@@ -8,12 +8,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -30,12 +32,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -52,11 +56,12 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.ExerciseSetsViewer
-import com.gabstra.myworkoutassistant.composables.ProgressState
+import com.gabstra.myworkoutassistant.composables.FadingText
 import com.gabstra.myworkoutassistant.composables.PreviousNextNavigationHeader
-import com.gabstra.myworkoutassistant.composables.ScalableText
+import com.gabstra.myworkoutassistant.composables.ProgressState
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.composables.WorkoutStepIndicatorText
 import com.gabstra.myworkoutassistant.composables.buildExercisesPagePreparedRows
@@ -78,6 +83,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.display.ExerciseSetDisplayRow
 import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetSetDisplayRows
+import com.gabstra.myworkoutassistant.shared.workout.display.resolveSupersetExercisePrefix
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
@@ -88,6 +94,19 @@ import java.util.UUID
 
 private fun resolveExerciseOrSupersetId(viewModel: AppViewModel, exerciseId: UUID): UUID =
     viewModel.supersetIdByExerciseId[exerciseId] ?: exerciseId
+
+internal fun resolveExercisesPageFirstSetListItemIndex(hasSupersetMemberNamesItem: Boolean): Int =
+    1 + if (hasSupersetMemberNamesItem) 1 else 0
+
+internal fun resolveExercisesPageScrollTargetIndex(
+    firstSetListItemIndex: Int,
+    selectedSetIndex: Int,
+    hasSupersetMemberNamesItem: Boolean,
+): Int = if (hasSupersetMemberNamesItem && selectedSetIndex == 0) {
+    firstSetListItemIndex - 1
+} else {
+    firstSetListItemIndex + selectedSetIndex
+}
 
 private fun getRepresentativeExercise(viewModel: AppViewModel, exerciseOrSupersetId: UUID): Exercise {
     val supersetExercises = viewModel.exercisesBySupersetId[exerciseOrSupersetId]
@@ -444,11 +463,10 @@ private fun ExercisePageFixedHeader(
         ) {
             when (pageItem) {
                 is ExercisesPageItem.SupersetPage -> ExerciseNameText(
-                    text = buildSupersetDisplayName(pageItem.exercises),
-                    modifier = Modifier
-                        .fillMaxWidth(),
+                    text = stringResource(R.string.page_exercises_superset),
+                    modifier = Modifier.fillMaxWidth(),
                     style = titleStyle,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
                 is ExercisesPageItem.ExercisePage -> ExerciseNameText(
                     text = AnnotatedString(pageItem.exercise.name),
@@ -519,7 +537,7 @@ private fun RestPageFixedHeader(
                 verticalArrangement = Arrangement.spacedBy(2.5.dp)
             ) {
                 Text(
-                    text = "UP NEXT",
+                    text = stringResource(R.string.page_exercises_up_next),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -579,7 +597,7 @@ private fun TransformingLazyColumnScope.RestPageContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .graphicsLayer { with(transformationSpec) { applyContentTransformation(scrollProgress) } }
-                    .height(25.dp)
+                    .heightIn(min = 30.dp)
                     .background(backgroundColor, shape)
                     .border(BorderStroke(1.dp, borderColor), shape)
                     .semantics {
@@ -587,11 +605,13 @@ private fun TransformingLazyColumnScope.RestPageContent(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                ScalableText(
+                Text(
                     modifier = Modifier.padding(vertical = 2.5.dp, horizontal = 5.dp),
-                    text = "REST $formattedRest",
-                    style = MaterialTheme.typography.numeralMedium,
+                    text = stringResource(R.string.page_exercises_rest, formattedRest),
+                    style = MaterialTheme.typography.labelLarge,
                     color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -673,15 +693,14 @@ fun ExercisesPage(
             selectedPageIndex = selectedPageIndex.value
         )
     }
-    val selectedStepLabel = remember(pageItems, selectedPageIndex.value) {
-        if (pageItems.isEmpty() || selectedPageIndex.value !in pageItems.indices) {
-            null
-        } else {
-            "Step: ${selectedPageIndex.value + 1}/${pageItems.size}"
-        }
+    val selectedStepLabel = if (pageItems.isEmpty() || selectedPageIndex.value !in pageItems.indices) {
+        null
+    } else {
+        stringResource(R.string.page_exercises_step_indicator, selectedPageIndex.value + 1, pageItems.size)
     }
     // Item 0 is the spacer used to reserve room for the fixed header overlay.
-    val firstSetListItemIndex = 1
+    val hasSupersetMemberNamesItem = selectedPageItem is ExercisesPageItem.SupersetPage
+    val firstSetListItemIndex = resolveExercisesPageFirstSetListItemIndex(hasSupersetMemberNamesItem)
     val selectedProgressState = when {
         showAllAsCompleted -> ProgressState.PAST
         selectedPageIndex.value < currentPageIndex.value -> ProgressState.PAST
@@ -733,7 +752,11 @@ fun ExercisesPage(
             selectedPageItem == null -> null
             selectedPageItem is ExercisesPageItem.RestPage -> firstSetListItemIndex
             selectedPagePreparedRows == null -> null
-            else -> (firstSetListItemIndex + selectedPagePreparedRows.setIndex).coerceAtLeast(firstSetListItemIndex)
+            else -> resolveExercisesPageScrollTargetIndex(
+                firstSetListItemIndex = firstSetListItemIndex,
+                selectedSetIndex = selectedPagePreparedRows.setIndex,
+                hasSupersetMemberNamesItem = hasSupersetMemberNamesItem,
+            ).coerceAtLeast(firstSetListItemIndex - if (hasSupersetMemberNamesItem) 1 else 0)
         }
     }
     val transformationSpec = rememberTransformationSpec(
@@ -764,11 +787,12 @@ fun ExercisesPage(
     }
     val headerOverlayHeightDp = 40.dp
     val density = LocalDensity.current
+    val setsViewerDescription = stringResource(R.string.page_exercises_cd_sets_viewer)
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .semantics { contentDescription = "Exercise sets viewer" }
+            .semantics { contentDescription = setsViewerDescription }
     ) {
         val topSection = headerOverlayHeightDp + WorkoutPagerPageSafeAreaPadding.calculateTopPadding()
         val stepIndicatorReservedHeightDp = 30.dp
@@ -781,6 +805,9 @@ fun ExercisesPage(
         val selectedRowScrollOffsetPx = with(density) {
             ((maxHeight / 2) - (selectedRowHeightDp / 2) - topSection - itemSpacingDp/2).roundToPx()
         }
+        val selectedScrollTargetOffsetPx = if (
+            hasSupersetMemberNamesItem && selectedPagePreparedRows?.setIndex == 0
+        ) 0 else selectedRowScrollOffsetPx
         val initialAnchorItemIndex = targetItemIndex ?: 0
         val transformingLazyColumnState: TransformingLazyColumnState = remember(
             selectedPageIndex.value,
@@ -789,7 +816,7 @@ fun ExercisesPage(
         ) {
             TransformingLazyColumnState(
                 initialAnchorItemIndex = initialAnchorItemIndex,
-                initialAnchorItemScrollOffset = selectedRowScrollOffsetPx
+                initialAnchorItemScrollOffset = selectedScrollTargetOffsetPx
             )
         }
         val rowMaxWidth = (maxWidth - 40.dp).coerceAtLeast(0.dp)
@@ -818,14 +845,14 @@ fun ExercisesPage(
                 maxHeight - firstRowTop - visibleRowsHeight
                 ).coerceAtLeast(stepIndicatorReservedHeightDp)
 
-        LaunchedEffect(targetItemIndex, selectedPageIndex.value, selectedRowScrollOffsetPx) {
+        LaunchedEffect(targetItemIndex, selectedPageIndex.value, selectedScrollTargetOffsetPx) {
             val targetIndex = targetItemIndex ?: return@LaunchedEffect
             if (isAutoScrolling) return@LaunchedEffect
             isAutoScrolling = true
             try {
                 transformingLazyColumnState.scrollToItem(
                     index = targetIndex,
-                    scrollOffset = selectedRowScrollOffsetPx
+                    scrollOffset = selectedScrollTargetOffsetPx
                 )
             } finally {
                 isAutoScrolling = false
@@ -878,6 +905,46 @@ fun ExercisesPage(
                         contentPadding = listContentPadding
                     ) {
                         InvisibleListSpacer(headerOverlayHeightDp)
+                        if (hasSupersetMemberNamesItem) {
+                            val supersetPage = selectedPageItem
+                            item {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .transformedHeight(this, transformationSpec)
+                                        .graphicsLayer {
+                                            with(transformationSpec) {
+                                                applyContainerTransformation(scrollProgress)
+                                            }
+                                        },
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    supersetPage.exercises.forEach { exercise ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            // Fixed letter column so every name starts at the same x.
+                                            Text(
+                                                text = resolveSupersetExercisePrefix(
+                                                    viewModel = viewModel,
+                                                    exerciseId = exercise.id,
+                                                ).orEmpty(),
+                                                modifier = Modifier.width(14.dp),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                textAlign = TextAlign.Start,
+                                            )
+                                            FadingText(
+                                                text = exercise.name,
+                                                modifier = Modifier.weight(1f),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                textAlign = TextAlign.Start,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         ExerciseSetsViewer(
                             viewModel = viewModel,
                             exercise = selectedPageItem.representativeExercise,
@@ -1048,7 +1115,7 @@ private fun buildExercisesPagePreviewFixture(): ExercisesPagePreviewFixture {
     val supersetExerciseA = Exercise(
         id = UUID.fromString("71000000-0000-0000-0000-000000000003"),
         enabled = true,
-        name = "Incline Dumbbell Press",
+        name = "Incline Dumbbell Press Press Press",
         notes = "",
         sets = listOf(
             WeightSet(

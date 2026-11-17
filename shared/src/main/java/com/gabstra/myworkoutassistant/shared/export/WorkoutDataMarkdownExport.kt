@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatNumber
+import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -52,6 +53,28 @@ import kotlin.math.roundToInt
 
 /** Parallel export chunk size (sessions / histories / exercise blocks processed per coroutine batch). */
 private const val EXPORT_RENDER_BATCH_SIZE = 16
+
+/**
+ * Completed-session export order: date first (always known), then real start time
+ * when known, with unknown-time sessions after known ones on the same date.
+ */
+private val exportHistoryOrder: Comparator<WorkoutHistory> =
+    compareBy<WorkoutHistory> { it.date }
+        .thenBy { it.knownStartTimeOrNull() == null }
+        .thenBy { it.knownStartTimeOrNull() }
+        .thenBy { it.id.toString() }
+
+/** Date plus reported time only when known; marks user-imported sessions. */
+private fun sessionHeadingLabel(history: WorkoutHistory): String = buildString {
+    append(history.date)
+    history.knownStartTimeOrNull()?.let { start ->
+        append(' ')
+        append(start.toLocalTime())
+    }
+    if (history.origin == com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin.USER_IMPORTED) {
+        append(" (imported/user-reported)")
+    }
+}
 
 private val EXPORT_HISTORY_OPEN_START: LocalDate = LocalDate.of(1970, 1, 1)
 private val EXPORT_HISTORY_OPEN_END: LocalDate = LocalDate.of(9999, 12, 31)
@@ -208,7 +231,7 @@ suspend fun writeWorkoutDataMarkdown(
         )
     }
         .filter { history -> exportRange.includes(history.date, referenceDate) }
-        .sortedWith(compareBy<WorkoutHistory>({ it.startTime }, { it.date }, { it.time }, { it.id.toString() }))
+        .sortedWith(exportHistoryOrder)
     val exercises = collectExercisesForExport(workoutStore)
 
     appendMarkdown("# My Workout Assistant Export\n\n")
@@ -331,9 +354,7 @@ private suspend fun appendWeeklyTrainingLogMarkdown(
             WeekExportGroup(
                 weekStart = weekStart,
                 weekEnd = endOfWeek(weekStart),
-                histories = weekHistories.sortedWith(
-                    compareBy<WorkoutHistory>({ it.startTime }, { it.date }, { it.time }, { it.id.toString() })
-                )
+                histories = weekHistories.sortedWith(exportHistoryOrder)
             )
         }
     val skippedSessions = mutableListOf<String>()
@@ -363,11 +384,11 @@ private suspend fun appendWeeklyTrainingLogMarkdown(
             }
             renderedSessions.sortedBy { it.index }.forEach { block ->
                 if (block.markdown != null) {
-                    appendMarkdown("##### Session ${block.index + 1}: ${block.history.date} ${block.history.time}\n\n")
+                    appendMarkdown("##### Session ${block.index + 1}: ${sessionHeadingLabel(block.history)}\n\n")
                     appendMarkdown(block.markdown.trim())
                     appendMarkdown("\n\n")
                 } else {
-                    skippedSessions += "${block.history.date} ${block.history.time}: ${block.failureMessage}"
+                    skippedSessions += "${sessionHeadingLabel(block.history)}: ${block.failureMessage}"
                 }
             }
         }
@@ -467,7 +488,8 @@ private suspend fun buildCompactSessionMarkdown(
     ).forEach { decision -> markdown.append(decision.asFactBlock()).append("\n\n") }
 
     markdown.append("- Workout: ${workout.name}\n")
-    markdown.append("- Duration: ${formatDurationForExport(history.duration)}\n")
+    appendReportedSessionSourceMarkdown(markdown, history)
+    markdown.append("- ${buildSessionDateTimeDurationLine(history)}\n")
     compactSessionHeartRateLine(history, workoutStore, userAge)?.let { line ->
         markdown.append("- Heart rate: $line\n")
     }
@@ -628,7 +650,11 @@ private fun appendCompactExerciseSessionMarkdown(
     workoutStore: WorkoutStore,
     userAge: Int,
 ) {
-    val timelineSets = section.setHistories.sortedBy { it.startTime ?: history.startTime }
+    // Keep source order for sets without timestamps (e.g. user-imported history)
+    // instead of sorting against the session's placeholder start.
+    val timelineSets = section.setHistories.sortedWith(
+        compareBy<SetHistory> { it.startTime == null }.thenBy { it.startTime }
+    )
     val activeSets = timelineSets.filterForInsightComparisonSets()
     if (timelineSets.isEmpty()) return
 
@@ -648,16 +674,7 @@ private fun appendCompactExerciseSessionMarkdown(
         }
         .toMap()
     val plannedDurationSecondsByOrder = plannedDurationSecondsByOrderForExercise(section.exercise)
-    val isUnilateralExecution = section.exercise.intraSetRestInSeconds?.let { it > 0 } == true &&
-        timeline.anyIndexed { index, item ->
-            if (item !is SessionTimelineItem.RestStep) return@anyIndexed false
-            if (!item.history.isUnilateralSideRest(section.exercise.intraSetRestInSeconds)) return@anyIndexed false
-            val previousSet = timeline.getOrNull(index - 1) as? SessionTimelineItem.SetStep
-            val nextSet = timeline.getOrNull(index + 1) as? SessionTimelineItem.SetStep
-            previousSet?.history?.isProgressionComparableWorkSet() == true &&
-                nextSet?.history?.isProgressionComparableWorkSet() == true &&
-                previousSet.history.order == nextSet.history.order
-        }
+    val isUnilateralExecution = section.exercise.hasPairedSideExecution
     val unilateralOrders = if (isUnilateralExecution) {
         timelineSets
             .filter { it.isProgressionComparableWorkSet() }
@@ -693,6 +710,10 @@ private fun appendCompactExerciseSessionMarkdown(
     }
 
     markdown.append("- ${section.label}\n")
+    val reportedExerciseName = performedExerciseDisplayName(section.exercise.name, timelineSets)
+    if (reportedExerciseName != section.exercise.name) {
+        markdown.append("  - Reported exercise: $reportedExerciseName\n")
+    }
     compactExerciseEquipmentLabel(section, equipment, workoutStore)?.let { label ->
         markdown.append("  - Equipment: $label\n")
     }
@@ -1004,7 +1025,7 @@ private fun compactAchievedSets(
     achievableWeights: List<Double>?,
     equipment: WeightLoadedEquipment?,
 ): List<String> {
-    if ((section.exercise.intraSetRestInSeconds ?: 0) <= 0) {
+    if (!section.exercise.hasPairedSideExecution) {
         return activeSets.toCompactSetTokens(achievableWeights, equipment)
     }
 
@@ -1499,11 +1520,11 @@ private suspend fun appendCompletedSessionsMarkdown(
         }
         renderedSessions.sortedBy { it.index }.forEach { block ->
             if (block.markdown != null) {
-                appendMarkdown("### Session ${block.index + 1}: ${block.history.date} ${block.history.time}\n\n")
+                appendMarkdown("### Session ${block.index + 1}: ${sessionHeadingLabel(block.history)}\n\n")
                 appendMarkdown(block.markdown.trim())
                 appendMarkdown("\n\n")
             } else {
-                skippedSessions += "${block.history.date} ${block.history.time}: ${block.failureMessage}"
+                skippedSessions += "${sessionHeadingLabel(block.history)}: ${block.failureMessage}"
             }
         }
     }

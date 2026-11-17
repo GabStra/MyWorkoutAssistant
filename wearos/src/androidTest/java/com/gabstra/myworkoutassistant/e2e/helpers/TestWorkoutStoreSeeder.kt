@@ -4,13 +4,12 @@ import android.content.Context
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import java.io.File
 import java.time.LocalDate
 import java.util.UUID
 
@@ -23,23 +22,18 @@ import java.util.UUID
 object TestWorkoutStoreSeeder {
 
     /**
-     * Seed the watch's filesDir with the given [workoutStore], or a default
+     * Seed the watch's store with the given [workoutStore], or a default
      * realistic test store if none is provided.
      *
-     * This writes to the same location and filename used by WorkoutStoreRepository:
-     *   File(context.filesDir, "workout_store.json")
+     * Goes through the repository so the seeded store is split into shared content and
+     * the active profile's personal settings exactly like production writes.
      */
     fun seedWorkoutStore(
         context: Context,
         workoutStore: WorkoutStore? = null,
     ): WorkoutStore {
         val storeToWrite = workoutStore ?: createDefaultTestWorkoutStore()
-
-        // Serialize using the same JSON adapters as the production app
-        val json = fromWorkoutStoreToJSON(storeToWrite)
-        val file = File(context.filesDir, "workout_store.json")
-        file.writeText(json)
-
+        WorkoutStoreRepository.forActiveProfile(context).saveWorkoutStore(storeToWrite)
         return storeToWrite
     }
 

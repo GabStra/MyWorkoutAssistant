@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -45,6 +46,7 @@ import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
 import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
@@ -53,6 +55,8 @@ import com.gabstra.myworkoutassistant.shared.DarkOrange
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureDetailLevel
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSampleRate
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
@@ -77,10 +81,16 @@ fun ControlsPage(
     val isInspectionMode = LocalInspectionMode.current
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
     val screenState by viewModel.screenState.collectAsState()
+    val motionCapture by viewModel.motionCaptureUiState.collectAsState()
     val currentWorkoutState = screenState.workoutState
 
     val context = LocalContext.current
     val scope = rememberWearCoroutineScope()
+
+    val controlsPageDescription = stringResource(R.string.page_controls_cd)
+    val startWithActionDescription = stringResource(R.string.page_controls_cd_start_with_action)
+    val setOrderActionDescription = stringResource(R.string.page_controls_cd_set_order_action)
+    val skipExerciseActionDescription = stringResource(R.string.page_controls_cd_skip_exercise_action)
 
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipExerciseDialog by remember { mutableStateOf(false) }
@@ -177,7 +187,7 @@ fun ControlsPage(
     ScreenScaffold(
         modifier = Modifier
             .fillMaxSize()
-            .semantics { contentDescription = "Workout controls page" },
+            .semantics { contentDescription = controlsPageDescription },
         scrollState = state,
         scrollIndicator = {
             ScrollIndicator(
@@ -192,14 +202,14 @@ fun ControlsPage(
         TransformingLazyColumn(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
-                .semantics { contentDescription = "Workout controls page" },
+                .semantics { contentDescription = controlsPageDescription },
             contentPadding = WorkoutPagerPageSafeAreaPadding,
             state = state
         ) {
             if (showNavigationSection) {
                 item {
                     ControlsPageSectionHeader(
-                        text = "Navigation",
+                        text = stringResource(R.string.page_controls_section_navigation),
                         modifier = Modifier
                             .fillMaxWidth()
                             .then(
@@ -223,7 +233,7 @@ fun ControlsPage(
                                 )
                             ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Back",
+                        text = stringResource(R.string.page_controls_back),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             // Handle go back for calibration flow:
@@ -275,7 +285,7 @@ fun ControlsPage(
             if (showExerciseSection) {
                 item {
                     ControlsPageSectionHeader(
-                        text = "Exercise",
+                        text = stringResource(R.string.page_controls_section_exercise),
                         modifier = Modifier
                             .fillMaxWidth()
                             .then(
@@ -304,7 +314,7 @@ fun ControlsPage(
                                 )
                             ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Change equipment",
+                        text = stringResource(R.string.page_controls_change_equipment),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             onChangeEquipmentClick()
@@ -324,7 +334,7 @@ fun ControlsPage(
                                 )
                             ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Add rest-pause set",
+                        text = stringResource(R.string.page_controls_add_rest_pause_set),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             viewModel.storeSetData()
@@ -347,7 +357,7 @@ fun ControlsPage(
                                 )
                             ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Add set",
+                        text = stringResource(R.string.page_controls_add_set),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             viewModel.storeSetData()
@@ -365,7 +375,7 @@ fun ControlsPage(
             }
             item {
                 ControlsPageSectionHeader(
-                    text = "Preferences",
+                    text = stringResource(R.string.page_controls_section_preferences),
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
@@ -411,17 +421,17 @@ fun ControlsPage(
                             verticalArrangement = Arrangement.spacedBy(2.5.dp)
                         ) {
                             Text(
-                                text = "Alert sound",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = stringResource(R.string.page_controls_alert_sound),
+                                style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Start,
                             )
                             Text(
                                 text = if (alertSoundEnabled) {
-                                    "Critical alerts vibrate and beep"
+                                    stringResource(R.string.page_controls_alert_sound_on)
                                 } else {
-                                    "Critical alerts vibrate only"
+                                    stringResource(R.string.page_controls_alert_sound_off)
                                 },
-                                style = MaterialTheme.typography.bodyExtraSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 textAlign = TextAlign.Start,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
@@ -473,17 +483,17 @@ fun ControlsPage(
                             verticalArrangement = Arrangement.spacedBy(2.5.dp)
                         ) {
                             Text(
-                                text = "Calories on timed sets",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = stringResource(R.string.page_controls_calories_timed_sets),
+                                style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Start,
                             )
                             Text(
                                 text = if (calorieDisplayEnabled) {
-                                    "HR-based estimate shown while running"
+                                    stringResource(R.string.page_controls_calories_on)
                                 } else {
-                                    "Estimate hidden"
+                                    stringResource(R.string.page_controls_calories_off)
                                 },
-                                style = MaterialTheme.typography.bodyExtraSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 textAlign = TextAlign.Start,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
@@ -531,13 +541,17 @@ fun ControlsPage(
                             verticalArrangement = Arrangement.spacedBy(2.5.dp)
                         ) {
                             Text(
-                                text = "Live heart rate",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = stringResource(R.string.page_controls_live_heart_rate),
+                                style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Start,
                             )
                             Text(
-                                text = "${activeSource.shortName()} · tap for ${nextSource.shortName()}",
-                                style = MaterialTheme.typography.bodyExtraSmall,
+                                text = stringResource(
+                                    R.string.page_controls_hr_source_hint,
+                                    activeSource.shortName(),
+                                    nextSource.shortName()
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
                                 textAlign = TextAlign.Start,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
@@ -577,17 +591,17 @@ fun ControlsPage(
                             verticalArrangement = Arrangement.spacedBy(2.5.dp)
                         ) {
                             Text(
-                                text = "Samsung heart rate",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = stringResource(R.string.page_controls_samsung_heart_rate),
+                                style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Start,
                             )
                             Text(
                                 text = if (useSamsungHeartRate) {
-                                    "Raw sensor via Samsung Health"
+                                    stringResource(R.string.page_controls_samsung_hr_on)
                                 } else {
-                                    "Standard watch sensor"
+                                    stringResource(R.string.page_controls_samsung_hr_off)
                                 },
-                                style = MaterialTheme.typography.bodyExtraSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 textAlign = TextAlign.Start,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
@@ -609,7 +623,6 @@ fun ControlsPage(
             }
 
             item {
-                val motionCapture by viewModel.motionCaptureUiState.collectAsState()
                 val motionEnabled = motionCapture.collectionEnabled
                 val toggleMotionCapture: (Boolean) -> Unit = { value ->
                     viewModel.setMotionCaptureEnabledForSession(value)
@@ -638,17 +651,17 @@ fun ControlsPage(
                             verticalArrangement = Arrangement.spacedBy(2.5.dp)
                         ) {
                             Text(
-                                text = "Record motion",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = stringResource(R.string.page_controls_record_motion),
+                                style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Start,
                             )
                             Text(
                                 text = if (motionEnabled) {
-                                    "On for this workout"
+                                    stringResource(R.string.page_controls_motion_on)
                                 } else {
-                                    "Off for this workout"
+                                    stringResource(R.string.page_controls_motion_off)
                                 },
-                                style = MaterialTheme.typography.bodyExtraSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 textAlign = TextAlign.Start,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
@@ -665,6 +678,100 @@ fun ControlsPage(
                                 uncheckedBorderColor = MaterialTheme.colorScheme.onBackground,
                             ),
                         )
+                    }
+                }
+            }
+
+            if (motionCapture.collectionEnabled) {
+                item {
+                    val detailLevel = motionCapture.detailLevel
+                    val nextDetailLevel = if (detailLevel == MotionCaptureDetailLevel.FULL) {
+                        MotionCaptureDetailLevel.CORE
+                    } else {
+                        MotionCaptureDetailLevel.FULL
+                    }
+
+                    WearTonalContentButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        onClick = {
+                            viewModel.setMotionCaptureDetailLevelForSession(nextDetailLevel)
+                            hapticsViewModel.doGentleVibration()
+                        }
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.page_controls_motion_detail),
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Start,
+                            )
+                            Text(
+                                text = if (detailLevel == MotionCaptureDetailLevel.FULL) {
+                                    stringResource(R.string.page_controls_motion_detail_full)
+                                } else {
+                                    stringResource(R.string.page_controls_motion_detail_core)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Start,
+                                color = MaterialTheme.colorScheme.tertiaryContent
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    val sampleRate = motionCapture.sampleRate
+                    val nextSampleRate = if (sampleRate == MotionCaptureSampleRate.HZ_50) {
+                        MotionCaptureSampleRate.HZ_25
+                    } else {
+                        MotionCaptureSampleRate.HZ_50
+                    }
+
+                    WearTonalContentButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        onClick = {
+                            viewModel.setMotionCaptureSampleRateForSession(nextSampleRate)
+                            hapticsViewModel.doGentleVibration()
+                        }
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.page_controls_motion_rate),
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Start,
+                            )
+                            Text(
+                                text = if (sampleRate == MotionCaptureSampleRate.HZ_50) {
+                                    stringResource(R.string.page_controls_motion_rate_50)
+                                } else {
+                                    stringResource(R.string.page_controls_motion_rate_25)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Start,
+                                color = MaterialTheme.colorScheme.tertiaryContent
+                            )
+                        }
                     }
                 }
             }
@@ -700,13 +807,13 @@ fun ControlsPage(
                         verticalArrangement = Arrangement.spacedBy(2.5.dp)
                     ) {
                         Text(
-                            text = "Watch face timer",
-                            style = MaterialTheme.typography.bodySmall,
+                            text = stringResource(R.string.page_controls_watch_face_timer),
+                            style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Start,
                         )
                         Text(
-                            text = "Pick this app, then style \"icon + text\"",
-                            style = MaterialTheme.typography.bodyExtraSmall,
+                            text = stringResource(R.string.page_controls_watch_face_hint),
+                            style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Start,
                             color = MaterialTheme.colorScheme.tertiaryContent
                         )
@@ -717,9 +824,9 @@ fun ControlsPage(
             item {
                 val exerciseDefaultKeepOn = exercise.keepScreenOn
                 val statusText = when {
-                    exerciseDefaultKeepOn -> "This exercise keeps the screen on"
-                    !exerciseDefaultKeepOn && !keepScreenOnOverride -> "Screen can dim for this exercise"
-                    else -> "Screen will stay on for this workout"
+                    exerciseDefaultKeepOn -> stringResource(R.string.page_controls_screen_exercise_forced)
+                    !exerciseDefaultKeepOn && !keepScreenOnOverride -> stringResource(R.string.page_controls_screen_can_dim)
+                    else -> stringResource(R.string.page_controls_screen_stays_on)
                 }
                 val isSwitchEnabled = !exerciseDefaultKeepOn
                 val switchChecked = exerciseDefaultKeepOn || keepScreenOnOverride
@@ -750,13 +857,13 @@ fun ControlsPage(
                             verticalArrangement = Arrangement.spacedBy(2.5.dp)
                         ) {
                             Text(
-                                text = "Keep screen on",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = stringResource(R.string.page_controls_keep_screen_on),
+                                style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Start,
                             )
                             Text(
                                 text = statusText,
-                                style = MaterialTheme.typography.bodyExtraSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 textAlign = TextAlign.Start,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
@@ -789,7 +896,7 @@ fun ControlsPage(
             }
             item {
                 ControlsPageSectionHeader(
-                    text = "Session",
+                    text = stringResource(R.string.page_controls_section_session),
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
@@ -804,7 +911,7 @@ fun ControlsPage(
                 item {
                     ButtonWithText(
                         modifier = Modifier
-                            .semantics { contentDescription = "Start with action" }
+                            .semantics { contentDescription = startWithActionDescription }
                             .fillMaxWidth()
                             .then(
                                 if (isInspectionMode) Modifier else Modifier.transformedHeight(
@@ -813,7 +920,7 @@ fun ControlsPage(
                                 )
                             ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Start with $cadenceStartName",
+                        text = stringResource(R.string.page_controls_start_with, cadenceStartName),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             showStartWithDialog = true
@@ -824,7 +931,7 @@ fun ControlsPage(
                     item {
                         ButtonWithText(
                             modifier = Modifier
-                                .semantics { contentDescription = "Set order action" }
+                                .semantics { contentDescription = setOrderActionDescription }
                                 .fillMaxWidth()
                                 .then(
                                     if (isInspectionMode) Modifier else Modifier.transformedHeight(
@@ -833,7 +940,7 @@ fun ControlsPage(
                                     )
                                 ),
                             transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                            text = "Set order…",
+                            text = stringResource(R.string.page_controls_set_order),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 orderBuilder = emptyList()
@@ -846,7 +953,7 @@ fun ControlsPage(
                 item {
                     ButtonWithText(
                         modifier = Modifier
-                            .semantics { contentDescription = "Skip exercise action" }
+                            .semantics { contentDescription = skipExerciseActionDescription }
                             .fillMaxWidth()
                             .then(
                                 if (isInspectionMode) Modifier else Modifier.transformedHeight(
@@ -855,7 +962,7 @@ fun ControlsPage(
                                 )
                             ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Skip exercise",
+                        text = stringResource(R.string.page_controls_skip_exercise),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             showSkipExerciseDialog = true
@@ -874,7 +981,7 @@ fun ControlsPage(
                             )
                         ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                    text = "Finish early",
+                    text = stringResource(R.string.page_controls_finish_early),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         showFinishEarlyDialog = true
@@ -892,7 +999,7 @@ fun ControlsPage(
                             )
                         ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                    text = "Go Home",
+                    text = stringResource(R.string.page_controls_go_home),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         onBeforeGoHome?.invoke()
@@ -918,8 +1025,8 @@ fun ControlsPage(
 
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
-        title = "Go back one set",
-        message = "Return to the previous set?",
+        title = stringResource(R.string.page_controls_dialog_go_back_title),
+        message = stringResource(R.string.page_controls_dialog_go_back_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.goToPreviousSetWear()
@@ -954,9 +1061,9 @@ fun ControlsPage(
     SupersetStartMemberPickerOverlay(
         show = orderPickerVisible,
         title = when {
-            orderBuilder == null -> "Start with"
-            orderStep >= memberCount -> "Order set"
-            else -> "Order ${orderStep + 1} of $memberCount"
+            orderBuilder == null -> stringResource(R.string.page_controls_picker_start_with)
+            orderStep >= memberCount -> stringResource(R.string.page_controls_picker_order_set)
+            else -> stringResource(R.string.page_controls_picker_order_of, orderStep + 1, memberCount)
         },
         options = memberNames.mapIndexed { index, name ->
             SupersetStartMemberOption(
@@ -994,8 +1101,8 @@ fun ControlsPage(
 
     CustomDialogYesOnLongPress(
         show = showSkipExerciseDialog,
-        title = "Skip exercise",
-        message = "Skip all remaining sets for this exercise?",
+        title = stringResource(R.string.page_controls_skip_exercise),
+        message = stringResource(R.string.page_controls_dialog_skip_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             showSkipExerciseDialog = false
@@ -1027,8 +1134,8 @@ fun ControlsPage(
 
     CustomDialogYesOnLongPress(
         show = showFinishEarlyDialog,
-        title = "Finish early",
-        message = "End the workout now? All remaining exercises and sets will be skipped.",
+        title = stringResource(R.string.page_controls_finish_early),
+        message = stringResource(R.string.page_controls_dialog_finish_early_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             showFinishEarlyDialog = false
@@ -1068,7 +1175,7 @@ private fun ControlsPageSectionHeader(
     Text(
         text = text.uppercase(currentLocale),
         modifier = modifier.padding(horizontal = 25.dp),
-        style = workoutPagerTitleTextStyle(),
+        style = workoutSectionLabelTextStyle(),
         color = MaterialTheme.colorScheme.onBackground,
         textAlign = TextAlign.Center
     )

@@ -52,5 +52,10 @@ data class SetHistory(
     val supersetRound: UInt? = null,
     val supersetExerciseIndex: UInt? = null,
     val executionSequence: UInt? = null,
-    val version: UInt = 0u
+    val version: UInt = 0u,
+    val recurringExerciseId: UUID? = null,
+    val exerciseDefinitionIdSnapshot: UUID? = null,
+    val exerciseTypeSnapshot: String? = null,
+    /** Actual performed name when a documented substitution differs from the prescribed occurrence. */
+    val exerciseNameSnapshot: String? = null
 )

@@ -54,8 +54,8 @@ fun showWorkoutInProgressNotification(
     )
 
     // Create a notification channel for Android O and above
-    val name = "Workout Progress"
-    val descriptionText = "A workout is in progress"
+    val name = context.getString(R.string.notif_channel_workout_progress)
+    val descriptionText = context.getString(R.string.notif_channel_workout_progress_desc)
     val importance = NotificationManager.IMPORTANCE_HIGH
     val channel = NotificationChannel(channelId, name, importance).apply {
         description = descriptionText
@@ -70,7 +70,7 @@ fun showWorkoutInProgressNotification(
     // Build the notification builder
     val notificationBuilder = NotificationCompat.Builder(context, channelId)
         .setSmallIcon(R.drawable.ic_workout_icon) // Notification small icon; OngoingActivity supplies the watch-face badge.
-        .setContentTitle("Workout in Progress")
+        .setContentTitle(context.getString(R.string.notif_workout_in_progress_title))
         .setContentIntent(pendingIntent)
         .setCategory(NotificationCompat.CATEGORY_WORKOUT)
         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -80,16 +80,16 @@ fun showWorkoutInProgressNotification(
         .setOngoing(true)
 
     // What the Samsung Now Bar card (built from this notification, see below) shows.
-    var nowBarText = "Workout in progress"
+    var nowBarText = context.getString(R.string.notif_workout_in_progress)
     var nowBarChronometer: RemoteViews? = null
     val ongoingActivityStatus = if (timerUiState == null) {
         notificationBuilder
-            .setContentText("Tap to open the app.")
+            .setContentText(context.getString(R.string.notif_tap_to_open_app))
             .setShowWhen(false)
             .setUsesChronometer(false)
-        Status.Builder().addTemplate("Workout in progress").build()
+        Status.Builder().addTemplate(context.getString(R.string.notif_workout_in_progress)).build()
     } else if (!timerUiState.isRunning) {
-        val pausedStatus = formatTimerNotificationStatus(timerUiState) ?: "Workout in progress"
+        val pausedStatus = formatTimerNotificationStatus(timerUiState) ?: context.getString(R.string.notif_workout_in_progress)
         nowBarText = pausedStatus
         notificationBuilder
             .setContentText(pausedStatus)
@@ -99,11 +99,11 @@ fun showWorkoutInProgressNotification(
     } else {
         val elapsedRealtime = SystemClock.elapsedRealtime()
         val timerLabel = when (timerUiState.timerType) {
-            WorkoutTimerService.TimerType.REST -> "Rest"
-            WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set"
-            WorkoutTimerService.TimerType.ENDURANCE_SET -> "Set elapsed"
-            WorkoutTimerService.TimerType.SUPERSET_CAP -> "Time left"
-            WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> "Round"
+            WorkoutTimerService.TimerType.REST -> context.getString(R.string.notif_timer_rest)
+            WorkoutTimerService.TimerType.TIMED_DURATION_SET -> context.getString(R.string.notif_timer_set)
+            WorkoutTimerService.TimerType.ENDURANCE_SET -> context.getString(R.string.notif_timer_set_elapsed)
+            WorkoutTimerService.TimerType.SUPERSET_CAP -> context.getString(R.string.notif_timer_time_left)
+            WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> context.getString(R.string.notif_timer_round)
         }
         val timerPart = when (timerUiState.timerType) {
             WorkoutTimerService.TimerType.REST,
@@ -164,7 +164,7 @@ fun showWorkoutInProgressNotification(
             putParcelable("queIcon", icon)
             putString("cardContents", nowBarText)
             putString("expandPrimaryInfo", nowBarText)
-            putString("expandSecondaryInfo", "Workout in progress")
+            putString("expandSecondaryInfo", context.getString(R.string.notif_workout_in_progress))
             nowBarChronometer?.let {
                 putParcelable("cardChronometerRemoteView", it)
                 putParcelable("expandChronometerRemoteView", it)
@@ -210,8 +210,8 @@ fun cancelWorkoutInProgressNotification(context: Context) {
 fun showTimerCompletedNotification(
     context: Context,
     workoutGlobalId: UUID? = null,
-    title: String = "Timer completed",
-    message: String = "Tap to continue workout"
+    title: String = context.getString(R.string.notif_timer_completed),
+    message: String = context.getString(R.string.notif_tap_to_continue_workout)
 ) {
     val channelId = "timer_completion_channel"
     val notificationId = 3
@@ -224,10 +224,10 @@ fun showTimerCompletedNotification(
 
     val channel = NotificationChannel(
         channelId,
-        "Timer Completion",
+        context.getString(R.string.notif_channel_timer_completion),
         NotificationManager.IMPORTANCE_HIGH
     ).apply {
-        description = "Notifications when workout timers complete"
+        description = context.getString(R.string.notif_channel_timer_completion_desc)
         enableVibration(true)
         setSound(null, null)
     }
@@ -264,8 +264,8 @@ fun showSyncCompleteNotification(context: Context) {
         context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    val channelName = "Sync Status"
-    val channelDescription = "Notifications for sync events"
+    val channelName = context.getString(R.string.notif_channel_sync_status)
+    val channelDescription = context.getString(R.string.notif_channel_sync_status_desc)
     // Use IMPORTANCE_HIGH to ensure sound and vibration
     val channelImportance = NotificationManager.IMPORTANCE_HIGH
     val channel = NotificationChannel(channelId, channelName, channelImportance).apply {
@@ -281,8 +281,8 @@ fun showSyncCompleteNotification(context: Context) {
 
     val notification = NotificationCompat.Builder(context, channelId)
         .setSmallIcon(R.drawable.ic_workout_icon)
-        .setContentTitle("Sync complete")
-        .setContentText("Workout data updated")
+        .setContentTitle(context.getString(R.string.notif_sync_complete))
+        .setContentText(context.getString(R.string.notif_sync_complete_text))
         .setContentIntent(pendingIntent) // Add intent to open app when tapped
         .setAutoCancel(true)
         .setColor(ContextCompat.getColor(context, R.color.ic_launcher_background))

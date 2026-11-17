@@ -19,7 +19,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import kotlinx.coroutines.Dispatchers
@@ -49,11 +51,12 @@ fun TimedSetLoadField(
 
     Box(modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
-            value = selectedWeight?.let(equipment::formatWeight) ?: "Not set",
+            value = selectedWeight?.let(equipment::formatWeight)
+                ?: stringResource(R.string.form_target_load_not_set),
             onValueChange = {},
             readOnly = true,
             enabled = !loading,
-            label = { Text("Target load") },
+            label = { Text(stringResource(R.string.form_target_load)) },
             modifier = Modifier.fillMaxWidth().padding(8.dp),
         )
         Box(
@@ -72,7 +75,7 @@ fun TimedSetLoadField(
 
     if (selectedWeight != null) {
         TextButton(onClick = { onWeightSelected(null) }) {
-            Text("Remove target load")
+            Text(stringResource(R.string.form_remove_target_load))
         }
     }
 
@@ -116,7 +119,10 @@ fun TimedSetExecutionLoadLabel(
     }
 
     Text(
-        text = "Load ${equipment.formatWeight(selectedWeight)}",
+        text = stringResource(
+            R.string.form_load_value,
+            equipment.formatWeight(selectedWeight)
+        ),
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.combinedClickable(

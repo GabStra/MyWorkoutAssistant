@@ -30,7 +30,7 @@ class TuesdayBackupPhoneSyncPreparationTest {
         }
         require(targetWorkout.name == WORKOUT_NAME)
 
-        WorkoutStoreRepository(context.filesDir).saveWorkoutStore(
+        WorkoutStoreRepository.forActiveProfile(context).saveWorkoutStore(
             backup.WorkoutStore.copy(
                 workouts = backup.WorkoutStore.workouts.filter { it.isActive }
             )

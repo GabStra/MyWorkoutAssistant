@@ -43,10 +43,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 import com.gabstra.myworkoutassistant.composables.DialogOutlinedButton
 import com.gabstra.myworkoutassistant.composables.StandardDialog
@@ -72,10 +74,10 @@ private val SessionTimestampFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd 
 private fun formatEpochMs(epochMs: Long): String =
     SessionTimestampFormatter.format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
 
-private fun formatSessionDuration(startedAtEpochMs: Long, endedAtEpochMs: Long?): String {
-    if (endedAtEpochMs == null || endedAtEpochMs < startedAtEpochMs) return "Unfinished"
+private fun formatSessionDuration(context: Context, startedAtEpochMs: Long, endedAtEpochMs: Long?): String {
+    if (endedAtEpochMs == null || endedAtEpochMs < startedAtEpochMs) return context.getString(R.string.sensor_unfinished)
     val totalSeconds = (endedAtEpochMs - startedAtEpochMs) / 1000
-    return "%d:%02d min".format(totalSeconds / 60, totalSeconds % 60)
+    return context.getString(R.string.sensor_duration_format, totalSeconds / 60, totalSeconds % 60)
 }
 
 /**
@@ -152,14 +154,14 @@ private fun SensorSessionsScreenContent(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = "Sensor sessions (${sessions.size})"
+                        text = stringResource(R.string.sensor_sessions_title, sessions.size)
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 }
@@ -175,7 +177,7 @@ private fun SensorSessionsScreenContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No sensor sessions received from the watch yet",
+                    text = stringResource(R.string.sensor_no_sessions),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.tertiaryContent
                 )
@@ -208,6 +210,7 @@ private fun SensorSessionCard(
     segmentCount: Int,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
     Card(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
@@ -233,12 +236,12 @@ private fun SensorSessionCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = formatSessionDuration(session.startedAtEpochMs, session.endedAtEpochMs),
+                    text = formatSessionDuration(context, session.startedAtEpochMs, session.endedAtEpochMs),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "$segmentCount segments",
+                    text = stringResource(R.string.sensor_segments_count, segmentCount),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -290,7 +293,7 @@ fun SensorSessionDetailScreen(
                 if (exportedFile == null) {
                     Toast.makeText(
                         context,
-                        "Sensor session files are not on this phone.",
+                        context.getString(R.string.sensor_not_on_phone),
                         Toast.LENGTH_SHORT
                     ).show()
                 } else {
@@ -303,7 +306,7 @@ fun SensorSessionDetailScreen(
             val clipboard =
                 context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("Sensor session zip", exportedZipPath))
-            Toast.makeText(context, "Path copied.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.sensor_path_copied), Toast.LENGTH_SHORT).show()
         },
         onShareExportPath = { path ->
             val zipFile = java.io.File(path)
@@ -317,7 +320,7 @@ fun SensorSessionDetailScreen(
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(share, "Share sensor session"))
+            context.startActivity(Intent.createChooser(share, context.getString(R.string.sensor_share_chooser)))
         }
     )
 }
@@ -335,6 +338,7 @@ private fun SensorSessionDetailScreenContent(
     onCopyExportPath: () -> Unit,
     onShareExportPath: (String) -> Unit
 ) {
+    val context = LocalContext.current
     BreadcrumbScaffold(
         topBar = {
             TopAppBar(
@@ -349,14 +353,14 @@ private fun SensorSessionDetailScreenContent(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = "Sensor session"
+                        text = stringResource(R.string.sensor_session_title)
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
@@ -367,7 +371,7 @@ private fun SensorSessionDetailScreenContent(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Share,
-                            contentDescription = "Export session as zip"
+                            contentDescription = stringResource(R.string.sensor_export_cd)
                         )
                     }
                 }
@@ -407,31 +411,39 @@ private fun SensorSessionDetailScreenContent(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Device: ${currentSession.deviceManufacturer} " +
-                                    "${currentSession.deviceModel} (${currentSession.deviceName})",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "App version: ${currentSession.appVersion}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "Duration: " + formatSessionDuration(
-                                    currentSession.startedAtEpochMs,
-                                    currentSession.endedAtEpochMs
+                                text = stringResource(
+                                    R.string.sensor_device_line,
+                                    currentSession.deviceManufacturer,
+                                    currentSession.deviceModel,
+                                    currentSession.deviceName
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "Status: ${currentSession.status}",
+                                text = stringResource(R.string.sensor_app_version, currentSession.appVersion),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "Session: ${currentSession.sessionDirectoryName}",
+                                text = stringResource(
+                                    R.string.sensor_duration_label,
+                                    formatSessionDuration(
+                                        context,
+                                        currentSession.startedAtEpochMs,
+                                        currentSession.endedAtEpochMs
+                                    )
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = stringResource(R.string.sensor_status_line, currentSession.status),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = stringResource(R.string.sensor_session_dir_line, currentSession.sessionDirectoryName),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.tertiaryContent
                             )
@@ -440,7 +452,7 @@ private fun SensorSessionDetailScreenContent(
                 }
                 item {
                     Text(
-                        text = "Segments (${segments.size})",
+                        text = stringResource(R.string.sensor_segments_title, segments.size),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onBackground
                     )
@@ -455,7 +467,7 @@ private fun SensorSessionDetailScreenContent(
     exportedZipPath?.let { path ->
         StandardDialog(
             onDismissRequest = onDismissExportDialog,
-            title = "Session exported",
+            title = stringResource(R.string.sensor_exported_title),
             body = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(path)
@@ -463,13 +475,13 @@ private fun SensorSessionDetailScreenContent(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End
                     ) {
-                        DialogOutlinedButton(text = "Copy path", onClick = onCopyExportPath)
+                        DialogOutlinedButton(text = stringResource(R.string.sensor_copy_path), onClick = onCopyExportPath)
                     }
                 }
             },
-            confirmText = "Share",
+            confirmText = stringResource(R.string.sensor_share),
             onConfirm = { onShareExportPath(path) },
-            dismissText = "Close",
+            dismissText = stringResource(R.string.common_close),
             onDismissButton = onDismissExportDialog
         )
     }
@@ -479,6 +491,7 @@ private fun SensorSessionDetailScreenContent(
 private fun SensorSegmentCard(
     segment: MotionCaptureSegmentEntity
 ) {
+    val context = LocalContext.current
     val record = remember(segment.id) { MotionCaptureSyncMappings.segmentEntityToRecord(segment) }
     val label = record.correctedLabel ?: record.autoLabel
     Card(
@@ -512,15 +525,15 @@ private fun SensorSegmentCard(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Kind: ${label.kind.name}" +
+                text = stringResource(R.string.sensor_kind_line, label.kind.name) +
                     (label.exerciseName?.let { " | $it" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "Duration: " + formatSessionDuration(
-                    record.startedAtEpochMs,
-                    record.endedAtEpochMs
+                text = stringResource(
+                    R.string.sensor_duration_label,
+                    formatSessionDuration(context, record.startedAtEpochMs, record.endedAtEpochMs)
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

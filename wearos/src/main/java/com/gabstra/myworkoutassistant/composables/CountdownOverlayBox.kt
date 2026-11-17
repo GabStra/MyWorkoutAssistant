@@ -15,7 +15,6 @@ import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.Text
 
 @Composable
 fun CountdownOverlayBox(
@@ -37,7 +36,7 @@ fun CountdownOverlayBox(
                 .background(MaterialTheme.colorScheme.background.copy(alpha = 0.85f)),
             contentAlignment = Alignment.Center
         ) {
-            Text(
+            TightNumericText(
                 text = "$time",
                 textAlign = TextAlign.Center,
                 style = itemStyle

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -35,8 +34,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -44,13 +45,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -58,18 +59,18 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val ConfirmationCancelButtonSize = WearSecondaryIconButtonSize
-private val ConfirmationCancelIconSize = WearSecondaryIconButtonIconSize
+private val ConfirmationCancelButtonSize = WearStandardIconButtonSize
+private val ConfirmationCancelIconSize = WearStandardIconButtonIconSize
 private val ConfirmationButtonSize = ConfirmationCancelButtonSize
 private val ConfirmationButtonIconSize = ConfirmationCancelIconSize
-private val ConfirmationIndicatorSize = 56.dp
+private val ConfirmationIndicatorSize = 68.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CustomDialogYesOnLongPress(
     show: Boolean = false,
-    title: String = "Exit workout",
-    message: String = "Do you want to leave this workout?",
+    title: String? = null,
+    message: String? = null,
     handleNoClick: () -> Unit,
     handleYesClick: () -> Unit,
     closeTimerInMillis: Long = 0,
@@ -79,6 +80,8 @@ fun CustomDialogYesOnLongPress(
 ) {
     val systemLongPressTimeout = LocalViewConfiguration.current.longPressTimeoutMillis
     val effectiveHoldTime = if (holdTimeInMillis > 0) holdTimeInMillis else systemLongPressTimeout
+    val resolvedTitle = title ?: stringResource(R.string.wear_exit_workout_title)
+    val resolvedMessage = message ?: stringResource(R.string.wear_exit_workout_message)
     val holdDurationMillis = effectiveHoldTime.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
     var hasBeenShownOnce by remember { mutableStateOf(false) }
@@ -92,8 +95,8 @@ fun CustomDialogYesOnLongPress(
         label = "confirm button press",
     )
     val confirmContentColor by animateColorAsState(
-        if (holdProgress.value > 0f) darkenButtonColor(MaterialTheme.colorScheme.onPrimary)
-        else MaterialTheme.colorScheme.onPrimary,
+        if (holdProgress.value > 0f) darkenButtonColor(Color.White)
+        else Color.White,
         label = "confirm button content press",
     )
     val latestHandleNoClick by rememberUpdatedState(handleNoClick)
@@ -241,7 +244,7 @@ fun CustomDialogYesOnLongPress(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            text = title,
+                            text = resolvedTitle,
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.SemiBold,
@@ -259,7 +262,7 @@ fun CustomDialogYesOnLongPress(
                             .verticalScroll(scrollState)
                         ){
                             Text(
-                                text = message,
+                                text = resolvedMessage,
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodyLarge,
@@ -267,83 +270,82 @@ fun CustomDialogYesOnLongPress(
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
-                        val contentColor = MaterialTheme.colorScheme.onSurface
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            SetValueSection(
-                                label = "CANCEL",
-                                headerStyle = MaterialTheme.typography.bodyExtraSmall,
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
-                                EnhancedIconButton(
-                                    buttonSize = ConfirmationCancelButtonSize,
-                                    hitBoxScale = 1.2f,
-                                    // Same neutral colors as the edit-screen back button.
-                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                        contentColor = MaterialTheme.colorScheme.onBackground,
-                                    ),
-                                    onClick = {
-                                        runNoClick()
-                                    },
-                                    buttonModifier = Modifier.clip(CircleShape)
+                                Box(
+                                    modifier = Modifier.weight(1f),
+                                    contentAlignment = Alignment.Center,
                                 ) {
-                                    Icon(
-                                        modifier = Modifier.size(ConfirmationCancelIconSize),
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Close",
-                                        tint = androidx.wear.compose.material3.LocalContentColor.current
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            SetValueSection(
-                                label = "HOLD TO CONFIRM",
-                                headerStyle = MaterialTheme.typography.bodyExtraSmall,
-                            ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(ConfirmationIndicatorSize)
-                                    .pointerInput(show, holdDurationMillis) {
-                                        detectTapGestures(
-                                            onPress = {
-                                                startConfirmHold()
-                                                try {
-                                                    tryAwaitRelease()
-                                                } finally {
-                                                    stopConfirmHold()
-                                                }
-                                            }
+                                    EnhancedIconButton(
+                                        buttonSize = ConfirmationCancelButtonSize,
+                                        hitBoxScale = 1.2f,
+                                        // Same neutral colors as the edit-screen back button;
+                                        // grey containers always carry white icons.
+                                        colors = wearColoredIconButtonColors(MaterialTheme.colorScheme.surfaceContainerHigh),
+                                        onClick = { runNoClick() },
+                                        buttonModifier = Modifier.clip(CircleShape)
+                                    ) {
+                                        Icon(
+                                            modifier = Modifier.size(ConfirmationCancelIconSize),
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = stringResource(R.string.dialog_cd_close),
+                                            tint = androidx.wear.compose.material3.LocalContentColor.current
                                         )
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (holdProgress.value > 0f) {
-                                    androidx.wear.compose.material.CircularProgressIndicator(
-                                        progress = holdProgress.value,
-                                        modifier = Modifier.size(ConfirmationIndicatorSize),
-                                        strokeWidth = 4.dp,
-                                        indicatorColor = MaterialTheme.colorScheme.primary,
-                                        trackColor = MediumDarkGray
-                                    )
+                                    }
                                 }
                                 Box(
-                                    modifier = Modifier
-                                        .size(ConfirmationButtonSize)
-                                        .clip(CircleShape)
-                                        .background(confirmContainerColor),
-                                    contentAlignment = Alignment.Center
+                                    modifier = Modifier.weight(1f),
+                                    contentAlignment = Alignment.Center,
                                 ) {
-                                    Icon(
-                                        modifier = Modifier.size(ConfirmationButtonIconSize),
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Done",
-                                        tint = confirmContentColor
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(ConfirmationIndicatorSize)
+                                            .pointerInput(show, holdDurationMillis) {
+                                                detectTapGestures(
+                                                    onPress = {
+                                                        startConfirmHold()
+                                                        try {
+                                                            tryAwaitRelease()
+                                                        } finally {
+                                                            stopConfirmHold()
+                                                        }
+                                                    }
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (holdProgress.value > 0f) {
+                                            androidx.wear.compose.material.CircularProgressIndicator(
+                                                progress = holdProgress.value,
+                                                modifier = Modifier.size(ConfirmationIndicatorSize),
+                                                strokeWidth = 4.dp,
+                                                indicatorColor = MaterialTheme.colorScheme.primary,
+                                                trackColor = MediumDarkGray
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .size(ConfirmationButtonSize)
+                                                .clip(CircleShape)
+                                                .background(confirmContainerColor),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                modifier = Modifier.size(ConfirmationButtonIconSize),
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = stringResource(R.string.dialog_cd_done),
+                                                tint = confirmContentColor
+                                            )
+                                        }
+                                    }
                                 }
-                            }
                             }
                         }
                     }

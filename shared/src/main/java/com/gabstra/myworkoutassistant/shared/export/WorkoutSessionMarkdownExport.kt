@@ -114,9 +114,8 @@ suspend fun buildWorkoutSessionMarkdown(
     if (workoutHistory.endReason == WorkoutSessionEndReason.FINISHED_EARLY) {
         markdown.append("Session status: Finished early before completing the workout\n")
     }
-    markdown.append(
-        "${workoutHistory.date} ${workoutHistory.time} | Dur: ${formatDurationForExport(workoutHistory.duration)}\n"
-    )
+    appendReportedSessionSourceMarkdown(markdown, workoutHistory)
+    markdown.append(buildSessionDateTimeDurationLine(workoutHistory)).append("\n")
     if (workout.description.isNotBlank()) {
         markdown.append("${workout.description}\n")
     }
@@ -145,7 +144,7 @@ suspend fun buildWorkoutSessionMarkdown(
                 val exercise = templateExercise.withRecordedDurationPrescription(allSets)
                 val active = allSets.filterForInsightComparisonSets()
                 if (active.isEmpty()) continue
-                markdown.append("### ${exercise.name}\n")
+                markdown.append("### ${performedExerciseDisplayName(exercise.name, allSets)}\n")
                 val comparableSessions = loadComparableExerciseSessions(
                     exercise = exercise,
                     workouts = workoutStore.workouts,
@@ -261,7 +260,7 @@ suspend fun buildWorkoutSessionMarkdown(
                     val setsForEx = setHistoriesSuperset.filter { it.exerciseId == ex.id }
                     val active = setsForEx.filterForInsightComparisonSets()
                     if (active.isEmpty()) continue
-                    markdown.append("#### ${ex.name}\n")
+                    markdown.append("#### ${performedExerciseDisplayName(ex.name, setsForEx)}\n")
                     val progression = exerciseSessionProgressionDao.getByWorkoutHistoryIdAndExerciseId(
                         workoutHistory.id,
                         ex.id

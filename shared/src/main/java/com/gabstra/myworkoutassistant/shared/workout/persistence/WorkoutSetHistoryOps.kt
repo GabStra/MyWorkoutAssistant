@@ -57,6 +57,7 @@ internal object WorkoutSetHistoryOps {
         )
     }
 
+
     private fun isCalibrationSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Boolean = when (set) {
         is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
         is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet

@@ -24,9 +24,11 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.AppTextButton
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.ErrorLogDao
@@ -64,14 +66,14 @@ fun ErrorLogsScreen(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = "Error Logs (${errorLogs.size})",
+                        text = stringResource(R.string.logs_title, errorLogs.size),
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
@@ -90,16 +92,16 @@ fun ErrorLogsScreen(
                                         
                                         dataClient.putDataItem(request)
                                     }
-                                    Toast.makeText(context, "Error logs cleared.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, context.getString(R.string.logs_cleared), Toast.LENGTH_SHORT).show()
                                 } catch (e: Exception) {
-                                    Toast.makeText(context, "Couldn't clear the error logs. Please try again.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, context.getString(R.string.logs_clear_failed), Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
-                            contentDescription = "Clear All"
+                            contentDescription = stringResource(R.string.logs_clear_all)
                         )
                     }
                 }
@@ -115,7 +117,7 @@ fun ErrorLogsScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No error logs",
+                    text = stringResource(R.string.logs_empty),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.tertiaryContent
                 )
@@ -156,7 +158,7 @@ fun ErrorLogCard(errorLog: ErrorLog) {
         }
         val clip = ClipData.newPlainText("Stack Trace", fullStackTrace)
         clipboard.setPrimaryClip(clip)
-        Toast.makeText(context, "Stack trace copied.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.logs_copied), Toast.LENGTH_SHORT).show()
     }
     
     Card(
@@ -185,7 +187,7 @@ fun ErrorLogCard(errorLog: ErrorLog) {
             Spacer(modifier = Modifier.height(4.dp))
             
             Text(
-                text = "Thread: ${errorLog.threadName}",
+                text = stringResource(R.string.logs_thread_line, errorLog.threadName),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.tertiaryContent
             )
@@ -205,7 +207,7 @@ fun ErrorLogCard(errorLog: ErrorLog) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 AppTextButton(
-                    text = if (expanded) "Hide Stack Trace" else "Show Stack Trace",
+                    text = if (expanded) stringResource(R.string.logs_hide_stack_trace) else stringResource(R.string.logs_show_stack_trace),
                     onClick = { expanded = !expanded },
                     modifier = Modifier.weight(1f)
                 )
@@ -216,7 +218,7 @@ fun ErrorLogCard(errorLog: ErrorLog) {
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Copy Stack Trace"
+                        contentDescription = stringResource(R.string.logs_copy_stack_trace)
                     )
                 }
             }

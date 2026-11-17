@@ -59,10 +59,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
@@ -158,7 +161,11 @@ fun WorkoutForm(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .basicMarquee(iterations = Int.MAX_VALUE),
-                            text = if (workout == null) "Add workout" else "Edit workout",
+                            text = if (workout == null) {
+                                stringResource(R.string.workout_form_add_title)
+                            } else {
+                                stringResource(R.string.workout_form_edit_title)
+                            },
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.titleLarge
                         )
@@ -172,7 +179,7 @@ fun WorkoutForm(
                         IconButton(onClick = onCancel, enabled = !isSaving) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
+                                contentDescription = stringResource(R.string.workout_back_cd)
                             )
                         }
                     },
@@ -181,7 +188,7 @@ fun WorkoutForm(
                         IconButton(modifier = Modifier.alpha(0f), onClick = { }) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
+                                contentDescription = stringResource(R.string.workout_back_cd)
                             )
                         }
                     }
@@ -197,7 +204,7 @@ fun WorkoutForm(
                     .padding(horizontal = Spacing.md),
             ) {
                 // ----- Essentials -----
-                FormSectionTitle(text = "Essentials")
+                FormSectionTitle(text = stringResource(R.string.workout_form_section_essentials))
                 StyledCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.padding(Spacing.md),
@@ -206,14 +213,22 @@ fun WorkoutForm(
                         OutlinedTextField(
                             value = workoutNameState.value,
                             onValueChange = { workoutNameState.value = it },
-                            label = { Text("Workout name", style = MaterialTheme.typography.labelLarge) },
-                            modifier = Modifier.fillMaxWidth()
+                            label = { Text(stringResource(R.string.workout_form_name_label), style = MaterialTheme.typography.labelLarge) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = workout?.recurringSessionId == null,
                         )
+                        if (workout?.recurringSessionId != null) {
+                            Text(
+                                text = stringResource(R.string.workout_form_rename_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
 
                         OutlinedTextField(
                             value = workoutDescriptionState.value,
                             onValueChange = { workoutDescriptionState.value = it },
-                            label = { Text("Description", style = MaterialTheme.typography.labelLarge) },
+                            label = { Text(stringResource(R.string.workout_form_description_label), style = MaterialTheme.typography.labelLarge) },
                             modifier = Modifier.fillMaxWidth(),
                             maxLines = 5,
                             singleLine = false
@@ -223,7 +238,7 @@ fun WorkoutForm(
                             workoutTypeItems.firstOrNull { it.value == selectedWorkoutType.intValue }?.label ?: ""
                         }
                         StandardFilterDropdown(
-                            label = "Workout type",
+                            label = stringResource(R.string.workout_form_type_label),
                             selectedText = typeLabel,
                             items = workoutTypeItems,
                             onItemSelected = { selectedWorkoutType.intValue = it },
@@ -239,13 +254,13 @@ fun WorkoutForm(
                                     timesCompletedInAWeekState.value = input
                                 }
                             },
-                            label = { Text("Target sessions per week", style = MaterialTheme.typography.labelLarge) },
+                            label = { Text(stringResource(R.string.workout_form_target_sessions_label), style = MaterialTheme.typography.labelLarge) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth()
                         )
 
                         Text(
-                            text = "Heart rate sources",
+                            text = stringResource(R.string.workout_form_hr_sources_label),
                             style = MaterialTheme.typography.labelLarge
                         )
                         FlowRow(
@@ -287,7 +302,7 @@ fun WorkoutForm(
                                 ?: HeartRateSource.WATCH_SENSOR.displayName()
                         }
                         StandardFilterDropdown(
-                            label = "Live source",
+                            label = stringResource(R.string.workout_form_live_source_label),
                             selectedText = heartRateSourceLabel,
                             items = enabledItems,
                             onItemSelected = { heartRateSourceState.value = it },
@@ -300,20 +315,21 @@ fun WorkoutForm(
 
                 Spacer(Modifier.height(Spacing.md))
 
-                FormSectionTitle(text = "Schedule")
-                val scheduleSummary = remember(schedules.size) {
-                    if (schedules.isEmpty()) "No alarms yet"
-                    else "${schedules.size} alarm${if (schedules.size == 1) "" else "s"}"
+                FormSectionTitle(text = stringResource(R.string.workout_form_section_schedule))
+                val scheduleSummary = if (schedules.isEmpty()) {
+                    stringResource(R.string.workout_form_no_alarms)
+                } else {
+                    pluralStringResource(R.plurals.workout_form_alarm_count, schedules.size, schedules.size)
                 }
                 CollapsibleSection(
-                    title = "Alarms",
+                    title = stringResource(R.string.workout_form_alarms_title),
                     summary = scheduleSummary,
                     expanded = expandedSchedule,
                     onToggle = { expandedSchedule = !expandedSchedule }
                 ) {
                     if (schedules.isEmpty()) {
                         Text(
-                            text = "No alarms yet.",
+                            text = stringResource(R.string.workout_form_no_alarms_body),
                             style = MaterialTheme.typography.bodyMedium
                         )
                     } else {
@@ -341,7 +357,7 @@ fun WorkoutForm(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.md)
                     ) {
                         AppPrimaryOutlinedButton(
-                            text = "Add one",
+                            text = stringResource(R.string.workout_form_add_one),
                             onClick = {
                                 currentEditingSchedule.value = null
                                 showScheduleDialog.value = true
@@ -350,7 +366,7 @@ fun WorkoutForm(
                         )
 
                         AppPrimaryOutlinedButton(
-                            text = "Add multiple",
+                            text = stringResource(R.string.workout_form_add_multiple),
                             onClick = { showBatchScheduleDialog.value = true },
                             modifier = Modifier.weight(1f)
                         )
@@ -368,14 +384,14 @@ fun WorkoutForm(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     AppSecondaryButton(
-                        text = "Cancel",
+                        text = stringResource(R.string.workout_cancel),
                         onClick = onCancel,
                         enabled = !isSaving,
                         modifier = Modifier.weight(1f)
                     )
 
                     AppPrimaryButton(
-                        text = "Save",
+                        text = stringResource(R.string.workout_save),
                         onClick = {
                             val enabledSources = enabledHeartRateSourcesState.value +
                                 heartRateSourceState.value
@@ -385,7 +401,10 @@ fun WorkoutForm(
                             if (unconfigured != null) {
                                 Toast.makeText(
                                     context,
-                                    "Configure ${unconfigured.displayName()} in Settings first.",
+                                    context.getString(
+                                        R.string.workout_form_configure_source_first,
+                                        unconfigured.displayName()
+                                    ),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 return@AppPrimaryButton
@@ -402,7 +421,10 @@ fun WorkoutForm(
                                 timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
                                 globalId = newGlobalId,
                                 type = selectedWorkoutType.intValue,
-                                workoutPlanId = workoutPlanId ?: workout?.workoutPlanId
+                                workoutPlanId = workoutPlanId ?: workout?.workoutPlanId,
+                                recurringSessionId = workout?.recurringSessionId,
+                                prescriptionOrdinal = workout?.prescriptionOrdinal,
+                                prescriptionLabel = workout?.prescriptionLabel,
                             )
                             onWorkoutUpsert(newWorkout, schedules.toList())
                         },
@@ -430,7 +452,7 @@ fun WorkoutForm(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(Spacing.md))
-                    Text(text = "Saving changes...", style = MaterialTheme.typography.bodyLarge)
+                    Text(text = stringResource(R.string.workout_form_saving), style = MaterialTheme.typography.bodyLarge)
                 }
             }
         }
@@ -499,7 +521,11 @@ fun ScheduleDialog(
 
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = if (isEditing) "Edit alarm" else "Add alarm",
+        title = if (isEditing) {
+            stringResource(R.string.workout_form_edit_alarm)
+        } else {
+            stringResource(R.string.workout_form_add_alarm)
+        },
         body = {
             Column(
                 modifier = Modifier
@@ -509,12 +535,12 @@ fun ScheduleDialog(
                 OutlinedTextField(
                     value = labelState.value,
                     onValueChange = { labelState.value = it },
-                    label = { Text("Label (optional)", style = MaterialTheme.typography.labelLarge) },
+                    label = { Text(stringResource(R.string.workout_form_label_optional), style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(Modifier.height(Spacing.lg))
-                Text("Time", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.workout_form_time_label), style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(Spacing.sm))
                 AppPrimaryOutlinedButton(
                     text = "${hourState.intValue}:${minuteState.intValue.toString().padStart(2, '0')}",
@@ -524,7 +550,7 @@ fun ScheduleDialog(
 
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Use specific date", style = MaterialTheme.typography.bodyLarge) },
+                    headlineContent = { Text(stringResource(R.string.workout_form_use_specific_date), style = MaterialTheme.typography.bodyLarge) },
                     trailingContent = {
                         Switch(
                             checked = useSpecificDate.value,
@@ -541,7 +567,7 @@ fun ScheduleDialog(
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     } ?: LocalDate.now()
 
-                    Text("Date", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.workout_form_date_label), style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(Spacing.sm))
                     AppPrimaryOutlinedButton(
                         text = date.toString(),
@@ -549,15 +575,25 @@ fun ScheduleDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
                 } else {
-                    Text("Days of week", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.workout_form_days_of_week), style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(Spacing.sm))
                     WeekdaySelectionRow(
-                        days = listOf("Mon", "Tue", "Wed", "Thu"),
+                        days = listOf(
+                            stringResource(R.string.workout_day_mon),
+                            stringResource(R.string.workout_day_tue),
+                            stringResource(R.string.workout_day_wed),
+                            stringResource(R.string.workout_day_thu),
+                        ),
                         bitValues = listOf(2, 4, 8, 16),
                         daysOfWeekState = daysOfWeekState
                     )
                     WeekdaySelectionRow(
-                        days = listOf("Fri", "Sat", "Sun", ""),
+                        days = listOf(
+                            stringResource(R.string.workout_day_fri),
+                            stringResource(R.string.workout_day_sat),
+                            stringResource(R.string.workout_day_sun),
+                            "",
+                        ),
                         bitValues = listOf(32, 64, 1, 0),
                         daysOfWeekState = daysOfWeekState,
                         showLastCheckbox = false
@@ -569,7 +605,7 @@ fun ScheduleDialog(
 
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Enabled", style = MaterialTheme.typography.bodyLarge) },
+                    headlineContent = { Text(stringResource(R.string.workout_form_enabled), style = MaterialTheme.typography.bodyLarge) },
                     trailingContent = {
                         Switch(
                             checked = isEnabledState.value,
@@ -579,7 +615,7 @@ fun ScheduleDialog(
                 )
             }
         },
-        confirmText = "Save",
+        confirmText = stringResource(R.string.workout_save),
         onConfirm = {
             val specificDate = if (useSpecificDate.value) {
                 datePickerState.selectedDateMillis?.let {
@@ -596,7 +632,7 @@ fun ScheduleDialog(
             )
 
             if (validationError != null) {
-                Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, context.getString(validationError), Toast.LENGTH_LONG).show()
             } else {
                 val newSchedule = WorkoutSchedule(
                     id = schedule?.id ?: UUID.randomUUID(),
@@ -629,7 +665,7 @@ fun ScheduleDialog(
                 }
             }
         },
-        dismissText = "Cancel",
+        dismissText = stringResource(R.string.workout_cancel),
         onDismissButton = onDismiss
     )
 
@@ -650,13 +686,13 @@ fun ScheduleDialog(
             onDismissRequest = { showDatePicker.value = false },
             confirmButton = {
                 DialogOutlinedButton(
-                    text = "OK",
+                    text = stringResource(R.string.workout_ok),
                     onClick = { showDatePicker.value = false }
                 )
             },
             dismissButton = {
                 DialogOutlinedButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.workout_cancel),
                     onClick = { showDatePicker.value = false }
                 )
             }
@@ -671,15 +707,15 @@ internal fun validateAlarmScheduleInput(
     minute: Int,
     daysOfWeek: Int,
     now: LocalDateTime = LocalDateTime.now()
-): String? {
+): Int? {
     if (!useSpecificDate && daysOfWeek <= 0) {
-        return "Select at least one day for recurring alarms."
+        return R.string.workout_form_alarm_error_select_day
     }
 
     if (useSpecificDate) {
-        val triggerDate = specificDate ?: return "Pick a date for the alarm."
+        val triggerDate = specificDate ?: return R.string.workout_form_alarm_error_pick_date
         if (!triggerDate.atTime(hour, minute).isAfter(now)) {
-            return "Pick a future date and time for one-time alarms."
+            return R.string.workout_form_alarm_error_future_date
         }
     }
 
@@ -745,11 +781,11 @@ fun TimePickerDialog(
 ) {
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = "Choose a time",
+        title = stringResource(R.string.workout_form_choose_time),
         body = { TimePicker(state = timePickerState) },
-        confirmText = "OK",
+        confirmText = stringResource(R.string.workout_ok),
         onConfirm = onConfirm,
-        dismissText = "Cancel",
+        dismissText = stringResource(R.string.workout_cancel),
         onDismissButton = onDismiss
     )
 }
@@ -769,17 +805,25 @@ fun DayOfWeekCheckbox(
     }
 }
 
+private const val WeekendDaysBitmask = 1 or 64 // Sunday | Saturday
+
+@Composable
 fun getDaysOfWeekString(daysOfWeek: Int): String {
     val dayPairs = listOf(
-        1 to "Sun", 2 to "Mon", 4 to "Tue", 8 to "Wed",
-        16 to "Thu", 32 to "Fri", 64 to "Sat"
+        1 to stringResource(R.string.workout_day_sun),
+        2 to stringResource(R.string.workout_day_mon),
+        4 to stringResource(R.string.workout_day_tue),
+        8 to stringResource(R.string.workout_day_wed),
+        16 to stringResource(R.string.workout_day_thu),
+        32 to stringResource(R.string.workout_day_fri),
+        64 to stringResource(R.string.workout_day_sat)
     )
     val days = dayPairs.filter { (bit, _) -> (daysOfWeek and bit) != 0 }.map { it.second }
     return when {
-        days.isEmpty() -> "No days selected"
-        days.size == 7 -> "Every day"
-        days.size == 5 && !days.contains("Sat") && !days.contains("Sun") -> "Weekdays"
-        days.size == 2 && days.contains("Sat") && days.contains("Sun") -> "Weekends"
+        days.isEmpty() -> stringResource(R.string.workout_form_alarm_no_days)
+        days.size == 7 -> stringResource(R.string.workout_form_alarm_every_day)
+        days.size == 5 && (daysOfWeek and WeekendDaysBitmask) == 0 -> stringResource(R.string.workout_form_alarm_weekdays)
+        days.size == 2 && (daysOfWeek and WeekendDaysBitmask) == WeekendDaysBitmask -> stringResource(R.string.workout_form_alarm_weekends)
         else -> days.joinToString(", ")
     }
 }
@@ -800,21 +844,33 @@ fun ScheduleListItem(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = if (schedule.label.isNotEmpty()) schedule.label else "Alarm ${index + 1}",
+                text = if (schedule.label.isNotEmpty()) {
+                    schedule.label
+                } else {
+                    stringResource(R.string.workout_form_alarm_n, index + 1)
+                },
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
                 text = if (schedule.specificDate != null) {
-                    "On ${schedule.specificDate} at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
+                    stringResource(
+                        R.string.workout_form_alarm_on_date_at_time,
+                        schedule.specificDate.toString(),
+                        "${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}",
+                    )
                 } else {
                     val days = getDaysOfWeekString(schedule.daysOfWeek)
-                    "$days at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
+                    stringResource(
+                        R.string.workout_form_alarm_days_at_time,
+                        days,
+                        "${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}",
+                    )
                 },
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        Text(text = "Edit", modifier = Modifier.clickable { onEdit() })
-        Text(text = "Delete", modifier = Modifier.clickable { onDelete() })
+        Text(text = stringResource(R.string.workout_form_edit_action), modifier = Modifier.clickable { onEdit() })
+        Text(text = stringResource(R.string.workout_form_delete_action), modifier = Modifier.clickable { onDelete() })
     }
 }
 
@@ -851,14 +907,17 @@ fun BatchScheduleDialog(
 
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = "Add multiple alarms",
+        title = stringResource(R.string.workout_form_add_multiple_alarms),
         body = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
             ) {
                 SwipeableTabs(
-                    tabTitles = listOf("One-time", "Recurring"),
+                    tabTitles = listOf(
+                        stringResource(R.string.workout_form_tab_one_time),
+                        stringResource(R.string.workout_form_tab_recurring),
+                    ),
                     selectedTabIndex = selectedTabIndex.intValue,
                     onTabSelected = { selectedTabIndex.intValue = it },
                     containerColor = Color.Transparent,
@@ -873,13 +932,13 @@ fun BatchScheduleDialog(
                 OutlinedTextField(
                     value = labelPrefixState.value,
                     onValueChange = { labelPrefixState.value = it },
-                    label = { Text("Label prefix", style = MaterialTheme.typography.labelLarge) },
+                    label = { Text(stringResource(R.string.workout_form_label_prefix), style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(Modifier.height(Spacing.lg))
 
-                Text("Time range", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.workout_form_time_range), style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(Spacing.sm))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -887,7 +946,7 @@ fun BatchScheduleDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("From", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.workout_form_from), style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(Spacing.xs))
                         AppPrimaryOutlinedButton(
                             text = "${startHourState.intValue}:${startMinuteState.intValue.toString().padStart(2, '0')}",
@@ -902,7 +961,7 @@ fun BatchScheduleDialog(
                     }
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("To", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.workout_form_to), style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(Spacing.xs))
                         AppPrimaryOutlinedButton(
                             text = "${endHourState.intValue}:${endMinuteState.intValue.toString().padStart(2, '0')}",
@@ -921,13 +980,13 @@ fun BatchScheduleDialog(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Spacer(Modifier.height(Spacing.lg))
 
-                Text("Interval", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.workout_form_interval), style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(Spacing.sm))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = intervalHoursState.value,
                         onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalHoursState.value = v },
-                        label = { Text("Hours", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.workout_form_hours), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
                     )
@@ -935,7 +994,7 @@ fun BatchScheduleDialog(
                     OutlinedTextField(
                         value = intervalMinutesState.value,
                         onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalMinutesState.value = v },
-                        label = { Text("Minutes", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(stringResource(R.string.workout_form_minutes), style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
                     )
@@ -949,7 +1008,7 @@ fun BatchScheduleDialog(
                     val date = datePickerState.selectedDateMillis?.let {
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     } ?: LocalDate.now()
-                    Text("Date", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.workout_form_date_label), style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(Spacing.sm))
                     AppPrimaryOutlinedButton(
                         text = date.toString(),
@@ -957,15 +1016,25 @@ fun BatchScheduleDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
                 } else {
-                    Text("Days of week", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.workout_form_days_of_week), style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(Spacing.sm))
                     WeekdaySelectionRow(
-                        days = listOf("Mon", "Tue", "Wed", "Thu"),
+                        days = listOf(
+                            stringResource(R.string.workout_day_mon),
+                            stringResource(R.string.workout_day_tue),
+                            stringResource(R.string.workout_day_wed),
+                            stringResource(R.string.workout_day_thu),
+                        ),
                         bitValues = listOf(2, 4, 8, 16),
                         daysOfWeekState = daysOfWeekState
                     )
                     WeekdaySelectionRow(
-                        days = listOf("Fri", "Sat", "Sun", ""),
+                        days = listOf(
+                            stringResource(R.string.workout_day_fri),
+                            stringResource(R.string.workout_day_sat),
+                            stringResource(R.string.workout_day_sun),
+                            "",
+                        ),
                         bitValues = listOf(32, 64, 1, 0),
                         daysOfWeekState = daysOfWeekState,
                         showLastCheckbox = false
@@ -977,7 +1046,7 @@ fun BatchScheduleDialog(
 
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Enable all", style = MaterialTheme.typography.bodyLarge) },
+                    headlineContent = { Text(stringResource(R.string.workout_form_enable_all), style = MaterialTheme.typography.bodyLarge) },
                     trailingContent = {
                         Switch(
                             checked = isEnabledState.value,
@@ -987,7 +1056,7 @@ fun BatchScheduleDialog(
                 )
             }
         },
-        confirmText = "Save",
+        confirmText = stringResource(R.string.workout_save),
         onConfirm = {
             val list = mutableListOf<WorkoutSchedule>()
             val startTotal = startHourState.intValue * 60 + startMinuteState.intValue
@@ -1026,7 +1095,7 @@ fun BatchScheduleDialog(
 
             val validationError =
                 when {
-                    list.isEmpty() -> "Choose a time range that creates at least one alarm."
+                    list.isEmpty() -> R.string.workout_form_time_range_error
                     else -> list.firstNotNullOfOrNull { schedule ->
                         validateAlarmScheduleInput(
                             useSpecificDate = schedule.specificDate != null,
@@ -1039,7 +1108,7 @@ fun BatchScheduleDialog(
                 }
 
             if (validationError != null) {
-                Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, context.getString(validationError), Toast.LENGTH_LONG).show()
             } else {
                 // Check for conflicts
                 val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
@@ -1055,7 +1124,7 @@ fun BatchScheduleDialog(
                 }
             }
         },
-        dismissText = "Cancel",
+        dismissText = stringResource(R.string.workout_cancel),
         onDismissButton = onDismiss
     )
 
@@ -1081,13 +1150,13 @@ fun BatchScheduleDialog(
             onDismissRequest = { showDatePicker.value = false },
             confirmButton = {
                 DialogOutlinedButton(
-                    text = "OK",
+                    text = stringResource(R.string.workout_ok),
                     onClick = { showDatePicker.value = false }
                 )
             },
             dismissButton = {
                 DialogOutlinedButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.workout_cancel),
                     onClick = { showDatePicker.value = false }
                 )
             }

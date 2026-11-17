@@ -97,7 +97,7 @@ class ExactBackupPhoneSyncPreparationTest {
             workout.isActive || appBackup.WorkoutHistories.any { it.workoutId == workout.id }
         }
         val workoutStore = appBackup.WorkoutStore.copy(workouts = allowedWorkouts)
-        WorkoutStoreRepository(context.filesDir).saveWorkoutStore(workoutStore)
+        WorkoutStoreRepository.forActiveProfile(context).saveWorkoutStore(workoutStore)
 
         workoutHistoryDao.deleteAll()
         setHistoryDao.deleteAll()

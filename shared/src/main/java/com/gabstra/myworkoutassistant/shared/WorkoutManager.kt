@@ -9,6 +9,7 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -276,7 +277,10 @@ class WorkoutManager {
                             is RestSet -> it.copy(id = UUID.randomUUID())
                         }
                     }
-                    workoutComponent.copy(name = workoutComponent.name + " (copy)", id = UUID.randomUUID(), sets = newSets)
+                    workoutComponent.copy(
+                        name = workoutComponent.name + " (copy)", id = UUID.randomUUID(), sets = newSets,
+                        recurringExerciseId = null, loadHistoryPolicy = LoadHistoryPolicy.NONE
+                    )
                 }
                 is Rest -> {
                     workoutComponent.copy(id = UUID.randomUUID())
@@ -389,7 +393,10 @@ class WorkoutManager {
                     is RestSet -> it.copy(id = UUID.randomUUID())
                 }
             }
-            return exercise.copy(name = exercise.name + " (copy)", id = UUID.randomUUID(), sets = newSets)
+            return exercise.copy(
+                name = exercise.name + " (copy)", id = UUID.randomUUID(), sets = newSets,
+                recurringExerciseId = null, loadHistoryPolicy = LoadHistoryPolicy.NONE
+            )
         }
     }
 }

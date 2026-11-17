@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -30,6 +31,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.composables.TightNumericText
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -62,11 +65,14 @@ fun CalibrationRirPage(
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { 
+    val itemStyle = remember(typography) {
         typography.numeralSmall.copy(fontWeight = FontWeight.Medium)
     }
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    
+    val rirValueDescription = stringResource(R.string.page_calibration_cd_rir_value)
+    val confirmRirTitle = stringResource(R.string.page_calibration_confirm_rir_title)
+    val confirmRirMessage = stringResource(R.string.page_calibration_confirm_rir_message)
+
     fun updateInteractionTime() {
         lastInteractionTime = System.currentTimeMillis()
     }
@@ -154,22 +160,25 @@ fun CalibrationRirPage(
     fun RIRRow(modifier: Modifier = Modifier, style: TextStyle) {
         Row(
             modifier = modifier
-                .height(40.dp)
-                .semantics { contentDescription = "RIR value" }
+                .heightIn(min = 40.dp)
+                .semantics { contentDescription = rirValueDescription }
                 .combinedClickable(
                     onClick = {
                         updateInteractionTime()
                     },
                     onLongClick = { onOpenPicker() }
                 ),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
-            ScalableText(
-                modifier = Modifier.fillMaxWidth(),
-                text = rirText,
-                style = style,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+            Box(Modifier.fillMaxWidth().heightIn(min = 32.dp), contentAlignment = Alignment.Center) {
+                TightNumericText(
+                    modifier = Modifier.fillMaxWidth(),
+                    text = rirText,
+                    style = style,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
     
@@ -193,10 +202,11 @@ fun CalibrationRirPage(
                     hapticsViewModel.doGentleVibration()
                 },
             ) {
-                SetValueSection(label = "RIR", headerStyle = headerStyle) {
-                    ScalableText(
+                SetValueSection(label = stringResource(R.string.page_calibration_label_rir), headerStyle = headerStyle) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 32.dp)
                             .combinedClickable(
                                 onClick = {
                                     updateInteractionTime()
@@ -207,10 +217,16 @@ fun CalibrationRirPage(
                                 onDoubleClick = {
                                 }
                             ),
-                        text = rirText,
-                        style = itemStyle,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        TightNumericText(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = rirText,
+                            style = itemStyle,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
             }
         } else {
@@ -238,7 +254,7 @@ fun CalibrationRirPage(
                         verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                     ) {
                         Text(
-                            text = "RIR",
+                            text = stringResource(R.string.page_calibration_label_rir),
                             style = headerStyle,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onBackground,
@@ -247,15 +263,15 @@ fun CalibrationRirPage(
                     }
                 }
 
-                CalibrationInstructionText(text = "0 = Form Breaks")
+                CalibrationInstructionText(text = stringResource(R.string.page_calibration_form_breaks))
             }
         }
     }
 
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
-        title = "Confirm RIR",
-        message = "Use this RIR for the set?",
+        title = confirmRirTitle,
+        message = confirmRirMessage,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             onConfirmClick()
@@ -306,6 +322,9 @@ fun CalibrationRirPage(
         typography.numeralSmall.copy(fontWeight = FontWeight.Medium)
     }
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
+    val rirValueDescription = stringResource(R.string.page_calibration_cd_rir_value)
+    val confirmRirTitle = stringResource(R.string.page_calibration_confirm_rir_title)
+    val confirmRirMessage = stringResource(R.string.page_calibration_confirm_rir_message)
 
     fun updateInteractionTime() {
         lastInteractionTime = System.currentTimeMillis()
@@ -371,20 +390,23 @@ fun CalibrationRirPage(
     fun RIRRow(modifier: Modifier = Modifier, style: TextStyle) {
         Row(
             modifier = modifier
-                .height(40.dp)
-                .semantics { contentDescription = "RIR value" }
+                .heightIn(min = 40.dp)
+                .semantics { contentDescription = rirValueDescription }
                 .combinedClickable(
                     onClick = { updateInteractionTime() },
                     onLongClick = { onOpenPicker() }
                 ),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
-            ScalableText(
-                modifier = Modifier.fillMaxWidth(),
-                text = rirText,
-                style = style,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+            Box(Modifier.fillMaxWidth().heightIn(min = 32.dp), contentAlignment = Alignment.Center) {
+                TightNumericText(
+                    modifier = Modifier.fillMaxWidth(),
+                    text = rirText,
+                    style = style,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 
@@ -407,17 +429,23 @@ fun CalibrationRirPage(
                     hapticsViewModel.doGentleVibration()
                 },
             ) {
-                SetValueSection(label = "RIR (AR)", headerStyle = headerStyle) {
-                    ScalableText(
-                        modifier = Modifier.fillMaxWidth().combinedClickable(
+                SetValueSection(label = stringResource(R.string.page_calibration_label_rir_ar), headerStyle = headerStyle) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp).combinedClickable(
                             onClick = { updateInteractionTime() },
                             onLongClick = { onClosePicker() },
                             onDoubleClick = { }
                         ),
-                        text = rirText,
-                        style = itemStyle,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        TightNumericText(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = rirText,
+                            style = itemStyle,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
             }
         } else {
@@ -437,7 +465,7 @@ fun CalibrationRirPage(
                         verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                     ) {
                             Text(
-                                text = "RIR (AR)",
+                                text = stringResource(R.string.page_calibration_label_rir_ar),
                                 style = headerStyle,
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onBackground,
@@ -445,15 +473,15 @@ fun CalibrationRirPage(
                             RIRRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                         }
                 }
-                CalibrationInstructionText(text = "0 = Form Breaks")
+                CalibrationInstructionText(text = stringResource(R.string.page_calibration_form_breaks))
             }
         }
     }
 
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
-        title = "Confirm RIR",
-        message = "Use this RIR for the set?",
+        title = confirmRirTitle,
+        message = confirmRirMessage,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             onConfirmClick()

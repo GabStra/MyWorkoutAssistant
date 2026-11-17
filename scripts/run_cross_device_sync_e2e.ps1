@@ -27,6 +27,8 @@ Param(
     [switch]$InjectEmulatorGpsDuringWearProducer = $false,
     [switch]$UseWearGpsInjectionMarkers = $false,
     [switch]$RevokeWearLocationPermissionsBeforeProducer = $false,
+    [switch]$RecurringIsolatedMode = $false,
+    [string]$RecurringRunId,
     [string]$WearTestMethod,
     [string]$TimingOutputPath
 )
@@ -34,6 +36,40 @@ Param(
 $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptRoot
+
+# The general cross-device scenario below intentionally resets device history and may uninstall
+# apps on retry. Recurring-data verification uses a separate emulator-only path that preserves
+# all device app data and cleans only its run-scoped profile/rows.
+if ($RecurringIsolatedMode) {
+    if ([string]::IsNullOrWhiteSpace($PhoneEmulatorSerial) -or
+        [string]::IsNullOrWhiteSpace($WearEmulatorSerial)) {
+        throw "-RecurringIsolatedMode requires explicit -PhoneEmulatorSerial and -WearEmulatorSerial values."
+    }
+    if ($CleanInstallApps -or $VerifyMissingWearAppGuard -or $RevokeWearLocationPermissionsBeforeProducer -or
+        $UseWearGpsInjectionMarkers -or $InjectEmulatorGpsDuringWearProducer -or $MobileBackupPath) {
+        throw "-RecurringIsolatedMode cannot be combined with reset, permission, GPS-injection, or backup-staging options."
+    }
+
+    $safeScript = Join-Path $scriptRoot "run_recurring_cross_device_sync_e2e.ps1"
+    if (-not (Test-Path -LiteralPath $safeScript)) {
+        throw "Safe recurring cross-device runner is missing: $safeScript"
+    }
+    $safeArgs = @(
+        "-NoProfile", "-File", $safeScript,
+        "-PhoneEmulatorSerial", $PhoneEmulatorSerial,
+        "-WearEmulatorSerial", $WearEmulatorSerial,
+        "-AppPackage", $AppPackage
+    )
+    if (-not [string]::IsNullOrWhiteSpace($RecurringRunId)) {
+        $safeArgs += @("-RunId", $RecurringRunId)
+    }
+    & pwsh @safeArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Safe recurring cross-device runner failed with exit code $LASTEXITCODE."
+    }
+    return
+}
+
 $runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $timings = [ordered]@{}
 $timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")

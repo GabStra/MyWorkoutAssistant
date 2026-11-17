@@ -137,7 +137,8 @@ class InsightProbeService : Service() {
             // Cyclette workout (no LLM call) to inspect evidence structure.
             "M" -> {
                 val db = com.gabstra.myworkoutassistant.shared.AppDatabase.getDatabase(context)
-                val repo = com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository(context.filesDir)
+                val repo = com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+                    .forActiveProfile(context)
                 val workoutStore = repo.getWorkoutStore()
                 val md = runBlocking {
                     val hid = db.workoutHistoryDao().getLatestWorkoutHistoryByWorkoutId(
@@ -167,7 +168,8 @@ class InsightProbeService : Service() {
             // Dump the COMPACT markdown + overview lines for the same session.
             "M2" -> {
                 val db = com.gabstra.myworkoutassistant.shared.AppDatabase.getDatabase(context)
-                val repo = com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository(context.filesDir)
+                val repo = com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+                    .forActiveProfile(context)
                 val workoutStore = repo.getWorkoutStore()
                 val result = runBlocking {
                     val hid = db.workoutHistoryDao().getLatestWorkoutHistoryByWorkoutId(

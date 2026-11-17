@@ -42,9 +42,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
@@ -95,14 +97,14 @@ fun WeightVestForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
-                        text = if(weightVest == null) "Insert Weight Vest" else "Edit Weight Vest",
+                        text = if(weightVest == null) stringResource(R.string.equipment_insert_weight_vest) else stringResource(R.string.equipment_edit_weight_vest),
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 },
@@ -112,7 +114,7 @@ fun WeightVestForm(
                     }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.equipment_back)
                         )
                     }
                 }
@@ -129,18 +131,18 @@ fun WeightVestForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            EquipmentFormSection(title = "Details") {
+            EquipmentFormSection(title = stringResource(R.string.equipment_details)) {
                 OutlinedTextField(
                     value = nameState.value,
                     onValueChange = { nameState.value = it },
-                    label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
+                    label = { Text(stringResource(R.string.equipment_name_label), style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
 
             CollapsibleSection(
-                title = "Available Weights",
-                summary = "${availableWeightsState.value.size} weights",
+                title = stringResource(R.string.equipment_available_weights),
+                summary = stringResource(R.string.equipment_weights_count, availableWeightsState.value.size),
                 expanded = expandedWeights,
                 onToggle = { expandedWeights = !expandedWeights },
                 expandedContentSpacing = Spacing.sm,
@@ -158,14 +160,14 @@ fun WeightVestForm(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${index+1}) ${weight.weight}kg", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.equipment_weight_entry, index + 1, weight.weight), style = MaterialTheme.typography.bodyMedium)
                         IconButton(
                             modifier = Modifier.size(32.dp),
                             onClick = {
                                 availableWeightsState.value = availableWeightsState.value - weight
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Weight")
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.equipment_remove_weight))
                         }
                     }
                 }
@@ -179,7 +181,7 @@ fun WeightVestForm(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.equipment_cancel),
                     onClick = {
                         onCancel()
                     },
@@ -187,7 +189,7 @@ fun WeightVestForm(
                 )
 
                 AppPrimaryButton(
-                    text = "Save",
+                    text = stringResource(R.string.equipment_save),
                     onClick = {
                         val newMachine = WeightVest(
                             id = weightVest?.id ?: UUID.randomUUID(),
@@ -207,7 +209,7 @@ fun WeightVestForm(
     if (showAvailableWeightsDialog.value) {
         StandardDialog(
             onDismissRequest = { showAvailableWeightsDialog.value = false },
-            title = "Add Available Plate",
+            title = stringResource(R.string.equipment_add_available_plate),
             body = {
                 Column {
                     OutlinedTextField(
@@ -217,13 +219,13 @@ fun WeightVestForm(
                                 newWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (KG)") },
+                        label = { Text(stringResource(R.string.equipment_weight_kg_label)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
-            confirmText = "Add",
+            confirmText = stringResource(R.string.equipment_add),
             onConfirm = {
                 val weight = newWeightState.value.toDoubleOrNull()
                 if (weight != null && weight > 0) {
@@ -234,7 +236,7 @@ fun WeightVestForm(
                 }
             },
             confirmEnabled = newWeightState.value.isNotEmpty(),
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.equipment_cancel),
             onDismissButton = { showAvailableWeightsDialog.value = false }
         )
     }

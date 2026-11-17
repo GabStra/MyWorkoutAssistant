@@ -10,9 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.TextAutoSize
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
@@ -166,21 +164,23 @@ fun CalibrationLoadPage(
     fun WeightRow(modifier: Modifier = Modifier, style: TextStyle) {
         Row(
             modifier = modifier
-                .height(40.dp)
+                .heightIn(min = 40.dp)
                 .combinedClickable(
                     onClick = {
                         updateInteractionTime()
                     },
                     onLongClick = { onOpenPicker() }
                 ),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
-            ScalableText(
-                modifier = Modifier.fillMaxWidth(),
-                text = weightText,
-                style = style,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+            Box(Modifier.fillMaxWidth().heightIn(min = 32.dp), contentAlignment = Alignment.Center) {
+                FadingText(
+                    modifier = Modifier.fillMaxWidth(),
+                    text = weightText,
+                    style = style,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            }
         }
     }
 
@@ -249,10 +249,10 @@ fun CalibrationLoadPage(
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
-                    BasicText(
+                    FadingText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .heightIn(min = 40.dp)
                             .combinedClickable(
                                 onClick = {
                                     updateInteractionTime()
@@ -264,17 +264,14 @@ fun CalibrationLoadPage(
                             ),
                         text = weightText,
                         style = itemStyle.copy(
-                            color = MaterialTheme.colorScheme.onBackground,
-                            textAlign = TextAlign.Center,
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                             lineHeightStyle = LineHeightStyle(
                                 alignment = LineHeightStyle.Alignment.Center,
                                 trim = LineHeightStyle.Trim.Both,
                             ),
                         ),
-                        maxLines = 1,
-                        softWrap = false,
-                        autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = itemStyle.fontSize),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -315,7 +312,6 @@ fun CalibrationLoadPage(
                 CalibrationInstructionText(
                     text = "Set load for $reps reps\nat 1-2 RIR",
                     modifier = Modifier.weight(1f),
-                    maxLines = 2,
                 )
             }
         }

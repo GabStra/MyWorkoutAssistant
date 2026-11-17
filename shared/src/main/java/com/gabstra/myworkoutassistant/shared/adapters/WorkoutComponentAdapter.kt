@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.LoadHistoryPolicy
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.SupersetCadenceMode
@@ -53,6 +54,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 src.exerciseDefinitionId?.let {
                     jsonObject.addProperty("exerciseDefinitionId", it.toString())
                 }
+                src.recurringExerciseId?.let { jsonObject.addProperty("recurringExerciseId", it.toString()) }
+                jsonObject.addProperty("loadHistoryPolicy", src.loadHistoryPolicy.name)
                 src.placementNotes?.let { jsonObject.addProperty("placementNotes", it) }
                 src.nameOverride?.let { jsonObject.addProperty("nameOverride", it) }
                 jsonObject.add("sets", context.serialize(src.sets))
@@ -424,6 +427,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                             it, object : TypeToken<Map<String, List<String>>>() {}.type
                         )
                     },
+                    recurringExerciseId = jsonObject.get("recurringExerciseId")
+                        ?.takeUnless { it.isJsonNull }?.asString?.let(UUID::fromString),
+                    loadHistoryPolicy = jsonObject.get("loadHistoryPolicy")
+                        ?.takeUnless { it.isJsonNull }?.asString
+                        ?.let { runCatching { LoadHistoryPolicy.valueOf(it) }.getOrNull() }
+                        ?: LoadHistoryPolicy.NONE,
                 )
             }
 
