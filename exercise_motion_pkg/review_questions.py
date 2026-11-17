@@ -1,11 +1,35 @@
 """Bounded independent review questions with reusable, conclusive answers."""
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
+import json
+import re
 import threading
 from typing import Any, Callable
 
 from exercise_motion_pkg.llama_defaults import DEFAULT_LLAMA_CPP_PARALLEL
 from exercise_motion_pkg.stage_cache import cache_key, file_identity, load_stage, save_stage, stage_lock
+
+STRUCTURED_RESPONSE_PROMPT_POLICY_VERSION = 1
+
+
+def with_schema_choice_vocabulary(prompt: str, schema: dict | None) -> str:
+    """Decoder constraints do not tell the model which choice tokens mean what."""
+    properties = schema.get('properties') if isinstance(schema, dict) else None
+    # Nested evidence structures stay with the caller's format description.
+    choices = {name: field['enum'] for name, field in
+               (properties.items() if isinstance(properties, dict) else [])
+               if isinstance(field, dict) and isinstance(field.get('enum'), list) and field['enum']
+               and all(value is None or isinstance(value, (str, int, float, bool))
+                       for value in field['enum'])}
+    if not choices:
+        return prompt
+    def visible(token):
+        text = token if isinstance(token, str) else json.dumps(token)
+        return re.search(r'(?<!\w)' + re.escape(text) + r'(?!\w)', prompt) is not None
+    if all(visible(name) and all(visible(value) for value in values)
+           for name, values in choices.items()):
+        return prompt
+    return prompt + '\nAllowed JSON choices by field: ' + json.dumps(choices, separators=(',', ':'))
 
 _executor_lock = threading.Lock()
 _executor: ThreadPoolExecutor | None = None
@@ -53,13 +77,21 @@ def _ensure_question_executor(workers: int) -> ThreadPoolExecutor:
 
 def answer_question(*, directory: Path, name: str, prompt: str, frames: list[Path],
                     max_tokens: int, operation: Callable[[], tuple[str, Any]],
-                    reusable: Callable[[Any], bool], identity: Any = None) -> tuple[str, Any]:
+                    reusable: Callable[[Any], bool], identity: Any = None,
+                    legacy_prompt: str | None = None) -> tuple[str, Any]:
     # Shared answers require an explicit model/policy identity. Preserve image
     # order while allowing identical regenerated artifacts at different paths.
-    key = (cache_key({"prompt": prompt, "maxTokens": max_tokens, "identity": identity,
-                      "images": [file_identity(frame).get("sha256") for frame in frames]}, [])
-           if identity is not None and all(frame.is_file() for frame in frames)
-           else cache_key({"prompt": prompt, "maxTokens": max_tokens}, frames))
+    prompt = with_schema_choice_vocabulary(
+        prompt, identity.get('schema') if isinstance(identity, dict) else None)
+    request = {"prompt": prompt, "maxTokens": max_tokens,
+               "structuredResponsePromptPolicyVersion": STRUCTURED_RESPONSE_PROMPT_POLICY_VERSION}
+    image_identity = ([file_identity(frame).get("sha256") for frame in frames]
+                      if identity is not None and all(frame.is_file() for frame in frames) else None)
+    key = (cache_key({**request, "identity": identity, "images": image_identity}, [])
+           if image_identity is not None else cache_key(request, frames))
+    legacy_key = _legacy_prompt_key(
+        prompt=legacy_prompt, identity=identity, frames=frames, max_tokens=max_tokens,
+        image_identity=image_identity)
     checkpoint = directory / name / key / "checkpoint.json"
     with stage_lock(checkpoint):
         cached = load_stage(checkpoint, key)
@@ -67,6 +99,16 @@ def answer_question(*, directory: Path, name: str, prompt: str, frames: list[Pat
             with _metrics_lock:
                 _metrics["cacheHits"] += 1
             return cached["raw"], cached["parsed"]
+        if legacy_key is not None and legacy_key != key:
+            # Read-only migration: reuse a prior answer only under the exact old
+            # prompt+images+policy identity. Never write or approve under it.
+            legacy_checkpoint = directory / name / legacy_key / "checkpoint.json"
+            with stage_lock(legacy_checkpoint):
+                legacy_cached = load_stage(legacy_checkpoint, legacy_key)
+            if legacy_cached is not None and reusable(legacy_cached.get("parsed")):
+                with _metrics_lock:
+                    _metrics["cacheHits"] += 1
+                return legacy_cached["raw"], legacy_cached["parsed"]
         with _metrics_lock:
             _metrics["questionsAsked"] += 1
         raw, parsed = operation()
@@ -76,6 +118,19 @@ def answer_question(*, directory: Path, name: str, prompt: str, frames: list[Pat
             prompt_path.write_text(prompt, encoding="utf-8")
             save_stage(checkpoint, key, {"raw": raw, "parsed": parsed}, [prompt_path, *frames])
         return raw, parsed
+
+
+def _legacy_prompt_key(*, prompt: str | None, identity: Any, frames: list[Path],
+                       max_tokens: int, image_identity: list[str | None] | None) -> str | None:
+    """Reproduce the exact pre-versioning cache key when a legacy prompt is supplied."""
+    if prompt is None:
+        return None
+    prompt = with_schema_choice_vocabulary(
+        prompt, identity.get('schema') if isinstance(identity, dict) else None)
+    legacy_request = {"prompt": prompt, "maxTokens": max_tokens,
+                      "structuredResponsePromptPolicyVersion": STRUCTURED_RESPONSE_PROMPT_POLICY_VERSION}
+    return (cache_key({**legacy_request, "identity": identity, "images": image_identity}, [])
+            if image_identity is not None else cache_key(legacy_request, frames))
 
 
 def run_questions(jobs: dict[str, Callable[[], Any]], caption_images: Callable[..., str]) -> dict[str, Any]:

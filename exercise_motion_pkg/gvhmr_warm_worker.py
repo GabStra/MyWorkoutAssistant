@@ -442,7 +442,11 @@ def compose_job_cfg(state: dict[str, Any], video_path: Path, output_root: Path, 
 
 
 def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, state: dict[str, Any]) -> None:
-    from gvhmr_pkl_export import export_gvhmr_results_pkl
+    import importlib
+    import gvhmr_pkl_export
+
+    # Export is stateless; its mounted code can change while inference models stay warm.
+    export_gvhmr_results_pkl = importlib.reload(gvhmr_pkl_export).export_gvhmr_results_pkl
 
     job = json.loads(job_path.read_text(encoding="utf-8"))
     job_id = str(job.get("jobId") or job_path.stem)

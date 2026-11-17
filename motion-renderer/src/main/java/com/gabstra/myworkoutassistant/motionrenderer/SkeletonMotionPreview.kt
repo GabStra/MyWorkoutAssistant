@@ -136,6 +136,25 @@ private data class WearSkeleton(
     val fixedRig: FixedRigPlayback? = null,
     val displayTransform: WearSkeletonDisplayCoordinateTransform = WearSkeletonDisplayCoordinateTransform.None,
     val footRestPitchRadians: Map<String, Float> = emptyMap(),
+    val nativeFootGeometry: WearNativeFootGeometry? = null,
+)
+
+internal data class WearNativeFootGeometry(
+    val modelSha256: String,
+    val left: WearNativeFootSideGeometry,
+    val right: WearNativeFootSideGeometry,
+)
+
+internal data class WearNativeFootSideGeometry(
+    val ankleToFootJointLengthMeters: Float,
+    val heelFromAnkleLocalMeters: WearSkeletonVec3,
+    val toeFromAnkleLocalMeters: WearSkeletonVec3,
+)
+
+internal data class WearNativeFootMeshVertices(
+    val rings: List<List<WearSkeletonVec3>>,
+    val rearTip: WearSkeletonVec3,
+    val toeTip: WearSkeletonVec3,
 )
 
 private data class WearSkeletonDisplay(
@@ -176,7 +195,7 @@ internal data class SkeletonLoopPlayback(
     val frameCursor: Double = frameIndex.toDouble(),
 )
 
-private data class WearSkeletonVec3(
+internal data class WearSkeletonVec3(
     val x: Float,
     val y: Float,
     val z: Float,
@@ -199,6 +218,60 @@ private data class WearSkeletonVec3(
     fun dot(other: WearSkeletonVec3): Float = x * other.x + y * other.y + z * other.z
 }
 
+internal fun nativeFootShoeVertices(
+    ankle: WearSkeletonVec3,
+    foot: WearSkeletonVec3,
+    sideAxis: WearSkeletonVec3,
+    fallbackSide: WearSkeletonVec3,
+    geometry: WearNativeFootSideGeometry,
+    footScale: Float,
+): WearNativeFootMeshVertices {
+    val bone = foot - ankle
+    val boneLength = bone.length()
+    require(boneLength > 0.0001f && geometry.ankleToFootJointLengthMeters > 0f) {
+        "Native shoe geometry requires a nonzero ankle-to-foot bone."
+    }
+    val forward = bone * (1f / boneLength)
+    val lateral = (sideAxis - forward * sideAxis.dot(forward))
+        .normalizedOr(fallbackSide.projectOntoPlane(forward).normalizedOr(fallbackSide))
+    val up = lateral.cross(forward).normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
+    val factor = boneLength / geometry.ankleToFootJointLengthMeters
+    val heel = geometry.heelFromAnkleLocalMeters * factor
+    val toe = geometry.toeFromAnkleLocalMeters * factor
+    val halfWidth = max(boneLength * 0.26f, footScale * 0.15f)
+    val height = max(boneLength * 0.28f, footScale * 0.15f)
+    val profile = listOf(
+        floatArrayOf(0f, -0.05f, 0.78f, 0.55f),
+        floatArrayOf(0.36f, 0.12f, 1f, 0.72f),
+        floatArrayOf(1f, -0.25f, 0.76f, 0.35f),
+    )
+    val rings = profile.map { (fraction, upScale, widthScale, heightScale) ->
+        val local = heel.lerp(toe, fraction)
+        val center = ankle + forward * local.x + lateral * local.y +
+            up * (local.z + height * (upScale + 0.60f))
+        val width = lateral * (halfWidth * widthScale)
+        val depth = up * (height * heightScale)
+        val topWidth = width * 0.88f
+        val corners = listOf(
+            center + topWidth + depth,
+            center - topWidth + depth,
+            center - width - depth,
+            center + width - depth,
+        )
+        corners.indices.flatMap { index ->
+            listOf(
+                corners[index].lerp(corners[(index + corners.size - 1) % corners.size], 0.30f),
+                corners[index].lerp(corners[(index + 1) % corners.size], 0.30f),
+            )
+        }
+    }
+    return WearNativeFootMeshVertices(
+        rings = rings,
+        rearTip = (rings.first()[0] + rings.first()[4]) * 0.5f,
+        toeTip = (rings.last()[0] + rings.last()[4]) * 0.5f,
+    )
+}
+
 private enum class WearSkeletonDisplayCoordinateTransform {
     None,
     RotateXPi;
@@ -207,6 +280,9 @@ private enum class WearSkeletonDisplayCoordinateTransform {
         None -> point
         RotateXPi -> WearSkeletonVec3(point.x, -point.y, -point.z)
     }
+
+    /** Every configured display transform is an involution, so apply is its own inverse. */
+    fun inverseApply(point: WearSkeletonVec3): WearSkeletonVec3 = apply(point)
 
     fun apply(bounds: WearSkeletonBounds): WearSkeletonBounds = when (this) {
         None -> bounds
@@ -830,6 +906,7 @@ private class WearSkeletonFilamentRenderer(
                 shoeOrientation = posedFrame.shoeOrientation,
                 bodyProportions = skeleton.stableBodyProportions(),
                 footRestPitches = skeleton.footRestPitchRadians,
+                nativeFootGeometry = skeleton.nativeFootGeometry,
             ) ?: GeneratedLowPolyMesh()
             val reuseTopology = bodyEntity != 0 &&
                 generatedMesh.vertices.size == bodyVertexCount &&
@@ -1555,6 +1632,7 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
             shoeOrientation = frame.shoeOrientation,
             bodyProportions = bodyProportions,
             footRestPitches = footRestPitchRadians,
+            nativeFootGeometry = nativeFootGeometry,
         )?.vertices.orEmpty()
         meshVertices.forEach(::includeInBounds)
         frameVertices += meshVertices
@@ -1683,6 +1761,7 @@ private fun buildSingleLowPolyMesh(
     shoeOrientation: Map<String, WearSkeletonShoeOrientation>,
     bodyProportions: StableBodyProportions,
     footRestPitches: Map<String, Float> = emptyMap(),
+    nativeFootGeometry: WearNativeFootGeometry? = null,
 ): GeneratedLowPolyMesh? {
     val pelvis = joints["pelvis"] ?: return null
     val neck = joints["neck"] ?: return null
@@ -1938,6 +2017,7 @@ private fun buildSingleLowPolyMesh(
         shoulderWidth = shoulderWidth,
         midLerp = neckMidLerp,
     )
+
     val headAxes = alignRingAxes(
         neckConnector.axes,
         spineRingAxes(neck, neck.lerp(head, 0.5f), head, shoulderAxes),
@@ -2094,6 +2174,7 @@ private fun buildSingleLowPolyMesh(
             ?: coordinatedLegSides[LimbKey("left_ankle", "left_foot")],
         footRestPitches["left"],
         shoeOrientation["left"],
+        nativeFootGeometry?.left,
     )
     addShoeBlockFromNames(
         mesh, resolvedJoints, "right_ankle", "right_foot", bodyAxes, footScale, palette,
@@ -2101,6 +2182,7 @@ private fun buildSingleLowPolyMesh(
             ?: coordinatedLegSides[LimbKey("right_ankle", "right_foot")],
         footRestPitches["right"],
         shoeOrientation["right"],
+        nativeFootGeometry?.right,
     )
     addJointCapAtNames(mesh, resolvedJoints, "left_elbow", bodyAxes, max(
         segmentScaledWidth("left_shoulder", "left_elbow", 0.225f),
@@ -2206,12 +2288,32 @@ private fun addShoeBlockFromNames(
     preferredSide: WearSkeletonVec3? = null,
     restPitch: Float? = null,
     materialOrientation: WearSkeletonShoeOrientation? = null,
+    nativeGeometry: WearNativeFootSideGeometry? = null,
 ) {
     val ankle = joints[ankleName] ?: return
     val foot = joints[footName] ?: return
     val worldUp = WearSkeletonVec3(0f, 1f, 0f)
     val footVector = foot - ankle
     val footLength = footVector.length()
+    if (nativeGeometry != null && footLength > 0.0001f) {
+        val sideAxis = materialOrientation?.side ?: preferredSide
+        val nativeVertices = nativeFootShoeVertices(
+            ankle = ankle,
+            foot = foot,
+            sideAxis = sideAxis ?: bodyAxes.side,
+            fallbackSide = bodyAxes.side,
+            geometry = nativeGeometry,
+            footScale = footScale,
+        )
+        val fill = palette.limbFill
+        val rings = nativeVertices.rings.map { ring -> ring.map { addMeshVertex(mesh, it) } }
+        rings.zipWithNext().forEach { (rear, front) -> addMeshStrip(mesh, rear, front, fill) }
+        val rearTip = addMeshVertex(mesh, nativeVertices.rearTip)
+        val toeTip = addMeshVertex(mesh, nativeVertices.toeTip)
+        addMeshFan(mesh, rearTip, rings.first(), fill)
+        addMeshFan(mesh, toeTip, rings.last().asReversed(), fill)
+        return
+    }
     val bodyForward = bodyAxes.forward - worldUp * bodyAxes.forward.dot(worldUp)
     val stableForward = bodyForward.normalizedOr(WearSkeletonVec3(0f, 0f, 1f))
     var footForward = if (footLength > 0.0001f) {
@@ -2992,6 +3094,25 @@ private fun Map<String, WearSkeletonVec3>.toBodyAxes(): BodyAxes {
     return BodyAxes(side = side, up = up, forward = forward)
 }
 
+/**
+ * Resolves the renderer's original per-sample shoe material side axes in
+ * canonical rig space so the mirrored contact blend starts from the same
+ * authority the shoe mesh renders.
+ */
+private fun originalMaterialSideAxes(
+    boneSides: Map<LimbKey, WearSkeletonVec3>,
+    shoeSides: Map<String, WearSkeletonVec3>,
+    displayTransform: WearSkeletonDisplayCoordinateTransform,
+): Map<String, DoubleArray> = buildMap {
+    for (side in listOf("left", "right")) {
+        val resolved = shoeSides[side]
+            ?: boneSides[LimbKey("${side}_ankle", "${side}_foot")]
+            ?: continue
+        val canonical = displayTransform.inverseApply(resolved)
+        put("${side}_ankle->${side}_foot", doubleArrayOf(canonical.x.toDouble(), canonical.y.toDouble(), canonical.z.toDouble()))
+    }
+}
+
 private data class LimbProfile(
     val startWidth: Float,
     val endWidth: Float,
@@ -3014,13 +3135,34 @@ private fun WearSkeleton.frameAt(cursor: Double): WearSkeletonFrame {
         val shoeSide = (interpolatedSide - forward * interpolatedSide.dot(forward))
             .normalizedOr(orientation.side)
         side to WearSkeletonShoeOrientation(forward, shoeSide)
-    }.toMap()
+    }.toMap().toMutableMap()
     val rig = fixedRig ?: return currentFrame.copy(shoeOrientation = shoeOrientation)
-    val joints = rig.sample(cursor, wrap = loopable).mapValues { (_, value) ->
+    val sides = currentFrame.boneSides.toMutableMap().mapValues { (key, value) ->
+        value.lerp(nextFrame.boneSides[key] ?: value, alpha).normalizedOr(value)
+    }.toMutableMap()
+    val pose = rig.samplePose(
+        cursor,
+        wrap = loopable,
+        originalMaterialSideAxes = originalMaterialSideAxes(
+            sides,
+            shoeOrientation.mapValues { (_, orientation) -> orientation.side },
+            displayTransform,
+        ),
+    )
+    val joints = pose.joints.mapValues { (_, value) ->
         displayTransform.apply(WearSkeletonVec3(value[0].toFloat(), value[1].toFloat(), value[2].toFloat()))
     }
-    val sides = currentFrame.boneSides.mapValues { (key, value) ->
-        value.lerp(nextFrame.boneSides[key] ?: value, alpha).normalizedOr(value)
+    pose.contactSideAxes.forEach { (key, value) ->
+        val names = key.split("->", limit = 2)
+        if (names.size == 2) {
+            val resolvedSide = displayTransform.apply(
+                WearSkeletonVec3(value[0].toFloat(), value[1].toFloat(), value[2].toFloat())
+            ).normalizedOr(WearSkeletonVec3(0f, 0f, 1f))
+            sides[LimbKey(names[0], names[1])] = resolvedSide
+            shoeOrientation[names[0].removeSuffix("_ankle")]?.let { orientation ->
+                shoeOrientation[names[0].removeSuffix("_ankle")] = WearSkeletonShoeOrientation(orientation.forward, resolvedSide)
+            }
+        }
     }
     return WearSkeletonFrame(joints, sides, shoeOrientation)
 }
@@ -3031,9 +3173,31 @@ private fun WearSkeleton.sidesAt(cursor: Double): Map<LimbKey, WearSkeletonVec3>
     if (fixedRig == null) return sides
     val next = if (loopable) (first + 1) % frames.size else min(first + 1, frames.lastIndex)
     val alpha = (cursor - kotlin.math.floor(cursor)).toFloat()
-    return sides.mapValues { (key, value) ->
+    val result = sides.mapValues { (key, value) ->
         value.lerp(limbSidesByFrame.getOrNull(next)?.get(key) ?: value, alpha).normalizedOr(value)
+    }.toMutableMap()
+    val currentFrame = frames[first]
+    val nextFrame = frames[next]
+    val baselineSides = currentFrame.boneSides.mapValues { (key, value) ->
+        value.lerp(nextFrame.boneSides[key] ?: value, alpha).normalizedOr(value)
     }
+    val baselineShoeSides = currentFrame.shoeOrientation.mapNotNull { (side, orientation) ->
+        val nextOrientation = nextFrame.shoeOrientation[side] ?: return@mapNotNull null
+        val forward = orientation.forward.lerp(nextOrientation.forward, alpha).normalizedOr(orientation.forward)
+        val lateral = orientation.side.lerp(nextOrientation.side, alpha)
+        side to (lateral - forward * lateral.dot(forward)).normalizedOr(orientation.side)
+    }.toMap()
+    fixedRig.samplePose(
+        cursor,
+        wrap = loopable,
+        originalMaterialSideAxes = originalMaterialSideAxes(baselineSides, baselineShoeSides, displayTransform),
+    ).contactSideAxes.forEach { (key, value) ->
+        val names = key.split("->", limit = 2)
+        if (names.size == 2) result[LimbKey(names[0], names[1])] = displayTransform.apply(
+            WearSkeletonVec3(value[0].toFloat(), value[1].toFloat(), value[2].toFloat())
+        ).normalizedOr(WearSkeletonVec3(0f, 0f, 1f))
+    }
+    return result
 }
 
 private fun parseWearSkeleton(json: String): WearSkeleton {
@@ -3092,11 +3256,30 @@ private fun parseWearSkeleton(json: String): WearSkeleton {
         )
     }
     val loopable = root.optionalJsonObject("loop")?.optionalBoolean("enabled") ?: true
-    val fixedRig = root.optionalJsonObject("fixedRig")?.let { FixedRigPlayback.parse(it, frames.size) }
+    val nativeFootGeometry = parseNativeFootGeometry(root)
+    val fixedRig = root.optionalJsonObject("fixedRig")?.let {
+        FixedRigPlayback.parse(it, frames.size, nativeFootGeometry, root.optionalJsonObject("canonicalExecution"))
+    }
     val playbackFrames = if (fixedRig == null) smoothJointTracks(frames, loopable) else frames.mapIndexed { index, frame ->
-        frame.copy(joints = fixedRig.sample(index.toDouble(), wrap = loopable).mapValues { (_, point) ->
+        val pose = fixedRig.samplePose(index.toDouble(), wrap = loopable)
+        val joints = pose.joints.mapValues { (_, point) ->
             displayCoordinateTransform.apply(WearSkeletonVec3(point[0].toFloat(), point[1].toFloat(), point[2].toFloat()))
-        })
+        }
+        val boneSides = frame.boneSides.toMutableMap()
+        val shoeOrientation = frame.shoeOrientation.toMutableMap()
+        pose.contactSideAxes.forEach { (key, axis) ->
+            val names = key.split("->", limit = 2)
+            if (names.size == 2) {
+                val resolvedSide = displayCoordinateTransform.apply(
+                    WearSkeletonVec3(axis[0].toFloat(), axis[1].toFloat(), axis[2].toFloat())
+                ).normalizedOr(WearSkeletonVec3(0f, 0f, 1f))
+                boneSides[LimbKey(names[0], names[1])] = resolvedSide
+                shoeOrientation[names[0].removeSuffix("_ankle")]?.let { orientation ->
+                    shoeOrientation[names[0].removeSuffix("_ankle")] = WearSkeletonShoeOrientation(orientation.forward, resolvedSide)
+                }
+            }
+        }
+        frame.copy(joints = joints, boneSides = boneSides, shoeOrientation = shoeOrientation)
     }
     return WearSkeleton(
         fps = root.get("fps")?.asFloat ?: 30f,
@@ -3117,6 +3300,75 @@ private fun parseWearSkeleton(json: String): WearSkeleton {
                 ?.takeIf { it.isFinite() && abs(it) < PI.toFloat() / 2f }
                 ?.let { side to it }
         }.toMap(),
+        nativeFootGeometry = nativeFootGeometry,
+    )
+}
+
+internal fun parseNativeFootGeometry(root: JsonObject): WearNativeFootGeometry? {
+    val encoded = root.get("nativeFootGeometry")
+    if (encoded == null || encoded.isJsonNull) return null
+    require(encoded.isJsonObject) { "nativeFootGeometry must be an object when present." }
+    val geometry = encoded.asJsonObject
+    val version = geometry.get("version")
+    require(version != null && version.isJsonPrimitive && version.asJsonPrimitive.isNumber &&
+        version.asInt == 1 && version.asDouble == 1.0) {
+        "Unsupported nativeFootGeometry version."
+    }
+    require(geometry.optionalString("source") == "named_smpl_rest_heel_and_toe_vertices") {
+        "Unsupported nativeFootGeometry source."
+    }
+    val modelSha256 = geometry.optionalString("modelSha256")
+    require(modelSha256 != null && modelSha256.matches(Regex("[0-9a-f]{64}"))) {
+        "nativeFootGeometry.modelSha256 must be a 64-character SHA-256 digest."
+    }
+    val sides = geometry.get("sides")
+    require(sides != null && sides.isJsonObject) { "nativeFootGeometry.sides must be an object." }
+    val sidesObject = sides.asJsonObject
+    require(sidesObject.keySet() == setOf("left", "right")) {
+        "nativeFootGeometry.sides must contain exactly left and right."
+    }
+    fun parseSide(name: String): WearNativeFootSideGeometry {
+        val sideElement = sidesObject.get(name)
+        require(sideElement != null && sideElement.isJsonObject) {
+            "nativeFootGeometry.sides.$name must be an object."
+        }
+        val side = sideElement.asJsonObject
+        val referenceLength = side.optionalFloat("ankleToFootJointLengthMeters")
+        require(referenceLength != null && referenceLength.isFinite() && referenceLength > 0f) {
+            "nativeFootGeometry.sides.$name.ankleToFootJointLengthMeters must be positive and finite."
+        }
+        fun vector(key: String): WearSkeletonVec3 {
+            val value = side.get(key)
+            require(value != null && value.isJsonArray && value.asJsonArray.size() == 3) {
+                "nativeFootGeometry.sides.$name.$key must contain exactly three numbers."
+            }
+            val values = value.asJsonArray.map { element ->
+                require(element.isJsonPrimitive && element.asJsonPrimitive.isNumber) {
+                    "nativeFootGeometry.sides.$name.$key must contain finite numbers."
+                }
+                element.asFloat.also { number ->
+                    require(number.isFinite()) {
+                        "nativeFootGeometry.sides.$name.$key must contain finite numbers."
+                    }
+                }
+            }
+            return WearSkeletonVec3(values[0], values[1], values[2])
+        }
+        val heel = vector("heelFromAnkleLocalMeters")
+        val toe = vector("toeFromAnkleLocalMeters")
+        require(toe.x > 0f && toe.length() > 1e-9f && (toe - heel).length() > 1e-9f) {
+            "nativeFootGeometry.sides.$name markers are not a valid ankle-to-toe span."
+        }
+        return WearNativeFootSideGeometry(
+            ankleToFootJointLengthMeters = referenceLength,
+            heelFromAnkleLocalMeters = heel,
+            toeFromAnkleLocalMeters = toe,
+        )
+    }
+    return WearNativeFootGeometry(
+        modelSha256 = modelSha256,
+        left = parseSide("left"),
+        right = parseSide("right"),
     )
 }
 

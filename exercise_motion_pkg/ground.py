@@ -1,14 +1,209 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 from exercise_motion_pkg.models import MotionClip
 from exercise_motion_pkg.motion_io import save_motion_json
 from exercise_motion_pkg.render_geometry import support_surface_height
+
+
+def estimate_native_ground_plane_from_source_support(
+    clip: MotionClip,
+    source_support_evidence: dict[str, object] | None,
+    *,
+    selected_video_path: Path | None,
+) -> dict[str, object] | None:
+    """Estimate one fixed floor plane from verified source contacts and native shoes."""
+    if not isinstance(source_support_evidence, dict) or selected_video_path is None:
+        return None
+    try:
+        selected_video_path = Path(selected_video_path).expanduser().resolve()
+        selected_digest = hashlib.sha256(selected_video_path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+    if str(source_support_evidence.get("sourceVideoSha256") or "").casefold() != selected_digest:
+        return None
+
+    reconstruction = clip.metadata.get("reconstruction") if isinstance(clip.metadata, dict) else None
+    prior = reconstruction.get("footMarkerPrior") if isinstance(reconstruction, dict) else None
+    from .native_foot_geometry import native_foot_geometry_from_prior
+    from .foot_geometry import foot_scale_from_pose, shoe_vertices
+
+    native_geometry = native_foot_geometry_from_prior(prior)
+    if native_geometry is None or not clip.frames:
+        return None
+    mapping = clip.metadata.get("sourceTimelineMapping")
+    if (not isinstance(mapping, dict) or mapping.get("verified") is not True
+            or str(mapping.get("selectedSegmentSha256") or "").casefold() != selected_digest):
+        return None
+    lineage = mapping.get("selectedFrameLineage")
+    if not isinstance(lineage, list) or not lineage:
+        return None
+    try:
+        selected_clock_path = Path(str(mapping["selectedFrameClockReceiptPath"])).expanduser().resolve()
+        selected_clock_sha = hashlib.sha256(selected_clock_path.read_bytes()).hexdigest()
+        if selected_clock_sha != str(mapping.get("selectedFrameClockReceiptSha256") or "").casefold():
+            return None
+        from .source_frame_clock import load_verified_source_frame_clock
+        selected_clock = load_verified_source_frame_clock(selected_clock_path)
+        # The verified receipt may name an earlier exact copy of the selected
+        # clip. Bind by output bytes and recorded selected-segment lineage, not
+        # by comparing its parent/source hash or output path to this copy path.
+        if (str(selected_clock.get("outputVideoSha256") or "").casefold() != selected_digest
+                or selected_clock.get("outputFrameCount") != len(lineage)):
+            return None
+        clock_frames = selected_clock.get("frames")
+        output_fps = float(selected_clock.get("outputFps", 0.0))
+        if (not isinstance(clock_frames, list) or len(clock_frames) != len(lineage)
+                or not math.isfinite(output_fps) or output_fps <= 0.0):
+            return None
+    except (KeyError, OSError, ValueError, TypeError):
+        return None
+
+    from .body_support_observation import validated_body_support_contact_timeline
+    rows = validated_body_support_contact_timeline(
+        source_support_evidence.get("bodySupportObservation"),
+        expected_video_sha256=selected_digest)
+    if rows is None:
+        return None
+    lineage_by_index: dict[int, tuple[float, float]] = {}
+    try:
+        for item in lineage:
+            selected_index = item["selectedFrameIndex"]
+            local_time, parent_time = float(item["selectedFrameTimeSec"]), float(item["parentSourceTimeSec"])
+            if (type(selected_index) is not int or selected_index < 0
+                    or not math.isfinite(local_time) or not math.isfinite(parent_time)):
+                return None
+            clock_frame = clock_frames[selected_index]
+            if (not isinstance(clock_frame, dict)
+                    or item.get("parentSourceFrameIndex") != clock_frame.get("sourceFrameIndex")
+                    or abs(parent_time - float(clock_frame.get("sourceTimeSec"))) > 1e-6
+                    or abs(local_time - selected_index / output_fps) > 1e-6):
+                return None
+            lineage_by_index[selected_index] = (local_time, parent_time)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if not lineage_by_index:
+        return None
+
+    timed_frames = []
+    for frame in clip.frames:
+        if frame.source_time_sec is None or not math.isfinite(float(frame.source_time_sec)):
+            return None
+        timed_frames.append((float(frame.source_time_sec), frame))
+    timed_frames.sort(key=lambda item: item[0])
+    if any(timed_frames[i][0] >= timed_frames[i + 1][0] for i in range(len(timed_frames) - 1)):
+        return None
+    names = clip.joint_names
+    try:
+        scale = float(foot_scale_from_pose(
+            np.asarray([clip.frames[0].joints[name] for name in names], dtype=float), names))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(scale) or scale <= 0.0:
+        return None
+
+    times = [item[0] for item in timed_frames]
+
+    def frame_at(source_time: float):
+        index = int(np.searchsorted(times, source_time, side="left"))
+        if index < len(times) and abs(times[index] - source_time) <= 1e-5:
+            return timed_frames[index][1]
+        if index <= 0 or index >= len(times):
+            return None
+        left_time, left = timed_frames[index - 1]
+        right_time, right = timed_frames[index]
+        fraction = (source_time - left_time) / (right_time - left_time)
+        joints = {
+            name: tuple(float(a) + (float(b) - float(a)) * fraction
+                        for a, b in zip(left.joints[name], right.joints[name]))
+            for name in names
+        }
+        if not isinstance(left.bone_sides, dict) or not isinstance(right.bone_sides, dict):
+            return None
+        sides = {}
+        for key in set(left.bone_sides) & set(right.bone_sides):
+            axis = np.asarray(left.bone_sides[key], dtype=float) * (1.0 - fraction) + np.asarray(
+                right.bone_sides[key], dtype=float) * fraction
+            norm = float(np.linalg.norm(axis))
+            if norm <= 1e-9 or not np.isfinite(axis).all():
+                return None
+            sides[key] = tuple((axis / norm).tolist())
+        from .models import MotionFrame
+        return MotionFrame(time_sec=source_time, source_time_sec=source_time,
+                           joints=joints, bone_sides=sides)
+
+    patches = {
+        "full_sole": tuple(range(26)),
+        "forefoot": (*range(16, 24), 25),
+        "heel_only": (*range(0, 8), 24),
+        "inferred_outsole_patch": tuple(range(26)),
+    }
+    samples: list[tuple[float, str, str, str]] = []
+    for row in rows:
+        side = row.get("side")
+        landmark, state, surface = row.get("landmark", "foot"), row.get("contactState"), row.get("surface")
+        if side not in {"left", "right"} or row.get("visible") is not True or surface not in {"ground", "floor"}:
+            continue
+        if landmark == "foot" and state in {"full_sole", "forefoot", "heel_only"}:
+            patch = state
+        elif landmark == "region" and row.get("contactRegion") == "foot" and state == "direct_contact":
+            patch = "inferred_outsole_patch"
+        else:
+            continue
+        source_index = row.get("sourceFrameIndex")
+        if source_index not in lineage_by_index:
+            return None
+        local_time, parent_time = lineage_by_index[source_index]
+        if abs(local_time - float(row["sourceTimeSec"])) > 1e-4:
+            return None
+        pose_frame = frame_at(parent_time)
+        if pose_frame is None:
+            return None
+        ankle_name, foot_name = f"{side}_ankle", f"{side}_foot"
+        side_axis = (pose_frame.bone_sides or {}).get(f"{ankle_name}->{foot_name}")
+        geometry_side = native_geometry["sides"].get(side)
+        if ankle_name not in pose_frame.joints or foot_name not in pose_frame.joints or side_axis is None or geometry_side is None:
+            return None
+        try:
+            vertices = shoe_vertices(
+                np.asarray(pose_frame.joints[ankle_name]), np.asarray(pose_frame.joints[foot_name]),
+                np.asarray(side_axis), None, scale, native_geometry=geometry_side)
+            contact_y = float(np.min(np.asarray(vertices)[list(patches[patch]), 1]))
+        except (ValueError, TypeError, IndexError, FloatingPointError):
+            return None
+        if not math.isfinite(contact_y):
+            return None
+        samples.append((contact_y, side, patch, str(row.get("sampleId"))))
+    if not samples:
+        return None
+    floor_y = float(np.median([sample[0] for sample in samples]))
+    rms = float(np.sqrt(np.mean([(sample[0] - floor_y) ** 2 for sample in samples])))
+    return {
+        "schemaVersion": 1,
+        "kind": "source_native_foot_contact_plane_estimate",
+        "authority": "verified_source_contact_plus_native_mesh_geometry",
+        "planeNormal": [0.0, 1.0, 0.0],
+        "planeOffsetMeters": floor_y,
+        "planeRmsErrorMeters": rms,
+        "surfaceHeightSource": "native_shoe_contact_patch_at_verified_source_times",
+        "sourceVideoSha256": selected_digest,
+        "selectedFrameClockReceiptPath": str(selected_clock_path),
+        "selectedFrameClockReceiptSha256": selected_clock_sha,
+        "sourceTimelineMappingKind": mapping.get("mappingKind"),
+        "sampleCount": len(samples),
+        "samples": [
+            {"heightMeters": height, "side": side, "patchRole": role, "sampleId": sample_id}
+            for height, side, role, sample_id in samples
+        ],
+    }
 
 
 @dataclass(frozen=True)
@@ -20,8 +215,8 @@ class PlaneEstimate:
 
 @dataclass(frozen=True)
 class GroundMetadata:
-    render_plane: PlaneEstimate
-    render_origin: tuple[float, float, float]
+    render_plane: PlaneEstimate | None
+    render_origin: tuple[float, float, float] | None
     motion_plane: PlaneEstimate
     motion_origin: tuple[float, float, float]
     camera_plane: PlaneEstimate | None
@@ -34,8 +229,6 @@ class GroundMetadata:
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
-            "renderGroundPlane": _plane_to_payload(self.render_plane, space="motion"),
-            "renderGroundOrigin": _point_to_payload(self.render_origin, space="motion"),
             "motionGroundPlane": _plane_to_payload(self.motion_plane, space="motion"),
             "motionGroundOrigin": _point_to_payload(self.motion_origin, space="motion"),
             "renderSource": self.render_source,
@@ -47,12 +240,52 @@ class GroundMetadata:
             },
             "notes": self.notes,
         }
+        if self.render_plane is not None and self.render_origin is not None:
+            payload["renderGroundPlane"] = _plane_to_payload(self.render_plane, space="motion")
+            payload["renderGroundOrigin"] = _point_to_payload(self.render_origin, space="motion")
         if self.camera_plane is not None:
             payload["unidepth"] = {
                 **payload["unidepth"],
                 "cameraGroundPlane": _plane_to_payload(self.camera_plane, space="camera"),
             }
         return payload
+
+
+def _has_ground_contact_observations(clip: MotionClip) -> bool:
+    cleanup = clip.metadata.get("cleanup") or {}
+    reconstruction = clip.metadata.get("reconstruction") or {}
+    native_geometry_present = (isinstance(reconstruction, dict)
+                               and ("footMarkerPrior" in reconstruction
+                                    or "nativeFootGeometry" in reconstruction))
+    if native_geometry_present:
+        native_contact = cleanup.get("nativeGroundContact") if isinstance(cleanup, dict) else None
+        return bool(isinstance(native_contact, dict)
+                    and native_contact.get("applied") is True
+                    and native_contact.get("authority")
+                    == "verified_source_contact_plus_native_mesh_geometry")
+    grounding = cleanup.get("verticalGrounding") or {}
+    if grounding.get("groundContactMode") == "none":
+        return False
+    return any(isinstance(state, dict) and bool(state.get("contactJoints"))
+               for state in cleanup.get("footContacts") or [])
+
+
+def clip_has_render_floor_authority(clip: MotionClip) -> bool:
+    """Contact observations or applied camera-floor registration own the plane.
+
+    Numeric all-frame foot bounds alone remain diagnostic, including retained
+    metadata that formerly labelled that fallback as contact-authoritative.
+    """
+    ground = clip.metadata.get("ground") or {}
+    if _has_ground_contact_observations(clip):
+        return True
+    video = clip.metadata.get("videoWorldAlignment") or {}
+    if video.get("applied") and _camera_plane_from_alignment_metadata(video) is not None:
+        return True
+    depth = ground.get("unidepth") or {}
+    return bool(depth.get("alignmentStatus") == "video_depth_yolo_aligned"
+                and isinstance(depth.get("framesUsed"), int) and depth["framesUsed"] > 0
+                and _camera_plane_from_alignment_metadata(depth) is not None)
 
 
 def generate_ground_metadata(
@@ -64,18 +297,40 @@ def generate_ground_metadata(
 ) -> GroundMetadata:
     motion_plane = estimate_motion_ground_plane(cleaned_clip)
     motion_origin = estimate_motion_ground_origin(cleaned_clip, motion_plane)
-    render_plane = motion_plane
-    render_origin = motion_origin
+    observed_contacts = _has_ground_contact_observations(cleaned_clip)
+    cleanup = cleaned_clip.metadata.get("cleanup") if isinstance(cleaned_clip.metadata, dict) else None
+    native_contact = cleanup.get("nativeGroundContact") if isinstance(cleanup, dict) else None
+    native_contact_applied = (observed_contacts and isinstance(native_contact, dict)
+                              and native_contact.get("applied") is True
+                              and native_contact.get("authority")
+                              == "verified_source_contact_plus_native_mesh_geometry")
+    if native_contact_applied:
+        plane_rms = native_contact.get("planeRmsErrorMeters")
+        render_plane = PlaneEstimate((0.0, 1.0, 0.0), 0.0,
+                                     float(plane_rms) if isinstance(plane_rms, (int, float)) else None)
+        render_origin = (0.0, 0.0, 0.0)
+    else:
+        render_plane = motion_plane if observed_contacts else None
+        render_origin = motion_origin if observed_contacts else None
     alignment_status = "motion_space_only"
-    render_source = "motion_contact_authoritative"
-    notes = [
-        "renderGroundPlane is motion/contact-derived and is the authoritative floor for rendering.",
-    ]
+    render_source = ("source_native_contact_mesh_inferred_plane" if native_contact_applied else
+                     "motion_contact_authoritative" if observed_contacts else "motion_bounds_only")
+    notes = ([
+        "A single clip-level floor translation was estimated from verified ground-contact rows and the native shoe mesh; contact states and sole roles remain those in source evidence."
+    ] if native_contact_applied else [
+        "Motion-space foot bounds do not establish an observed render floor."
+        if not observed_contacts else
+        "Render floor is supported by recorded ground-contact episodes."
+    ])
     camera_plane = _camera_plane_from_alignment_metadata(video_alignment_metadata)
     sample_frame_seconds: list[float] = []
     frames_used = 0
     model_name = None
-    if isinstance(video_alignment_metadata, dict) and bool(video_alignment_metadata.get("applied")):
+    if (not native_contact_applied
+            and isinstance(video_alignment_metadata, dict)
+            and bool(video_alignment_metadata.get("applied"))
+            and camera_plane is not None):
+        render_plane, render_origin = motion_plane, motion_origin
         alignment_status = "video_depth_yolo_aligned"
         render_source = "video_depth_yolo_aligned_motion_contact"
         notes.append(

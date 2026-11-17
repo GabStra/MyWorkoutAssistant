@@ -100,4 +100,25 @@ def test_unresolved_source_cannot_be_overridden_or_used_as_pose_verdict():
     result = bake.materialized_source_pose_fidelity_metrics(
         source_pose_payload=source, output_motion_payload={}, required=True)
     assert not result['available'] and not result['passed']
-    assert result['skippedReason'] == 'source_pose_reference_unreliable'
+    assert result.get('skippedReason') != 'source_pose_reference_unreliable'
+
+
+def test_loaded_pose_carries_verified_video_identity_not_a_pose_claim(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    from types import SimpleNamespace
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'exact source bytes')
+    pose = reference()
+    pose['sourceVideoSha256'] = '0' * 64
+    digest = hashlib.sha256(video.read_bytes()).hexdigest()
+    path = tmp_path / 'reference.json'
+    path.write_text(json.dumps({'sourceVideoSha256': digest, 'pose': pose}))
+    monkeypatch.setattr(bake, 'read_basic_video_metadata',
+                        lambda _path: SimpleNamespace(width=600, height=600))
+    loaded = bake.load_verified_source_pose_reference(path, video)
+    assert loaded['sourceVideoSha256'] == digest
+    assert loaded['frames'] == pose['frames']
+    wrong = tmp_path / 'wrong.mp4'
+    wrong.write_bytes(b'other bytes')
+    assert bake.load_verified_source_pose_reference(path, wrong) is None

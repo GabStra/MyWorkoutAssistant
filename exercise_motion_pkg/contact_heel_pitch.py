@@ -21,6 +21,395 @@ def _unit(vector):
     return vector / np.maximum(length, 1e-12)
 
 
+def anatomical_foot_frame(vector, normal=(0., 1., 0.)):
+    """The ankle/foot material frame shared by marker calibration and fitting."""
+    forward = _unit(vector)
+    lateral = np.cross(forward, np.asarray(normal))
+    if np.any(np.linalg.norm(lateral, axis=-1) <= 1e-9):
+        raise ValueError('anatomical foot frame is degenerate')
+    lateral = _unit(lateral)
+    return np.stack([forward, lateral, np.cross(lateral, forward)], axis=-1)
+
+
+def anatomical_heel_vectors(points, names, observations, *, projection, normal=(0., 1., 0.)):
+    """Project the same fixed anatomical feature pair used by the inverse."""
+    result = []
+    for row in observations:
+        left, right, alpha = row['leftFrame'], row['rightFrame'], row['alpha']
+        pose = points[left] * (1. - alpha) + points[right] * alpha
+        side = row['motionSide']
+        vector = pose[names.index(side + '_foot')] - pose[names.index(side + '_ankle')]
+        frame = anatomical_foot_frame(vector, normal)
+        result.append(np.asarray(projection) @ frame @ np.asarray(row['anatomicalMarkerLocalVector']))
+    return np.asarray(result)
+
+
+def marker_pair_region_translation(heel, toe, low, high):
+    """Fix only the unobserved common origin, never the measured pair vector."""
+    heel, toe, low, high = (np.asarray(value, dtype=float) for value in (heel, toe, low, high))
+    lower = np.maximum(low - heel, low - toe)
+    upper = np.minimum(high - heel, high - toe)
+    if np.any(lower > upper):
+        return None
+    return np.clip(np.zeros(3), lower, upper)
+
+
+def anatomical_marker_foot_geometry(ankle, toe, direction, marker, rest, scale, floor,
+                                    *, ankle_anchor=None, toe_anchor=None):
+    """Test orientation with the actual anchor ownership, not free seed placement."""
+    from .foot_geometry import free_foot_floor_translation, material_foot_points, shoe_vertices
+
+    ankle, toe = np.asarray(ankle), np.asarray(toe)
+    length = float(np.linalg.norm(toe - ankle))
+    frame = anatomical_foot_frame(direction)
+    if ankle_anchor is not None and toe_anchor is not None:
+        ankle, toe = np.asarray(ankle_anchor), np.asarray(toe_anchor)
+        frame = anatomical_foot_frame(toe - ankle)
+    elif ankle_anchor is not None:
+        ankle = np.asarray(ankle_anchor)
+        toe = ankle + length * frame[:, 0]
+    else:
+        toe = np.asarray(toe_anchor) if toe_anchor is not None else toe.copy()
+        ankle = toe - length * frame[:, 0]
+    orientation = {'forward': frame[:, 0] * math.cos(rest) - frame[:, 2] * math.sin(rest),
+                   'side': frame[:, 1]}
+    translation = np.zeros(3)
+    if floor is not None and ankle_anchor is None and toe_anchor is None:
+        lift = free_foot_floor_translation(
+            ankle, toe, floor_y=floor, rest_pitch_radians=rest,
+            foot_scale=scale, side_axis=frame[:, 1])
+        translation = np.asarray([0., lift, 0.])
+        ankle, toe = ankle + translation, toe + translation
+    vertices = shoe_vertices(ankle, toe, frame[:, 1], rest, scale, orientation)
+    heel, _ = material_foot_points(ankle, toe, frame[:, 1], rest, orientation)
+    return {'vector': frame @ np.asarray(marker), 'vertices': vertices, 'heel': heel,
+            'ankle': ankle, 'toe': toe, 'virtualClearance': translation}
+
+
+def calibrate_anatomical_heel_markers(payload, points, names, projection, observations, contexts):
+    """Calibrate observed neutral pixels, retaining the model only in the camera nullspace."""
+    prior = payload.get('sourceFootMarkerPrior')
+    if not isinstance(prior, dict):
+        return {}
+    reference = payload.get('sourcePoseCameraReference') or {}
+    mapping = reference.get('sourceTimelineMapping') or {}
+    evidence = payload.get('sourceFootSupportEvidence') or {}
+    identities = {evidence.get('sourceVideoSha256'), mapping.get('parentSourceSha256'),
+                  mapping.get('selectedSegmentSha256')}
+    from .native_foot_geometry import is_qualified_named_foot_marker_prior
+    if (not is_qualified_named_foot_marker_prior(prior)
+            or not prior.get('sourceVideoSha256') or prior['sourceVideoSha256'] not in identities
+            or prior.get('modelInputVideoSha256') != mapping.get('parentClockOutputSha256')
+            or not isinstance(prior.get('modelInputVideoSha256'), str)
+            or len(prior['modelInputVideoSha256']) != 64
+            or any(character not in '0123456789abcdef'
+                   for character in prior['modelInputVideoSha256'])):
+        return {}
+    try:
+        source_points = np.asarray([
+            [(frame.get('cameraPlacementReferenceJoints') or frame['sourceJoints'])[name]
+             for name in names] for frame in payload['frames']], dtype=float)
+        if not np.isfinite(source_points).all():
+            return {}
+        # Neutral rig placement follows the existing explicit technique policy,
+        # independently of subsequent fitted/support-corrected candidate joints.
+        from .controlled_motion import canonical_bilateral_reference
+        source_points = canonical_bilateral_reference(
+            source_points, names, payload.get('canonicalExecution') or {})
+    except (KeyError, ValueError, TypeError):
+        return {}
+    calibrated = {}
+    for side in ('left', 'right'):
+        model = (prior.get('sides') or {}).get(side) or {}
+        neutral = [row for row in contexts.get(side, [])
+                   if row.get('sourceFeature') == 'anatomical_heel_to_toe']
+        reference_rows = [row for row in observations
+                          if row['motionSide'] == side and row['state'] == 'full_sole'
+                          and row.get('sourceFeature') == 'anatomical_heel_to_toe']
+        rest = (payload.get('footRestPitchRadians') or {}).get(side)
+        if len(neutral) < 3 or not reference_rows or rest is None:
+            continue
+        try:
+            model_vector, toe, low, high = [np.asarray(model[key], dtype=float) for key in (
+                'heelToToeLocalMeters', 'toeFromAnkleLocalMeters',
+                'regionMinimumModelMeters', 'regionMaximumModelMeters')]
+            model_frame = np.asarray(model['modelFootFrame'], dtype=float)
+            if not all(value.shape == (3,) and np.isfinite(value).all()
+                       for value in (model_vector, toe, low, high)) or np.any(high <= low) or (
+                    model_frame.shape != (3, 3) or not np.isfinite(model_frame).all()
+                    or not np.allclose(model_frame.T @ model_frame, np.eye(3), atol=1e-6)):
+                continue
+            frames = []
+            for row in reference_rows:
+                source_vectors = []
+                for index in (row['leftFrame'], row['rightFrame']):
+                    source_vectors.append(source_points[index, names.index(side + '_foot')]
+                                          - source_points[index, names.index(side + '_ankle')])
+                heading = source_vectors[0] * (1. - row['alpha']) + source_vectors[1] * row['alpha']
+                heading[1] = 0.
+                if np.linalg.norm(heading) <= 1e-9:
+                    raise ValueError('neutral foot heading unavailable')
+                vector = _unit(heading) * math.cos(rest) + np.asarray([0., 1., 0.]) * math.sin(rest)
+                frames.append(anatomical_foot_frame(vector))
+            design = np.mean([np.asarray(projection) @ frame for frame in frames], axis=0)
+            if np.linalg.matrix_rank(design) != 2:
+                continue
+            observed = np.median([row['sourceHeelToToeVector'] for row in neutral], axis=0)
+            local = model_vector + np.linalg.pinv(design) @ (observed - design @ model_vector)
+            # A calibrated heel must remain within the actual model's foot region.
+            model_heel = model_frame @ (toe + local)
+            model_toe = model_frame @ toe
+            translation = marker_pair_region_translation(model_heel, model_toe, low, high)
+            if translation is None:
+                continue
+        except (ValueError, KeyError, TypeError, np.linalg.LinAlgError):
+            continue
+        calibrated[side] = {
+            'localVector': local.tolist(), 'neutralSourceTimes': [row['sourceTime'] for row in neutral],
+            'sourceVideoSha256': evidence.get('sourceVideoSha256'),
+            'sourcePosePayloadSha256': mapping.get('sourcePosePayloadSha256'),
+            'projection': np.asarray(projection).tolist(),
+            'sourceTimelineMappingIdentity': (reference.get('camera') or {}).get('sourceTimelineMappingIdentity'),
+            'modelSha256': prior['modelSha256'], 'reconstructionSha256': prior['reconstructionSha256'],
+            'neutralProjectedVector': (design @ local).tolist(),
+            'sourceFeature': 'anatomical_heel_to_toe', 'calibrationRank': 2,
+            'rigReference': 'immutable_source_with_explicit_canonical_policy',
+            'markerPairTranslationModelMeters': translation.tolist(),
+        }
+    return calibrated
+
+
+def _propose_anatomical_heel_pitch(points, names, payload, constraint, fps, deadline,
+                                  contact_targets=None, *, pinned=None):
+    from scipy.interpolate import PchipInterpolator
+    from scipy.optimize import minimize
+    from .foot_geometry import foot_scale_from_pose
+    from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, PLAYBACK_FLOOR_LIMIT_METERS
+
+    projection = _source_projection_for_points(constraint['projection'], payload)
+    count = len(points)
+    desired = np.stack([_unit(points[:, names.index(side + '_foot')]
+                             - points[:, names.index(side + '_ankle')])
+                        for side in ('left', 'right')], axis=1)
+    times = np.asarray([frame['sourceTimeSec'] for frame in payload['frames']]) - constraint['sourceTimeOriginSec']
+    scale = foot_scale_from_pose(points[0], names)
+    floor = payload.get('renderFloorY')
+    floor = float(floor) if isinstance(floor, (float, int)) and np.isfinite(floor) else None
+    reports, authority_masks, trajectory_masks, pitch_tracks = {}, {}, {}, {}
+    failures = []
+    image_noise_exceedances = []
+    pins = np.zeros(points.shape[:2], dtype=bool) if pinned is None else np.asarray(pinned, dtype=bool)
+    if pins.shape != points.shape[:2]:
+        raise ValueError('anatomical inverse pins must match rig keyframes')
+    # A full-sole observed foot patch must not become an exact tangential ankle
+    # anchor merely because a legacy caller widened the pin mask. Preserve an
+    # independently observed ankle contact/restraint: that is real point
+    # ownership and its anchor remains authoritative.
+    from .contact_constraints import (
+        contact_frame_bounds,
+        is_stationary_contact,
+        motion_space_support_evidence,
+    )
+    support = motion_space_support_evidence(payload)
+    patch_ankle_pin = np.zeros_like(pins)
+    explicit_ankle_pin = np.zeros_like(pins)
+    for key in ('contacts', 'supportContacts'):
+        for contact in support.get(key) or []:
+            if not isinstance(contact, dict) or not is_stationary_contact(contact):
+                continue
+            joint = str(contact.get('jointName') or '')
+            if not joint.endswith(('_ankle', '_foot')):
+                continue
+            start, stop = contact_frame_bounds(contact, count)
+            if stop < start:
+                continue
+            if joint.endswith('_ankle') and joint in names:
+                explicit_ankle_pin[start:stop + 1, names.index(joint)] = True
+            if (joint.endswith('_foot')
+                    and contact.get('supportKind') == 'observed_foot_patch'
+                    and contact.get('contactState') == 'full_sole'):
+                ankle_name = joint.removesuffix('_foot') + '_ankle'
+                if ankle_name in names:
+                    patch_ankle_pin[start:stop + 1,
+                                    names.index(ankle_name)] = True
+    for side_index, side in enumerate(('left', 'right')):
+        rows = [row for row in constraint['sourceFootHeelImageObservations']
+                if row['motionSide'] == side and 'anatomicalMarkerLocalVector' in row]
+        authority, trajectory = np.zeros(count, bool), np.zeros(count, bool)
+        authority_masks[side], trajectory_masks[side] = authority, trajectory
+        pitch_tracks[side] = np.zeros(count)
+        if not rows:
+            reports[side] = {'available': False, 'reason': 'anatomical_marker_unavailable'}
+            continue
+        ankle_i, toe_i = names.index(side + '_ankle'), names.index(side + '_foot')
+        rest = float(payload['footRestPitchRadians'][side])
+        height = float(payload['sourcePoseCameraReference']['sourcePose']['imageHeight'])
+        solved, previous, maximum_clearance = [], np.zeros(2), 0.
+        for row in rows:
+            _check_deadline(deadline)
+            left, right, alpha = row['leftFrame'], row['rightFrame'], row['alpha']
+            pose = points[left] * (1. - alpha) + points[right] * alpha
+            ankle, toe = pose[ankle_i].copy(), pose[toe_i].copy()
+
+            def endpoint_owned(index):
+                def member(mask):
+                    if alpha <= 0. or left == right:
+                        return bool(mask[left, index])
+                    if alpha >= 1.:
+                        return bool(mask[right, index])
+                    return bool(mask[left, index] or mask[right, index])
+                if (index == ankle_i and member(patch_ankle_pin)
+                        and not member(explicit_ankle_pin)):
+                    return False
+                return member(pins)
+
+            anchored = (contact_targets[left] * (1. - alpha) + contact_targets[right] * alpha
+                        if contact_targets is not None else pose)
+            ankle_anchor = anchored[ankle_i] if endpoint_owned(ankle_i) else None
+            toe_anchor = anchored[toe_i] if endpoint_owned(toe_i) else None
+            heading = pose[toe_i] - pose[ankle_i]
+            heading[1] = 0.
+            heading = _unit(heading)
+            if np.linalg.norm(heading) <= 1e-9:
+                failures.append({'sourceTimeSec': row['sourceTime'], 'reason': 'foot_heading_unavailable'})
+                continue
+            marker = np.asarray(row['anatomicalMarkerLocalVector'])
+            target = np.asarray(row['sourceHeelToToeVector'])
+
+            def geometry(parameters):
+                yaw, pitch = parameters
+                cosine, sine = math.cos(yaw), math.sin(yaw)
+                h = np.asarray([cosine * heading[0] + sine * heading[2], 0.,
+                                -sine * heading[0] + cosine * heading[2]])
+                direction = h * math.cos(pitch + rest) + np.asarray([0., 1., 0.]) * math.sin(pitch + rest)
+                return anatomical_marker_foot_geometry(
+                    ankle, toe, direction, marker, rest, scale, floor,
+                    ankle_anchor=ankle_anchor, toe_anchor=toe_anchor)
+
+            def cost(parameters):
+                error = (projection @ geometry(parameters)['vector'] - target) * height
+                return float(error @ error)
+
+            guard = np.finfo(float).eps * max(1., np.linalg.norm(ankle), np.linalg.norm(toe)) * 64
+
+            def margin(pitch):
+                if floor is None:
+                    return 1.
+                candidate = geometry([0., pitch])
+                limits = [float(candidate['vertices'][:, 1].min() - floor + PLAYBACK_FLOOR_LIMIT_METERS)]
+                if row['state'] == 'full_sole':
+                    limits.extend(float(PLAYBACK_CONTACT_LIMIT_METERS - abs(candidate[point][1] - floor))
+                                  for point in ('heel', 'toe'))
+                return min(limits) - guard
+
+            probes = np.linspace(max(-math.pi / 2 + .001, -math.pi / 2 - rest + .001), math.pi / 2 - .001, 401)
+            indexes = np.flatnonzero([margin(value) >= 0. for value in probes])
+            if not len(indexes) or np.any(np.diff(indexes) != 1):
+                failures.append({'sourceTimeSec': row['sourceTime'], 'reason': 'anatomical_marker_shoe_domain_unresolved'})
+                continue
+            low, high = probes[indexes[0]], probes[indexes[-1]]
+            for edge, invalid in (('low', indexes[0] - 1), ('high', indexes[-1] + 1)):
+                if invalid < 0 or invalid >= len(probes):
+                    continue
+                bad, good = probes[invalid], low if edge == 'low' else high
+                for _ in range(52):
+                    middle = (bad + good) * .5
+                    if margin(middle) >= 0.:
+                        good = middle
+                    else:
+                        bad = middle
+                if edge == 'low':
+                    low = good
+                else:
+                    high = good
+            attempts = []
+            for seed in (previous, np.asarray([0., -.5]), np.asarray([.5, -.5]), np.asarray([-.5, -.5])):
+                _check_deadline(deadline)
+                solved_row = minimize(cost, np.clip(seed, [-math.pi, low], [math.pi, high]),
+                                      method='SLSQP', bounds=[(-math.pi, math.pi), (low, high)],
+                                      options={'maxiter': 100, 'ftol': 1e-10})
+                if margin(solved_row.x[1]) >= -np.finfo(float).eps:
+                    attempts.append(solved_row)
+            if not attempts:
+                failures.append({'sourceTimeSec': row['sourceTime'], 'reason': 'anatomical_marker_inverse_failed'})
+                continue
+            minimum = min(attempt.fun for attempt in attempts)
+            minimum_error = math.sqrt(max(0., minimum))
+            # Continuity breaks ties only within a conservative source-precision
+            # bound on extra projected error, even when every fit is imperfect.
+            noise_pixels = float(row['sourceNoiseImageUnits']) * height
+            equivalent = [
+                attempt for attempt in attempts
+                if math.sqrt(max(0., attempt.fun)) <= minimum_error + noise_pixels]
+            best = min(equivalent, key=lambda attempt: abs(math.atan2(
+                math.sin(attempt.x[0] - previous[0]),
+                math.cos(attempt.x[0] - previous[0]))))
+            if ankle_anchor is not None and toe_anchor is not None:
+                fixed = _unit(toe_anchor - ankle_anchor)
+                delta = math.atan2(fixed[0], fixed[2]) - math.atan2(heading[0], heading[2])
+                best.x = np.asarray([math.atan2(math.sin(delta), math.cos(delta)),
+                                     math.asin(float(np.clip(fixed[1], -1., 1.))) - rest])
+            previous = best.x
+            actual_geometry = geometry(best.x)
+            maximum_clearance = max(maximum_clearance, float(actual_geometry['virtualClearance'][1]))
+            error = (projection @ actual_geometry['vector'] - target) * height
+            within_noise = bool(np.all(np.abs(error) <= float(row['sourceNoiseImageUnits']) * height))
+            if not within_noise:
+                # Noise is an episode-level RMS/range acceptance policy in the
+                # fresh source-material consumer, not a maximum per-row axis cap.
+                image_noise_exceedances.append({'motionSide': side, 'sourceTimeSec': row['sourceTime'],
+                                               'sourceErrorPixels': error.tolist()})
+            solved.append((float(row['sourceTime']), best.x, float(np.linalg.norm(error))))
+        if not solved:
+            reports[side] = {'available': False}
+            continue
+        knots = np.asarray([value[0] for value in solved])
+        parameters = np.asarray([value[1] for value in solved])
+        if np.any(np.diff(knots) <= 0.):
+            raise ValueError('anatomical marker source observations must have unique ordered exposure times')
+        source_steps = np.diff(knots)
+        maximum_gap = 2.5 * float(np.median(source_steps)) if len(source_steps) else 0.
+        boundaries = np.r_[0, np.flatnonzero(source_steps > maximum_gap) + 1, len(knots)]
+        evaluated = np.zeros((count, 2))
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            selected = (times >= knots[start] - 1e-9) & (times <= knots[end - 1] + 1e-9)
+            if end - start == 1:
+                selected &= np.isclose(times, knots[start], atol=1e-9, rtol=0.)
+                evaluated[selected] = parameters[start]
+            else:
+                values = parameters[start:end].copy()
+                values[:, 0] = np.unwrap(values[:, 0])
+                evaluated[selected] = PchipInterpolator(knots[start:end], values, axis=0,
+                                                        extrapolate=False)(np.clip(times[selected], knots[start], knots[end - 1]))
+            trajectory |= selected
+        authority[:] = np.any(np.isclose(times[:, None], knots[None], atol=1e-9, rtol=0.), axis=1)
+        base = points[:, toe_i] - points[:, ankle_i]
+        base[:, 1] = 0.
+        base = _unit(base)
+        yaw, pitch = evaluated[:, 0], evaluated[:, 1]
+        h = np.stack([np.cos(yaw) * base[:, 0] + np.sin(yaw) * base[:, 2], np.zeros(count),
+                      -np.sin(yaw) * base[:, 0] + np.cos(yaw) * base[:, 2]], axis=1)
+        proposed = h * np.cos(pitch + rest)[:, None] + np.sin(pitch + rest)[:, None] * [0., 1., 0.]
+        desired[trajectory, side_index] = proposed[trajectory]
+        pitch_tracks[side] = pitch
+        reports[side] = {'available': True, 'observationCount': len(solved),
+                         'maximumVirtualFreeFootClearanceMeters': maximum_clearance,
+                         'sourceRmsPixels': float(np.sqrt(np.mean([value[2] ** 2 for value in solved]))),
+                         'yawRangeDegrees': np.rad2deg([parameters[:, 0].min(), parameters[:, 0].max()]).tolist(),
+                         'pitchRangeDegrees': np.rad2deg([parameters[:, 1].min(), parameters[:, 1].max()]).tolist()}
+    return desired, {
+        'available': any(report.get('available') for report in reports.values()),
+        'passed': not failures and any(report.get('available') for report in reports.values()),
+        'method': 'calibrated_anatomical_marker_pitch_heading_inverse',
+        'eventCount': sum(report.get('observationCount', 0) for report in reports.values()),
+        'inversionFailureCount': len(failures), 'inversionFailures': failures, 'sides': reports,
+        'sourceImageNoiseExceedances': image_noise_exceedances,
+        'pitchAuthorityMaskBySide': {side: mask.tolist() for side, mask in authority_masks.items()},
+        'pitchTrajectoryMaskBySide': {side: mask.tolist() for side, mask in trajectory_masks.items()},
+        'pitchDeltaRadiansBySide': {side: values.tolist() for side, values in pitch_tracks.items()},
+    }
+
+
 def _source_projection_for_points(projection, payload):
     projection = np.asarray(projection, dtype=float)
     if projection.shape != (2, 3) or not np.isfinite(projection).all():
@@ -509,22 +898,18 @@ def _shape_preserving_source_pitch(
     if fixed.shape != (frame_count,):
         raise ValueError('full-sole pitch mask must match the rig frame count')
 
-    frame_clock = None
-    has_source_clock = False
-    if frame_times is not None:
+    has_source_clock = frame_times is not None
+    if has_source_clock:
         try:
-            candidate_clock = np.asarray(frame_times, dtype=float)
-        except (TypeError, ValueError, OverflowError):
-            candidate_clock = np.empty(0, dtype=float)
-        if (candidate_clock.shape == (frame_count,)
-                and np.isfinite(candidate_clock).all()
-                and (frame_count < 2 or np.all(np.diff(candidate_clock) > 0.))):
-            frame_clock = candidate_clock
-            has_source_clock = True
-    if frame_clock is None:
-        # Direct callers without source timestamps retain exact fit-frame
-        # alignment; production payloads use their absolute source clock.
-        if not np.isfinite(float(fps)) or float(fps) <= 0.:
+            frame_clock = np.asarray(frame_times, dtype=float)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError('source pitch clock must be finite and nondecreasing') from error
+        if (frame_clock.shape != (frame_count,) or not np.isfinite(frame_clock).all()
+                or np.any(np.diff(frame_clock) < 0.)):
+            raise ValueError('source pitch clock must be finite and nondecreasing')
+    else:
+        # Synthetic callers without a source clock retain fit-frame alignment.
+        if not np.isfinite(float(fps)) or fps <= 0.:
             raise ValueError('source pitch interpolation requires a positive frame rate')
         frame_clock = np.arange(frame_count, dtype=float) / float(fps)
 
@@ -544,12 +929,17 @@ def _shape_preserving_source_pitch(
         observations.append((source_time, cursor, state, row))
     observations.sort(key=lambda item: item[0])
 
-    event_by_key = {
-        (row.get('sourceSide'), round(float(row['sourceTime']), 6), row.get('motionSide')):
-            float(pitch_delta)
-        for row, pitch_delta in event_pitches
-        if row.get('motionSide') == side
-    }
+    event_by_key = {}
+    for row, pitch_delta in event_pitches:
+        if row.get('motionSide') != side:
+            continue
+        key = (row.get('sourceSide'), round(float(row['sourceTime']), 6), row.get('motionSide'))
+        value = float(pitch_delta)
+        if key in event_by_key and event_by_key[key] != value:
+            # Conflicting independent observations never become an averaged fact.
+            event_by_key[key] = None
+        else:
+            event_by_key[key] = value
     geometry_by_key = {
         (row.get('sourceSide'), round(float(row['sourceTime']), 6), row.get('motionSide')):
             {'target': float(pitch_delta),
@@ -589,6 +979,16 @@ def _shape_preserving_source_pitch(
             'sourceSide': row.get('sourceSide'),
             'measuredGeometry': (state == 'unknown' and key in geometry_by_key),
         })
+
+    unique_mapped = []
+    for item in mapped:
+        if unique_mapped and item['time'] == unique_mapped[-1]['time']:
+            prior = unique_mapped[-1]
+            if any(item[key] != prior[key] for key in ('state', 'target', 'anchorGroup')):
+                prior.update(state='unknown', target=None, anchorGroup=None)
+        else:
+            unique_mapped.append(dict(item))
+    mapped = unique_mapped
 
     pitch_delta = np.zeros(frame_count, dtype=float)
     authority = fixed.copy()
@@ -655,12 +1055,15 @@ def _shape_preserving_source_pitch(
         else:
             # A lone observation authorizes only its mapped frame, never a
             # neighborhood or the rest of the clip.
-            index = int(np.clip(round(segment[0]['cursor']), 0, frame_count - 1))
-            frame_interval = (float(np.median(np.diff(frame_clock)))
-                              if frame_count > 1 else 1. / float(fps))
-            if abs(frame_clock[index] - segment[0]['time']) <= .5 * frame_interval + 1e-9:
-                pitch_delta[index] = float(sample_targets[0])
-                trajectory[index] = True
+            if has_source_clock:
+                same_exposure = frame_clock == segment[0]['time']
+                pitch_delta[same_exposure] = float(sample_targets[0])
+                trajectory[same_exposure] = True
+            else:
+                index = int(np.clip(round(segment[0]['cursor']), 0, frame_count - 1))
+                if abs(frame_clock[index] - segment[0]['time']) <= .5 / float(fps) + 1e-9:
+                    pitch_delta[index] = float(sample_targets[0])
+                    trajectory[index] = True
         observed_sample_count += len(segment)
 
     # Contact/pitch authority requires measured adjacent support samples.
@@ -674,6 +1077,8 @@ def _shape_preserving_source_pitch(
         # reliable unknown heel/toe image vector can validate direction while
         # the separate pinned/contact masks remain untouched.
         authority[nearest] = True
+        if has_source_clock:
+            authority[frame_clock == item['time']] = True
         if index + 1 >= len(mapped):
             continue
         following = mapped[index + 1]
@@ -782,7 +1187,8 @@ def propose_source_heel_pitch(rig, coordinates, payload, source_projection_const
     rest_pitch = dict(payload_rest_pitch) if isinstance(payload_rest_pitch, dict) else {}
     calibrated_pitch = calibrated_foot_rest_pitches(
         points, names, support_evidence,
-        frame_times=[frame.get('sourceTimeSec') for frame in payload.get('frames', [])])
+        frame_times=[frame.get('sourceTimeSec') for frame in payload.get('frames', [])],
+        canonical_execution=payload.get('canonicalExecution'))
     rest_pitch_source_by_side = {}
     for side in ('left', 'right'):
         value = rest_pitch.get(side)
@@ -791,6 +1197,33 @@ def propose_source_heel_pitch(rig, coordinates, payload, source_projection_const
         elif side in calibrated_pitch:
             rest_pitch[side] = calibrated_pitch[side]
             rest_pitch_source_by_side[side] = 'calibrated_source_full_sole'
+
+    anatomical_sides = {row['motionSide'] for row in image_observations
+                        if 'anatomicalMarkerLocalVector' in row}
+    if anatomical_sides:
+        anatomical_payload = {**payload, 'footRestPitchRadians': rest_pitch}
+        desired, report = _propose_anatomical_heel_pitch(
+            points, names, anatomical_payload, source_projection_constraint, fps, deadline, contact_targets,
+            pinned=pinned)
+        native_images = [row for row in image_observations if row['motionSide'] not in anatomical_sides]
+        if native_images:
+            native_constraint = dict(source_projection_constraint)
+            for key in ('sourceFootHeelImageObservations', 'sourceFootHeelTrajectoryObservations',
+                        'sourceFootHeelCalibrationObservations', 'sourceFootHeelTrajectoryEvents'):
+                native_constraint[key] = [row for row in source_projection_constraint.get(key, [])
+                                          if row['motionSide'] not in anatomical_sides]
+            native_desired, native_report = propose_source_heel_pitch(
+                rig, coordinates, payload, native_constraint, pinned, fps, deadline, contact_targets)
+            report['nativeFallback'] = native_report
+            if native_constraint.get('sourceFootHeelTrajectoryObservations'):
+                report['passed'] = report['passed'] and native_report['passed']
+            for index, side in enumerate(('left', 'right')):
+                if side not in anatomical_sides:
+                    desired[:, index] = native_desired[:, index]
+                    report['sides'][side] = native_report.get('sides', {}).get(side, {})
+                    for key in ('pitchAuthorityMaskBySide', 'pitchTrajectoryMaskBySide', 'pitchDeltaRadiansBySide'):
+                        report[key][side] = native_report.get(key, {}).get(side, report[key][side])
+        return desired, report
 
     # Source heel baselines are rendered when the projection constraint is
     # prepared. If it carries that geometry context, its material rest pitch
@@ -868,9 +1301,9 @@ def propose_source_heel_pitch(rig, coordinates, payload, source_projection_const
         candidate_frame_times = candidate_frame_times - source_time_origin
     else:
         candidate_frame_times = np.empty(0, dtype=float)
-    if (candidate_frame_times.shape == (frame_count,)
-            and np.isfinite(candidate_frame_times).all()
-            and (frame_count < 2 or np.all(np.diff(candidate_frame_times) > 0.))):
+    if any('sourceTimeSec' in frame for frame in payload.get('frames', [])):
+        # Preserve explicit exposure ties and let the shared mapper reject an
+        # invalid clock; never replace supplied source timing with nominal fps.
         frame_times = candidate_frame_times
     for side_index, side in enumerate(('left', 'right')):
         _check_deadline(deadline)
@@ -897,7 +1330,20 @@ def propose_source_heel_pitch(rig, coordinates, payload, source_projection_const
             pitch_trajectory_by_side[side] = np.zeros(frame_count, dtype=bool).tolist()
             continue
 
-        fullsole = pinned[:, ankle_index] & pinned[:, toe_index]
+        # Physical full-sole state belongs to the observed image row, not to an
+        # ankle XYZ pin. A full-sole foot contact pins the foot only, so the
+        # former ankle-and-toe pair test would erase every valid flat stance.
+        fullsole = np.zeros(frame_count, dtype=bool)
+        for row in image_observations:
+            if (row.get('motionSide') != side
+                    or str(row.get('state') or '').casefold() != 'full_sole'):
+                continue
+            try:
+                cursor = float(row['leftFrame']) + float(row['alpha'])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+            if np.isfinite(cursor):
+                fullsole[int(np.clip(round(cursor), 0, frame_count - 1))] = True
         side_geometry_pitches = []
         for geometry_row, target_delta in unknown_geometry_pitches:
             if geometry_row.get('motionSide') != side:

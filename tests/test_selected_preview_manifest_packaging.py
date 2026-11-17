@@ -107,3 +107,35 @@ Update-PackagedSelectionArtifactReferences `
     packaged = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     assert packaged["selectedPreviewHtmlPath"] == str(selected_preview)
     assert packaged["selected"]["selectedPreviewHtmlPath"] == str(selected_preview)
+
+@pytest.mark.skipif(os.name != 'nt' or shutil.which('pwsh') is None, reason='Windows replacement lock')
+def test_atomic_manifest_write_recovers_from_concurrent_reader(tmp_path):
+    import time
+    manifest = tmp_path / 'selection_manifest.json'
+    manifest.write_text('{"old": true}', encoding='utf-8')
+    script = r'''
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $env:WRAPPER_PATH, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+$function = $ast.Find({param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Write-AtomicJsonDocument'
+}, $true)
+Invoke-Expression $function.Extent.Text
+[Console]::WriteLine('ready')
+[Console]::Out.Flush()
+Write-AtomicJsonDocument -Path $env:MANIFEST_PATH -InputObject @{updated=$true}
+'''
+    environment = {**os.environ, 'WRAPPER_PATH': str(WRAPPER), 'MANIFEST_PATH': str(manifest)}
+    with manifest.open('r', encoding='utf-8') as reader:
+        process = subprocess.Popen(['pwsh', '-NoProfile', '-Command', script],
+                                   env=environment, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        assert process.stdout.readline().strip() == 'ready'
+        time.sleep(.2)
+    stdout, stderr = process.communicate(timeout=15)
+    assert process.returncode == 0, stdout + stderr
+    assert json.loads(manifest.read_text(encoding='utf-8')) == {'updated': True}
+    assert not list(tmp_path.glob('*.tmp'))

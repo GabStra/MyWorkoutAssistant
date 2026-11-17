@@ -79,14 +79,29 @@ def _legacy_bounded_selection_evidence(interval: dict[str, object]) -> dict[str,
 
 def test_manual_review_fallback_is_exportable_from_a_staged_wave():
     assert wave.wave_manifest_is_exportable({"selected": {"selectedWearSkeletonPath": "x"}})
+    from exercise_motion_pkg.artifact_state import build_artifact_state
+    state = build_artifact_state(
+        artifact_class="full_clip_bake", selection_class="full_clip_bake", required_class=None,
+        selection_evidence={"fullClipBake": {"algorithm": "sha256", "contentSha256": "a" * 64,
+                                           "identityVersion": 2, "fps": 30, "frameCount": 10}})
     fallback_manifest = {
         "selected": None,
         "selectionStatus": "needs_manual_review",
-        "manualReviewFallback": {"selectedWearSkeletonPath": "x"},
+        "manualReviewFallback": {"selectedWearSkeletonPath": "x", "artifactState": state},
     }
     assert wave.wave_manifest_is_exportable(fallback_manifest)
     assert wave.artifact_disposition(fallback_manifest) == "manual_review"
     assert wave.final_validation_outcome_status(fallback_manifest) == "needs_manual_review"
+    state.update(requiredClass="cyclic_rebake", terminal=False)
+    assert wave.artifact_disposition(fallback_manifest) == "retryable"
+    assert not wave.wave_manifest_is_exportable(fallback_manifest)
+    assert wave.final_validation_outcome_status(fallback_manifest) == "no_selection"
+    assert wave.wave_retry_disposition({"status": "retry_required", "finalValidation": {
+        "status": wave.final_validation_outcome_status(fallback_manifest),
+        **wave.final_processing_diagnostics(fallback_manifest),
+    }}) == "next_source"
+    fallback_manifest["manualReviewFallback"].pop("artifactState")
+    assert not wave.wave_manifest_is_exportable(fallback_manifest)
     assert not wave.wave_manifest_is_exportable({
         "selected": None,
         "selectionStatus": "needs_manual_review",
@@ -309,8 +324,9 @@ def test_cycle_artifact_binds_local_selection_to_exact_native_source_interval():
         bake.validate_artifact_state(changed_state, movement_payload=changed)
 
 
+@pytest.mark.parametrize('resampled_source', [False, True])
 def test_retained_cycle_fit_lineage_uses_materialized_frames_not_preflight_bounds(
-    monkeypatch,
+    monkeypatch, resampled_source,
 ):
     from exercise_motion_pkg.artifact_state import cycle_selection_evidence
     from exercise_motion_pkg.controlled_motion import (
@@ -324,12 +340,18 @@ def test_retained_cycle_fit_lineage_uses_materialized_frames_not_preflight_bound
         "requiresReturnToStart": True,
         "exerciseName": "Barbell Step-Up",
     }
+    frame_count = 69 if resampled_source else 60
     full_clip = _artifact_test_payload(
-        start_frame=0,
-        end_frame=59,
-        frame_count=60,
+        start_frame=138 if resampled_source else 0,
+        end_frame=194 if resampled_source else 59,
+        frame_count=frame_count,
         loop_enabled=False,
     )
+    if resampled_source:
+        for index, frame in enumerate(full_clip['frames']):
+            frame['sourceTimeSec'] = frame['sourceFrameIndex'] / 25.
+        full_clip['loop']['sourceStartTimeSec'] = full_clip['frames'][0]['sourceTimeSec']
+        full_clip['loop']['sourceEndTimeSec'] = full_clip['frames'][-1]['sourceTimeSec']
     parent_state = bake.artifact_state_for_baked_payload(
         full_clip,
         contract=contract,
@@ -359,7 +381,7 @@ def test_retained_cycle_fit_lineage_uses_materialized_frames_not_preflight_bound
         source_parent_payload=full_clip,
     )
     assert selection["cycleSelection"]["interval"]["startFrame"] == 0
-    assert selection["cycleSelection"]["interval"]["endFrame"] == 59
+    assert selection["cycleSelection"]["interval"]["endFrame"] == frame_count - 1
     assert bake.attach_materialized_source_interval(
         retained,
         selection,
@@ -379,7 +401,7 @@ def test_retained_cycle_fit_lineage_uses_materialized_frames_not_preflight_bound
     ]["startFrame"] == 0
     assert retained["artifactState"]["selectionEvidence"]["cycleSelection"][
         "interval"
-    ]["endFrame"] == 59
+    ]["endFrame"] == frame_count - 1
     assert retained["artifactState"]["selectionEvidence"]["sourceCyclePreflight"][0][
         "selection"
     ] == {"startFrame": 17, "stopFrameExclusive": 50}

@@ -118,7 +118,8 @@ def test_motion_cancellation_reaches_piped_child_wrapper(tmp_path: Path) -> None
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows process-tree shutdown")
-def test_cancellation_stops_idle_staged_worker(tmp_path: Path) -> None:
+@pytest.mark.parametrize("shutdown_mode", ["Cancel", "RunComplete", "RunFailure"])
+def test_shutdown_stops_idle_staged_worker(tmp_path: Path, shutdown_mode: str) -> None:
     wrapper = Path(__file__).resolve().parents[1] / "scripts/run_exercise_motion_workout_plan.ps1"
     command = r"""
     $ErrorActionPreference = 'Stop'
@@ -129,7 +130,7 @@ def test_cancellation_stops_idle_staged_worker(tmp_path: Path) -> None:
         $node.Name -in @('Get-StagedBakeQueueServiceState', 'Stop-StagedBakeQueueServiceProcessTree', 'Stop-StagedBakeQueueService')
     }, $true)) { Invoke-Expression $function.Extent.Text }
     function ConvertFrom-ReconstructionJson { process { $_ | ConvertFrom-Json } }
-    function Test-MotionRunCancelRequested { return $true }
+    function Test-MotionRunCancelRequested { return $env:MOTION_SHUTDOWN_MODE -eq 'Cancel' }
     $script:StagedWaveServiceQueueRoot = $env:MOTION_TEST_ROOT
     $movementRunId = 'cancel-idle-test'
     $worker = Start-Process -FilePath $env:MOTION_TEST_PYTHON -ArgumentList @('-c', '"import time; time.sleep(30)"') -WindowStyle Hidden -PassThru
@@ -137,14 +138,21 @@ def test_cancellation_stops_idle_staged_worker(tmp_path: Path) -> None:
         @{schemaVersion=1; queueRoot=$script:StagedWaveServiceQueueRoot; pid=$worker.Id; processIdentity=$worker.StartTime.ToUniversalTime().ToFileTimeUtc();
           currentWaveId=$null; status='idle'; updatedAtEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0} |
             ConvertTo-Json | Set-Content (Join-Path $script:StagedWaveServiceQueueRoot 'worker_state.json')
-        $confirmed = Stop-StagedBakeQueueService -Cancel
-        if (-not $confirmed -or -not $worker.WaitForExit(1000)) { throw 'Cancellation left the idle worker alive' }
+        $shutdown = @{}
+        $shutdown[$env:MOTION_SHUTDOWN_MODE] = $true
+        $confirmed = Stop-StagedBakeQueueService @shutdown
+        if (-not $confirmed -or -not $worker.WaitForExit(1000)) { throw 'Shutdown left the idle worker alive' }
+        $marker = Join-Path $script:StagedWaveServiceQueueRoot "cancelled_runs/$movementRunId.json"
+        if ((Test-Path $marker) -ne ($env:MOTION_SHUTDOWN_MODE -ne 'RunComplete')) {
+            throw 'Shutdown wrote an incorrect cancellation marker'
+        }
     } finally {
         if (-not $worker.HasExited) { $worker.Kill() }
         $worker.Dispose()
     }
     """
-    environment = dict(os.environ, MOTION_WRAPPER_PATH=str(wrapper), MOTION_TEST_ROOT=str(tmp_path), MOTION_TEST_PYTHON=sys.executable)
+    environment = dict(os.environ, MOTION_WRAPPER_PATH=str(wrapper), MOTION_TEST_ROOT=str(tmp_path),
+                       MOTION_TEST_PYTHON=sys.executable, MOTION_SHUTDOWN_MODE=shutdown_mode)
     result = subprocess.run(["pwsh", "-NoProfile", "-Command", command], env=environment, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -758,7 +766,12 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                 skeleton_payload["artifactState"] = full_clip_artifact_state(skeleton_payload)
                 manifest_artifact_state = json.loads(json.dumps(skeleton_payload["artifactState"]))
                 artifact_state_case = os.environ.get("FAKE_MOTION_ARTIFACT_STATE_CASE")
-                if artifact_state_case == "missing_full_clip_lineage":
+                if artifact_state_case == "oversized_evidence":
+                    manifest_artifact_state["selectionEvidence"]["sourceCyclePreflight"] = [
+                        {"diagnostic": "large source evidence " * 4000}
+                    ]
+                    skeleton_payload["artifactState"] = json.loads(json.dumps(manifest_artifact_state))
+                elif artifact_state_case == "missing_full_clip_lineage":
                     manifest_artifact_state.pop("lineageComplete")
                     manifest_artifact_state["selectionEvidence"] = {}
                     skeleton_payload["artifactState"] = json.loads(json.dumps(manifest_artifact_state))
@@ -874,6 +887,11 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                         "selectedSegmentPath": str(input_video_path),
                         "selectedSegmentSha256": hashlib.sha256(input_video_path.read_bytes()).hexdigest(),
                     }
+                if artifact_state_case == "oversized_evidence":
+                    sheet = selected_dir / "fixture_contact_sheet.png"
+                    sheet.write_bytes(__import__("base64").b64decode(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF1kAAAAASUVORK5CYII="))
+                    selected["ranking"]["payload"]["finalOutputValidation"]["renderEvidence"]["contactSheetPaths"] = [str(sheet)]
                 manual_review = os.environ.get("FAKE_MOTION_MANUAL_REVIEW") == "1"
                 selection = {
                     "schemaVersion": 1,
@@ -916,6 +934,8 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                     ),
                 }
                 workspace.mkdir(parents=True, exist_ok=True)
+                if artifact_state_case == "oversized_evidence":
+                    selection["selectedPreviewHtmlPath"] = str(preview_html_path)
                 (workspace / "selection_manifest.json").write_text(json.dumps(selection), encoding="utf-8")
                 raise SystemExit(0)
 
@@ -1850,6 +1870,8 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
     summary = json.loads((workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8"))
     assert summary["processingOrder"] == "pipelined_discovery_source_download_and_bake"
     assert summary["speedProfile"] == "fast"
+    assert summary["effectiveCandidateBudget"]["discoveryCandidateBudget"] == 48
+    assert summary["effectiveCandidateBudget"]["discoveryTimeBudgetSeconds"] == 180
     assert summary["discoveryWorkers"] == 1
     assert summary["bakeWorkers"] == 1
     assert summary["parallelism"]["llamaCppParallel"] == 6
@@ -2958,6 +2980,7 @@ def test_workout_plan_wrapper_publishes_manual_review_fallback(tmp_path: Path) -
     ("artifact_state_case", "manual_review"),
     [
         ("missing_full_clip_lineage", False),
+        ("oversized_evidence", False),
         ("embedded_state_mismatch", False),
         ("embedded_state_corrupt", False),
         ("missing_embedded_state", False),
@@ -3026,6 +3049,17 @@ def test_workout_plan_wrapper_rejects_invalid_packaged_artifact_state(
     )
 
     if manual_review:
+        if artifact_state_case == "missing_embedded_state":
+            assert result.returncode == 0, result.stdout + result.stderr
+            summary = json.loads(
+                (workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8")
+            )
+            exercise = summary["exercises"][0]
+            assert exercise["status"] == "no_selection"
+            assert exercise["stage"] == "bake"
+            assert exercise["selectedResults"] == []
+            assert "Prepared candidate did not produce a validated movement" in exercise["error"]
+            return
         assert result.returncode != 0
         assert "Selected skeleton is missing its persisted artifact state." in result.stdout + result.stderr
         return
@@ -3033,9 +3067,16 @@ def test_workout_plan_wrapper_rejects_invalid_packaged_artifact_state(
     assert result.returncode == 0, result.stdout + result.stderr
     summary = json.loads((workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8"))
     exercise = summary["exercises"][0]
-    assert exercise["status"] == "failed"
-    assert exercise["stage"] == "selected_output_parity"
-    assert exercise["selectedResults"] == []
+    if artifact_state_case == "oversized_evidence":
+        assert exercise["status"] == "completed"
+        selected = Path(exercise["selectedWearSkeletonPath"])
+        payload = json.loads(selected.read_text(encoding="utf-8"))
+        evidence = payload["artifactState"]["selectionEvidence"]["sourceCyclePreflight"]
+        assert evidence == [{"diagnostic": "large source evidence " * 4000}]
+    else:
+        assert exercise["status"] == "failed"
+        assert exercise["stage"] == "selected_output_parity"
+        assert exercise["selectedResults"] == []
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
@@ -3050,6 +3091,23 @@ def test_workout_plan_wrapper_avoids_cuda_discovery_overlap_with_bake_by_default
         tmp_path,
         fake_cli,
         workout_plan,
+    )
+    prepared_manifest_payload = json.loads(prepared_candidates_manifest.read_text(encoding="utf-8"))
+    flat_candidate_item = prepared_manifest_payload["items"][0]
+    flat_candidate_path = Path(flat_candidate_item["candidatesJson"])
+    candidate_payload = json.loads(flat_candidate_path.read_text(encoding="utf-8"))
+    source_exercise = candidate_payload["exercises"][0]
+    flat_candidate_path.write_text(
+        json.dumps(
+            {
+                "exerciseId": source_exercise["exerciseId"],
+                "exerciseName": source_exercise["exerciseName"],
+                "slug": source_exercise["slug"],
+                "candidates": source_exercise["candidates"],
+                "preparedSelectionEvidence": {"retained": True},
+            }
+        ),
+        encoding="utf-8",
     )
     command_log = tmp_path / "commands.log"
     env = os.environ.copy()
@@ -3105,6 +3163,16 @@ def test_workout_plan_wrapper_avoids_cuda_discovery_overlap_with_bake_by_default
         assert "installed prepared candidates; skipping discovery and source download" in (
             exercise_workspace / "bake.log"
         ).read_text(encoding="utf-8")
+
+    from exercise_motion_pkg.bake_and_rank import parse_ranked_candidates_manifest
+
+    installed_candidates = workspace / flat_candidate_item["exerciseSlug"] / "youtube_candidates.json"
+    installed_payload = json.loads(installed_candidates.read_text(encoding="utf-8"))
+    parsed_candidates = parse_ranked_candidates_manifest(installed_payload)
+    assert len(parsed_candidates) == 1
+    assert parsed_candidates[0].exercise_id == flat_candidate_item["exerciseId"]
+    assert parsed_candidates[0].exercise_name == source_exercise["exerciseName"]
+    assert installed_payload["preparedSelectionEvidence"] == {"retained": True}
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
@@ -3431,6 +3499,16 @@ def test_workout_plan_discovery_child_receives_effective_definition_context(tmp_
     repo_root = Path(__file__).resolve().parents[1]
     wrapper_path = repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"
     output_path = tmp_path / "exercise_plan.json"
+    preflight_path = tmp_path / "preflight.json"
+    approved_at = "2026-11-12T00:03:18.404851+00:00"
+    preflight_path.write_text(json.dumps({"exercises": [{
+        "exerciseId": "bench", "exerciseName": "Barbell Bench Press",
+        "motionContext": {"exerciseDefinition": {
+            "definingAction": "Press bar from chest to full elbow extension.",
+            "review": {"approvedAtUtc": approved_at},
+        }},
+        "definitionReadiness": {"status": "ready", "definitionSource": "approved_registry"},
+    }]}), encoding="utf-8")
     command = r"""
     $ErrorActionPreference = 'Stop'
     $tokens = $null; $errors = $null
@@ -3441,11 +3519,17 @@ def test_workout_plan_discovery_child_receives_effective_definition_context(tmp_
             $node.Name -eq 'New-OneExercisePlanJson'
     }, $true)
     . ([scriptblock]::Create($function.Extent.Text))
-    $resolvedWorkoutPlanJson = $env:MOTION_SOURCE_PLAN
-    $exercise = [pscustomobject]@{
-        exerciseId = 'bench'; exerciseName = 'Barbell Bench Press'
-        motionContext = @{ exerciseDefinition = @{ definingAction = 'Press bar from chest to full elbow extension.' } }
-        definitionReadiness = @{ status = 'ready'; definitionSource = 'approved_registry' }
+    . $env:MOTION_COMPAT_PATH
+    $definitionEffectivePlanPath = $env:MOTION_SOURCE_PLAN
+    $definitionPreflightListPath = $env:MOTION_PREFLIGHT_PATH
+    $read = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -eq '$exerciseList'
+    }, $true)
+    . ([scriptblock]::Create($read.Extent.Text))
+    $exercise = $exerciseList.exercises[0]
+    if ($exercise.motionContext.exerciseDefinition.review.approvedAtUtc -isnot [string]) {
+        throw 'Approved context timestamp was coerced to DateTime.'
     }
     New-OneExercisePlanJson -Exercise $exercise -OutPath $env:MOTION_CHILD_PLAN
     $child = Get-Content -LiteralPath $env:MOTION_CHILD_PLAN -Raw | ConvertFrom-Json
@@ -3458,6 +3542,8 @@ def test_workout_plan_discovery_child_receives_effective_definition_context(tmp_
         ["pwsh", "-NoProfile", "-Command", command],
         cwd=repo_root,
         env={**os.environ, "MOTION_WRAPPER_PATH": str(wrapper_path),
+             "MOTION_COMPAT_PATH": str(repo_root / "scripts/reconstruction_compat.ps1"),
+             "MOTION_PREFLIGHT_PATH": str(preflight_path),
              "MOTION_SOURCE_PLAN": str(tmp_path / "source_plan.json"), "MOTION_CHILD_PLAN": str(output_path)},
         text=True,
         capture_output=True,
@@ -3470,3 +3556,4 @@ def test_workout_plan_discovery_child_receives_effective_definition_context(tmp_
     child_plan = json.loads(output_path.read_text(encoding="utf-8"))
     assert child_plan["sourcePlanPath"] == str(tmp_path / "source_plan.json")
     assert child_plan["exercises"][0]["definitionReadiness"]["definitionSource"] == "approved_registry"
+    assert child_plan["exercises"][0]["motionContext"]["exerciseDefinition"]["review"]["approvedAtUtc"] == approved_at

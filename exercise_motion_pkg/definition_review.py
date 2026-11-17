@@ -10,6 +10,8 @@ from .youtube import (
     extract_exercise_id,
     extract_exercise_name,
     load_workout_plan_exercises,
+    normalize_bilateral_execution,
+    normalize_body_support_requirements,
 )
 
 
@@ -86,6 +88,17 @@ def export_definition_review(*, plan_path: Path, candidates_path: Path | None = 
             "variantQualifiers": contract.get("variantQualifiers") or [],
         },
     }
+    existing_definition = target.motion_context.get("exerciseDefinition") or {}
+    support_value = existing_definition.get("bodySupportRequirements", contract.get("bodySupportRequirements"))
+    if support_value is not None:
+        requirements = normalize_body_support_requirements(support_value)
+        if requirements is None:
+            raise ValueError("definition proposal has invalid bodySupportRequirements")
+        review["definition"]["bodySupportRequirements"] = requirements
+    if "bilateralExecution" in existing_definition:
+        review["definition"]["bilateralExecution"] = normalize_bilateral_execution(
+            existing_definition["bilateralExecution"]
+        )
     proposed_phases = contract.get("requiredPhases")
     if isinstance(proposed_phases, list) and proposed_phases:
         review["definition"]["requiredPhases"] = proposed_phases
@@ -109,8 +122,8 @@ def approve_definition_review(*, plan_path: Path, exercise_id: str,
     raw = review.get("definition")
     if not isinstance(raw, dict):
         raise ValueError("Review needs a definition object")
-    if set(raw) - {"definingAction", "completionMode", "variantQualifiers", "requiredPhases"}:
-        raise ValueError("Definition supports only definingAction, completionMode, variantQualifiers, and requiredPhases")
+    if set(raw) - {"definingAction", "completionMode", "variantQualifiers", "requiredPhases", "bilateralExecution", "bodySupportRequirements"}:
+        raise ValueError("Definition supports only definingAction, completionMode, variantQualifiers, requiredPhases, bilateralExecution, and bodySupportRequirements")
     action = raw.get("definingAction")
     qualifiers = raw.get("variantQualifiers", [])
     if not isinstance(action, str) or not action.strip() or len(action.strip()) > 512:
@@ -124,6 +137,8 @@ def approve_definition_review(*, plan_path: Path, exercise_id: str,
         or any(not isinstance(item, str) or not item.strip() or len(item.strip()) > 180 for item in phases)
     ):
         raise ValueError("requiredPhases must contain at most eight nonempty strings of at most 180 characters")
+    if "bilateralExecution" in raw:
+        normalize_bilateral_execution(raw["bilateralExecution"])
     normalized = exercise_motion_context_action_definition({"exerciseDefinition": raw})
     if normalized is None:
         raise ValueError("Definition needs a supported completionMode")
@@ -132,6 +147,10 @@ def approve_definition_review(*, plan_path: Path, exercise_id: str,
     )}
     if phases is not None:
         definition["requiredPhases"] = normalized.get("requiredPhases", [])
+    if "bilateralExecution" in raw:
+        definition["bilateralExecution"] = normalized["bilateralExecution"]
+    if "bodySupportRequirements" in raw:
+        definition["bodySupportRequirements"] = normalized["bodySupportRequirements"]
     definition["review"] = {
         "status": "approved",
         "approvedAtUtc": datetime.now(timezone.utc).isoformat(),

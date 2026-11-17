@@ -283,6 +283,25 @@ def transport_side(side: np.ndarray, old_axis: np.ndarray, new_axis: np.ndarray)
 
 def transport_corrected_bone_sides(previous_frames: list[dict[str, Any]], payload: dict[str, Any]) -> None:
     """Keep axial orientation attached to a bone when an IK pass moves its joints."""
+    from .reconstruction_convert import NATIVE_FOOT_SIDE_AXIS_PROVENANCE
+    previous_frames = list(previous_frames)
+    for frame_index, frame in enumerate(payload.get("frames", [])):
+        for key, provenance in (frame.get("boneSideProvenance") or {}).items():
+            if provenance != NATIVE_FOOT_SIDE_AXIS_PROVENANCE:
+                continue
+            try:
+                start, end = key.split("->", 1)
+                axis = np.asarray(frame["boneSides"][key], dtype=float)
+                source_frame = previous_frames[frame_index] if frame_index < len(previous_frames) else frame
+                forward = np.asarray(source_frame["joints"][end], dtype=float) - np.asarray(source_frame["joints"][start], dtype=float)
+                if (axis.shape != (3,) or not np.isfinite(axis).all()
+                        or not np.isfinite(forward).all()
+                        or abs(float(np.linalg.norm(axis)) - 1.0) > 1e-4
+                        or np.linalg.norm(forward) <= 1e-12
+                        or abs(float(np.dot(axis, _unit(forward)))) > 1e-4):
+                    raise ValueError
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(f"Malformed qualified bone side for {key}.")
     for before, after in zip(previous_frames, payload.get("frames", [])):
         for key, value in list(after.get("boneSides", {}).items()):
             if "->" not in key:
@@ -308,11 +327,17 @@ def transport_corrected_bone_sides(previous_frames: list[dict[str, Any]], payloa
         for contact in evidence.get('soleContacts', []):
             _, ankle, toe = contact['joints']
             normal = np.asarray(contact['normal'], dtype=float)
+            key = f'{ankle}->{toe}'
             for frame in payload.get('frames', []):
+                if (frame.get('boneSideProvenance') or {}).get(key) == (
+                        NATIVE_FOOT_SIDE_AXIS_PROVENANCE):
+                    # The native sole solver owns the corrected model frame;
+                    # this cross-product cannot represent calibrated heel/toe offsets.
+                    continue
                 forward = np.asarray(frame['joints'][toe])-frame['joints'][ankle]
                 side = _unit(_cross3(forward, normal))
                 if side is not None:
-                    frame.setdefault('boneSides', {})[f'{ankle}->{toe}'] = side.tolist()
+                    frame.setdefault('boneSides', {})[key] = side.tolist()
     # Timed ground patches also own sole roll, even without torso bodySupport.
     # This rotates mesh axes only; toe-only pitch and all joint positions stay free.
     from .contact_constraints import motion_space_support_evidence, observed_ground_contact_mask
@@ -326,7 +351,8 @@ def transport_corrected_bone_sides(previous_frames: list[dict[str, Any]], payloa
             **calibrated_foot_rest_pitches(
                 np.asarray([[frame['joints'][name] for name in names] for frame in frames]),
                 names, timed_evidence,
-                frame_times=[frame.get('sourceTimeSec') for frame in frames]),
+                frame_times=[frame.get('sourceTimeSec') for frame in frames],
+                canonical_execution=payload.get('canonicalExecution')),
             **payload.get('footRestPitchRadians', {}),
         }
     for leg in ('left', 'right'):
@@ -337,10 +363,16 @@ def transport_corrected_bone_sides(previous_frames: list[dict[str, Any]], payloa
             frame = frames[index]
             if ankle not in frame.get('joints', {}) or toe not in frame.get('joints', {}):
                 continue
+            key = f'{ankle}->{toe}'
+            if (frame.get('boneSideProvenance') or {}).get(key) == (
+                    NATIVE_FOOT_SIDE_AXIS_PROVENANCE):
+                # A qualified model-pose estimate already carries the ankle
+                # bone roll; the legacy global-up convention would replace it.
+                continue
             forward = np.asarray(frame['joints'][toe]) - frame['joints'][ankle]
             side = _unit(_cross3(forward, np.array([0., 1., 0.])))
             if side is not None:
-                frame.setdefault('boneSides', {})[f'{ankle}->{toe}'] = side.tolist()
+                frame.setdefault('boneSides', {})[key] = side.tolist()
 
 
 def bone_roll_metrics(payload: dict[str, Any]) -> dict[str, Any]:
@@ -398,6 +430,42 @@ def bone_roll_metrics(payload: dict[str, Any]) -> dict[str, Any]:
     return {"available": bool(keys), "severe": bool(events), "maxStepDegrees": maximum, "events": events}
 
 
+def coordinate_knee_side(thigh, shin, foot, previous, *, previous_jacobian=False):
+    """Native knee-frame step, optionally differentiated through its history."""
+    projected = (previous - shin * np.dot(previous, shin)
+                 if previous is not None else None)
+    reference = _unit(projected) if projected is not None else None
+    history_reference = reference is not None
+    if reference is None:
+        reference = _unit(_cross3(foot, -shin))
+    knee_side = _cross3(thigh, shin)
+    bend = math.sqrt(float(np.dot(knee_side, knee_side)))
+    side = knee_side / bend if bend > .342 else reference
+    if side is None:
+        return (None, np.zeros((3, 3))) if previous_jacobian else None
+    if reference is not None and np.dot(side, reference) < 0:
+        side = -side
+    weight = 0.
+    mixed = side
+    if reference is not None and previous is not None:
+        weight = .2 * float(np.clip((bend - .342) / .3, 0, 1))
+        mixed = reference * (1 - weight) + side * weight
+        side = _unit(mixed)
+    if not previous_jacobian:
+        return side
+    derivative = np.zeros((3, 3))
+    if previous is not None and history_reference:
+        def unit_derivative(value):
+            length = np.linalg.norm(value)
+            normal = value / length
+            return (np.eye(3) - np.outer(normal, normal)) / length
+        # Below the bend threshold the selected side is the reference itself.
+        reference_weight = 1. if bend <= .342 else 1. - weight
+        derivative = (unit_derivative(mixed) @ (reference_weight * unit_derivative(projected))
+                      @ (np.eye(3) - np.outer(shin, shin)))
+    return side, derivative
+
+
 def rendered_leg_sides(frames: list[dict[str, Any]]) -> list[dict[str, list[float]]]:
     """Replay the renderer's knee frames, including axes absent from boneSides.
 
@@ -420,19 +488,9 @@ def rendered_leg_sides(frames: list[dict[str, Any]]) -> list[dict[str, list[floa
                 continue
             shin_key = f"{leg}_knee->{leg}_ankle"
             old = previous.get(shin_key)
-            reference = _unit(old - shin * np.dot(old, shin)) if old is not None else None
-            if reference is None:
-                reference = _unit(_cross3(foot, -shin))
-            knee_side = _cross3(thigh, shin)
-            bend = math.sqrt(float(np.dot(knee_side, knee_side)))
-            side = knee_side / bend if bend > .342 else reference
+            side = coordinate_knee_side(thigh, shin, foot, old)
             if side is None:
                 continue
-            if reference is not None and np.dot(side, reference) < 0:
-                side = -side
-            if reference is not None and old is not None:
-                weight = .2 * float(np.clip((bend - .342) / .3, 0, 1))
-                side = _unit(reference * (1 - weight) + side * weight)
             current[f"{leg}_hip->{leg}_knee"] = side
             current[shin_key] = side
             # Match playback: knee articulation must not become shoe roll.

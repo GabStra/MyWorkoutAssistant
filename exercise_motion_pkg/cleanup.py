@@ -6,7 +6,7 @@ import statistics
 
 import numpy as np
 
-from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
+from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3, axis_angle_rotation
 from exercise_motion_pkg.render_geometry import (
     UNIFORM_CAPSULE_RADIUS,
     support_joint_height_for_surface,
@@ -265,16 +265,10 @@ def _rotate_clip_about_axis(
     rotated_frames = []
     for frame in clip.frames:
         rotated_frames.append(
-            MotionFrame(
-                time_sec=frame.time_sec,
-                source_time_sec=frame.source_time_sec,
-                source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                joints={
+            frame.with_joints({
                     name: _rotate_point_rodigues(pt, pivot=pivot, axis=axis, angle_radians=angle_radians)
                     for name, pt in frame.joints.items()
-                },
-            )
+                }, rigid_rotation=axis_angle_rotation(axis, angle_radians))
         )
     return replace(clip, frames=rotated_frames)
 
@@ -505,8 +499,7 @@ def _level_frame_contacts(
         for name, point in frame.joints.items()
     }
     return (
-        MotionFrame(time_sec=frame.time_sec, joints=rotated_joints,
-                    source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index),
+        frame.with_joints(rotated_joints, rigid_rotation=axis_angle_rotation(axis, angle)),
         math.degrees(angle),
     )
 
@@ -552,12 +545,7 @@ def _rotate_frame_about_contact_pair(
         (first[1] + second[1]) * 0.5,
         (first[2] + second[2]) * 0.5,
     )
-    return MotionFrame(
-        time_sec=frame.time_sec,
-        source_time_sec=frame.source_time_sec,
-        source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-        joints={
+    return frame.with_joints({
             name: _rotate_point_rodigues(
                 point,
                 pivot=pivot,
@@ -565,8 +553,7 @@ def _rotate_frame_about_contact_pair(
                 angle_radians=angle_radians,
             )
             for name, point in frame.joints.items()
-        },
-    )
+        }, rigid_rotation=axis_angle_rotation(normalized_axis, angle_radians))
 
 
 def _contact_hinge_score(
@@ -982,8 +969,7 @@ def solve_contact_aware_rigid_world_alignment(
                 point[2],
             )
         grounded_frames.append(
-            MotionFrame(time_sec=frame.time_sec, joints=projected_joints,
-                        source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+            frame.with_joints(projected_joints)
         )
     grounded = replace(aligned, frames=grounded_frames)
     return grounded, {
@@ -1115,6 +1101,8 @@ def cleanup_motion_clip(
     ground_contact_mode: str = "unknown",
     support_mode_hint: str | None = None,
     preserve_temporal_extent: bool = False,
+    native_ground_plane: dict[str, object] | None = None,
+    native_foot_geometry_available: bool = False,
 ) -> tuple[MotionClip, CleanupStats]:
     repaired_clip, repaired_joint_outliers = repair_isolated_joint_position_outliers(clip)
     if preserve_temporal_extent:
@@ -1136,6 +1124,22 @@ def cleanup_motion_clip(
         ground_contact_mode_allows_floor_support(ground_contact_mode)
         and support_mode not in {"seated", "lying"}
     )
+    native_floor_height = None
+    if isinstance(native_ground_plane, dict):
+        try:
+            candidate_height = float(native_ground_plane["planeOffsetMeters"])
+            normal = tuple(float(value) for value in native_ground_plane["planeNormal"])
+            if (native_ground_plane.get("kind") == "source_native_foot_contact_plane_estimate"
+                    and len(normal) == 3 and all(math.isfinite(value) for value in normal)
+                    and abs(normal[0]) <= 1e-6 and abs(normal[1] - 1.0) <= 1e-6
+                    and abs(normal[2]) <= 1e-6 and math.isfinite(candidate_height)):
+                native_floor_height = candidate_height
+        except (KeyError, TypeError, ValueError, OverflowError):
+            native_floor_height = None
+    native_ground_applied = (
+        native_floor_height is not None
+        and ground_contact_mode_allows_floor_support(ground_contact_mode)
+    )
     preserve_video_floor_orientation = clip_preserves_video_floor_orientation(trimmed_clip)
     preserve_horizontal_orientation = support_mode in {
         "horizontal_unspecified",
@@ -1152,15 +1156,23 @@ def cleanup_motion_clip(
         if floor_support_enabled
         else [{} for _ in trimmed_clip.frames]
     )
-    grounded = (
-        trimmed_clip
-        if preserve_horizontal_orientation or not floor_support_enabled
-        else ground_to_floor(
-            trimmed_clip,
-            support_states=raw_support_states,
-            support_mode=support_mode,
+    if native_ground_applied:
+        # One source-bound, clip-level plane translation. No per-frame snapping.
+        grounded = ground_to_floor(trimmed_clip, floor_height=native_floor_height)
+    elif native_foot_geometry_available:
+        # Native shoe geometry without verified ground evidence must not silently
+        # fall back to the legacy 46 mm joint capsule estimate.
+        grounded = trimmed_clip
+    else:
+        grounded = (
+            trimmed_clip
+            if preserve_horizontal_orientation or not floor_support_enabled
+            else ground_to_floor(
+                trimmed_clip,
+                support_states=raw_support_states,
+                support_mode=support_mode,
+            )
         )
-    )
     # `ground_to_floor` is one clip-wide translation, so it cannot change
     # contact timing. Continuous ground support can be re-detected after the
     # shift because raw world coordinates may not use the floor as Y=0. Keep
@@ -1181,7 +1193,8 @@ def cleanup_motion_clip(
             support_mode=support_mode,
             ground_contact_mode=ground_contact_mode,
         )
-    support_ground_y = estimate_support_ground_height(grounded, support_states)
+    support_ground_y = (0.0 if native_ground_applied
+                        else estimate_support_ground_height(grounded, support_states))
     intermittent_support = (
         str(ground_contact_mode or "unknown").strip().casefold() == "intermittent"
     )
@@ -1224,6 +1237,20 @@ def cleanup_motion_clip(
                 else "ground_contact_mode_does_not_allow_grounding"
             ),
         }
+    elif native_ground_applied or native_foot_geometry_available:
+        vertically_grounded = support_stabilized
+        vertical_grounding = {
+            "applied": native_ground_applied,
+            "groundContactMode": str(ground_contact_mode or "unknown").strip().casefold(),
+            "reason": ("single_native_mesh_plane_translation"
+                       if native_ground_applied
+                       else "native_geometry_without_qualified_ground_plane"),
+            **({"sourceVideoSha256": native_ground_plane.get("sourceVideoSha256"),
+                "sampleCount": native_ground_plane.get("sampleCount"),
+                "planeOffsetBeforeTranslationMeters": native_floor_height,
+                "planeOffsetAfterTranslationMeters": 0.0}
+               if native_ground_applied and isinstance(native_ground_plane, dict) else {}),
+        }
     elif preserve_horizontal_orientation:
         vertically_grounded = support_stabilized
         vertical_grounding = {
@@ -1238,7 +1265,15 @@ def cleanup_motion_clip(
                 "continuous" if uses_knee_floor_support(support_mode) else ground_contact_mode
             ),
         )
-    if not floor_support_enabled:
+    if native_ground_applied or native_foot_geometry_available:
+        support_constrained = vertically_grounded
+        support_constraint = {
+            "applied": False,
+            "reason": ("native_mesh_plane_owns_clip_vertical_translation"
+                       if native_ground_applied
+                       else "native_geometry_without_qualified_ground_plane"),
+        }
+    elif not floor_support_enabled:
         support_constrained = vertically_grounded
         support_constraint = {
             "applied": False,
@@ -1377,6 +1412,14 @@ def cleanup_motion_clip(
         "verticalGrounding": vertical_grounding,
         "supportSurfaceConstraint": support_constraint,
         "footContacts": final_support_states,
+        "nativeGroundContact": ({
+            **native_ground_plane,
+            "applied": True,
+            "appliedOffsetMeters": native_floor_height,
+            "remainingPlaneOffsetMeters": 0.0,
+            "translationScope": "single_clip_global_y",
+        } if native_ground_applied and isinstance(native_ground_plane, dict) else None),
+        "nativeFootGeometryAvailable": bool(native_foot_geometry_available),
         "reviewStatus": "needs_manual_review",
     }
     return MotionClip(
@@ -1429,16 +1472,10 @@ def stabilize_vertical_floor_contact(
         }
 
     grounded_frames = [
-        MotionFrame(
-            time_sec=frame.time_sec,
-            source_time_sec=frame.source_time_sec,
-            source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-            joints={
+        frame.with_joints({
                 name: (point[0], point[1] - correction, point[2])
                 for name, point in frame.joints.items()
-            },
-        )
+            })
         for frame, correction in zip(clip.frames, corrections)
     ]
     return MotionClip(
@@ -1675,8 +1712,8 @@ def _rotate_clip_about_axis(
                 for index in range(3)
             )
             joints[name] = rotated
-        rotated_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints,
-                                          source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        rotated_frames.append(frame.with_joints(
+            joints, rigid_rotation=axis_angle_rotation(axis, angle_radians)))
     return MotionClip(
         fps=clip.fps,
         joint_names=clip.joint_names,
@@ -1765,8 +1802,7 @@ def constrain_support_surfaces(
                     )
             maximum_correction = max(maximum_correction, correction_length)
             corrected_samples += 1
-        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints,
-                                            source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        corrected_frames.append(frame.with_joints(joints))
     return MotionClip(
         fps=clip.fps,
         joint_names=clip.joint_names,
@@ -1891,8 +1927,7 @@ def repair_isolated_joint_position_outliers(
     if not repairs:
         return clip, []
     repaired_frames = [
-        MotionFrame(time_sec=frame.time_sec, joints=frame_joints[index],
-                    source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+        frame.with_joints(frame_joints[index])
         for index, frame in enumerate(clip.frames)
     ]
     return MotionClip(
@@ -1968,8 +2003,7 @@ def smooth_root_translation(
             name: (coords[0] + delta[0], coords[1] + delta[1], coords[2] + delta[2])
             for name, coords in frame.joints.items()
         }
-        smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints,
-                                           source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        smoothed_frames.append(frame.with_joints(smoothed_joints))
         previous_filtered_root = filtered_root
         previous_filtered_derivative = filtered_derivative
 
@@ -1997,8 +2031,7 @@ def trim_static_edges(
     end_frame = min(clip.frame_count - 1, active_indices[-1] + padding_frames)
     sliced_frames = clip.frames[start_frame : end_frame + 1]
     rebased = [
-        MotionFrame(time_sec=index / clip.fps, joints=frame.joints,
-                    source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+        frame.with_joints(frame.joints, time_sec=index / clip.fps)
         for index, frame in enumerate(sliced_frames)
     ]
     return (
@@ -2057,8 +2090,7 @@ def ground_to_floor(
             name: (coords[0], coords[1] - floor_height, coords[2])
             for name, coords in frame.joints.items()
         }
-        grounded_frames.append(MotionFrame(time_sec=frame.time_sec, joints=grounded_joints,
-                                           source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        grounded_frames.append(frame.with_joints(grounded_joints))
     return MotionClip(
         fps=clip.fps,
         joint_names=clip.joint_names,
@@ -2135,16 +2167,10 @@ def place_support_joints_on_floor(
     if abs(delta) <= 1e-8:
         return clip
     placed_frames = [
-        MotionFrame(
-            time_sec=frame.time_sec,
-            source_time_sec=frame.source_time_sec,
-            source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-            joints={
+        frame.with_joints({
                 name: (point[0], point[1] + delta, point[2])
                 for name, point in frame.joints.items()
-            },
-        )
+            })
         for frame in clip.frames
     ]
     return MotionClip(
@@ -2252,10 +2278,10 @@ def restore_bilateral_support_chain_lengths(
             return clip, {"applied": False, "reason": "ambiguous_core_translation"}
         correction = center + radius * toward_origin / max(direction_length, 1e-9)
         maximum_correction = max(maximum_correction, float(np.linalg.norm(correction)))
-        frames.append(MotionFrame(frame.time_sec, {
+        frames.append(frame.with_joints({
             name: point if name in stationary else tuple(float(v) for v in np.asarray(point) + correction)
             for name, point in frame.joints.items()
-        }, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        }))
     return replace(clip, frames=frames), {
         "applied": True, "strategy": "rigid_core_support_sphere_intersection",
         "maximumCorrection": maximum_correction,
@@ -2320,8 +2346,7 @@ def stabilize_kneeling_distal_support_pose(
             foot = ankle + np.asarray(vectors["ankleToFoot"], dtype=np.float64)
             joints[ankle_name] = tuple(float(value) for value in ankle)
             joints[foot_name] = tuple(float(value) for value in foot)
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints,
-                                  source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     return replace(clip, frames=frames), {"applied": True, "sides": side_vectors}
 
 
@@ -2395,12 +2420,7 @@ def lock_support_pair_midpoint_rigidly(
         )
         maximum_correction = max(maximum_correction, math.dist((0.0, 0.0, 0.0), correction))
         frames.append(
-            MotionFrame(
-                time_sec=frame.time_sec,
-                source_time_sec=frame.source_time_sec,
-                source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                joints={
+            frame.with_joints({
                     name: (
                         rotated[0] + correction[0],
                         rotated[1] + correction[1],
@@ -2417,8 +2437,8 @@ def lock_support_pair_midpoint_rigidly(
                         if rotation_axis is not None
                         else point,
                     )
-                },
-            )
+                }, rigid_rotation=(axis_angle_rotation(rotation_axis, rotation_angle)
+                                   if rotation_axis is not None else None))
         )
     return replace(clip, frames=frames), {
         "applied": True,
@@ -2532,8 +2552,7 @@ def lock_planted_support_joints(
                     descendant[2] + correction[2],
                 )
             maximum_correction = max(maximum_correction, correction_length)
-        locked_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints,
-                                         source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        locked_frames.append(frame.with_joints(joints))
         resolved_anchor_frames.append(resolved_frame_anchors)
     return MotionClip(
         fps=clip.fps,
@@ -2673,8 +2692,7 @@ def lift_clip_above_support_ground(
             name: (coords[0], coords[1] + penetration, coords[2])
             for name, coords in frame.joints.items()
         }
-        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=corrected_joints,
-                                            source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        corrected_frames.append(frame.with_joints(corrected_joints))
     return MotionClip(
         fps=clip.fps,
         joint_names=clip.joint_names,
@@ -2743,8 +2761,7 @@ def stabilize_global_translation_from_support_contacts(
             )
             for name, coords in frame.joints.items()
         }
-        stabilized_frames.append(MotionFrame(time_sec=frame.time_sec, joints=translated_joints,
-                                             source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        stabilized_frames.append(frame.with_joints(translated_joints))
         previous_contacting_joints = set(contacting_joints)
 
     return MotionClip(
@@ -2824,8 +2841,7 @@ def stabilize_multi_contact_support(
                 translated_point[1] * (1.0 - SUPPORT_LOCK_Y_BLEND) + target[1] * SUPPORT_LOCK_Y_BLEND,
                 translated_point[2] * (1.0 - SUPPORT_LOCK_XZ_BLEND) + target[2] * SUPPORT_LOCK_XZ_BLEND,
             )
-        stabilized_frames.append(MotionFrame(time_sec=frame.time_sec, joints=translated_joints,
-                                             source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        stabilized_frames.append(frame.with_joints(translated_joints))
         previous_contacting_joints = set(contacting_joints)
 
     return MotionClip(
@@ -2922,8 +2938,7 @@ def suppress_micro_movements(
                 filtered_joints[joint_name] = previous_coords
             else:
                 filtered_joints[joint_name] = coords
-        stabilized_frames.append(MotionFrame(time_sec=frame.time_sec, joints=filtered_joints,
-                                             source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        stabilized_frames.append(frame.with_joints(filtered_joints))
 
     return MotionClip(
         fps=clip.fps,

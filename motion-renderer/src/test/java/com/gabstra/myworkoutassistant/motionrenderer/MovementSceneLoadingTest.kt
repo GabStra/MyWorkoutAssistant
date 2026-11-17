@@ -116,7 +116,7 @@ class MovementSceneLoadingTest {
             .newInstance(vector(0f, 0f, 1f), vector(-1f, 0f, 0f))
         val palette = call("createSkeletonPalette", Color.White.value.toLong())
         val renderShoe = renderer.declaredMethods.single {
-            it.name == "addShoeBlockFromNames" && it.parameterCount == 10
+            it.name == "addShoeBlockFromNames" && it.parameterCount == 11
         }.apply { isAccessible = true }
         fun build(restPitch: Float): List<Any> {
             val mesh = meshClass.declaredConstructors.single { it.parameterCount == 0 }
@@ -133,6 +133,7 @@ class MovementSceneLoadingTest {
                 null,
                 restPitch,
                 orientation,
+                null,
             )
             @Suppress("UNCHECKED_CAST")
             return field(mesh, "vertices") as List<Any>

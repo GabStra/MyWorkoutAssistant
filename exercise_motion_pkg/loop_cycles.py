@@ -41,8 +41,40 @@ def _boundary_motion_metrics(points, *, fps, scale):
             'endpointVelocityDifferenceLimitMetersPerSecond': float(limit)}
 
 
-def cycle_boundary_motion_metrics(payload, selection=None):
-    """Check actual included endpoint edges, independently of phase completeness."""
+def support_wrap_only_failure(boundary):
+    return (not boundary.get('passed')
+            and boundary.get('rejectionReasons') == ['source_support_wrap_unrepairable'])
+
+
+def source_support_boundary_deferable(boundary):
+    reasons = boundary.get('rejectionReasons') or []
+    return (not boundary.get('passed') and bool(reasons)
+            and boundary.get('failureOwner', 'source') == 'source'
+            and set(reasons).issubset({
+                'source_support_wrap_unrepairable',
+                'source_boundary_tangents_incompatible',
+            }))
+
+
+def confirmed_support_joint_indices(payload, names):
+    """Return source-confirmed stationary support anchors, never inferred body parts."""
+    from .support_geometry import evidence_is_complete, support_evidence
+
+    evidence = support_evidence(payload)
+    if (not evidence.get('required') or evidence.get('status') != 'confirmed'
+            or not evidence_is_complete(evidence, names)):
+        return []
+    return [names.index(name) for name in evidence.get('stationaryJoints', []) if name in names]
+
+
+def _contacted_support_joint_indices(contacts, start, stop):
+    if stop <= start:
+        return []
+    return np.flatnonzero(np.any(contacts[start:stop], axis=0)).tolist()
+
+
+def cycle_boundary_motion_metrics(payload, selection=None, *, support_aware=False):
+    """Check actual endpoint edges; verified support can defer source-space seams to fitting."""
     names, frames = payload.get('jointNames', []), payload.get('frames', [])
     start = int((selection or {}).get('startFrame', 0))
     stop = int((selection or {}).get('stopFrameExclusive', len(frames)))
@@ -53,8 +85,13 @@ def cycle_boundary_motion_metrics(payload, selection=None):
     points = np.asarray([[f['joints'][n] for n in names] for f in frames], dtype=float)
     if not np.isfinite(points).all():
         return {'passed': False, 'rejectionReasons': ['boundary_motion_unresolved']}
-    indices = [i for i, name in enumerate(names)
-               if name == 'pelvis' or name.endswith(('hip', 'knee', 'ankle', 'foot'))]
+    indices = confirmed_support_joint_indices(payload, names) if support_aware else []
+    if support_aware and not indices:
+        indices = _contacted_support_joint_indices(
+            contact_mask(payload, names, len(frames)), start, stop)
+    if not indices:
+        indices = [i for i, name in enumerate(names)
+                   if name == 'pelvis' or name.endswith(('hip', 'knee', 'ankle', 'foot'))]
     if not indices:
         return {'passed': False, 'rejectionReasons': ['boundary_motion_unresolved']}
     return _boundary_motion_metrics(points[start:stop, indices], fps=fps,
@@ -134,6 +171,7 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
         MAX_RANKED_SOURCE_WRAP_RATIO)
     support_idx = [i for i, name in enumerate(names)
                    if name == 'pelvis' or name.endswith(('hip', 'knee', 'ankle', 'foot'))]
+    verified_support_idx = confirmed_support_joint_indices(payload, names)
     complete_proposals = []
     for start in range(count-minimum_frames):
         # The final observed sample can be the return point of a complete
@@ -147,8 +185,15 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
                 continue
             counts['contactCompatible'] += 1
             jump = float(np.max(np.linalg.norm(points[start]-points[endpoint_index], axis=-1)))
+            candidate_support_idx = verified_support_idx or _contacted_support_joint_indices(
+                contacts, start, stop)
+            endpoint_support_pinned = bool(allow_repairable_support_wrap and candidate_support_idx) and all(
+                contacts[frame, index]
+                for frame in (start, endpoint_index)
+                for index in candidate_support_idx
+            )
             # Bounded fit feasibility, not permission to accept a final seam.
-            if jump > max(.08, 2*endpoint_correction_ratio)*scale:
+            if jump > max(.08, 2*endpoint_correction_ratio)*scale and not endpoint_support_pinned:
                 continue
             counts['endpointFeasible'] += 1
             phase_window = phase_track[start:stop]
@@ -179,7 +224,8 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
             # Hard-reject uses support/lower-body joints so incidental head drift
             # cannot empty otherwise-valid geometric proposals.
             _, excess, increments = seam_errors(points[start:stop])
-            support_points = points[start:stop][:, support_idx] if support_idx else points[start:stop]
+            seam_indices = candidate_support_idx if endpoint_support_pinned else support_idx
+            support_points = points[start:stop][:, seam_indices] if seam_indices else points[start:stop]
             step_ratio = float(np.max(excess, initial=0.)) / max(
                 MAX_STEP_EXCESS_BODY_RATIO * scale, 1e-9)
             vel_ratio = (
@@ -187,21 +233,14 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
                 / max(MAX_VELOCITY_MISMATCH_BODY_RATIO * scale, 1e-9))
             wrap_ratio = max(step_ratio, vel_ratio)
             boundary = _boundary_motion_metrics(support_points, fps=fps, scale=scale)
-            endpoint_support_pinned = all(
-                name in names and contacts[frame, names.index(name)]
-                for frame in (start, endpoint_index)
-                for side in ('left', 'right')
-                for name in (f'{side}_ankle', f'{side}_foot')
-            )
-            repairable_wrap = bool(allow_repairable_support_wrap and endpoint_support_pinned)
+            repairable_wrap = endpoint_support_pinned
             if (boundary['sourceSupportWrapOverLimitRatio'] > MAX_RANKED_SOURCE_WRAP_RATIO
                     and not repairable_wrap):
                 continue
             counts['wrapFeasible'] += 1
             deferred_reasons = boundary.get('rejectionReasons') or []
             if (not boundary['passed']
-                    and not (repairable_wrap
-                             and deferred_reasons == ['source_support_wrap_unrepairable'])):
+                    and not (repairable_wrap and source_support_boundary_deferable(boundary))):
                 if diagnostics is not None:
                     previous = diagnostics.get('boundaryMotion')
                     if (previous is None or boundary['maximumEndpointVelocityDifferenceMetersPerSecond']
@@ -215,7 +254,7 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
                      + .01 * (1 - (stop - start) / count))
             retained = np.linalg.norm(np.ptp(features[start:stop], axis=0), axis=-1)
             complete_proposals.append(
-                (score, start, stop, jump, mismatch, wrap_ratio, retained))
+                (score, start, stop, jump, mismatch, wrap_ratio, repairable_wrap, retained))
     # Whole-clip feature range includes multi-rep drift. A single observed cycle
     # must preserve one-repetition excursion, not incidental drift across the
     # entire source window (same intent as the phase_values path above).
@@ -231,7 +270,7 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
     range_basis = cycle_range if moving_cycle.any() else full_range
     moving_basis = moving_cycle if moving_cycle.any() else moving
     accepted = []
-    for score, start, stop, jump, mismatch, wrap_ratio, retained in sorted(complete_proposals):
+    for score, start, stop, jump, mismatch, wrap_ratio, repairable_wrap, retained in sorted(complete_proposals):
         if np.any(retained[moving_basis] < .9 * range_basis[moving_basis]):
             continue
         counts['rangePreserved'] += 1
@@ -264,11 +303,9 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
                          'velocityMismatchRmsMetersPerSecond': mismatch,
                          'sourceWrapOverLimitRatio': wrap_ratio,
                          'sourceWrapDeferredToSupportInitialization': bool(
-                             allow_repairable_support_wrap and all(
-                                 name in names and contacts[frame, names.index(name)]
-                                 for frame in (start, stop if stop < count else count - 1)
-                                 for side in ('left', 'right')
-                                 for name in (f'{side}_ankle', f'{side}_foot'))),
+                              repairable_wrap and (
+                                  jump > max(.08, 2*endpoint_correction_ratio)*scale
+                                  or not boundary['passed'])),
                          'requiresEndpointCorrection': jump > .08*scale,
                          'minimumRetainedRangeRatio': float(
                              np.min(retained[moving_basis] / np.maximum(range_basis[moving_basis], 1e-12))

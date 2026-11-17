@@ -39,6 +39,138 @@ def accepted_payload():
     return payload
 
 
+def _native_height_track(frame_count, mode='verticalOnly'):
+    anchor = f'native-material:left:0:0:{frame_count - 1}'
+    return {
+        'version': 2,
+        'left': {
+            'active': [True] * frame_count,
+            'directions': [[0.0, 0.0, 1.0]] * frame_count,
+            'sideAxes': [[1.0, 0.0, 0.0]] * frame_count,
+            'anchorIds': [anchor] * frame_count,
+            'episodes': [{
+                'startFrame': 0,
+                'endFrame': frame_count - 1,
+                'anchorId': anchor,
+                'regionRole': 'forefoot',
+                'mode': mode,
+                'primitiveId': 'wearShoe:left_ankle->left_foot',
+                'triangleIndex': 11,
+                'barycentric': [0.2, 0.3, 0.5],
+                'materialOffsetLocalMeters': [0.0, 0.0, 0.0],
+                'referenceLengthMeters': 0.1,
+                'surfaceNormal': [0.0, 1.0, 0.0],
+                'planeOffsetMeters': 0.0,
+            }],
+        },
+    }
+
+
+def _native_height_reuse_payload(mode='verticalOnly', *, proof=None):
+    payload = accepted_payload()
+    frame_count = len(payload['frames'])
+    payload['fixedRig']['contactFootTracks'] = _native_height_track(
+        frame_count, mode)
+    fit = payload['controlledMotionFit']
+    fit['checks']['heightOnlyContacts'] = True
+    fit['heightOnlyContactConstraint'] = {
+        'available': True,
+        'axis': 'floor_normal_y',
+        'frameJointCount': frame_count,
+        'nativeMaterialFrameCount': (
+            frame_count if mode == 'verticalOnly' else 0),
+        'nativeMaterialMeasured': False,
+    }
+    fit['playback'] = {'passed': True}
+    if proof is not None:
+        fit['heightOnlyContactConstraint'].update(proof['constraint'])
+        fit['playback']['nativeHeightOnlyMaterialShoes'] = dict(proof['material'])
+    fit['fitSourceEvidenceDigest'] = (
+        controlled_motion_fit_source_evidence_digest(payload))
+    fit['outputPoseDigest'] = pose_digest(payload)
+    return payload
+
+
+def _native_material_proof(*, passed, error=0.001, samples=7, **overrides):
+    constraint = {
+        'nativeMaterialMeasured': True,
+        'nativeMaterialKeySampleCount': samples,
+        'nativeMaterialPlaybackSampleCount': samples,
+        'nativeMaterialKeyMaximumErrorMeters': error,
+        'nativeMaterialPlaybackMaximumErrorMeters': error,
+        'nativeMaterialPassed': passed,
+    }
+    material = {
+        'applicable': True,
+        'available': True,
+        'passed': passed,
+        'storedFrameSampleCount': samples,
+        'sampleCount': samples,
+        'storedFrameMaximumErrorMeters': error,
+        'maximumErrorMeters': error,
+    }
+    constraint.update(overrides)
+    return {'constraint': constraint, 'material': material}
+
+
+def test_native_height_only_reuse_requires_actual_material_proof():
+    assert can_reuse_controlled_motion(accepted_payload())
+
+    legacy = _native_height_reuse_payload()
+    assert not can_reuse_controlled_motion(legacy)
+
+    failed = _native_height_reuse_payload(
+        proof=_native_material_proof(passed=False, error=0.01))
+    assert not can_reuse_controlled_motion(failed)
+
+    over_limit = _native_height_reuse_payload(
+        proof=_native_material_proof(passed=True, error=0.01))
+    assert not can_reuse_controlled_motion(over_limit)
+
+    nonfinite = _native_height_reuse_payload(
+        proof=_native_material_proof(passed=True, error=float('nan')))
+    assert not can_reuse_controlled_motion(nonfinite)
+
+    passing = _native_height_reuse_payload(
+        proof=_native_material_proof(passed=True, error=0.001))
+    assert can_reuse_controlled_motion(passing)
+
+    stationary = _native_height_reuse_payload(mode='stationary')
+    assert can_reuse_controlled_motion(stationary)
+
+
+def test_reviewed_bilateral_target_reaches_rig_seed_without_rewriting_source(monkeypatch):
+    original = accepted_payload()
+    assert can_reuse_controlled_motion(original)
+    changed_intent = copy.deepcopy(original)
+    changed_intent['canonicalExecution'] = {'arms': 'mirrored'}
+    assert not can_reuse_controlled_motion(changed_intent)
+    original['frames'][0]['sourceJoints']['left_elbow'][2] += .05
+    original['frames'][0]['joints']['left_elbow'][2] += .05
+    before = copy.deepcopy(original)
+    captured = []
+
+    def fit(working):
+        captured.append(working)
+        return working, {'applied': False, 'reason': 'test_capture'}
+
+    monkeypatch.setattr(controlled_motion, 'fit_controlled_motion', fit)
+    monkeypatch.setattr(bake_and_rank, 'constrain_to_source_articulation_envelope',
+                        lambda source, proposed, **kwargs: (proposed, {'applied': False}))
+    bake_and_rank.constrain_baked_payload_to_source_articulation(original, exercise_motion_contract={
+        'bilateralExecution': {'arms': 'mirrored'},
+        'bilateralExecutionAuthority': 'structured_definition',
+    })
+    working, = captured
+    assert working['canonicalExecution'] == {'arms': 'mirrored'}
+    assert not can_reuse_controlled_motion(working)
+    for frame, source in zip(working['frames'], before['frames']):
+        assert frame['sourceJoints'] == source['sourceJoints']
+        assert frame['joints'] == frame['controlledArticulationReferenceJoints']
+    assert working['frames'][0]['joints'] != before['frames'][0]['joints']
+    assert original == before
+
+
 def test_support_wrap_deferral_requires_verified_camera_clock_and_bilateral_endpoint_pins(monkeypatch):
     from exercise_motion_pkg import body_support_observation, support_geometry
     from exercise_motion_pkg import sequence_stabilization
@@ -70,21 +202,61 @@ def test_support_wrap_deferral_requires_verified_camera_clock_and_bilateral_endp
     monkeypatch.setattr(sequence_stabilization, 'contact_mask',
                         lambda *_args, **_kwargs: all_pinned.copy())
 
-    assert controlled_motion._verified_support_wrap_deferral(payload)
+    complete_phase = {'required': True, 'passed': True, 'hasSingleMajorCycle': True}
+    assert controlled_motion._verified_support_wrap_deferral(payload, source_phase=complete_phase)
     incomplete = all_pinned.copy()
     incomplete[0, 1] = False
     monkeypatch.setattr(sequence_stabilization, 'contact_mask',
                         lambda *_args, **_kwargs: incomplete.copy())
+    assert not controlled_motion._verified_support_wrap_deferral(
+        payload, source_phase=complete_phase)
+
+    anchored = {
+        'bodySupport': {'required': True, 'status': 'confirmed',
+                        'sourceVideoSha256': 'selected',
+                        'stationaryJoints': ['left_wrist', 'right_wrist'],
+                        'coplanarGroups': [{'joints': ['left_wrist', 'right_wrist'],
+                                            'normal': [0, 1, 0]}]},
+        'bodySupportObservation': {'sourceVideoSha256': 'selected'},
+    }
+    payload['jointNames'] += ['left_wrist', 'right_wrist']
+    monkeypatch.setattr(body_support_observation, 'materialize_stationary_sole_support',
+                        lambda _payload: anchored)
+    monkeypatch.setattr(sequence_stabilization, 'contact_mask',
+                        lambda *_args, **_kwargs: np.zeros((3, 6), dtype=bool))
+    assert controlled_motion._verified_support_wrap_deferral(payload, source_phase=complete_phase)
     assert not controlled_motion._verified_support_wrap_deferral(payload)
+    anchored['bodySupport']['sourceVideoSha256'] = 'different-video'
+    assert not controlled_motion._verified_support_wrap_deferral(payload, source_phase=complete_phase)
+    anchored['bodySupport']['sourceVideoSha256'] = 'selected'
+    payload['sourceCyclePreflight'] = [{
+        'passed': True, 'selection': {'startFrame': 0, 'stopFrameExclusive': 3},
+        'sourcePhase': complete_phase,
+    }]
+    payload['loop'] = {'enabled': True}
+    payload['loopCycleSelection'] = {'startFrame': 0, 'stopFrameExclusive': 3}
+    from exercise_motion_pkg import loop_cycles
+    monkeypatch.setattr(loop_cycles, 'cycle_boundary_motion_metrics', lambda *_args, **_kwargs: {
+        'passed': False, 'rejectionReasons': [
+            'source_support_wrap_unrepairable', 'source_boundary_tangents_incompatible']})
+    fit_calls = []
+    def fit(candidate, **kwargs):
+        fit_calls.append(candidate)
+        return candidate, {'applied': False, 'reason': 'final_validation_failed'}
+    monkeypatch.setattr(controlled_motion, '_fit_controlled_motion', fit)
+    _, result = controlled_motion._fit_observed_cycles(payload, timeout_seconds=60)
+    assert len(fit_calls) == 1
+    assert result['applied'] is False
+    assert result['reason'] == 'final_validation_failed'
 
     payload['sourcePoseCameraReference']['camera']['sourceTimelineMappingIdentity'][
         'selectedFrameClockReceiptSha256'] = 'different-clock'
     monkeypatch.setattr(sequence_stabilization, 'contact_mask',
                         lambda *_args, **_kwargs: all_pinned.copy())
-    assert not controlled_motion._verified_support_wrap_deferral(payload)
+    assert not controlled_motion._verified_support_wrap_deferral(payload, source_phase=complete_phase)
 
 
-def test_supported_fit_anatomy_gate_uses_support_reference_without_retargeting_source_articulation():
+def test_supported_fit_anatomy_gate_keeps_source_bounds_independent_of_spatial_reference():
     from exercise_motion_pkg.controlled_motion import (
         ANATOMY_FIT_MARGIN, fit_anatomy_constraint_reference,
         fit_anatomy_structure_residuals,
@@ -92,9 +264,11 @@ def test_supported_fit_anatomy_gate_uses_support_reference_without_retargeting_s
     from exercise_motion_pkg.physical_validation import (
         anatomical_structure_residuals, validate_physical_motion,
     )
+    from exercise_motion_pkg.anatomical_repair import repair_residuals
 
     names = ['pelvis', 'left_hip', 'right_hip', 'spine1', 'spine2', 'spine3', 'neck',
-             'left_collar', 'right_collar', 'left_shoulder', 'right_shoulder']
+             'left_collar', 'right_collar', 'left_shoulder', 'right_shoulder',
+             'left_knee', 'left_ankle', 'left_foot', 'right_knee', 'right_ankle', 'right_foot']
 
     def pose(shoulder_bend_degrees):
         deviation = np.deg2rad(180. - shoulder_bend_degrees)
@@ -104,28 +278,28 @@ def test_supported_fit_anatomy_gate_uses_support_reference_without_retargeting_s
             [0., .5, 0.], [0., .75, 0.], [0., 1., 0.],
             [-.05, .75, .1], [-.05, .75, -.1],
             shoulders + [0., 0., .1], shoulders + [0., 0., -.1],
+            [-.1, -.4, 0.], [-.1, -.8, 0.], [-.1, -.8, .2],
+            [.1, -.4, 0.], [.1, -.8, 0.], [.1, -.8, .2],
         ])
         return points[None, :, :]
 
-    source_reference = pose(143.)
-    support_reference = pose(145.)
+    source_reference = pose(145.)
+    support_reference = pose(143.)
     fitted_points = pose(143.5)
 
     selected_source_reference = fit_anatomy_constraint_reference(source_reference)
     source_residuals = fit_anatomy_structure_residuals(
         fitted_points, names, selected_source_reference)
-    selected_support_reference = fit_anatomy_constraint_reference(
-        source_reference, support_reference)
+    selected_support_reference = fit_anatomy_constraint_reference(source_reference)
     supported_residuals = fit_anatomy_structure_residuals(
         fitted_points, names, selected_support_reference)
-    expected_residuals, labels = anatomical_structure_residuals(
-        fitted_points, names, pose_only=True, margin=ANATOMY_FIT_MARGIN,
-        reference=selected_support_reference)
+    expected_residuals, labels = repair_residuals(
+        fitted_points, names, reference=selected_support_reference)
     bend_index = labels.index('anatomy_torso_bend:shoulders')
     # Ask the same hard validator used by both fit completion and materialization.
     source_gate = validate_physical_motion(
         fitted_points, names, reference=source_reference,
-        anatomy_reference=source_reference)
+        anatomy_reference=support_reference)
     supported_gate = validate_physical_motion(
         fitted_points, names, reference=support_reference,
         anatomy_reference=selected_support_reference)
@@ -134,7 +308,7 @@ def test_supported_fit_anatomy_gate_uses_support_reference_without_retargeting_s
     assert any(e.get('reason') == 'anatomy_torso_bend'
                for e in supported_gate['events'])
     np.testing.assert_allclose(supported_residuals, expected_residuals)
-    assert source_residuals[0, bend_index] <= 1e-6
+    assert source_residuals[0, bend_index] > 1e-6
     assert supported_residuals[0, bend_index] > 1e-6
     assert fit_anatomy_constraint_reference(source_reference) is source_reference
 
@@ -410,11 +584,15 @@ def test_fit_cache_identity_includes_transitive_motion_constraint_dependencies()
 
     assert {
         'fit_runtime.py',
+        'trajectory_restoration.py',
+        'body_surface_contacts.py',
+        'body_surface_geometry.py',
         'contact_heel_pitch.py',
         'contact_heel_repair.py',
         'contact_interpolation.py',
         'joint_plant_initialization.py',
         'foot_kinematics.py',
+        'ground_contact_plane.py',
         'motion_placement.py',
         'smpl_joint_names.py',
         'structural_refinement.py',
@@ -832,3 +1010,77 @@ def test_final_validation_catches_whole_body_jump_independently_of_fit_report():
     metrics = bake_and_rank.compute_kinematic_plausibility_metrics_from_payload(payload)
     assert 'root_translation_discontinuity' in metrics['artifactReasons']
     assert metrics['rootMotion']['frames'] == [2, 3]
+
+def test_complete_source_phase_requires_bilateral_endpoint_pins_for_support_wrap_deferral(monkeypatch):
+    from exercise_motion_pkg import body_support_observation, support_geometry, sequence_stabilization
+    identity = dict(selectedSegmentSha256='source', parentSourceSha256='parent',
+                    selectedFrameClockReceiptSha256='clock', sourcePosePayloadSha256='pose')
+    payload = {'sourcePoseCameraReference':{
+        'camera':{'available':True, 'sourceTimelineMappingIdentity':identity},
+        'sourceTimelineMapping':{'schemaVersion':1, 'verified':True,
+                                'mappingKind':'selected_segment_to_parent_source', **identity},
+        'sourcePose':{'frames':[]}},
+        'sourceFootSupportEvidence':{'sourceVideoSha256':'source'},
+        'jointNames':['left_ankle','left_foot','right_ankle','right_foot'],
+        'frames':[{'joints':{}} for _ in range(4)],
+        'sourceCyclePreflight':[{'selection':{'startFrame':0,'stopFrameExclusive':4},
+                                'sourcePhase':{'required':True,'passed':True}}]}
+    monkeypatch.setattr(body_support_observation,'materialize_stationary_sole_support',lambda _: {})
+    monkeypatch.setattr(support_geometry,'support_contact_readiness',lambda *a, **k: {'passed':True})
+    pins=np.zeros((4,4),dtype=bool);pins[1,0]=True
+    monkeypatch.setattr(sequence_stabilization,'contact_mask',lambda *a, **k: pins)
+    assert not controlled_motion._verified_support_wrap_deferral(payload)
+    assert not controlled_motion._verified_support_wrap_deferral(payload,{'startFrame':1,'stopFrameExclusive':3})
+    pins[:] = True
+    assert controlled_motion._verified_support_wrap_deferral(payload)
+    payload['sourceCyclePreflight'][0]['sourcePhase']['passed']=False
+    assert not controlled_motion._verified_support_wrap_deferral(payload)
+
+    payload.pop('sourceCyclePreflight')
+    fresh_phase = {'required': True, 'passed': True, 'hasSingleMajorCycle': True}
+    assert controlled_motion._verified_support_wrap_deferral(payload, source_phase=fresh_phase)
+    assert not controlled_motion._verified_support_wrap_deferral(
+        payload, source_phase={**fresh_phase, 'hasSingleMajorCycle': False})
+    pins[:] = False
+    pins[[0, 2], :] = True
+    assert controlled_motion._verified_support_wrap_deferral(
+        payload, {'startFrame': 0, 'stopFrameExclusive': 2}, source_phase=fresh_phase)
+
+
+def test_unresolved_support_does_not_reuse_an_otherwise_accepted_fit():
+    candidate = accepted_payload()
+    assert can_reuse_controlled_motion(candidate)
+    candidate['controlledMotionFit']['sourceSupportAuthority'] = {
+        'status': 'unresolved', 'required': False, 'passed': None,
+    }
+    assert not can_reuse_controlled_motion(candidate)
+
+def test_materialized_cycle_phase_receipt_keeps_exact_native_interval_authority():
+    from copy import deepcopy
+    from exercise_motion_pkg import controlled_motion
+    interval = {'startFrame':0,'endFrame':2,'startTimeSec':0.,'endTimeSec':2/30}
+    cycle = {'selectionId':'retained-cycle','interval':dict(interval),'sourceInterval':dict(interval)}
+    payload = {'fps':30.,'loop':{'enabled':True},
+        'frames':[{'sourceFrameIndex':i,'sourceTimeSec':i/30}for i in range(3)],
+        'artifactState':{'selectionEvidence':{'cycleSelection':cycle}},
+        'sourceCyclePreflight':[{'reason':'no_feasible_observed_cycle'}],
+        'selectedIntervalSourcePhasePreflight':{
+            'selection':{'source':'artifactState.selectionEvidence.cycleSelection','selection':deepcopy(cycle)},
+            'required':True,'passed':True,
+            'sourcePhase':{'required':True,'passed':True,'hasSingleMajorCycle':True}}}
+    assert controlled_motion._source_phase_confirms_interval(payload)
+    assert not controlled_motion._source_phase_confirms_interval(payload,{'startFrame':1,'stopFrameExclusive':3})
+    wrong = deepcopy(payload)
+    wrong['frames'][-1]['sourceTimeSec'] += .01
+    assert not controlled_motion._source_phase_confirms_interval(wrong)
+    wrong = deepcopy(payload)
+    wrong['selectedIntervalSourcePhasePreflight']['selection']['selection']['sourceInterval']['endFrame'] = 1
+    assert not controlled_motion._source_phase_confirms_interval(wrong)
+    wrong = deepcopy(payload)
+    wrong['selectedIntervalSourcePhasePreflight']['sourcePhase']['hasSingleMajorCycle'] = False
+    assert not controlled_motion._source_phase_confirms_interval(wrong)
+    # An old legacy pass cannot override an explicit current failed receipt.
+    payload['sourceCyclePreflight'] = [{'selection':{'startFrame':0,'stopFrameExclusive':3},
+                                      'sourcePhase':{'required':True,'passed':True}}]
+    payload['selectedIntervalSourcePhasePreflight']['sourcePhase']['passed'] = False
+    assert not controlled_motion._source_phase_confirms_interval(payload)

@@ -241,3 +241,53 @@ if (Test-DiscoveryStageReady -WorkItem $item -Payload $payload) { throw 'Approve
     result = subprocess.run(["pwsh", "-NoProfile", "-File", str(script), str(runner), str(manifest), before, after],
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("intent", [None, {"arms": "mirrored", "legs": "unconstrained"}, {}])
+def test_bilateral_execution_review_round_trip(files, intent):
+    from exercise_motion_pkg.definition_ingestion import prepare_workout_plan_definition_readiness
+    from exercise_motion_pkg.youtube import exercise_motion_contract_for_prompt, exercise_motion_contract_prompt_body
+
+    arguments, output = files
+    review = export_definition_review(**arguments)
+    if intent is not None:
+        review["definition"]["bilateralExecution"] = intent
+    arguments["review_path"].write_text(json.dumps(review))
+    approve_definition_review(
+        **{key: value for key, value in arguments.items() if key != "candidates_path"}, output_path=output,
+    )
+    _effective, entries, report = prepare_workout_plan_definition_readiness(
+        plan_path=arguments["plan_path"], approved_registry_path=output,
+    )
+    assert report["readyCount"] == 1
+    definition = entries[0].motion_context["exerciseDefinition"]
+    contract = normalize_definition_exercise_motion_contract_response({
+        "movementType": "repetition", "completionMode": "return_to_start",
+        "bilateralExecution": {"legs": "mirrored"}, "bilateralExecutionAuthority": "structured_definition",
+    }, exercise=entries[0], source="llm")
+    if intent is None:
+        assert "bilateralExecution" not in definition
+        assert "bilateralExecution" not in contract
+        assert "bilateralExecutionAuthority" not in contract
+    else:
+        assert definition["bilateralExecution"] == intent
+        assert contract["bilateralExecution"] == intent
+        assert contract["bilateralExecutionAuthority"] == "structured_definition"
+        if intent:
+            assert exercise_motion_contract_for_prompt(contract)["bilateralExecution"] == intent
+            assert "bilateralExecution" not in exercise_motion_contract_prompt_body(
+                exercise_motion_contract_for_prompt(contract))
+            assert contract["bilateralExecution"] == intent
+
+
+@pytest.mark.parametrize("intent", [{"feet": "mirrored"}, {"arms": "symmetric"}, {"arms": []}, [], None])
+def test_invalid_bilateral_execution_review_is_rejected(files, intent):
+    arguments, output = files
+    review = export_definition_review(**arguments)
+    review["definition"]["bilateralExecution"] = intent
+    arguments["review_path"].write_text(json.dumps(review))
+    with pytest.raises(ValueError, match="bilateralExecution"):
+        approve_definition_review(
+            **{key: value for key, value in arguments.items() if key != "candidates_path"}, output_path=output,
+        )
+    assert not output.exists()

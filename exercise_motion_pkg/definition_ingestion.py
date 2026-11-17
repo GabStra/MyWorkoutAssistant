@@ -28,6 +28,8 @@ def _has_trusted_explicit_definition(motion_context: dict[str, Any]) -> bool:
     review = definition.get("review")
     if exercise_motion_context_action_definition(motion_context) is None:
         return False
+    if "bilateralExecution" not in definition:
+        return False
     source = str(definition.get("source") or "").strip().lower()
     if source not in {"", "approved", "library", "manual", "user"}:
         return False
@@ -99,20 +101,21 @@ def _target_is_exactly_reviewed(
         return False, "approved_definition_target_context_mismatch", None
     source_context = dict(source.motion_context)
     registry_context = dict(registry.motion_context)
+    source_context.pop("exerciseDefinition", None)
     registry_context.pop("exerciseDefinition", None)
     if registry_context != source_context:
         return False, "approved_definition_base_context_mismatch", None
     reviewed_definition = review.get("definition")
     if not isinstance(reviewed_definition, dict):
         return False, "approved_definition_review_proposal_missing", None
-    if set(reviewed_definition) - {"definingAction", "completionMode", "variantQualifiers", "requiredPhases"}:
+    if set(reviewed_definition) - {"definingAction", "completionMode", "variantQualifiers", "requiredPhases", "bilateralExecution", "bodySupportRequirements"}:
         return False, "approved_definition_review_proposal_invalid", None
     normalized_reviewed_definition = exercise_motion_context_action_definition(
         {"exerciseDefinition": reviewed_definition}
     )
     if normalized_reviewed_definition is None:
         return False, "approved_definition_review_proposal_invalid", None
-    for key in ("definingAction", "completionMode", "variantQualifiers", "requiredPhases"):
+    for key in ("definingAction", "completionMode", "variantQualifiers", "requiredPhases", "bilateralExecution", "bodySupportRequirements"):
         if normalized_reviewed_definition.get(key, [] if key in {"variantQualifiers", "requiredPhases"} else None) != approved_definition.get(
                 key, [] if key in {"variantQualifiers", "requiredPhases"} else None):
             return False, "approved_definition_differs_from_reviewed_proposal", None
@@ -121,6 +124,8 @@ def _target_is_exactly_reviewed(
         return False, "approval_proposal_fingerprint_mismatch", None
     if exercise_motion_context_action_definition({"exerciseDefinition": approved_definition}) is None:
         return False, "approved_definition_is_not_usable", None
+    if "bilateralExecution" not in approved_definition:
+        return False, "model_execution_intent_unresolved", None
     return True, "approved_definition_reused", {"path": str(review_path), "sha256": review_hash}
 
 
@@ -241,7 +246,13 @@ def prepare_workout_plan_definition_readiness(
             mismatch_reason = "registry_target_id_ambiguous"
 
         if status["status"] != "ready":
-            status["reason"] = mismatch_reason or "missing_or_untrusted_explicit_action_definition"
+            missing_model_intent = (
+                exercise_motion_context_action_definition(source.motion_context) is not None
+                and "bilateralExecution" not in (source.motion_context.get("exerciseDefinition") or {})
+            )
+            status["reason"] = mismatch_reason or (
+                "model_execution_intent_unresolved" if missing_model_intent
+                else "missing_or_untrusted_explicit_action_definition")
             queue_item = {
                 "exerciseId": source.exercise_id,
                 "exerciseName": source.name,

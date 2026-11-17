@@ -95,6 +95,10 @@ FRAME_EDGE_HARD_CUT_JUMP_THRESHOLD = 0.060
 FRAME_LAYOUT_SUSTAINED_CAMERA_MOTION_THRESHOLD = 0.010
 FRAME_EDGE_SUSTAINED_CAMERA_MOTION_THRESHOLD = 0.008
 POSE_CAMERA_POLICY_VERSION = 1
+POSE_PERSON_COUNT_POLICY_VERSION = 2
+POSE_DUPLICATE_BOX_CONTAINMENT_THRESHOLD = 0.98
+POSE_DUPLICATE_KEYPOINT_DISTANCE_RATIO = 0.02
+POSE_DUPLICATE_MIN_COMMON_KEYPOINTS = 6
 FULL_BODY_JOINT_SAFETY_THRESHOLD = 0.999
 FULL_BODY_SAFE_SAMPLE_RATIO = 0.95
 BODY_FRAME_CLEARANCE_MARGIN_RATIO = 0.01
@@ -238,6 +242,7 @@ def run_yolo_pose_prefilter(
     payload["scanStrategy"] = normalize_pose_scan_strategy(settings.scan_strategy)
     payload["samplingPolicyVersion"] = 3
     payload["cameraPolicyVersion"] = POSE_CAMERA_POLICY_VERSION
+    payload["personCountPolicyVersion"] = POSE_PERSON_COUNT_POLICY_VERSION
     payload["sampledFrameCount"] = len(samples)
     payload["dominantPoseSamples"] = dominant_pose_samples_payload(samples, metadata=metadata)
     payload["dominantPoseSampleCoordinateSpace"] = "normalized_image_xy"
@@ -486,10 +491,8 @@ def detections_from_yolo_result(
 ) -> list[PoseDetection]:
     result = result_value[0] if isinstance(result_value, list) and result_value else result_value
     keypoints_obj = getattr(result, "keypoints", None)
-    if keypoints_obj is None:
-        return []
-    xy_value = getattr(keypoints_obj, "xy", None)
-    conf_value = getattr(keypoints_obj, "conf", None)
+    xy_value = getattr(keypoints_obj, "xy", None) if keypoints_obj is not None else None
+    conf_value = getattr(keypoints_obj, "conf", None) if keypoints_obj is not None else None
     boxes_obj = getattr(result, "boxes", None)
     boxes_xyxy = getattr(boxes_obj, "xyxy", None) if boxes_obj is not None else None
     boxes_conf = getattr(boxes_obj, "conf", None) if boxes_obj is not None else None
@@ -498,11 +501,12 @@ def detections_from_yolo_result(
     boxes = tensor_like_to_list(boxes_xyxy)
     box_conf = tensor_like_to_list(boxes_conf)
     detections: list[PoseDetection] = []
-    if not isinstance(xy, list):
-        return detections
-    for person_index, person_points in enumerate(xy):
+    xy = xy if isinstance(xy, list) else []
+    boxes = boxes if isinstance(boxes, list) else []
+    for person_index in range(max(len(xy), len(boxes))):
+        person_points = xy[person_index] if person_index < len(xy) else []
         if not isinstance(person_points, list):
-            continue
+            person_points = []
         person_conf = conf[person_index] if isinstance(conf, list) and person_index < len(conf) else []
         keypoints: dict[str, tuple[float, float, float]] = {}
         for index, name in enumerate(COCO_KEYPOINT_NAMES):
@@ -516,23 +520,87 @@ def detections_from_yolo_result(
             if confidence < min_keypoint_confidence:
                 continue
             keypoints[name] = (float(person_points[index][0]), float(person_points[index][1]), confidence)
-        if not keypoints:
+        bbox = None
+        if person_index < len(boxes) and isinstance(boxes[person_index], list) and len(boxes[person_index]) >= 4:
+            try:
+                candidate_bbox = tuple(float(value) for value in boxes[person_index][:4])
+            except (TypeError, ValueError):
+                candidate_bbox = None
+            if (
+                candidate_bbox is not None
+                and all(math.isfinite(value) for value in candidate_bbox)
+                and candidate_bbox[2] > candidate_bbox[0]
+                and candidate_bbox[3] > candidate_bbox[1]
+            ):
+                clipped_bbox = clamp_bbox(candidate_bbox, metadata)
+                if clipped_bbox[2] > clipped_bbox[0] and clipped_bbox[3] > clipped_bbox[1]:
+                    bbox = clipped_bbox
+        if bbox is None and keypoints:
+            bbox = clamp_bbox(bbox_from_keypoints(keypoints), metadata)
+        if bbox is None:
             continue
-        bbox = bbox_from_keypoints(keypoints)
-        if isinstance(boxes, list) and person_index < len(boxes) and isinstance(boxes[person_index], list) and len(boxes[person_index]) >= 4:
-            bbox = (
-                float(boxes[person_index][0]),
-                float(boxes[person_index][1]),
-                float(boxes[person_index][2]),
-                float(boxes[person_index][3]),
-            )
         confidence = (
             float(box_conf[person_index])
             if isinstance(box_conf, list) and person_index < len(box_conf) and isinstance(box_conf[person_index], (int, float))
-            else average_keypoint_confidence(keypoints)
+            else average_keypoint_confidence(keypoints) if keypoints else 0.0
         )
-        detections.append(PoseDetection(keypoints=keypoints, bbox=clamp_bbox(bbox, metadata), confidence=confidence))
-    return detections
+        detections.append(PoseDetection(keypoints=keypoints, bbox=bbox, confidence=confidence))
+    return deduplicate_near_identical_pose_detections(detections)
+
+
+def deduplicate_near_identical_pose_detections(
+    detections: list[PoseDetection],
+) -> list[PoseDetection]:
+    """Collapse duplicate YOLO outputs while retaining distinct overlapping people."""
+    unique: list[PoseDetection] = []
+    for detection in detections:
+        duplicate_index = next(
+            (
+                index
+                for index, retained in enumerate(unique)
+                if pose_detections_are_near_duplicates(retained, detection)
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            unique.append(detection)
+        elif detection.confidence > unique[duplicate_index].confidence:
+            unique[duplicate_index] = detection
+    return unique
+
+
+def pose_detections_are_near_duplicates(
+    first: PoseDetection,
+    second: PoseDetection,
+) -> bool:
+    ax1, ay1, ax2, ay2 = first.bbox
+    bx1, by1, bx2, by2 = second.bbox
+    intersection = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(
+        0.0, min(ay2, by2) - max(ay1, by1)
+    )
+    smaller_area = min(
+        max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1),
+        max(0.0, bx2 - bx1) * max(0.0, by2 - by1),
+    )
+    if smaller_area <= 0.0 or intersection / smaller_area < POSE_DUPLICATE_BOX_CONTAINMENT_THRESHOLD:
+        return False
+
+    common_keypoints = sorted(set(first.keypoints) & set(second.keypoints))
+    if len(common_keypoints) < POSE_DUPLICATE_MIN_COMMON_KEYPOINTS:
+        return False
+    first_diagonal = math.hypot(ax2 - ax1, ay2 - ay1)
+    second_diagonal = math.hypot(bx2 - bx1, by2 - by1)
+    body_scale = min(first_diagonal, second_diagonal)
+    if body_scale <= 0.0:
+        return False
+    max_keypoint_distance = max(
+        math.hypot(
+            first.keypoints[name][0] - second.keypoints[name][0],
+            first.keypoints[name][1] - second.keypoints[name][1],
+        )
+        for name in common_keypoints
+    )
+    return max_keypoint_distance / body_scale <= POSE_DUPLICATE_KEYPOINT_DISTANCE_RATIO
 
 
 def tensor_like_to_list(value: Any) -> Any:
@@ -1175,18 +1243,9 @@ def select_dominant_detection(sample: PoseSample, *, metadata: BasicVideoMetadat
 
 
 def significant_person_count(sample: PoseSample, *, metadata: BasicVideoMetadata) -> int:
-    if not sample.detections:
-        return 0
-    dominant_area = max(bbox_area(detection.bbox) for detection in sample.detections)
-    # Source videos must be clean single-person clips. Count smaller background
-    # bodies too; the old dominant-area-relative threshold ignored seated or
-    # farther-away people that are still visible enough to confuse extraction.
-    min_area = max(metadata.width * metadata.height * 0.01, dominant_area * 0.05)
-    return sum(
-        1
-        for detection in sample.detections
-        if bbox_area(detection.bbox) >= min_area and len(detection.keypoints) >= 6
-    )
+    # YOLO has already applied its box-confidence threshold. Person eligibility
+    # must not depend on whether pose keypoints are visible or sufficiently dense.
+    return len(sample.detections)
 
 
 def required_keypoint_coverage(detection: PoseDetection) -> float:
@@ -1885,7 +1944,9 @@ def target_pose_observable_motion_spec_observability(
     reference_regions = [str(region) for region in spec.get("referenceRegions", [])]
     axis = str(spec.get("primaryAxis") or "any")
     pattern = str(spec.get("motionPattern") or "other")
-    moving_groups = pose_joint_groups_for_observable_regions(primary_regions)
+    from .source_observability import associated_observable_moving_regions
+    measured_primary_regions = associated_observable_moving_regions(primary_regions, pattern)
+    moving_groups = pose_joint_groups_for_observable_regions(measured_primary_regions)
     reference_groups = pose_joint_groups_for_observable_regions(reference_regions)
     primary_motion_range = max(
         (
@@ -1935,6 +1996,7 @@ def target_pose_observable_motion_spec_observability(
         "failureReasons": failure_reasons,
         "sampleCount": len(present),
         "primaryMotionRegions": primary_regions,
+        "measuredPrimaryMotionRegions": measured_primary_regions,
         "referenceRegions": reference_regions,
         "primaryAxis": axis,
         "motionPattern": pattern,
@@ -2395,5 +2457,6 @@ def empty_pose_prefilter_result(reason: str) -> PosePrefilterResult:
             "blockingIssues": [reason],
             "bestChunkStartSeconds": None,
             "bestChunkEndSeconds": None,
+            "personCountPolicyVersion": POSE_PERSON_COUNT_POLICY_VERSION,
         },
     )

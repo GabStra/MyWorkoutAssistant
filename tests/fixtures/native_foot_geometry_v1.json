@@ -1,0 +1,115 @@
+{
+  "schema": "native_foot_geometry_v1",
+  "note": "Portable geometry fixture. The model hash is synthetic; the proven production short-foot evidence comes from the same qualified named-SMPL prior family (source model SHA prefix 98e65, suffix bc42). No model load is required.",
+  "reference": {
+    "version": 1,
+    "source": "named_smpl_rest_heel_and_toe_vertices",
+    "modelSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "sides": {
+      "left": {
+        "ankleToFootJointLengthMeters": 0.134302,
+        "heelFromAnkleLocalMeters": [-0.038073, 0.0, 0.0],
+        "toeFromAnkleLocalMeters": [0.181410, 0.0, 0.0]
+      },
+      "right": {
+        "ankleToFootJointLengthMeters": 0.134302,
+        "heelFromAnkleLocalMeters": [-0.038073, 0.0, 0.0],
+        "toeFromAnkleLocalMeters": [0.181410, 0.0, 0.0]
+      }
+    }
+  },
+  "sourcePrior": {
+    "source": "named_smpl_rest_heel_and_toe_vertices",
+    "modelType": "smpl",
+    "modelVertexCount": 6890,
+    "modelSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "reconstructionSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "sourceVideoSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "modelInputVideoSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "sides": {
+      "left": {
+        "heelVertex": 3401,
+        "toeVertices": [3402, 3403],
+        "ankleToFootJointLengthMeters": 0.134302,
+        "heelToToeLocalMeters": [-0.219483, 0.0, 0.0],
+        "toeFromAnkleLocalMeters": [0.181410, 0.0, 0.0],
+        "modelFootFrame": [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
+        "regionMinimumModelMeters": [-0.07, -0.02, -0.10],
+        "regionMaximumModelMeters": [0.25, 0.16, 0.20]
+      },
+      "right": {
+        "heelVertex": 3404,
+        "toeVertices": [3405, 3406],
+        "ankleToFootJointLengthMeters": 0.134302,
+        "heelToToeLocalMeters": [-0.219483, 0.0, 0.0],
+        "toeFromAnkleLocalMeters": [0.181410, 0.0, 0.0],
+        "modelFootFrame": [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
+        "regionMinimumModelMeters": [-0.07, -0.02, -0.10],
+        "regionMaximumModelMeters": [0.25, 0.16, 0.20]
+      }
+    }
+  },
+  "neutralCase": {
+    "ankle": [0.0, 0.0, 0.0],
+    "footJoint": [0.134302, 0.0, 0.0],
+    "sideAxis": [0.0, 0.0, 1.0],
+    "scale": 1.0,
+    "expected": {
+      "ballJoint": [0.134302, 0.0, 0.0],
+      "heel": [-0.038073, 0.0, 0.0],
+      "toe": [0.181410, 0.0, 0.0],
+      "heelToToeSpanMeters": 0.219483
+    }
+  },
+  "rigidCases": [
+    {
+      "name": "rotated_quarter_turn",
+      "rotationMatrix": [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+      "translation": [0.5, -0.2, 1.25],
+      "scale": 1.0
+    },
+    {
+      "name": "mirrored_and_scaled",
+      "rotationMatrix": [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+      "translation": [-0.3, 0.7, 0.1],
+      "scale": 1.25
+    },
+    {
+      "name": "subframe_oblique",
+      "rotationMatrix": [[0.7071067811865476, -0.7071067811865475, 0.0],
+                         [0.4082482904638631, 0.4082482904638631, -0.8164965809277261],
+                         [0.5773502691896258, 0.5773502691896258, 0.5773502691896258]],
+      "translation": [0.1, 0.3, -0.4],
+      "scale": 1.12
+    }
+  ],
+  "twistedRetargetGeometry": {
+    "version": 1,
+    "source": "named_smpl_rest_heel_and_toe_vertices",
+    "modelSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "sides": {
+      "left": {
+        "ankleToFootJointLengthMeters": 0.134302,
+        "heelFromAnkleLocalMeters": [-0.038073, 0.021, -0.015],
+        "toeFromAnkleLocalMeters": [0.181410, -0.026, 0.034]
+      },
+      "right": {
+        "ankleToFootJointLengthMeters": 0.134302,
+        "heelFromAnkleLocalMeters": [-0.038073, 0.021, -0.015],
+        "toeFromAnkleLocalMeters": [0.181410, -0.026, 0.034]
+      }
+    }
+  },
+  "twistedRetargetCase": {
+    "ankle": [0.4, 0.2, -0.3],
+    "footJoint": [0.5678775, 0.2, -0.3],
+    "sideAxis": [0.0, 0.41687080242921076, 0.9089657496748851],
+    "scale": 1.25,
+    "expected": {
+      "ballJoint": [0.5678775, 0.2, -0.3],
+      "heel": [0.35240875, 0.19389975, -0.26832332],
+      "toe": [0.6267625, 0.22508274, -0.3472584],
+      "meshMinY": 0.1882227112910669
+    }
+  }
+}

@@ -95,6 +95,26 @@ def test_uniform_coverage_gets_one_targeted_correction(complete):
     assert merged['observations'][:-1] == payload['observations'][:-1]
 
 
+@pytest.mark.parametrize('ids', [['uniform:1', 'uniform:3', 'uniform:1'], ['uniform:missing']])
+def test_invalid_frame_references_get_targeted_correction_without_losing_valid_rows(ids):
+    requirements, inventory = source_requirements(contract(), []), frames()
+    payload = supported(requirements, inventory)
+    completion = next(row for row in payload['observations'] if row['requirementId'] == 'completion')
+    completion['evidenceFrameIds'] = ids
+    retained = [row for row in payload['observations'] if row['requirementId'] != 'completion']
+    calls = []
+
+    def request(targeted, frames, prompt, schema):
+        calls.append([row['id'] for row in targeted])
+        return semantic_reply(supported(targeted, frames), targeted)
+
+    merged, receipt = correct_incomplete_evidence(payload, requirements, inventory, request)
+    assert calls == [['completion']]
+    assert receipt['attempted'] is True
+    assert aggregate_evidence(merged, requirements, inventory)['passed']
+    assert [row for row in merged['observations'] if row['requirementId'] != 'completion'] == retained
+
+
 @pytest.mark.parametrize('mode', ['stable_hold', 'active_travel'])
 def test_continuous_action_does_not_promote_proposed_entry_exit_phases(mode):
     target = contract()
@@ -178,8 +198,11 @@ def test_return_to_start_accepts_one_cycle_rotation_but_not_reordering_or_anchor
         allow_cyclic_phase_order=True)['errors']
 
     assert permits_cyclic_phase_order(target) is True
+    assert permits_cyclic_phase_order({**target, 'movementType': 'cyclic'}) is True
     assert permits_cyclic_phase_order({**target, 'startPoseConstraints': {'posture': 'standing'}}) is True
     assert permits_cyclic_phase_order({**target, 'source': 'user', 'validStartState': 'standing'}) is False
+    assert permits_cyclic_phase_order({**target, 'movementType': 'cyclic',
+                                      'source': 'user', 'validStartState': 'standing'}) is False
 
 
 def test_retained_squat_incomplete_evidence_gets_one_targeted_correction_and_preserves_others():
@@ -237,6 +260,35 @@ def test_retained_squat_incomplete_evidence_gets_one_targeted_correction_and_pre
         allow_cyclic_phase_order=True)['passed'] is True
 
 
+@pytest.mark.parametrize('fault', [None, 'missing_runs', 'overlap', 'invalid_index'])
+def test_multicycle_choices_bind_a_complete_cycle_to_sparse_source_time(fault):
+    metrics = {'required': True, 'passed': True, 'hasCompleteMajorCycle': True,
+               'hasSingleMajorCycle': False, 'phaseSignalEvidence': {'resolved': True},
+               'sampleCount': 8, 'sampleFrameIndices': list(range(0, 15, 2)),
+               'majorPhaseSequence': ['low', 'high', 'low', 'high'],
+               'majorPhaseRuns': [
+                   {'phase': 'low', 'startFrameIndex': 0, 'endFrameIndex': 1, 'extremumFrameIndex': 0},
+                   {'phase': 'high', 'startFrameIndex': 2, 'endFrameIndex': 2, 'extremumFrameIndex': 2},
+                   {'phase': 'low', 'startFrameIndex': 3, 'endFrameIndex': 4, 'extremumFrameIndex': 4},
+                   {'phase': 'high', 'startFrameIndex': 5, 'endFrameIndex': 7, 'extremumFrameIndex': 6},
+               ]}
+    pose = {'frames': [{'sourceTimeSec': index / 4} for index in range(15)]}
+    frames = [{'id': f'f:{index}', 'timestampSeconds': index / 2} for index in range(8)]
+    if fault == 'missing_runs':
+        metrics.pop('majorPhaseRuns')
+    elif fault == 'overlap':
+        metrics['majorPhaseRuns'][1]['startFrameIndex'] = 1
+    elif fault == 'invalid_index':
+        metrics['majorPhaseRuns'][-1]['endFrameIndex'] = 99
+    choices = return_cycle_evidence_choices(metrics, pose, frames)
+    if fault is not None:
+        assert choices is None
+        return
+    assert choices['sequence'] == ['low', 'high', 'low']
+    assert choices['roleTimes'] == {'start': 0.0, 'excursion': 1.0, 'return': 2.0}
+    assert choices['roleFrameIds'] == {'start': 'f:0', 'excursion': 'f:2', 'return': 'f:4'}
+
+
 def test_code_owned_cycle_choices_prevent_three_bottom_frames_from_proving_completion():
     target = {**contract(), 'completionMode': 'return_to_start',
               'requiredPhases': ['lower', 'rise']}
@@ -282,12 +334,23 @@ def test_code_owned_cycle_choices_prevent_three_bottom_frames_from_proving_compl
     assert merged_rows['phase_1']['evidenceFrameIds'] == ['motion:9', 'uniform:16']
     assert merged_rows['phase_2']['evidenceFrameIds'] == ['uniform:1', 'motion:9']
 
+    # An omitted pose detection must not shift the measured excursion timestamp.
+    sparse_metrics = {**metrics, 'sampleCount': 4, 'sampleFrameIndices': [0, 2, 3, 4],
+                      'maxFrameIndex': 1, 'minFrameIndex': 3}
+    mapped = return_cycle_evidence_choices(sparse_metrics, pose, inventory)
+    assert mapped['roleFrameIds'] == choices['roleFrameIds']
+    assert return_cycle_evidence_choices(
+        {**sparse_metrics, 'sampleFrameIndices': [0, 2, 2, 4]}, pose, inventory
+    ) is None
+
     sparse = return_cycle_evidence_choices(metrics, pose, [
         {'id': 'uniform:1', 'sampling': 'uniform', 'timestampSeconds': 0.0},
         {'id': 'motion:1', 'sampling': 'motion', 'timestampSeconds': 0.25},
         {'id': 'uniform:16', 'sampling': 'uniform', 'timestampSeconds': 2.0},
     ])
-    assert sparse is None
+    assert sparse['roleFrameIds']['excursion'] == 'cycle:excursion'
+    assert sparse['additionalFrames'] == [
+        {'id': 'cycle:excursion', 'sampling': 'cycle', 'timestampSeconds': 1.0}]
 
 
 def test_structurally_invalid_initial_evidence_is_not_salvaged_by_targeted_correction():
@@ -350,6 +413,120 @@ def test_measured_cycle_semantics_owns_references_and_completion(fault):
         assert rows['phase_2']['evidenceFrameIds'] == ['uniform:1', 'uniform:2']
         assert rows['phase_1']['evidenceFrameIds'] == ['uniform:2', 'uniform:3']
         assert rows['completion']['evidenceFrameIds'] == ['uniform:1', 'uniform:2', 'uniform:3']
+
+
+def test_source_review_video_binding_rejects_changed_video_or_frame(tmp_path, monkeypatch):
+    video=tmp_path/'source.mp4';video.write_bytes(b'original video')
+    frame=tmp_path/'frame.png';frame.write_bytes(b'actual source frame')
+    def frames(*args,**kwargs):return [{'sha256':hashlib.sha256(frame.read_bytes()).hexdigest()}]
+    monkeypatch.setattr(bake,'source_cut_review_frame_evidence',frames)
+    before=frames();digest=bake.file_sha256(video)
+    def bind():return bake.source_cut_review_video_evidence(reviewed_video_path=video,original_source_path=video,
+        reviewed_video_sha256=digest,original_source_sha256=digest,review_frame_inputs_before=before,
+        candidates=[],frame_count=1)
+    evidence,changed=bind();assert not changed
+    assert evidence['sourceCutReviewVideoSha256After']==digest
+    video.write_bytes(b'changed video');assert bind()[1]
+    video.write_bytes(b'original video');frame.write_bytes(b'changed frame');assert bind()[1]
+
+
+def test_measured_cycle_preserves_reviewed_endpoint_and_code_owned_witnesses(tmp_path, monkeypatch):
+    action = ('Hang wearing a weighted vest, pull upward until the chin clears the bar, '
+              'then lower under control to the starting hang.')
+    requirements = source_requirements({**contract(), 'definingAction': action,
+        'completionMode': 'return_to_start', 'requiredPhases': ['pull upward', 'lower']}, [])
+    prompt, schema = cycle_semantic_question(requirements, frames(), first_role_image=1,
+                                             review_defining_action=True)
+    assert action in prompt
+    assert 'reviewed_action_visibility' in schema['required']
+    choices = {'roleFrameIds': {'start': 'uniform:1', 'excursion': 'uniform:2', 'return': 'uniform:3'},
+               'spanChoices': [{'frameIds': ['uniform:1', 'uniform:2']},
+                               {'frameIds': ['uniform:2', 'uniform:3']}]}
+    measured = [row for row in requirements if row['id'] in {'action', 'completion'}
+                or row['id'].startswith('phase_')]
+    payload = {'earlier_interval_action': 'pull upward', 'later_interval_action': 'lower',
+               'reviewed_action_visibility': 'unresolved'}
+    resolved = resolve_cycle_semantics(payload, measured, frames(), choices)
+    row = next(row for row in resolved['observations'] if row['requirementId'] == 'action')
+    assert row == {'requirementId': 'action', 'verdict': 'unresolved',
+                   'evidenceFrameIds': ['uniform:1', 'uniform:2', 'uniform:3']}
+    old = {'sourceCycleEvidenceChoices': choices, 'gates': {'structuredEvidence': {}}}
+    assert not bake.source_measured_action_review_is_current(old)
+    old['gates']['structuredEvidence']['correction'] = {'reviewedActionVisibility': 'supported'}
+    assert bake.source_measured_action_review_is_current(old)
+    from PIL import Image
+    images = []
+    for role, color in zip(('start', 'excursion', 'return'), ('red', 'green', 'blue')):
+        path = tmp_path / f'{role}.png'
+        Image.new('RGB', (100, 100), color).save(path)
+        images.append(path)
+    choices['roleTimes'] = {'start': 0., 'excursion': 1., 'return': 2.}
+    pose = {'coordinateSpace': 'normalized_image_xy',
+            'sourcePoseSampleBoundaryToleranceSeconds': .01,
+            'frames': [{'sourceTimeSec': float(index), 'joints': {'nose': [.5, .4],
+                'left_wrist': [.3, .2], 'right_wrist': [.7, .2], 'left_shoulder': [.4, .6]}}
+                for index in range(3)]}
+    details = bake.source_cycle_head_anchor_details(images, choices, pose, tmp_path / 'details')
+    assert [path.stem for path in details] == ['start', 'excursion', 'return']
+    for original, detail in zip(images, details):
+        with Image.open(original) as full, Image.open(detail) as crop:
+            assert crop.getpixel((0, 0)) == full.getpixel((0, 0))
+            assert crop.width < full.width and crop.height < full.height
+    choices['roleTimes']['excursion'] = 1.1
+    assert bake.source_cycle_head_anchor_details(images, choices, pose, tmp_path / 'wrong') == []
+    target = {**contract(), 'definingAction': action, 'requiredPhases': ['pull upward', 'lower'],
+        'observableMotionSpec': {'motionPattern': 'body_toward_anchor', 'referenceRegions': ['head']}}
+    original_prompt = 'Structured movement contract: ' + json.dumps(target)
+    assert bake.source_cut_review_contract(original_prompt)['definingAction'] == action
+    candidate = bake.SourceCutCandidate(candidate_id='candidate', frame_paths=[],
+        window=bake.DetectionWindow(index=0, start_seconds=0., end_seconds=2.),
+        exercise_motion_contract=target)
+    original_prompt = bake.build_source_cut_candidate_choice_prompt(exercise_name='Pull-Up',
+        candidate_title='Actual source',candidate=candidate,exercise_motion_contract=target)
+    assert 'Structured movement contract: ' not in original_prompt
+    assert bake.source_cut_review_contract(original_prompt,candidate=candidate)['definingAction'] == action
+    ranking = bake.LoopRanking(score=1., reasons=[], payload={'selectedCandidateId': 'candidate',
+        'selectedScorecard': {'passed': True}})
+    monkeypatch.setattr(bake, 'source_cut_ranking_has_vlm_approval', lambda value: True)
+    checked, raw = bake.review_source_cut_measured_action(candidate=candidate, ranking=ranking,
+        original_prompt=original_prompt, caption_images=lambda **kwargs: pytest.fail('missing context must not ask'),
+        request_kwargs={})
+    assert checked.score == 0 and 'selectedCandidateId' not in checked.payload
+    assert checked.payload['sourceCutMeasuredActionReview']['verdict'] == 'unresolved'
+    assert raw == []
+    paths = [*images, *details]
+    context = {'hasHeadAnchorDetails': True, 'choices': choices, 'frameInventory': frames(),
+               'imagePaths': [str(path) for path in paths],
+               'imageSha256': [bake.file_sha256(path) for path in paths],
+               'sourceVideoSha256': 'exact-source'}
+    candidate = bake.SourceCutCandidate(candidate_id='candidate', frame_paths=[],
+        window=candidate.window, motion_coverage={'measuredActionReviewContext': context},
+        question_cache_dir=tmp_path / 'questions',exercise_motion_contract=target)
+    def caption(**kwargs):
+        assert action in kwargs['prompt'] and kwargs['frame_paths'] == paths
+        return json.dumps({'earlier_interval_action': 'pull upward', 'later_interval_action': 'lower',
+                           'reviewed_action_visibility': 'contradicted'})
+    checked, raw = bake.review_source_cut_measured_action(candidate=candidate, ranking=ranking,
+        original_prompt=original_prompt, caption_images=caption, request_kwargs={})
+    assert len(raw) == 1 and checked.score == 0
+    assert checked.payload['sourceCutMeasuredActionReview']['verdict'] == 'contradicted'
+    parent_pose = {**pose, 'frames': [{**frame, 'sourceTimeSec': frame['sourceTimeSec'] + 10.}
+                                    for frame in pose['frames']]}
+    phase = {'required': True, 'passed': True, 'hasCompleteMajorCycle': True,
+        'hasSingleMajorCycle': True, 'phaseSignalEvidence': {'resolved': True},
+        'majorPhaseSequence': ['low', 'high', 'low'], 'sampleCount': 3,
+        'maxFrameIndex': 1, 'edgeMarginFrameCount': 0}
+    video = tmp_path / 'source.mp4'; video.write_bytes(b'actual source identity')
+    def role_frames(actual_video, render_choices, output_dir):
+        assert actual_video == video
+        assert render_choices['roleTimes'] == {'start': 0., 'excursion': 1., 'return': 2.}
+        return images
+    monkeypatch.setattr(bake, 'source_cycle_role_frames', role_frames)
+    context = bake.materialize_source_measured_action_context(video=video,pose=parent_pose,
+        phase_metrics=phase,source_offset_seconds=10.,output_dir=tmp_path/'parent-context')
+    assert context['choices']['roleTimes'] == {'start': 10., 'excursion': 11., 'return': 12.}
+    assert context['hasHeadAnchorDetails'] is True
+    assert context['sourceVideoSha256'] == hashlib.sha256(b'actual source identity').hexdigest()
 
 
 @pytest.mark.parametrize('mode,phases', [
@@ -678,7 +855,11 @@ def test_structured_source_production_uses_one_grounded_call_without_prose_adjud
         assert result['rejectionReasons'] == ['two_scale_source_pose_contract_mismatch']
 
 
-def test_measured_cycle_production_separates_semantic_questions_and_keeps_canonical_evidence(tmp_path, monkeypatch):
+@pytest.mark.parametrize('reference_kind', [
+    'path', 'embedded', 'final_validator_handoff',
+    'durable_final_validator_handoff', 'durable_wrong_video',
+])
+def test_measured_cycle_production_separates_semantic_questions_and_keeps_canonical_evidence(tmp_path, monkeypatch, reference_kind):
     uniform, motion = make_sheet(tmp_path, 'uniform'), make_sheet(tmp_path, 'motion')
     video = tmp_path / 'selected.mp4'
     video.write_bytes(b'exact source')
@@ -697,50 +878,138 @@ def test_measured_cycle_production_separates_semantic_questions_and_keeps_canoni
     monkeypatch.setattr(bake, 'final_output_motion_contact_sheets', lambda *a, **k: [motion])
     monkeypatch.setattr(bake, 'resolve_two_scale_exercise_motion_contract', lambda *a, **k: (target, None, None))
     monkeypatch.setattr(bake, 'validate_source_pose_endpoints_against_contract', lambda *a, **k: {'available': True, 'passed': True})
-    monkeypatch.setattr(bake, 'load_verified_source_pose_reference', lambda *a: {})
+    pose = {'frames': [{}, {}, {}]}
+    monkeypatch.setattr(bake, 'load_verified_source_pose_reference', lambda *a: pose)
+    def remeasure(verified_pose, *, exercise_name, ranking_payload):
+        assert verified_pose['frames'] == pose['frames']
+        assert exercise_name == item.exercise_name
+        assert ranking_payload == {'exerciseMotionContract': target}
+        return {'sampleCount': 2, 'sampleFrameIndices': [0, 2]}
+    monkeypatch.setattr(bake, 'full_repetition_phase_completeness_metrics_from_source_pose_payload', remeasure)
     monkeypatch.setattr('exercise_motion_pkg.source_evidence.return_cycle_evidence_choices', lambda *a: choices)
     monkeypatch.setattr(bake, 'source_cycle_role_frames', lambda *a: role_images)
     calls = []
     def caption(**kwargs):
         calls.append(kwargs)
         assert 'phase_1' not in kwargs['prompt'] and 'cycle_span_1' not in kwargs['prompt']
+        if reference_kind == 'durable_wrong_video':
+            assert 'earlier_interval_action' not in kwargs['response_schema'].get('properties', {})
+            return json.dumps({'observations': []})
         if 'observations' not in kwargs['response_schema']['properties']:
             assert kwargs['frame_paths'] == role_images
-            return json.dumps({'earlier_interval_action': 'rise', 'later_interval_action': 'lower'})
+            assert target['definingAction'] in kwargs['prompt']
+            return json.dumps({'earlier_interval_action': 'rise', 'later_interval_action': 'lower',
+                               'reviewed_action_visibility': 'supported'})
         assert kwargs['frame_paths'] == [uniform]
         assert 'Interpret the defining action cyclically too' in kwargs['prompt']
         requirements = source_requirements(target, bake.two_scale_equipment_role_requirements(item.exercise_name, target))
-        semantic = [row for row in requirements if row['id'] != 'completion' and not row['id'].startswith('phase_')]
+        semantic = [row for row in requirements if row['id'] not in {'action', 'completion'}
+                    and not row['id'].startswith('phase_')]
         payload = supported(semantic, evidence_inventory({'uniform': [uniform]}))
         for row in payload['observations']:
             if row['requirementId'] != 'clean_interval':
                 row['evidenceFrameIds'] = ['uniform:1', 'uniform:2'] if row['requirementId'] == 'action' else ['uniform:1']
         return json.dumps(payload)
     class Reviewer:
-        settings = SimpleNamespace(llama_cpp_model='test-vision')
+        settings = SimpleNamespace(llama_cpp_model='test-vision-' + reference_kind)
         def caption(self, **kwargs):
             return caption(**kwargs)
     reviewer = Reviewer()
-    result = bake.validate_two_scale_source_with_caption_images(item, uniform_sheet_paths=[uniform],
-        output_dir=tmp_path / 'review', caption_images=reviewer.caption, exercise_motion_contract=target,
-        source_phase_metrics={'sourceVideoPath': str(video), 'sourcePoseReferencePath': str(tmp_path / 'pose.json')})
+    phase_metrics = {'sourceVideoPath': str(video), 'sourcePoseReferencePath': str(tmp_path / 'pose.json'),
+                     'sampleCount': 2}
+    if reference_kind != 'path':
+        phase_metrics.pop('sourcePoseReferencePath')
+        phase_metrics.update(_sourcePoseReference=pose,
+                             sourceVideoSha256=hashlib.sha256(video.read_bytes()).hexdigest())
+    if reference_kind.startswith('durable_'):
+        # Durable selections resolve the reviewed video through retained provenance,
+        # without candidate_workspace/input or an explicit source_review_video_path.
+        item.source_review_video_path = None
+    if reference_kind == 'durable_wrong_video':
+        wrong_video = tmp_path / 'other.mp4'
+        wrong_video.write_bytes(b'other source')
+        phase_metrics['sourceVideoPath'] = str(wrong_video)
+        phase_metrics['sourceVideoSha256'] = hashlib.sha256(wrong_video.read_bytes()).hexdigest()
+    if reference_kind == 'final_validator_handoff' or reference_kind.startswith('durable_'):
+        public_phase = {key: value for key, value in phase_metrics.items() if not key.startswith('_')}
+        reviewed = []
+        original_review = bake.validate_two_scale_source_with_caption_images
+        class ReviewReached(Exception):
+            pass
+        def review(*args, **kwargs):
+            reviewed.append(original_review(*args, **kwargs))
+            raise ReviewReached()
+        with monkeypatch.context() as patch:
+            patch.setattr(bake, 'final_output_source_contact_sheets', lambda *a, **k: [uniform])
+            patch.setattr(bake, 'final_output_validation_artifact_slug', lambda *a: 'handoff')
+            patch.setattr(bake, 'read_basic_video_metadata', lambda *a: SimpleNamespace(duration_seconds=2.))
+            patch.setattr(bake, 'pre_reconstruction_exact_source_phase_reference_metrics', lambda *a: {})
+            patch.setattr(bake, 'validate_two_scale_source_with_caption_images', review)
+            with pytest.raises(ReviewReached):
+                bake.validate_final_output_with_caption_images(
+                    item, bake.LoopRanking(score=1., reasons=[], payload={'exerciseMotionContract': target}),
+                    request=SimpleNamespace(two_scale_source_validation=True), caption_images=reviewer.caption,
+                    deterministic_metrics={'sourceVideoFullRepetitionPhaseCompletenessMetrics': public_phase,
+                                           '_sourcePoseReference': pose})
+        assert not any(key.startswith('_') for key in public_phase)
+        result = reviewed[0]
+        if reference_kind == 'durable_wrong_video':
+            assert result['passed'] is False
+            assert result.get('sourceCycleEvidenceChoices') is None
+            assert all('earlier_interval_action' not in call['response_schema'].get('properties', {})
+                       for call in calls)
+            return
+    else:
+        result = bake.validate_two_scale_source_with_caption_images(item, uniform_sheet_paths=[uniform],
+            output_dir=tmp_path / 'review', caption_images=reviewer.caption, exercise_motion_contract=target,
+            source_phase_metrics=phase_metrics)
     assert result['passed'] is True
     assert len(calls) == 2
     gate = result['gates']['structuredEvidence']
     assert bake.extract_json_object(gate['rawResponse']) == gate['response']
     assert gate['correction']['mode'] == 'measured_cycle_semantics'
     assert gate['correction']['attempted'] is False
+    if reference_kind == 'final_validator_handoff' or reference_kind.startswith('durable_'):
+        return
     cached = bake.validate_two_scale_source_with_caption_images(item, uniform_sheet_paths=[uniform],
         output_dir=tmp_path / 'review', caption_images=reviewer.caption, exercise_motion_contract=target,
-        source_phase_metrics={'sourceVideoPath': str(video), 'sourcePoseReferencePath': str(tmp_path / 'pose.json')})
+        source_phase_metrics=phase_metrics)
     assert cached['sourceReviewCache']['cacheHit'] is True
     # Losing the aggregate receipt must not force the two retained judgments to repeat.
     Path(cached['sourceReviewCache']['checkpoint']).unlink()
     recovered = bake.validate_two_scale_source_with_caption_images(item, uniform_sheet_paths=[uniform],
         output_dir=tmp_path / 'review', caption_images=reviewer.caption, exercise_motion_contract=target,
-        source_phase_metrics={'sourceVideoPath': str(video), 'sourcePoseReferencePath': str(tmp_path / 'pose.json')})
+        source_phase_metrics=phase_metrics)
     assert recovered['passed'] is True
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize('emits_frame', [True, False])
+def test_source_frame_seek_preserves_last_exposure_and_commits_only_new_images(tmp_path, monkeypatch, emits_frame):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import segment_detection
+
+    timestamp = 133 / (30000 / 1001)
+    output = tmp_path / 'frames'
+    output.mkdir()
+    previous = output / 'frame_01.jpg'
+    previous.write_bytes(b'previous valid evidence')
+    monkeypatch.setattr(segment_detection, 'resolve_ffmpeg_path', lambda: 'ffmpeg')
+
+    def extract(command, **kwargs):
+        seek = float(command[command.index('-ss') + 1])
+        assert 0 <= timestamp - seek < 1e-6
+        if emits_frame:
+            Path(command[-1]).write_bytes(b'current exposure')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(segment_detection.subprocess, 'run', extract)
+    result = segment_detection.extract_window_frames_with_ffmpeg(
+        video_path=tmp_path / 'video.mp4', times=[timestamp], max_frame_width=960,
+        output_dir=output,
+    )
+    assert result == ([previous] if emits_frame else [])
+    assert previous.read_bytes() == (b'current exposure' if emits_frame else b'previous valid evidence')
 
 
 def test_cycle_role_frames_cache_invalidates_source_and_does_not_keep_partial_extraction(tmp_path, monkeypatch):
@@ -768,3 +1037,61 @@ def test_cycle_role_frames_cache_invalidates_source_and_does_not_keep_partial_ex
     paths[0].write_bytes(b'corrupt')
     bake.source_cycle_role_frames(video, choices, tmp_path / 'roles')
     assert len(calls) == 4
+
+
+@pytest.mark.parametrize('source_case', ['exact', 'child', 'mismatched_hash', 'malformed_reference'])
+def test_final_source_review_owns_exact_phase_timing_even_for_rendered_crop(tmp_path, monkeypatch, source_case):
+    video = tmp_path / 'selected.mp4'
+    video.write_bytes(b'exact source bytes')
+    reference = tmp_path / 'pose.json'
+    digest = hashlib.sha256(video.read_bytes()).hexdigest()
+    reference.write_text(json.dumps({'sourceVideoSha256': digest,
+        'pose': {'frames': [], 'sourcePoseEvidenceAudit': {'policyVersion': 1}}}))
+    exact = {'passed': True, 'sourceVideoSha256': digest, 'sourcePoseReferencePath': str(reference)}
+    if source_case == 'mismatched_hash':
+        exact['sourceVideoSha256'] = '0' * 64
+    if source_case == 'malformed_reference':
+        reference.write_text('{}')
+    cropped = {'passed': True, 'sampleCount': 16}
+    item = SimpleNamespace(candidate_workspace=tmp_path, loop_index=0)
+    monkeypatch.setattr(bake, 'final_output_validation_artifact_slug', lambda _: 'test')
+    monkeypatch.setattr(bake, 'final_output_source_contact_sheets', lambda *a, **k: [])
+    monkeypatch.setattr(bake, 'exercise_motion_contract_for_review_item', lambda *a: {})
+    monkeypatch.setattr(bake, 'final_output_source_video_window', lambda _: (
+        video, bake.DetectionWindow(0, .1 if source_case == 'child' else 0., 2.)))
+    monkeypatch.setattr(bake, 'read_basic_video_metadata', lambda _: SimpleNamespace(duration_seconds=2.))
+    monkeypatch.setattr(bake, 'pre_reconstruction_exact_source_phase_reference_metrics', lambda _: exact)
+    received = []
+    class CapturedSourceReview(Exception):
+        pass
+    def source_review(*a, **kwargs):
+        received.append(kwargs['source_phase_metrics'])
+        raise CapturedSourceReview
+    monkeypatch.setattr(bake, 'validate_two_scale_source_with_caption_images', source_review)
+    with pytest.raises(CapturedSourceReview):
+        bake.validate_final_output_with_caption_images(item, SimpleNamespace(),
+            request=SimpleNamespace(two_scale_source_validation=True), caption_images=lambda **k: pytest.fail('provider called'),
+            deterministic_metrics={'sourceVideoFullRepetitionPhaseCompletenessMetrics': cropped})
+    assert received == [exact if source_case == 'exact' else cropped]
+    assert cropped == {'passed': True, 'sampleCount': 16}
+def test_paired_cycle_semantics_requires_each_action_and_distinct_observed_sides():
+    from exercise_motion_pkg.source_evidence import (
+        paired_cycle_semantic_question, resolve_paired_cycle_semantics)
+    requirements = [{'id': 'action', 'description': 'Raise diagonally and reverse the path.'},
+                    {'id': 'phase_1', 'description': 'Raise'},
+                    {'id': 'phase_2', 'description': 'Return'},
+                    {'id': 'variant_1', 'description': 'Perform on both sides.'}]
+    prompt, schema = paired_cycle_semantic_question(requirements)
+    assert requirements[0]['description'] in prompt
+    assert requirements[-1]['description'] in prompt
+    answer = {f'{member}_{interval}_action': action
+              for member in ('first', 'second')
+              for interval, action in (('earlier', 'Raise'), ('later', 'Return'))}
+    answer.update(first_action_visibility='supported', second_action_visibility='supported',
+                  required_side_coverage='distinct_required_sides')
+    assert set(answer) == set(schema['properties'])
+    assert resolve_paired_cycle_semantics(answer, requirements)['passed']
+    for coverage in ('same_side', 'unresolved', 'not_required'):
+        assert not resolve_paired_cycle_semantics({**answer, 'required_side_coverage': coverage}, requirements)['passed']
+    assert not resolve_paired_cycle_semantics({**answer, 'second_later_action': 'unresolved'}, requirements)['passed']
+    assert not resolve_paired_cycle_semantics(None, requirements)['passed']

@@ -219,18 +219,66 @@ def trim_video(
     end_seconds: float,
     target_fps: float | None = None,
 ) -> Path:
+    from exercise_motion_pkg.video_materialization_cache import (
+        default_video_materialization_cache_dir,
+        materialize_cached,
+    )
+
     ffmpeg_path = resolve_ffmpeg_path()
-    if ffmpeg_path is not None:
-        kwargs: dict[str, object] = {
-            "source_path": source_path,
-            "output_path": output_path,
-            "start_seconds": start_seconds,
-            "end_seconds": end_seconds,
-            "ffmpeg": ffmpeg_path,
-        }
-        if target_fps is not None:
-            kwargs["target_fps"] = target_fps
-        return _trim_video_with_ffmpeg(**kwargs)
+    safe_start = max(0.0, float(start_seconds))
+    safe_end = max(safe_start, float(end_seconds))
+    normalized_target_fps = (
+        float(target_fps)
+        if target_fps is not None and float(target_fps) > 0.0
+        else None
+    )
+    settings = {
+        "policyVersion": 1,
+        "operation": "trim_video",
+        "startSeconds": safe_start,
+        "endSeconds": safe_end,
+        "targetFps": normalized_target_fps,
+        "encoder": list(h264_codec_args()) if ffmpeg_path is not None else ["opencv", "mp4v"],
+        "pixFmt": "yuv420p",
+        "movflags": "+faststart",
+    }
+
+    def produce(destination: Path) -> None:
+        if ffmpeg_path is not None:
+            _trim_video_with_ffmpeg(
+                source_path=source_path,
+                output_path=destination,
+                start_seconds=safe_start,
+                end_seconds=safe_end,
+                target_fps=normalized_target_fps,
+                ffmpeg=ffmpeg_path,
+            )
+        else:
+            _trim_video_with_opencv(
+                source_path=source_path,
+                output_path=destination,
+                start_seconds=safe_start,
+                end_seconds=safe_end,
+                target_fps=normalized_target_fps,
+            )
+
+    return materialize_cached(
+        source_path=source_path,
+        output_path=output_path,
+        settings=settings,
+        cache_dir=default_video_materialization_cache_dir(output_path),
+        producer=produce,
+    )
+
+
+def _trim_video_with_opencv(
+    *,
+    source_path: Path,
+    output_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+    target_fps: float | None = None,
+) -> Path:
 
     try:
         import cv2

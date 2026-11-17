@@ -19,6 +19,7 @@ def test_rejected_geometry_never_renders_and_remains_diagnosable(tmp_path, monke
     assert not gate["passed"]
     assert gate["rejectionReasons"]
     assert not artifact.review_video_path.exists()
+    assert "selectedSectionBakePathCodeDigest" not in json.loads(artifact.skeleton_path.read_text())
 
 
 def test_usable_geometry_renders_after_precheck(tmp_path, monkeypatch):
@@ -42,6 +43,8 @@ def test_usable_geometry_renders_after_precheck(tmp_path, monkeypatch):
     bake.render_prechecked_baked_artifacts(None, [artifact], tmp_path)
     assert calls == ["render"]
     assert payload["frames"] == before
+    saved = json.loads(artifact.skeleton_path.read_text())
+    assert saved["selectedSectionBakePathCodeDigest"] == bake._selected_section_bake_code_digest()["sha256"]
 
 
 def test_validated_codec_fallback_updates_artifact_and_metadata(tmp_path, monkeypatch):

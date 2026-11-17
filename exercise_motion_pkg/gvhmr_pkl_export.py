@@ -29,6 +29,7 @@ def export_gvhmr_results_pkl(results_pt: Path, output_pkl: Path, *, keep_source_
     global_orient = params["global_orient"].reshape(-1, 3)
     frame_count = global_orient.shape[0]
     body_pose = params["body_pose"].reshape(frame_count, -1)
+    camera_global_orient = pred["smpl_params_incam"]["global_orient"].reshape(frame_count, 3)
     if body_pose.shape[1] not in (63, 69):
         raise ValueError(f"GVHMR body_pose must have 63 or 69 columns, got {body_pose.shape}")
     if body_pose.shape[1] == 63:
@@ -53,6 +54,7 @@ def export_gvhmr_results_pkl(results_pt: Path, output_pkl: Path, *, keep_source_
         "betas": betas.numpy(),
         "frame_ids": frame_ids,
         "betasSource": betas_source,
+        "camera_global_orient": camera_global_orient.numpy(),
     }
     output_pkl.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump({0: payload}, output_pkl)

@@ -243,6 +243,42 @@ def test_rank_loop_cycles_defers_only_contact_anchored_wrap_to_initializer():
     assert all(choice['minimumRetainedRangeRatio'] >= .9 for choice in repaired)
 
 
+def test_hand_supported_cycle_defers_free_leg_endpoint_drift_to_support_fit():
+    from exercise_motion_pkg.loop_cycles import cycle_boundary_motion_metrics
+
+    payload = repeated_motion()
+    payload['frames'] = payload['frames'][:61]
+    payload['frameCount'] = len(payload['frames'])
+    names = payload['jointNames']
+    for frame in payload['frames']:
+        for name in ('left_wrist', 'right_wrist'):
+            frame['joints'][name] = list(payload['frames'][0]['joints'][name])
+    payload['frames'][60]['joints']['left_ankle'][0] += .25
+    payload['frames'][60]['joints']['right_ankle'][0] += .25
+    payload['sourceFootSupportEvidence'] = {'bodySupport': {
+        'required': True, 'status': 'confirmed',
+        'stationaryJoints': ['left_wrist', 'right_wrist'],
+        'coplanarGroups': [{'joints': ['left_wrist', 'right_wrist'], 'normal': [0, 1, 0]}],
+    }}
+    phases = [.15*np.sin(i*2*np.pi/60) for i in range(len(payload['frames']))]
+
+    assert not cycle_boundary_motion_metrics(payload)['passed']
+    assert cycle_boundary_motion_metrics(payload, support_aware=True)['passed']
+    assert not any(
+        choice['startFrame'] == 0 and choice['stopFrameExclusive'] == 60
+        for choice in rank_loop_cycles(payload, phase_values=phases)
+    )
+
+    choices = rank_loop_cycles(
+        payload, phase_values=phases, allow_repairable_support_wrap=True)
+    deferred = next(
+        choice for choice in choices
+        if choice['startFrame'] == 0 and choice['stopFrameExclusive'] == 60
+    )
+    assert deferred['sourceWrapDeferredToSupportInitialization']
+    assert deferred['endpointGapMeters'] > .2
+
+
 def test_contact_intervals_are_clipped_rebased_and_not_duplicated():
     payload = repeated_motion()
     payload['sourceFootSupportEvidence'] = {
@@ -384,3 +420,14 @@ def test_failed_cycle_attempts_return_the_entire_original_payload(monkeypatch):
     assert any(length < len(payload['frames']) for length in attempted_lengths)
     assert all(length <= len(payload['frames']) for length in attempted_lengths)
     assert len(payload['frames']) == 100
+
+def test_complete_cycle_can_join_across_a_phase_band_boundary():
+    from exercise_motion_pkg.repetition_phase import complete_repetition, major_phase_sequence
+    values = (.5 + .5 * np.cos(2.05 + np.arange(70) * 2 * np.pi / 70)).tolist()
+    assert major_phase_sequence(values) == ['low', 'high']
+    assert complete_repetition(values)[0]
+    assert not complete_repetition(values[:35])[0]
+    assert not complete_repetition(values[35:])[0]
+    assert not complete_repetition(values + values)[0]
+    mismatched = values[:-1] + [values[-1] + .2]
+    assert not complete_repetition(mismatched)[0]

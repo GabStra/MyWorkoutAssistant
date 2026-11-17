@@ -17,7 +17,7 @@ _CURRENT = ContextVar('movement_fit_session', default=None)
 _SPECULATIVE_FIT = ContextVar('speculative_fit', default=False)
 _FIT_GUARD = threading.Condition(threading.Lock())
 _FIT_IN_USE = 0
-_FIT_SPENT_BY_INPUT: dict[tuple, float] = {}
+_FIT_HISTORY_BY_INPUT: dict[tuple, tuple[float, dict]] = {}
 _PRIORITY_WORKSPACES: dict[str, int] = {}
 _ACTIVE_SPECULATIVE_WORKSPACES: set[str] = set()
 _ABANDONED_SPECULATIVE_WORKSPACES: set[str] = set()
@@ -52,6 +52,12 @@ class FitSlotTimeout(TimeoutError):
 
 # Default covers multi-cycle observed fits for longer clips without unbounded waits.
 DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS = 360.
+# Keep enough of the shared candidate deadline for one primary fit and the
+# 120-second retained-interval validation fallback used by controlled motion.
+FINALIZATION_FIT_RESERVE_SECONDS = 180.
+SPECULATIVE_CANDIDATE_FIT_BUDGET_SECONDS = max(
+    0.0, DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS - FINALIZATION_FIT_RESERVE_SECONDS
+)
 
 
 def _workspace_key(workspace) -> str | None:
@@ -298,7 +304,11 @@ class CandidateFitSession:
                 motion_digest = None
             self.budget_key = (str(self.path.resolve()), self.cache_namespace, motion_digest)
         with _FIT_GUARD:
-            self.previously_spent = _FIT_SPENT_BY_INPUT.get(self.budget_key, 0.) if self.budget_key else 0.
+            if self.budget_key is not None:
+                self.previously_spent, self.results = _FIT_HISTORY_BY_INPUT.setdefault(
+                    self.budget_key, (0., {}))
+            else:
+                self.previously_spent = 0.
         if self.path:
             try:
                 value = json.loads(self.path.read_text(encoding='utf-8'))
@@ -337,6 +347,20 @@ def current_fit_session():
     return _CURRENT.get()
 
 
+def candidate_fit_budget_available(minimum_seconds):
+    session = current_fit_session()
+    return session is None or session.remaining() >= float(minimum_seconds)
+
+
+def candidate_fit_timeout_seconds(timeout_seconds=None):
+    """Bound a fit by both the candidate and caller's remaining budgets."""
+    session = current_fit_session()
+    available = session.remaining() if session is not None else None
+    if timeout_seconds is not None:
+        available = float(timeout_seconds) if available is None else min(available, float(timeout_seconds))
+    return None if available is None else max(0., available)
+
+
 def fit_input_key(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -347,6 +371,9 @@ FIT_CACHE_SOURCE_MODULES = (
     'anatomical_repair.py',
     'articulation_trajectory.py',
     'body_support_observation.py',
+    'body_surface_contacts.py',
+    'body_surface_evidence.py',
+    'body_surface_geometry.py',
     'bilateral_evidence.py',
     'browser_workers.py',
     'cleanup.py',
@@ -364,10 +391,13 @@ FIT_CACHE_SOURCE_MODULES = (
     'foot_kinematics.py',
     'foot_geometry.py',
     'ground.py',
+    'ground_contact_plane.py',
     'heel_contacts.py',
     'joint_plant_initialization.py',
     'kinematic_policy.py',
     'limb_bend_repair.py',
+    'material_floor.py',
+    'native_foot_geometry.py',
     'loop_cycles.py',
     'loop_seam.py',
     'models.py',
@@ -375,6 +405,8 @@ FIT_CACHE_SOURCE_MODULES = (
     'reconstruction_compat.py',
     'motion_placement.py',
     'motion_scheduler.py',
+    'native_marker_projection.py',
+    'canonical_rig_projection.py',
     'physical_validation.py',
     'pose_fidelity.py',
     'preview.py',
@@ -393,9 +425,57 @@ FIT_CACHE_SOURCE_MODULES = (
     'structural_refinement.py',
     'support_alignment.py',
     'support_geometry.py',
+    'support_joint_tracks.py',
+    'supported_contact_rig.py',
     'temporal_contact_solver.py',
     'temporal_quality.py',
+    'trajectory_restoration.py',
     'whole_body_repair.py',
+    'artifact_state.py',
+    'camera_stability.py',
+    'canonical_rig_initialization.py',
+    'chain_depth_correction.py',
+    'child_process.py',
+    'chunking.py',
+    'clef_systemone.py',
+    'contact_sheet_crop.py',
+    'contact_sheet_guidance.py',
+    'contract_critic.py',
+    'discovery_budget.py',
+    'ffmpeg_utils.py',
+    'gpu_lock.py',
+    'gvhmr_runner.py',
+    'kinematic_cut.py',
+    'legacy_smpl_compat.py',
+    'llama_defaults.py',
+    'material_region_support.py',
+    'paths.py',
+    'pipeline.py',
+    'pose_prefilter.py',
+    'positional_range.py',
+    'reconstruction_convert.py',
+    'reconstruction_results.py',
+    'reconstruction_retarget_source.py',
+    'reconstruction_runner.py',
+    'reconstruction_smpl_preview.py',
+    'retarget_contract.py',
+    'review_questions.py',
+    'segment_detection.py',
+    'shared_llama_server.py',
+    'shoe_floor.py',
+    'source_evidence.py',
+    'source_frame_clock.py',
+    'source_observability.py',
+    'source_outcomes.py',
+    'spinepose_reconstruction_correction.py',
+    'storage.py',
+    'target_motion.py',
+    'unidepth_runner.py',
+    'video_materialization_cache.py',
+    'video_utils.py',
+    'video_world_alignment.py',
+    'vlm_errors.py',
+    'youtube.py',
 )
 
 
@@ -423,11 +503,17 @@ def fit_cache_source_namespace(source_paths=None):
 
 
 @contextmanager
-def candidate_fit_session(workspace=None, *, budget_seconds=DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS):
+def candidate_fit_session(workspace=None, *, budget_seconds=None):
     existing = current_fit_session()
     if existing is not None:
         yield existing
         return
+    if budget_seconds is None:
+        budget_seconds = (
+            SPECULATIVE_CANDIDATE_FIT_BUDGET_SECONDS
+            if _SPECULATIVE_FIT.get()
+            else DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS
+        )
     session = CandidateFitSession(workspace, budget_seconds=budget_seconds)
     token = _CURRENT.set(session)
     try:
@@ -439,5 +525,7 @@ def candidate_fit_session(workspace=None, *, budget_seconds=DEFAULT_CANDIDATE_FI
             if session.budget_key is not None:
                 with _FIT_GUARD:
                     active_seconds = max(0., monotonic()-session.started) if session.started is not None else 0.
-                    _FIT_SPENT_BY_INPUT[session.budget_key] = session.previously_spent + active_seconds
+                    # Finalization inherits the evidence that consumed its budget.
+                    _FIT_HISTORY_BY_INPUT[session.budget_key] = (
+                        session.previously_spent + active_seconds, session.results)
             _CURRENT.reset(token)

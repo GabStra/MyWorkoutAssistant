@@ -293,7 +293,9 @@ def test_material_tracks_only_corroborate_existing_full_sole_episode(tmp_path, m
             'available': True,
             'policyVersion': source_support_tracking.FOOT_MATERIAL_POLICY_VERSION,
             'episodes': [{**episodes[0], 'sourceVideoSha256': patch['sourceVideoSha256'],
-                          'status': 'verified', 'passed': True}],
+                          'status': 'verified', 'passed': True,
+                          'heel': {'reference': 'registered_scene'},
+                          'toe': {'reference': 'registered_scene'}}],
         }
 
     monkeypatch.setattr(foot, 'classify_foot_contacts', lambda *args, **kwargs: patch)
@@ -312,7 +314,7 @@ def test_material_tracks_only_corroborate_existing_full_sole_episode(tmp_path, m
     assert result['sourceMaterialStationarityPolicyVersion'] == source_support_tracking.FOOT_MATERIAL_POLICY_VERSION
     assert observed['episodes'][0]['contactState'] == 'full_sole'
     assert observed['episodes'][0]['startFrame'] == 4 and observed['episodes'][0]['endFrame'] == 7
-    assert observed['episodes'][0]['maximumDisplacementPixels'] == pytest.approx(.15 * .08 * 360)
+    assert observed['episodes'][0]['maximumDisplacementPixels'] == pytest.approx(.15 * .08 * 640)
     assert updated['anchorGroupId'] and updated['ankleAnchorGroupId']
     for field in ('rayObservations', 'heelImageObservations'):
         rows = result['footPatchEvidence']['feet']['right'][field]

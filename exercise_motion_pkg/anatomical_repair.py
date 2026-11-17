@@ -551,13 +551,27 @@ def _joints_for_repair_label(label, names, parents):
     return [joint] if joint in names else []
 
 
+
+def repair_residual_dependencies(rig, points, *, span_targets=None, reference=None, head_reference=None):
+    """Match every anatomy gate row to its existing affected-joint ownership."""
+    from .controlled_motion import joint_dependencies
+    labels = repair_residuals(points, rig.names, span_targets, reference=reference,
+                              head_reference=head_reference)[1]
+    from .support_geometry import _head_articulation_dependencies
+    return np.stack([
+        _head_articulation_dependencies(rig, points)[0]
+        if label.startswith('repair_head_articulation_distortion:') else
+        joint_dependencies(rig, _joints_for_repair_label(label, rig.names, rig.parents))
+        for label in labels])
+
+
 def free_rotation_columns(rig, active_labels):
     """Limit FD probes to rotations that can fix the active frame violations."""
     names = rig.names
     if active_labels and all(label.startswith('repair_head_articulation_distortion:')
                              for label in active_labels):
-        # Head direction is a distal neck DOF; do not re-pose torso or plants.
-        slot = rig.slots[names.index('neck')]
+        # The head leaf owns its bone direction; preserve the neck and plants.
+        slot = rig.slots[names.index('head')]
         return list(range(slot, slot + 3))
     affected = {'pelvis', 'left_hip', 'right_hip', 'neck'}
     for label in active_labels:
@@ -787,6 +801,8 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_de
             previous_observed = observed_coordinates[frame - 1]
             for joint in rig.active:
                 slot = rig.slots[joint]
+                if slot not in free_columns:
+                    continue
                 coordinate_slice = slice(slot - columns[0], slot - columns[0] + 3)
                 continuity_seed[coordinate_slice] = _transport_repair_rotation(
                     previous_observed[slot:slot + 3],

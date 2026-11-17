@@ -812,8 +812,9 @@ def test_service_persists_thread_stacks_after_an_advertised_operation_deadline(
     assert "stalledOperation" not in state
 
 
-def test_service_supervises_split_mode_source_checkpoint_without_accelerator_phase(
-    tmp_path: Path, monkeypatch,
+@pytest.mark.parametrize("has_deadline", [True, False])
+def test_service_reports_split_mode_source_checkpoint_without_accelerator_phase(
+    tmp_path: Path, monkeypatch, has_deadline,
 ):
     """The source call in split-GVHMR mode is outside accelerator_phase."""
     from exercise_motion_pkg import staged_wave_service as service
@@ -831,7 +832,8 @@ def test_service_supervises_split_mode_source_checkpoint_without_accelerator_pha
                 "videoId": "retained-video",
                 "candidateKey": "retained-exercise:retained-candidate",
                 "threadId": 4242,
-                "operationDeadlineEpoch": time.time() - 0.2,
+                "operationStartedEpoch": time.time() - 10,
+                "operationDeadlineEpoch": time.time() - 0.2 if has_deadline else None,
             },
         }],
     }).encode("utf-8")
@@ -864,23 +866,36 @@ def test_service_supervises_split_mode_source_checkpoint_without_accelerator_pha
     worker.start()
     assert entered.wait(2)
     state_path = queue / "worker_state.json"
+    state = None
     diagnostic = None
     deadline = time.monotonic() + 4
     while time.monotonic() < deadline:
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        if state.get("stalledOperation", {}).get("diagnosticPath"):
+        if has_deadline and state.get("stalledOperation", {}).get("diagnosticPath"):
             diagnostic = Path(state["stalledOperation"]["diagnosticPath"])
             break
+        if not has_deadline and state.get("activeRequests", [{}])[0].get("sourceActivities"):
+            break
         time.sleep(0.02)
-    assert diagnostic is not None and diagnostic.is_file()
-    captured = json.loads(diagnostic.read_text(encoding="utf-8"))
-    assert captured["operationDeadlineEpoch"] == pytest.approx(
-        json.loads(checkpoint_bytes)["items"][0]["sourceActivity"]["operationDeadlineEpoch"]
-    )
-    assert captured["sourceActivities"][0]["videoId"] == "retained-video"
-    assert captured["sourceActivities"][0]["candidateKey"] == "retained-exercise:retained-candidate"
-    assert captured["sourceActivities"][0]["threadId"] == 4242
-    assert any("blocked_source_call" in "".join(thread["stack"]) for thread in captured["threads"])
+    if has_deadline:
+        assert diagnostic is not None and diagnostic.is_file()
+        captured = json.loads(diagnostic.read_text(encoding="utf-8"))
+        assert captured["operationDeadlineEpoch"] == pytest.approx(
+            json.loads(checkpoint_bytes)["items"][0]["sourceActivity"]["operationDeadlineEpoch"]
+        )
+        assert any("blocked_source_call" in "".join(thread["stack"]) for thread in captured["threads"])
+    else:
+        assert state["activeRequests"][0]["sourceActivities"][0]["videoId"] == "retained-video"
+        assert state["activeRequests"][0]["sourceActivities"][0]["candidateKey"] == "retained-exercise:retained-candidate"
+        assert state["activeRequests"][0]["sourceActivities"][0]["elapsedSeconds"] >= 9
+        assert "preparing and validating source video (" in state["activeRequests"][0]["lastProgress"]
+        assert "operationDeadlineEpoch" not in state["activeRequests"][0]
+    if has_deadline:
+        assert diagnostic is not None
+        captured = json.loads(diagnostic.read_text(encoding="utf-8"))
+        assert captured["sourceActivities"][0]["videoId"] == "retained-video"
+        assert captured["sourceActivities"][0]["candidateKey"] == "retained-exercise:retained-candidate"
+        assert captured["sourceActivities"][0]["threadId"] == 4242
 
     release.set()
     worker.join(timeout=3)

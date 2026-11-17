@@ -216,3 +216,73 @@ def test_post_bake_solver_receives_retained_evidence_and_exports_its_floor(monke
     result, _ = b.constrain_baked_payload_to_source_articulation(payload, use_controlled_motion_fit=False)
     assert result["sourceFootSupportEvidence"] == evidence
     assert result["renderFloorY"] == pytest.approx(-.02)
+
+
+def test_verified_pose_reaches_fit_entry_without_camera_registration(monkeypatch):
+    from exercise_motion_pkg import body_support_observation as body_support
+    from exercise_motion_pkg import controlled_motion as controlled
+    from exercise_motion_pkg import foot_contact_observation as foot_contact
+    from exercise_motion_pkg import support_geometry
+
+    video_sha = "a" * 64
+    source_pose = {
+        "frames": [{"sourceTimeSec": 0., "joints": {
+            "left_ankle": [0., 0.], "right_ankle": [1., 0.],
+        }}],
+        "sourcePoseSampleBoundaryToleranceSeconds": .04,
+        "sourceTimeOriginSec": 0.,
+        "sourceVideoSha256": video_sha,
+        "imageWidth": 640,
+        "imageHeight": 480,
+    }
+    patch = {
+        "available": True,
+        "source": "mediapipe_full_heel_forefoot",
+        "policyVersion": foot_contact.POLICY_VERSION,
+        "sourcePosePayloadSha256": foot_contact._source_pose_digest(source_pose),
+        "sourcePoseFrameCount": 1,
+        "sourcePoseSampleBoundaryToleranceSeconds": .04,
+        "sourceVideoSha256": video_sha,
+        "sourcePoseVideoSha256": video_sha,
+        "sourceTimeBasis": "absolute_source_video",
+        "sourceTimeOriginSec": 0.,
+        "sourceTimesSec": [0.],
+        "sourceFrameCount": 1,
+        "imageWidth": 640,
+        "imageHeight": 480,
+        "feet": {side: {"states": ["unknown"], "rayObservations": []}
+                 for side in ("left", "right")},
+    }
+    evidence = {"footPatchEvidence": patch, "contacts": []}
+    joints = {"pelvis": [0., 1., 0.]}
+    payload = {"fps": 30., "jointNames": ["pelvis"], "frames": [
+        {"timeSec": 0., "joints": copy.deepcopy(joints),
+         "sourceJoints": copy.deepcopy(joints)}],
+        "sourceFootSupportEvidence": evidence}
+
+    monkeypatch.setattr(b, "constrain_to_source_articulation_envelope",
+                        lambda source, proposed, **kwargs: (proposed, {"applied": False}))
+    monkeypatch.setattr(support_geometry, "declare_support_requirements", lambda *args: None)
+    for name in ("materialize_body_support", "materialize_hand_support",
+                 "materialize_knee_support", "materialize_observed_ground_contacts",
+                 "materialize_ankle_support"):
+        monkeypatch.setattr(body_support, name, lambda *args, **kwargs: None)
+    monkeypatch.setattr(body_support, "calibrate_material_sole_floor", lambda value: value)
+    monkeypatch.setattr(controlled, "can_reuse_controlled_motion", lambda value: False)
+
+    class FitReached(Exception):
+        pass
+
+    def stop_at_fit_entry(fit_payload, **kwargs):
+        assert "sourcePoseCameraReference" not in fit_payload
+        assert fit_payload["sourcePoseReference"] == source_pose
+        assert controlled.source_foot_patch_pose_binding_failure(fit_payload) is None
+        raise FitReached
+
+    monkeypatch.setattr(controlled, "fit_controlled_motion", stop_at_fit_entry)
+    with pytest.raises(FitReached):
+        b.constrain_baked_payload_to_source_articulation(
+            payload,
+            source_foot_support_evidence=evidence,
+            source_pose_reference=source_pose,
+        )

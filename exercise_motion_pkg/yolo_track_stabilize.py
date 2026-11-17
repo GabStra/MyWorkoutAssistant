@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -193,50 +193,83 @@ def apply_yolo_track_stabilization(
     except ImportError:
         return source_path
 
-    capture = cv2.VideoCapture(str(source_path))
-    if not capture.isOpened():
-        return source_path
-    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
-    output_width, output_height = stabilized_output_size(plan)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(
-        str(output_path),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps if fps > 0.0 else 30.0,
-        (output_width, output_height),
-    )
-    if not writer.isOpened():
-        capture.release()
+    probe = cv2.VideoCapture(str(source_path))
+    if not probe.isOpened():
         return source_path
     try:
-        frame_index = 0
-        while True:
-            ok, frame = capture.read()
-            if not ok:
-                break
-            origin = plan.origins[min(frame_index, len(plan.origins) - 1)]
-            cropped = frame[
-                origin[1] : origin[1] + plan.crop_height,
-                origin[0] : origin[0] + plan.crop_width,
-            ]
-            if cropped.shape[0] != plan.crop_height or cropped.shape[1] != plan.crop_width:
-                capture.release()
-                writer.release()
-                return source_path
-            if cropped.shape[1] != output_width or cropped.shape[0] != output_height:
-                cropped = cv2.resize(
-                    cropped,
-                    (output_width, output_height),
-                    interpolation=cv2.INTER_CUBIC,
-                )
-            writer.write(cropped)
-            frame_index += 1
+        fps = float(probe.get(cv2.CAP_PROP_FPS) or 0.0)
     finally:
-        capture.release()
-        writer.release()
-    if not output_path.exists() or output_path.stat().st_size <= 0:
+        probe.release()
+    output_width, output_height = stabilized_output_size(plan)
+    output_fps = fps if fps > 0.0 else 30.0
+    settings = {
+        "policyVersion": YOLO_TRACK_STABILIZATION_POLICY_VERSION,
+        "operation": "yolo_track_stabilization",
+        "encoder": "mp4v",
+        "fps": output_fps,
+        "interpolation": "INTER_CUBIC",
+        "plan": asdict(plan),
+    }
+
+    from exercise_motion_pkg.video_materialization_cache import (
+        MaterializationNotProduced,
+        default_video_materialization_cache_dir,
+        materialize_cached,
+    )
+
+    def produce(destination: Path) -> None:
+        capture = cv2.VideoCapture(str(source_path))
+        if not capture.isOpened():
+            raise MaterializationNotProduced(f"Could not open video: {source_path}")
+        writer = None
+        try:
+            writer = cv2.VideoWriter(
+                str(destination),
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                output_fps,
+                (output_width, output_height),
+            )
+            if not writer.isOpened():
+                raise MaterializationNotProduced(
+                    f"Could not open video writer for output: {destination}"
+                )
+            frame_index = 0
+            while True:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                origin = plan.origins[min(frame_index, len(plan.origins) - 1)]
+                cropped = frame[
+                    origin[1] : origin[1] + plan.crop_height,
+                    origin[0] : origin[0] + plan.crop_width,
+                ]
+                if cropped.shape[0] != plan.crop_height or cropped.shape[1] != plan.crop_width:
+                    raise MaterializationNotProduced(
+                        f"Stabilization crop left the source frame: {source_path}"
+                    )
+                if cropped.shape[1] != output_width or cropped.shape[0] != output_height:
+                    cropped = cv2.resize(
+                        cropped,
+                        (output_width, output_height),
+                        interpolation=cv2.INTER_CUBIC,
+                    )
+                writer.write(cropped)
+                frame_index += 1
+        finally:
+            capture.release()
+            if writer is not None:
+                writer.release()
+
+    try:
+        return materialize_cached(
+            source_path=source_path,
+            output_path=output_path,
+            settings=settings,
+            cache_dir=default_video_materialization_cache_dir(output_path),
+            producer=produce,
+        )
+    except MaterializationNotProduced:
         return source_path
-    return output_path
 
 
 def stabilized_output_size(plan: YoloTrackStabilizationPlan) -> tuple[int, int]:

@@ -8,6 +8,7 @@ import math
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,6 +25,7 @@ from exercise_motion_pkg.gpu_lock import wait_for_gpu_cooling
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.contact_sheet_crop import CONTACT_SHEET_CROP_POLICY_VERSION, persistent_border_crop
 from exercise_motion_pkg.shared_llama_server import shared_llama_request_scope
+from exercise_motion_pkg.review_questions import with_schema_choice_vocabulary
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
@@ -82,7 +84,7 @@ class DetectionSettings:
     comparative_selection_max_candidates: int = 8
     merge_gap_seconds: float = 2.0
     confidence_threshold: float = 0.45
-    min_segment_seconds: float = 2.0
+    min_segment_seconds: float | None = None
     max_segment_seconds: float = 20.0
     target_segment_seconds: float | None = None
     chunk_retry_multipliers: tuple[float, ...] = (1.0, 1.5, 2.0)
@@ -108,6 +110,10 @@ class DetectionSettings:
     active_refinement_overlap_ratio: float = 0.5
     min_refined_score_ratio: float = 0.85
     min_refinement_duration_ratio: float = 0.65
+    static_challenge_focus_regions: tuple[str, ...] = ()
+    static_challenge_crop_provider: (
+        Callable[["StaticChallengeFocusQuery"], "StaticChallengeFocus | None"] | None
+    ) = field(default=None, repr=False, compare=False)
     health_timeout_seconds: float = 180.0
     request_timeout_seconds: float = 240.0
 
@@ -354,6 +360,89 @@ def detect_exercise_segment(
                 exercise_name=exercise_name,
             )
             break
+    if detected_span is None and _is_negative_whole_body_verdict(detections):
+        challenge_dir = output_dir / "static_challenge"
+        challenge_dir.mkdir(parents=True, exist_ok=True)
+        challenge_witness_settings = replace(
+            settings,
+            motion_padding_seconds=0.0,
+            motion_min_interval_seconds=0.0,
+        )
+        challenge_motion_intervals = (
+            detect_motion_candidate_intervals(
+                video_path=sanitized_video_path,
+                metadata=metadata,
+                settings=challenge_witness_settings,
+            )
+            if settings.refinement_frames_per_window > 0
+            and settings.refinement_window_seconds > 0.0
+            else []
+        )
+
+        def refine_static_challenge_whole_body(
+            coarse_span: DetectedSpan,
+        ) -> tuple[DetectedSpan, list[WindowDetection]]:
+            return refine_detected_span_with_smaller_windows(
+                video_path=sanitized_video_path,
+                output_dir=challenge_dir / "refinement",
+                client=active_client,
+                metadata=metadata,
+                coarse_span=coarse_span,
+                settings=settings,
+                exercise_name=exercise_name,
+            )
+
+        def refine_static_challenge_window(
+            coarse_span: DetectedSpan,
+            focus: StaticChallengeFocus | None,
+        ) -> tuple[DetectedSpan, list[WindowDetection]]:
+            if focus is not None:
+                focused_result = _refine_static_challenge_with_focus(
+                    video_path=sanitized_video_path,
+                    output_dir=challenge_dir / "region_focus",
+                    client=active_client,
+                    coarse_span=coarse_span,
+                    focus=focus,
+                    settings=settings,
+                    exercise_name=exercise_name,
+                )
+                if focused_result is not None:
+                    return focused_result
+            return refine_static_challenge_whole_body(coarse_span)
+
+        def static_challenge_focus_provider(
+            coarse_span: DetectedSpan,
+        ) -> StaticChallengeFocus | None:
+            provider = settings.static_challenge_crop_provider
+            if provider is None:
+                return None
+            query = _static_challenge_focus_query(
+                video_path=sanitized_video_path,
+                coarse_span=coarse_span,
+                metadata=metadata,
+                focus_regions=settings.static_challenge_focus_regions,
+            )
+            return provider(query)
+
+        (
+            detected_span,
+            challenge_detections,
+            static_challenge_info,
+        ) = _challenge_negative_coarse_verdict(
+            detections=detections,
+            motion_intervals=challenge_motion_intervals,
+            duration_seconds=metadata.duration_seconds,
+            min_segment_seconds=_effective_min_segment_seconds(settings.min_segment_seconds),
+            max_segment_seconds=settings.max_segment_seconds,
+            confidence_threshold=settings.confidence_threshold,
+            refine_window=refine_static_challenge_window,
+            focus_provider=static_challenge_focus_provider,
+        )
+        detections.extend(challenge_detections)
+        (challenge_dir / "static_challenge.json").write_text(
+            json.dumps(static_challenge_info, indent=2),
+            encoding="utf-8",
+        )
     if detected_span is not None and settings.active_refinement_max_rounds > 0:
         active_span, active_detections = refine_detected_span_with_active_search(
             video_path=sanitized_video_path,
@@ -420,7 +509,7 @@ class CaptionImagesDetectionClient:
         self.top_p = None if top_p is None else max(0.0, min(1.0, float(top_p)))
         self.top_k = None if top_k is None else max(0, int(top_k))
         self.disable_reasoning = bool(disable_reasoning)
-        self.request_timeout_seconds = max(1.0, float(request_timeout_seconds))
+        self.request_timeout_seconds = max(0.0, float(request_timeout_seconds))
 
     def detect_window(
         self,
@@ -485,7 +574,7 @@ class CaptionImagesDetectionClient:
             request_timeout_seconds=(
                 self.request_timeout_seconds
                 if request_timeout_seconds is None
-                else max(1.0, float(request_timeout_seconds))
+                else max(0.0, float(request_timeout_seconds))
             ),
             disable_reasoning=self.disable_reasoning if disable_reasoning is None else bool(disable_reasoning),
             json_response=bool(json_response),
@@ -773,6 +862,485 @@ def refine_detected_span_with_smaller_windows(
     return constrained_span, refinement_detections
 
 
+STATIC_CHALLENGE_MAX_MODEL_CALLS = 1
+STATIC_CHALLENGE_FOCUS_FRAME_COUNT = 8
+
+
+@dataclass(frozen=True)
+class StaticChallengeFocusQuery:
+    """Code-owned request for a fixed region-focus crop in the challenge window.
+
+    The frame indices and timestamps are selected here so the crop can only
+    describe the bounded coarse-negative window, never an unbounded video.
+    """
+
+    video_path: Path
+    start_seconds: float
+    end_seconds: float
+    frame_indices: tuple[int, ...]
+    timestamps: tuple[float, ...]
+    image_width: int
+    image_height: int
+    source_fps: float
+    focus_regions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class StaticChallengeFocus:
+    """A fixed crop derived from observed target regions, with provenance."""
+
+    crop_box: tuple[int, int, int, int]
+    frame_indices: tuple[int, ...]
+    timestamps: tuple[float, ...]
+    provenance: dict[str, object]
+
+
+def _static_challenge_focus_query(
+    *,
+    video_path: Path,
+    coarse_span: DetectedSpan,
+    metadata: VideoMetadata,
+    focus_regions: tuple[str, ...],
+) -> StaticChallengeFocusQuery:
+    timestamps = linspace_times(
+        coarse_span.start_seconds,
+        coarse_span.end_seconds,
+        STATIC_CHALLENGE_FOCUS_FRAME_COUNT,
+    )
+    last_frame_index = max(0, int(metadata.frame_count) - 1)
+    fps = max(0.0, float(metadata.fps))
+    frame_indices = tuple(
+        max(0, min(last_frame_index, int(round(timestamp * fps))))
+        for timestamp in timestamps
+    )
+    return StaticChallengeFocusQuery(
+        video_path=video_path,
+        start_seconds=float(coarse_span.start_seconds),
+        end_seconds=float(coarse_span.end_seconds),
+        frame_indices=frame_indices,
+        timestamps=tuple(float(value) for value in timestamps),
+        image_width=int(metadata.width),
+        image_height=int(metadata.height),
+        source_fps=fps,
+        focus_regions=tuple(str(region) for region in focus_regions),
+    )
+
+
+def _static_challenge_focus_digest(
+    focus: StaticChallengeFocus,
+) -> str:
+    payload = {
+        "frameIndices": list(focus.frame_indices),
+        "timestamps": list(focus.timestamps),
+        "cropBox": list(focus.crop_box),
+        "focusRegions": focus.provenance.get("focusRegions"),
+        "imageWidth": focus.provenance.get("imageWidth"),
+        "imageHeight": focus.provenance.get("imageHeight"),
+        "provenance": focus.provenance,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def static_challenge_focus_from_pose_payload(
+    payload: object,
+    *,
+    query: StaticChallengeFocusQuery | None = None,
+    focus_regions: tuple[str, ...] = (),
+    frame_indices: tuple[int, ...] = (),
+    timestamps: tuple[float, ...] = (),
+    image_width: int = 0,
+    image_height: int = 0,
+    min_keypoint_confidence: float = 0.8,
+    padding_ratio: float = 0.10,
+    max_person_count: int = 1,
+    min_keypoint_coverage: float = 0.65,
+) -> StaticChallengeFocus | None:
+    """Derive a fixed union crop from observed target-region pose joints.
+
+    Person count and keypoint coverage must be valid, and every requested
+    frame index must have a temporally matching pose sample. Nothing is
+    invented when the region is hidden or the payload does not cover the
+    bounded challenge window.
+    """
+    if query is not None:
+        focus_regions = query.focus_regions
+        frame_indices = query.frame_indices
+        timestamps = query.timestamps
+        image_width = query.image_width
+        image_height = query.image_height
+    if not isinstance(payload, dict):
+        return None
+    samples = payload.get("dominantPoseSamples")
+    if not isinstance(samples, list) or len(samples) < 3:
+        return None
+    person_count = payload.get("maxSignificantPersonCount", payload.get("personCount"))
+    try:
+        if int(person_count) != 1 or int(person_count) > max_person_count:
+            return None
+    except (TypeError, ValueError):
+        return None
+    coverage = payload.get("keypointCoverage")
+    try:
+        if not math.isfinite(float(coverage)) or float(coverage) < min_keypoint_coverage:
+            return None
+    except (TypeError, ValueError):
+        return None
+    from exercise_motion_pkg.pose_prefilter import pose_joint_groups_for_observable_regions
+
+    joint_names = {
+        name
+        for group in pose_joint_groups_for_observable_regions(focus_regions)
+        for name in group
+    }
+    if not joint_names:
+        return None
+    usable = [
+        sample
+        for sample in samples
+        if isinstance(sample, dict)
+        and isinstance(sample.get("timeSeconds"), (int, float))
+        and isinstance(sample.get("keypoints"), dict)
+    ]
+    if len(usable) < 3:
+        return None
+    sample_times = sorted(float(sample["timeSeconds"]) for sample in usable)
+    gaps = [right - left for left, right in zip(sample_times, sample_times[1:]) if right > left]
+    max_time_distance = max(0.5, 1.5 * (gaps[len(gaps) // 2] if gaps else 0.5))
+    selected: list[dict[str, object]] = []
+    for timestamp in timestamps:
+        sample = min(usable, key=lambda item: abs(float(item["timeSeconds"]) - timestamp))
+        if abs(float(sample["timeSeconds"]) - timestamp) > max_time_distance:
+            return None
+        selected.append(sample)
+    if not selected:
+        return None
+    points: list[tuple[float, float]] = []
+    body_heights: list[float] = []
+    observed_counts = dict.fromkeys(joint_names, 0)
+    for sample in selected:
+        bbox = sample.get("bbox")
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            try:
+                height = float(bbox[3]) - float(bbox[1])
+                if math.isfinite(height) and height > 0.:
+                    body_heights.append(height)
+            except (TypeError, ValueError):
+                pass
+        keypoints = sample["keypoints"]
+        for name in joint_names:
+            point = keypoints.get(name)
+            if not isinstance(point, (list, tuple)) or len(point) < 3:
+                continue
+            try:
+                x, y, confidence = float(point[0]), float(point[1]), float(point[2])
+            except (TypeError, ValueError):
+                continue
+            if confidence >= min_keypoint_confidence and 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0:
+                points.append((x, y))
+                observed_counts[name] += 1
+    if (not points or not body_heights or image_width <= 0 or image_height <= 0
+            or any(count < min_keypoint_coverage * len(selected) for count in observed_counts.values())):
+        return None
+    padding = sorted(body_heights)[len(body_heights) // 2] * padding_ratio
+    padding_x = padding * (float(image_height) / float(image_width))
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    left = max(0.0, min(xs) - padding_x)
+    right = min(1.0, max(xs) + padding_x)
+    top = max(0.0, min(ys) - padding)
+    bottom = min(1.0, max(ys) + padding)
+    crop_box = (
+        max(0, min(image_width, math.floor(left * image_width))),
+        max(0, min(image_height, math.floor(top * image_height))),
+        max(0, min(image_width, math.ceil(right * image_width))),
+        max(0, min(image_height, math.ceil(bottom * image_height))),
+    )
+    if crop_box[2] - crop_box[0] < 2 or crop_box[3] - crop_box[1] < 2:
+        return None
+    return StaticChallengeFocus(
+        crop_box=crop_box,
+        frame_indices=tuple(int(index) for index in frame_indices),
+        timestamps=tuple(float(value) for value in timestamps),
+        provenance={
+            "sampleCount": len(selected),
+            "poseSampleCount": len(usable),
+            "jointCount": len(points),
+            "minKeypointConfidence": float(min_keypoint_confidence),
+            "paddingRatio": float(padding_ratio),
+            "focusRegions": list(focus_regions),
+            "imageWidth": int(image_width),
+            "imageHeight": int(image_height),
+        },
+    )
+
+
+def _refine_static_challenge_with_focus(
+    *,
+    video_path: Path,
+    output_dir: Path,
+    client: object,
+    coarse_span: DetectedSpan,
+    focus: StaticChallengeFocus,
+    settings: DetectionSettings,
+    exercise_name: str | None,
+) -> tuple[DetectedSpan, list[WindowDetection]] | None:
+    """Run the single bounded challenge with a full-frame and focused view.
+
+    Both sheets are built from one frame extraction, so tiles share identical
+    timestamps and frame IDs, and the focus crop is fixed across the window.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    window = DetectionWindow(
+        index=10_000,
+        start_seconds=float(coarse_span.start_seconds),
+        end_seconds=float(coarse_span.end_seconds),
+    )
+    frame_paths = extract_window_frames(
+        video_path=video_path,
+        window=window,
+        frames_per_window=STATIC_CHALLENGE_FOCUS_FRAME_COUNT,
+        max_frame_width=settings.max_frame_width,
+        contact_sheet_enabled=False,
+        output_dir=output_dir / "frames",
+    )
+    if not frame_paths:
+        return None
+    timestamps = linspace_times(window.start_seconds, window.end_seconds, len(frame_paths))
+    context_sheet = build_frame_contact_sheet(
+        frame_paths=frame_paths,
+        timestamps=timestamps,
+        output_path=output_dir / "context_sheet.jpg",
+        columns=settings.contact_sheet_columns,
+        tile_width=settings.contact_sheet_tile_width,
+        jpeg_quality=settings.contact_sheet_jpeg_quality,
+        sequence_labels=True,
+    )
+    try:
+        focused_sheet = build_frame_contact_sheet(
+            frame_paths=frame_paths,
+            timestamps=timestamps,
+            output_path=output_dir / "focused_sheet.jpg",
+            columns=settings.contact_sheet_columns,
+            tile_width=settings.refinement_contact_sheet_tile_width,
+            jpeg_quality=settings.contact_sheet_jpeg_quality,
+            sequence_labels=True,
+            crop_box=focus.crop_box,
+        )
+    except ValueError:
+        focused_sheet = None
+    if context_sheet is None or focused_sheet is None:
+        return None
+    detection = client.detect_window(
+        frame_paths=[context_sheet, focused_sheet],
+        window=window,
+        exercise_name=exercise_name,
+        require_complete_execution=True,
+    )
+    return (
+        DetectedSpan(
+            start_seconds=window.start_seconds,
+            end_seconds=window.end_seconds,
+            confidence=float(detection.confidence),
+            average_camera_variation=float(detection.camera_variation),
+            contributing_windows=[window.index],
+        ),
+        [detection],
+    )
+
+
+def _is_negative_whole_body_verdict(detections: list[WindowDetection]) -> bool:
+    """Return True only when every completed coarse verdict is negative.
+
+    A zero-confidence parser or transport failure is unknown, not negative, so
+    it must not open the bounded static challenge.
+    """
+    if not detections:
+        return False
+    if any(float(item.confidence) <= 0.0 for item in detections):
+        return False
+    return not any(bool(item.movement_present) for item in detections)
+
+
+def _select_motion_witness(
+    intervals: list[MotionInterval],
+    *,
+    duration_seconds: float,
+) -> MotionInterval | None:
+    """Pick the strongest localized pixel-motion interval.
+
+    ``detect_motion_candidate_intervals`` returns one full-duration fallback
+    interval when it cannot separate movement from clip background. That
+    fallback is not independent evidence and must not trigger the challenge.
+    """
+    if duration_seconds <= 0.0:
+        return None
+    localized = [
+        interval
+        for interval in intervals
+        if interval.end_seconds - interval.start_seconds < duration_seconds - 0.05
+    ]
+    return max(localized, key=lambda interval: float(interval.score), default=None)
+
+
+def _finer_detection_proves_complete_execution(
+    detections: list[WindowDetection],
+    *,
+    confidence_threshold: float,
+) -> bool:
+    """Require the finer pass to prove a complete, single, normal-speed rep."""
+    for detection in detections:
+        if not detection.movement_present or detection.confidence < confidence_threshold:
+            continue
+        executions = tuple(detection.executions or ())
+        if not executions:
+            if detection.contains_movement_start and detection.contains_movement_end:
+                return True
+            continue
+        if any(
+            execution.complete
+            and execution.single_execution
+            and execution.normal_speed
+            and execution.fixed_camera
+            and execution.single_person
+            and execution.fully_in_frame
+            and not execution.partial_movement
+            and not execution.wrong_exercise_or_unrelated_movement
+            and execution.start_posture_visible
+            and execution.full_action_path_visible
+            and execution.end_posture_visible
+            and execution.target_exercise_match >= confidence_threshold
+            for execution in executions
+        ):
+            return True
+    return False
+
+
+def _build_static_challenge_span(
+    witness: MotionInterval,
+    *,
+    duration_seconds: float,
+    min_segment_seconds: float,
+    max_segment_seconds: float,
+    confidence_threshold: float,
+) -> DetectedSpan:
+    """Expand a short witness to the minimum accepted segment duration.
+
+    The witness localizes where motion is; it is not itself a candidate span.
+    Symmetric expansion gives the finer pass context around the movement while
+    remaining bounded by the clip and the normal segment limits.
+    """
+    start = max(0.0, float(witness.start_seconds))
+    end = min(float(duration_seconds), float(witness.end_seconds))
+    minimum = max(0.0, float(min_segment_seconds))
+    maximum = max(minimum, float(max_segment_seconds))
+    if end - start < minimum:
+        padding = (minimum - (end - start)) / 2.0
+        start = max(0.0, start - padding)
+        end = min(float(duration_seconds), end + padding)
+        if end - start < minimum:
+            start = max(0.0, min(start, float(duration_seconds) - minimum))
+            end = min(float(duration_seconds), start + minimum)
+    if end - start > maximum:
+        end = start + maximum
+    return DetectedSpan(
+        start_seconds=start,
+        end_seconds=end,
+        confidence=float(confidence_threshold),
+        average_camera_variation=0.0,
+        contributing_windows=[],
+    )
+
+
+def _challenge_negative_coarse_verdict(
+    *,
+    detections: list[WindowDetection],
+    motion_intervals: list[MotionInterval],
+    duration_seconds: float,
+    min_segment_seconds: float,
+    max_segment_seconds: float,
+    confidence_threshold: float,
+    refine_window: Callable[
+        [DetectedSpan, StaticChallengeFocus | None],
+        tuple[DetectedSpan, list[WindowDetection]],
+    ],
+    focus_provider: Callable[[DetectedSpan], StaticChallengeFocus | None] | None = None,
+) -> tuple[DetectedSpan | None, list[WindowDetection], dict[str, object]]:
+    """Run at most one finer challenge for an all-negative coarse verdict.
+
+    This owns only the generic decision. It names no exercise, crops no
+    anatomical region, and never relaxes the normal complete-execution gates.
+    """
+    info: dict[str, object] = {"applied": False, "modelCalls": 0}
+    if not _is_negative_whole_body_verdict(detections):
+        info["reason"] = "coarse_verdict_not_negative_or_unknown"
+        return None, [], info
+
+    witness = _select_motion_witness(motion_intervals, duration_seconds=duration_seconds)
+    if witness is None:
+        info["reason"] = "no_independent_motion_witness"
+        return None, [], info
+
+    coarse_span = _build_static_challenge_span(
+        witness,
+        duration_seconds=duration_seconds,
+        min_segment_seconds=min_segment_seconds,
+        max_segment_seconds=max_segment_seconds,
+        confidence_threshold=confidence_threshold,
+    )
+    info.update(
+        applied=True,
+        motionWitness={
+            "startSeconds": float(witness.start_seconds),
+            "endSeconds": float(witness.end_seconds),
+            "score": float(witness.score),
+        },
+        challengeWindow={
+            "startSeconds": coarse_span.start_seconds,
+            "endSeconds": coarse_span.end_seconds,
+        },
+        maxModelCalls=STATIC_CHALLENGE_MAX_MODEL_CALLS,
+    )
+
+    focus: StaticChallengeFocus | None = None
+    if focus_provider is not None:
+        try:
+            focus = focus_provider(coarse_span)
+        except Exception as exc:  # noqa: BLE001 - whole-body fallback stays safe
+            LOGGER.warning("Static challenge region-focus provider failed: %s", exc)
+    info["regionFocus"] = (
+        {
+            "applied": True,
+            "cropBox": list(focus.crop_box),
+            "frameIndices": list(focus.frame_indices),
+            "timestamps": list(focus.timestamps),
+            "provenance": dict(focus.provenance),
+            "provenanceSha256": _static_challenge_focus_digest(focus),
+        }
+        if focus is not None
+        else {"applied": False}
+    )
+
+    refined_span, challenge_detections = refine_window(coarse_span, focus)
+    info["modelCalls"] = STATIC_CHALLENGE_MAX_MODEL_CALLS
+    if refined_span is None or refined_span is coarse_span:
+        info["reason"] = "finer_evidence_negative"
+        return None, challenge_detections, info
+    if not _finer_detection_proves_complete_execution(
+        challenge_detections,
+        confidence_threshold=confidence_threshold,
+    ):
+        info["reason"] = "finer_evidence_incomplete_or_unknown"
+        return None, challenge_detections, info
+
+    info["reason"] = "finer_evidence_complete_positive"
+    info["resultSpan"] = {
+        "startSeconds": refined_span.start_seconds,
+        "endSeconds": refined_span.end_seconds,
+        "confidence": refined_span.confidence,
+    }
+    return refined_span, challenge_detections, info
+
+
 def refine_detected_span_with_active_search(
     *,
     video_path: Path,
@@ -866,7 +1434,9 @@ def build_active_refinement_windows(
     span_duration = span.end_seconds - span.start_seconds
     if span_duration <= 0:
         return []
-    subwindow_seconds = max(settings.min_segment_seconds, span_duration * 0.65)
+    subwindow_seconds = max(
+        _effective_min_segment_seconds(settings.min_segment_seconds), span_duration * 0.65,
+    )
     overlap_seconds = max(
         0.0,
         min(subwindow_seconds - 0.25, subwindow_seconds * settings.active_refinement_overlap_ratio),
@@ -936,7 +1506,10 @@ def constrain_refined_span_to_coarse_span(
     )
     if not _span_has_reasonable_length(
         constrained,
-        min_segment_seconds=settings.min_segment_seconds,
+        min_segment_seconds=(
+            0.0 if settings.min_segment_seconds is None
+            else _effective_min_segment_seconds(settings.min_segment_seconds)
+        ),
         max_segment_seconds=settings.max_segment_seconds,
     ):
         return None
@@ -1326,37 +1899,43 @@ def extract_window_frames_with_ffmpeg(
     scale_filter = []
     if max_frame_width > 0:
         scale_filter = ["-vf", f"scale='min({max_frame_width},iw)':-2"]
-    for frame_index, timestamp_seconds in enumerate(times, start=1):
-        frame_path = output_dir / f"frame_{frame_index:02d}.jpg"
-        command = [
-            ffmpeg,
-            "-hide_banner",
-            "-y",
-            "-loglevel",
-            "error",
-            "-ss",
-            f"{timestamp_seconds:.3f}",
-            "-i",
-            str(video_path),
-            "-frames:v",
-            "1",
-            *scale_filter,
-            "-q:v",
-            "5",
-            str(frame_path),
-        ]
-        try:
-            result = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=20,
-            )
-        except subprocess.TimeoutExpired:
-            continue
-        if result.returncode == 0 and frame_path.exists() and frame_path.stat().st_size > 0:
-            frame_paths.append(frame_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=output_dir) as temporary_directory:
+        for frame_index, timestamp_seconds in enumerate(times, start=1):
+            frame_path = output_dir / f"frame_{frame_index:02d}.jpg"
+            temporary_frame = Path(temporary_directory) / frame_path.name
+            command = [
+                ffmpeg,
+                "-hide_banner",
+                "-y",
+                "-loglevel",
+                "error",
+                "-ss",
+                # Seek at or before the exposure in FFmpeg's microsecond clock.
+                f"{math.floor(timestamp_seconds * 1_000_000) / 1_000_000:.6f}",
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                *scale_filter,
+                "-q:v",
+                "5",
+                str(temporary_frame),
+            ]
+            try:
+                result = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=20,
+                )
+            except subprocess.TimeoutExpired:
+                continue
+            if (result.returncode == 0 and temporary_frame.exists()
+                    and temporary_frame.stat().st_size > 0):
+                temporary_frame.replace(frame_path)
+                frame_paths.append(frame_path)
     return frame_paths
 
 
@@ -1598,10 +2177,10 @@ class LlamaCppVisionClient:
         self.disable_reasoning = disable_reasoning
         self.image_min_tokens = image_min_tokens
         self.image_max_tokens = image_max_tokens
-        self.request_timeout_seconds = max(1.0, float(request_timeout_seconds))
+        self.request_timeout_seconds = max(0.0, float(request_timeout_seconds))
         self.recovery_callback = recovery_callback
         self.max_recovery_retries = max(0, int(max_recovery_retries))
-        self.client = httpx.Client(timeout=self.request_timeout_seconds)
+        self.client = httpx.Client(timeout=self.request_timeout_seconds or None)
         self._client_generation = 0
         self._recovery_lock = threading.Lock()
         self._request_condition = threading.Condition()
@@ -1699,6 +2278,7 @@ class LlamaCppVisionClient:
     ) -> str:
         if self.base_url is None:
             raise RuntimeError("llama-cpp vision mode requires a base URL.")
+        prompt = with_schema_choice_vocabulary(prompt, response_schema)
         request_timeout = self._resolved_request_timeout(request_timeout_seconds)
         request_deadline = (None if request_timeout is None
                             else time.monotonic() + request_timeout)
@@ -1726,7 +2306,7 @@ class LlamaCppVisionClient:
 
     def _resolved_request_timeout(self, request_timeout_seconds: float | None) -> float | None:
         if request_timeout_seconds is None:
-            return self.request_timeout_seconds
+            return self.request_timeout_seconds or None
         requested_timeout = float(request_timeout_seconds)
         return None if requested_timeout <= 0.0 else max(1.0, requested_timeout)
 
@@ -2020,7 +2600,7 @@ class LlamaCppVisionClient:
                 )
             else:
                 previous_client = self.client
-                replacement_client = httpx.Client(timeout=self.request_timeout_seconds)
+                replacement_client = httpx.Client(timeout=self.request_timeout_seconds or None)
                 try:
                     if self.recovery_callback is not None:
                         self.recovery_callback()
@@ -2278,6 +2858,9 @@ def build_window_prompt(
 
 def parse_detection_payload(raw: str, *, window: DetectionWindow) -> dict[str, object]:
     payload = extract_json_object(raw)
+    # A broken structured answer cannot supply the legacy fallback's safety evidence.
+    if payload is None and re.search(r'"executions"\s*:', raw, flags=re.IGNORECASE):
+        raise RuntimeError("Segment detector returned truncated execution JSON.")
     if payload is None:
         payload = extract_detection_payload_loose(raw)
     if payload is None:
@@ -2429,14 +3012,32 @@ def canonicalize_execution_payload(payload: dict[str, object]) -> dict[str, obje
 
 
 def normalize_execution_timestamp(value: object, *, window: DetectionWindow) -> float | None:
+    try:
+        raw_seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(raw_seconds) or raw_seconds < 0.0:
+        return None
     seconds = normalize_optional_seconds(value)
     if seconds is None:
         return None
     window_duration = max(0.0, window.end_seconds - window.start_seconds)
     if window.start_seconds - 1e-6 <= seconds <= window.end_seconds + 1e-6:
         if seconds <= window_duration + 1e-6:
-            return window.start_seconds + seconds
-        return seconds
+            return min(window.end_seconds, window.start_seconds + seconds)
+        return min(window.end_seconds, max(window.start_seconds, seconds))
+    if 0.0 <= seconds <= window_duration:
+        return window.start_seconds + seconds
+
+    # Window and image labels use two decimal places; code retains exact bounds.
+    # Snap only an out-of-range hint equal to a displayed boundary.
+    for displayed, exact in (
+        (round(window.start_seconds, 2), window.start_seconds),
+        (round(window.end_seconds, 2), window.end_seconds),
+        (round(window_duration, 2), window.end_seconds),
+    ):
+        if seconds == displayed:
+            return exact
     return None
 
 
@@ -2635,17 +3236,24 @@ def normalize_confidence(value: object) -> float:
     return max(0.0, min(1.0, score))
 
 
+def _effective_min_segment_seconds(value: float | None) -> float:
+    return 2.0 if value is None else max(0.0, float(value))
+
+
 def choose_detected_span(
     *,
     detections: list[WindowDetection],
     confidence_threshold: float,
     merge_gap_seconds: float,
-    min_segment_seconds: float = 2.0,
+    min_segment_seconds: float | None = None,
     max_segment_seconds: float = 20.0,
     settings: DetectionSettings | None = None,
 ) -> DetectedSpan | None:
-    min_segment_seconds = max(0.0, min_segment_seconds)
-    max_segment_seconds = max(min_segment_seconds, max_segment_seconds)
+    explicit_minimum = min_segment_seconds is not None
+    search_minimum = _effective_min_segment_seconds(min_segment_seconds)
+    model_minimum = search_minimum if explicit_minimum else 0.0
+    min_segment_seconds = search_minimum
+    max_segment_seconds = max(model_minimum, max_segment_seconds)
     positive_indices = [
         index
         for index, item in enumerate(detections)
@@ -2657,7 +3265,7 @@ def choose_detected_span(
     model_candidates = _collect_model_execution_candidates(
         detections=detections,
         confidence_threshold=confidence_threshold,
-        min_segment_seconds=min_segment_seconds,
+        min_segment_seconds=model_minimum,
         max_segment_seconds=max_segment_seconds,
         settings=settings,
     )
@@ -2752,17 +3360,23 @@ def refine_span_with_comparative_selection(
     detections: list[WindowDetection],
     selected_span: DetectedSpan,
     confidence_threshold: float,
-    min_segment_seconds: float,
+    min_segment_seconds: float | None,
     max_segment_seconds: float,
     settings: DetectionSettings,
     exercise_name: str | None,
 ) -> DetectedSpan:
     if not settings.comparative_selection_enabled:
         return selected_span
+    model_minimum = (
+        0.0 if min_segment_seconds is None and settings.min_segment_seconds is None
+        else _effective_min_segment_seconds(
+            settings.min_segment_seconds if min_segment_seconds is None else min_segment_seconds
+        )
+    )
     candidates = _collect_model_execution_candidates(
         detections=detections,
         confidence_threshold=confidence_threshold,
-        min_segment_seconds=min_segment_seconds,
+        min_segment_seconds=model_minimum,
         max_segment_seconds=max_segment_seconds,
         settings=settings,
     )
@@ -3020,7 +3634,7 @@ def boundary_refinement_min_duration_seconds(
     settings: DetectionSettings,
 ) -> float:
     return max(
-        float(settings.min_segment_seconds),
+        _effective_min_segment_seconds(settings.min_segment_seconds),
         max(0.0, parent_duration) * settings.min_boundary_refinement_duration_ratio,
     )
 

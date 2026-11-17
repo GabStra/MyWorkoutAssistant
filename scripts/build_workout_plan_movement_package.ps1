@@ -7,6 +7,8 @@ param(
 
     [string]$OutputJson,
 
+    [string]$SourceReferenceMappingJson,
+
     [string]$Python = "python",
 
     [string]$MovementIdPrefix = "exercise-motion",
@@ -43,6 +45,9 @@ if ($StrictIdMatch) {
 }
 if ($AllowEmpty) {
     $builderArgs += "--allow-empty"
+}
+if ($SourceReferenceMappingJson) {
+    $builderArgs += @("--source-reference-mapping-json", (Resolve-Path -LiteralPath $SourceReferenceMappingJson).Path)
 }
 
 Push-Location $repoRoot

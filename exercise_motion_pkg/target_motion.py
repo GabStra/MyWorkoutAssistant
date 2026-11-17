@@ -23,7 +23,7 @@ OBSERVABLE_MOTION_PATTERN_VALUES = {
     "other",
 }
 OBSERVABLE_MOTION_AXIS_VALUES = {"vertical", "horizontal", "depth", "any"}
-OBSERVABLE_MOTION_REGION_ALIASES = {
+ANATOMICAL_MOTION_REGION_ALIASES = {
     "arm": "upper_limb",
     "arms": "upper_limb",
     "upper arm": "upper_limb",
@@ -64,6 +64,9 @@ OBSERVABLE_MOTION_REGION_ALIASES = {
     "heels": "feet",
     "toe": "feet",
     "toes": "feet",
+}
+OBSERVABLE_MOTION_REGION_ALIASES = {
+    **ANATOMICAL_MOTION_REGION_ALIASES,
     "bar": "hands",
     "barbell": "hands",
     "dumbbell": "hands",

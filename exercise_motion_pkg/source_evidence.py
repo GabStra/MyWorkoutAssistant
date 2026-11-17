@@ -4,14 +4,299 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import copy
 from pathlib import Path
 from typing import Any
 
 
-POLICY_VERSION = 14
+POLICY_VERSION = 15
 ALL_UNIFORM_SAMPLES = 'all_uniform_samples'
 MAX_TIMING_EVIDENCE_SAMPLE_GAP_SECONDS = 1.0
 MAX_OBSERVED_OBJECT_COUNT = 2_147_483_647
+SOURCE_REFERENCE_VISUAL_REVIEW_SPEC_POLICY_VERSION = 1
+# Model-facing frame fields. Hash provenance stays in code-owned cache/evidence
+# metadata; the decoder only needs stable identity, grouping, image and time.
+EVIDENCE_PROMPT_FRAME_FIELDS = ('id', 'sampling', 'image', 'tileNumber', 'timestampSeconds')
+
+
+def source_reference_review_context(
+    mapping: Any,
+    *,
+    target_exercise_name: str,
+    target_contract: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Project a producer-validated external-load waiver for review and cache use.
+
+    The projection is deliberately separate from ``target_contract``. It can
+    identify an approved motion reference and waive only external-load
+    visibility; it never edits the target definition or grants a positive
+    review decision.
+    """
+    if mapping is None:
+        return None
+    if not isinstance(mapping, dict) or not isinstance(target_contract, dict):
+        raise ValueError('source reference review context must be structured data')
+
+    def required_text(key: str) -> str:
+        value = mapping.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f'source reference mapping is missing {key}')
+        return value.strip()
+
+    def require_sha256(key: str) -> str:
+        value = required_text(key).casefold()
+        if (len(value) != 64
+                or any(character not in '0123456789abcdef' for character in value)):
+            raise ValueError(f'source reference mapping has invalid {key}')
+        return value
+
+    source_id = required_text('sourceExerciseId')
+    source_name = required_text('sourceExerciseName')
+    target_id = required_text('exerciseId')
+    target_name = required_text('exerciseName')
+    contract_name = str(target_contract.get('exerciseName') or target_exercise_name).strip()
+    if (not isinstance(target_exercise_name, str) or not target_exercise_name.strip()
+            or target_name.casefold() != target_exercise_name.strip().casefold()
+            or contract_name.casefold() != target_exercise_name.strip().casefold()):
+        raise ValueError('source reference mapping does not target the current exercise contract')
+    if source_id == target_id:
+        raise ValueError('source reference mapping must name distinct source and target exercises')
+    approval_difference_text = mapping.get('approvalAllowedDifference')
+    if (mapping.get('motionReferenceOnly') is not True
+            or mapping.get('allowedDifference') != 'external_load_not_shown'
+            or not isinstance(approval_difference_text, str)
+            or not approval_difference_text.strip()
+            or mapping.get('approvalAuthority') != 'explicit_user_approval'
+            or mapping.get('exportedExerciseUnchanged') is not True
+            or mapping.get('approvalUserAnswerPresent') is not True):
+        raise ValueError('source reference mapping does not contain the approved scoped waiver')
+    mapping_sha = require_sha256('mappingSha256')
+    approval_sha = require_sha256('approvalSha256')
+    target_context = mapping.get('motionContext')
+    if not isinstance(target_context, dict):
+        raise ValueError('source reference mapping has no target motion context')
+    source_context = mapping.get('sourceMotionContext')
+    if not isinstance(source_context, dict):
+        raise ValueError('source reference mapping has no authenticated source motion context')
+
+    contract_bytes = json.dumps(
+        target_contract, sort_keys=True, separators=(',', ':'),
+        ensure_ascii=False, allow_nan=False,
+    ).encode('utf-8')
+    context = {
+        'schemaVersion': 1,
+        'sourceExerciseId': source_id,
+        'sourceExerciseName': source_name,
+        'targetExerciseId': target_id,
+        'targetExerciseName': target_name,
+        'allowedDifference': 'external_load_not_shown',
+        'approvalAllowedDifference': approval_difference_text.strip(),
+        'approvalAuthority': 'explicit_user_approval',
+        'approvalSha256': approval_sha,
+        'mappingSha256': mapping_sha,
+        'targetContractSha256': hashlib.sha256(contract_bytes).hexdigest(),
+        'targetContractPolicyVersion': target_contract.get('contractPolicyVersion'),
+        'targetRequiredPhases': copy.deepcopy(target_contract.get('requiredPhases') or []),
+        'targetCompletionMode': target_contract.get('completionMode'),
+        'sourceMotionContext': source_context,
+    }
+    for field in ('sourceMotionContextSha256', 'targetMotionContextSha256'):
+        value = mapping.get(field)
+        if field == 'sourceMotionContextSha256' and value is None:
+            raise ValueError('source reference mapping is missing sourceMotionContextSha256')
+        if value is not None:
+            if (not isinstance(value, str) or len(value) != 64
+                    or any(character not in '0123456789abcdefABCDEF' for character in value)):
+                raise ValueError(f'source reference mapping has invalid {field}')
+            context[field] = value.casefold()
+    source_context_bytes = json.dumps(
+        source_context, sort_keys=True, separators=(',', ':'), ensure_ascii=False,
+        allow_nan=False,
+    ).encode('utf-8')
+    if hashlib.sha256(source_context_bytes).hexdigest() != context['sourceMotionContextSha256']:
+        raise ValueError('source reference mapping has mismatched sourceMotionContextSha256')
+    return context
+
+
+def source_reference_visual_review_contract(
+    target_contract: dict[str, Any],
+    source_reference_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the single model-facing visual contract for a mapped source.
+
+    Source identity/action/variants define what visible motion is reviewed.
+    Target phases, completion, biomechanics, and non-waived infrastructure stay
+    authoritative. The returned projection is detached from the immutable target
+    contract, which remains the authority for export and audit hashes.
+    """
+    if source_reference_context is None:
+        return target_contract
+    if not isinstance(target_contract, dict):
+        raise ValueError('target contract must be structured data')
+    if source_reference_review_context_sha256(source_reference_context) is None:
+        raise ValueError('source-reference context is not normalized')
+    target_name = str(target_contract.get('exerciseName') or '').strip()
+    if (source_reference_context.get('schemaVersion') != 1
+            or source_reference_context.get('allowedDifference') != 'external_load_not_shown'
+            or source_reference_context.get('targetExerciseName', '').casefold() != target_name.casefold()
+            or source_reference_context.get('targetContractSha256') != hashlib.sha256(
+                json.dumps(target_contract, sort_keys=True, separators=(',', ':'),
+                           ensure_ascii=False, allow_nan=False).encode('utf-8')).hexdigest()):
+        raise ValueError('source-reference context is not bound to the current target contract')
+    source_context = source_reference_context.get('sourceMotionContext')
+    source_digest = source_reference_context.get('sourceMotionContextSha256')
+    if not isinstance(source_context, dict) or not isinstance(source_digest, str):
+        raise ValueError('source-reference context has no authenticated source definition')
+    source_context_digest = hashlib.sha256(json.dumps(
+        source_context, sort_keys=True, separators=(',', ':'), ensure_ascii=False,
+        allow_nan=False,
+    ).encode('utf-8')).hexdigest()
+    if source_context_digest != source_digest:
+        raise ValueError('source motion context digest mismatch')
+    source_definition = source_context.get('exerciseDefinition')
+    if not isinstance(source_definition, dict):
+        raise ValueError('source motion context has no authored exercise definition')
+    action = source_definition.get('definingAction')
+    qualifiers = source_definition.get('variantQualifiers', [])
+    target_phases = target_contract.get('requiredPhases') or []
+    target_mode = target_contract.get('completionMode')
+    if (not isinstance(action, str) or not action.strip()
+            or not isinstance(qualifiers, list)
+            or any(not isinstance(value, str) or not value.strip() for value in qualifiers)
+            or source_definition.get('requiredPhases') != target_phases
+            or source_definition.get('completionMode') != target_mode):
+        raise ValueError('source definition conflicts with target phases or completion')
+    source_bilateral = source_definition.get('bilateralExecution')
+    target_bilateral = target_contract.get('bilateralExecution')
+    if target_bilateral is None:
+        target_motion_context = target_contract.get('motionContext')
+        target_definition = (target_motion_context.get('exerciseDefinition')
+                            if isinstance(target_motion_context, dict) else None)
+        target_bilateral = (target_definition.get('bilateralExecution')
+                            if isinstance(target_definition, dict) else None)
+    if target_bilateral is not None and source_bilateral != target_bilateral:
+        raise ValueError('source definition conflicts with target bilateral execution')
+    view = copy.deepcopy(target_contract)
+    view['exerciseName'] = str(source_reference_context['sourceExerciseName']).strip()
+    view['definingAction'] = action.strip()
+    view['variantQualifiers'] = list(qualifiers)
+
+    # A target advisory paragraph may restate the waived load as a visual
+    # requirement. Do not serialize it into the source-visual prompt. The
+    # authenticated source definition supplies visible action/variant wording;
+    # the target's structured phases and constraints remain below.
+    view.pop('advisoryText', None)
+    view.pop('reviewNotes', None)
+    motion_context = view.get('motionContext')
+    if isinstance(motion_context, dict):
+        motion_context = copy.deepcopy(motion_context)
+        primary = motion_context.get('primaryEquipment')
+        if (isinstance(primary, dict)
+                and str(primary.get('type') or '').strip().upper() == 'WEIGHTVEST'):
+            motion_context.pop('primaryEquipment', None)
+        # Keep the target's structured, non-waived requirements while replacing
+        # only identity/action/variant wording with authenticated source text.
+        visual_definition = motion_context.get('exerciseDefinition')
+        visual_definition = copy.deepcopy(visual_definition) if isinstance(visual_definition, dict) else {}
+        visual_definition['definingAction'] = action.strip()
+        visual_definition['variantQualifiers'] = list(qualifiers)
+        motion_context['exerciseDefinition'] = visual_definition
+        view['motionContext'] = motion_context
+    return view
+
+
+def source_reference_requirement_view(
+    target_contract: dict[str, Any],
+    source_reference_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compatibility name for the canonical source-visual contract projection."""
+    return source_reference_visual_review_contract(target_contract, source_reference_context)
+
+
+def source_reference_review_context_sha256(context: dict[str, Any] | None) -> str | None:
+    """Return a stable cache identity for normalized source-reference context."""
+    if context is None:
+        return None
+    canonical = json.dumps(context, sort_keys=True, separators=(',', ':'),
+                           ensure_ascii=False, allow_nan=False).encode('utf-8')
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def source_reference_visual_review_spec_sha256(
+    target_contract: dict[str, Any],
+    source_reference_context: dict[str, Any] | None,
+) -> str | None:
+    """Bind mapped reviews to the exact sanitized visual contract and policy."""
+    if source_reference_context is None:
+        return None
+    visual_contract = source_reference_visual_review_contract(
+        target_contract, source_reference_context,
+    )
+    payload = {
+        'policyVersion': SOURCE_REFERENCE_VISUAL_REVIEW_SPEC_POLICY_VERSION,
+        'sourceReferenceReviewContextSha256': source_reference_review_context_sha256(
+            source_reference_context,
+        ),
+        'targetContractSha256': source_reference_context.get('targetContractSha256'),
+        'visualContract': visual_contract,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'),
+                           ensure_ascii=False, allow_nan=False).encode('utf-8')
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def source_reference_review_prompt_section(context: dict[str, Any] | None) -> str:
+    """Describe a verified source mapping without changing target requirements."""
+    if context is None:
+        return ''
+    if (not isinstance(context, dict) or context.get('schemaVersion') != 1
+            or context.get('allowedDifference') != 'external_load_not_shown'
+            or context.get('approvalAuthority') != 'explicit_user_approval'
+            or context.get('sourceExerciseId') == context.get('targetExerciseId')):
+        raise ValueError('source reference review context is not normalized')
+    source_name = str(context.get('sourceExerciseName') or '').strip()
+    target_name = str(context.get('targetExerciseName') or '').strip()
+    source_definition = (context.get('sourceMotionContext') or {}).get('exerciseDefinition')
+    if not isinstance(source_definition, dict):
+        raise ValueError('source reference review context has no source action definition')
+    source_action = source_definition.get('definingAction')
+    source_variants = source_definition.get('variantQualifiers')
+    target_phases = context.get('targetRequiredPhases')
+    target_completion = context.get('targetCompletionMode')
+    if (not source_name or not target_name
+            or not isinstance(source_action, str) or not source_action.strip()
+            or not isinstance(source_variants, list)
+            or any(not isinstance(value, str) or not value.strip() for value in source_variants)
+            or not isinstance(target_phases, list)
+            or not target_phases
+            or any(not isinstance(value, str) or not value.strip() for value in target_phases)
+            or not isinstance(target_completion, str) or not target_completion.strip()
+            or any(not isinstance(context.get(key), str) or len(context[key]) != 64
+                   or any(character not in '0123456789abcdef' for character in context[key])
+                   for key in ('approvalSha256', 'mappingSha256', 'targetContractSha256'))):
+        raise ValueError('source reference review context has no source/target identity')
+    return (
+        '\n\nCode-verified approved motion-reference mapping (target export remains unchanged):\n'
+        f'Primary visible-motion identity: {source_name} (source ID {context["sourceExerciseId"]}).\n'
+        f'Unchanged export target: {target_name} (target ID {context["targetExerciseId"]}).\n'
+        f'Source-authored visible action: {source_action.strip()}\n'
+        f'Source-authored visible variants: {json.dumps(source_variants, ensure_ascii=False)}\n'
+        f'Unchanged target completion mode: {target_completion}.\n'
+        f'Unchanged target required phases in order: {json.dumps(target_phases, ensure_ascii=False)}\n'
+        'Judge visible identity, defining action, and variant from the authenticated source definition. '
+        'The explicit user approval waives only visibility of the target external load; absence of the weighted '
+        'vest or other external load alone is not an identity mismatch or rejection. '
+        'Continue to require the unchanged target phases, completion mode, support relationships, biomechanics, '
+        'and all non-waived equipment and constraints. A different action, grip, support setup, or other '
+        'non-waived variant remains a rejection. Do not claim the source footage shows an external load, '
+        'and do not change the exported target exercise.\n'
+    )
+
+
+def evidence_prompt_inventory(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project the exact frame inventory without leaking code-only hash fields."""
+    return [{field: frame[field] for field in EVIDENCE_PROMPT_FRAME_FIELDS if field in frame}
+            for frame in frames]
 
 
 def evidence_inventory(groups: dict[str, list[Path]]) -> list[dict[str, Any]]:
@@ -219,9 +504,18 @@ def temporal_evidence_covers_candidate(
     }
 
 
-def source_requirements(contract: dict[str, Any], equipment: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def source_requirements(
+    contract: dict[str, Any],
+    equipment: list[dict[str, Any]],
+    *,
+    source_reference_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     # Only the reviewed action supplies semantic requirements. Generated posture
     # expectations and exercise-name guesses never acquire authority here.
+    if source_reference_context is not None:
+        source_reference_review_context_sha256(source_reference_context)
+        equipment = source_reference_observation_equipment(contract, equipment, source_reference_context)
+        contract = source_reference_requirement_view(contract, source_reference_context)
     action = str(contract.get('definingAction') or '').strip()
     if not action:
         raise ValueError('Source review needs a defined action')
@@ -261,11 +555,43 @@ def source_requirements(contract: dict[str, Any], equipment: list[dict[str, Any]
     return requirements
 
 
+def source_reference_observation_equipment(
+    target_contract: dict[str, Any],
+    equipment: list[dict[str, Any]],
+    source_reference_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Omit only a typed weighted vest from source visibility requirements.
+
+    The production target contract remains unchanged. A setup fixture, bar,
+    dumbbell, or other equipment role remains required.
+    """
+    if (source_reference_context.get('schemaVersion') != 1
+            or source_reference_context.get('allowedDifference') != 'external_load_not_shown'):
+        raise ValueError('source-reference equipment projection lacks its scoped approval')
+    context = target_contract.get('motionContext')
+    primary = context.get('primaryEquipment') if isinstance(context, dict) else None
+    if not isinstance(primary, dict) or str(primary.get('type') or '').strip().upper() != 'WEIGHTVEST':
+        return equipment
+    primary_name = str(primary.get('name') or '').strip()
+    if not primary_name:
+        raise ValueError('weighted-vest primary equipment has no authenticated identity')
+    matching_indices = [
+        index for index, role in enumerate(equipment)
+        if isinstance(role, dict)
+        and role.get('role') == 'active_implement'
+        and str(role.get('name') or '').strip().casefold() == primary_name.casefold()
+    ]
+    if len(matching_indices) != 1:
+        raise ValueError('weighted-vest source requirement does not match target primary equipment')
+    waived_index = matching_indices[0]
+    return [role for index, role in enumerate(equipment) if index != waived_index]
+
+
 def permits_cyclic_phase_order(contract: dict[str, Any] | None) -> bool:
     """A return-to-start cycle may be cut at any point unless its start is prescribed."""
     if not isinstance(contract, dict) or contract.get('completionMode') != 'return_to_start':
         return False
-    if str(contract.get('movementType') or '').strip().casefold() != 'repetition':
+    if str(contract.get('movementType') or '').strip().casefold() not in {'repetition', 'cyclic'}:
         return False
     # Pose constraints and start/end labels can be generated advisory fields.
     # Only explicit library/user/manual provenance can anchor the cut boundary.
@@ -298,16 +624,25 @@ def return_cycle_evidence_choices(phase_metrics: dict[str, Any] | None,
         return None
     if (phase_metrics.get('required') is not True or phase_metrics.get('passed') is not True
             or phase_metrics.get('hasCompleteMajorCycle') is not True
-            or phase_metrics.get('hasSingleMajorCycle') is not True
             or not isinstance(phase_metrics.get('phaseSignalEvidence'), dict)
             or phase_metrics['phaseSignalEvidence'].get('resolved') is not True):
         return None
     sequence = phase_metrics.get('majorPhaseSequence')
-    if sequence not in (['low', 'high', 'low'], ['high', 'low', 'high']):
+    single_cycle = phase_metrics.get('hasSingleMajorCycle') is True
+    if single_cycle and sequence not in (['low', 'high', 'low'], ['high', 'low', 'high']):
         return None
     pose_frames = pose_reference.get('frames')
-    if (not isinstance(pose_frames, list) or len(pose_frames) < 3
-            or phase_metrics.get('sampleCount') != len(pose_frames)):
+    if not isinstance(pose_frames, list) or len(pose_frames) < 3:
+        return None
+    sample_indices = phase_metrics.get('sampleFrameIndices')
+    if sample_indices is not None:
+        if (not isinstance(sample_indices, list)
+                or any(type(index) is not int or not 0 <= index < len(pose_frames)
+                       for index in sample_indices)
+                or any(right <= left for left, right in zip(sample_indices, sample_indices[1:]))):
+            return None
+        pose_frames = [pose_frames[index] for index in sample_indices]
+    if len(pose_frames) < 3 or phase_metrics.get('sampleCount') != len(pose_frames):
         return None
     timestamps = [frame.get('sourceTimeSec') if isinstance(frame, dict) else None
                   for frame in pose_frames]
@@ -315,12 +650,39 @@ def return_cycle_evidence_choices(phase_metrics: dict[str, Any] | None,
         return None
     if any(right <= left for left, right in zip(timestamps, timestamps[1:])):
         return None
-    extremum_key = 'maxFrameIndex' if sequence == ['low', 'high', 'low'] else 'minFrameIndex'
-    extremum_index = phase_metrics.get(extremum_key)
-    edge_margin = phase_metrics.get('edgeMarginFrameCount')
-    if (type(extremum_index) is not int or type(edge_margin) is not int
-            or extremum_index < edge_margin or extremum_index > len(pose_frames) - 1 - edge_margin):
-        return None
+    if single_cycle:
+        extremum_key = 'maxFrameIndex' if sequence == ['low', 'high', 'low'] else 'minFrameIndex'
+        extremum_index = phase_metrics.get(extremum_key)
+        edge_margin = phase_metrics.get('edgeMarginFrameCount')
+        if (type(extremum_index) is not int or type(edge_margin) is not int
+                or extremum_index < edge_margin or extremum_index > len(pose_frames) - 1 - edge_margin):
+            return None
+        role_indices = (0, extremum_index, len(pose_frames) - 1)
+    else:
+        runs = phase_metrics.get('majorPhaseRuns')
+        if not isinstance(runs, list) or len(runs) < 3:
+            return None
+        previous_end = -1
+        for run in runs:
+            if not isinstance(run, dict) or run.get('phase') not in {'low', 'high'}:
+                return None
+            bounds = [run.get(key) for key in ('startFrameIndex', 'extremumFrameIndex', 'endFrameIndex')]
+            if (any(type(index) is not int for index in bounds)
+                    or not previous_end < bounds[0] <= bounds[1] <= bounds[2] < len(pose_frames)):
+                return None
+            previous_end = bounds[2]
+        if [run['phase'] for run in runs] != sequence:
+            return None
+        triple = next((runs[index:index + 3] for index in range(len(runs) - 2)
+                       if [run['phase'] for run in runs[index:index + 3]]
+                       in (['low', 'high', 'low'], ['high', 'low', 'high'])), None)
+        if triple is None:
+            return None
+        role_indices = (triple[0]['startFrameIndex'], triple[1]['extremumFrameIndex'],
+                        triple[2]['endFrameIndex'])
+        if not role_indices[0] < role_indices[1] < role_indices[2]:
+            return None
+        sequence = [run['phase'] for run in triple]
     if not frames:
         return None
     available_frames = [frame for frame in frames if isinstance(frame, dict)
@@ -336,19 +698,21 @@ def return_cycle_evidence_choices(phase_metrics: dict[str, Any] | None,
             return None
         boundary_tolerance = min(gaps) / 2.0
 
-    def nearest_frame(pose_time: float) -> dict[str, Any] | None:
+    additional_frames = []
+    def nearest_frame(pose_time: float, role: str) -> dict[str, Any]:
         frame = min(available_frames, key=lambda frame: (
             abs(float(frame['timestampSeconds']) - pose_time),
             0 if frame.get('sampling') == 'motion' else 1,
             str(frame.get('id') or ''),
         ))
         if abs(float(frame['timestampSeconds']) - pose_time) > float(boundary_tolerance):
-            return None
+            # The role renderer extracts this exact measured exposure separately.
+            frame = {'id': f'cycle:{role}', 'sampling': 'cycle', 'timestampSeconds': pose_time}
+            additional_frames.append(frame)
         return frame
 
     role_names = ('start', 'excursion', 'return')
-    role_indices = (0, extremum_index, len(pose_frames) - 1)
-    role_frames = {name: nearest_frame(float(timestamps[index]))
+    role_frames = {name: nearest_frame(float(timestamps[index]), name)
                    for name, index in zip(role_names, role_indices)}
     if any(frame is None for frame in role_frames.values()):
         return None
@@ -359,6 +723,7 @@ def return_cycle_evidence_choices(phase_metrics: dict[str, Any] | None,
         return None
     return {
         'choiceId': 'verified_return_cycle',
+        'additionalFrames': additional_frames,
         'sequence': list(sequence),
         'roleFrameIds': dict(zip(role_names, role_ids)),
         'roleTimes': dict(zip(role_names, role_times)),
@@ -483,7 +848,9 @@ def evidence_schema(requirements: list[dict[str, Any]], frames: list[dict[str, A
 def evidence_prompt(requirements: list[dict[str, Any]], frames: list[dict[str, Any]], *,
                     allow_cyclic_phase_order: bool = False,
                     cycle_choices: dict[str, Any] | None = None,
-                    semantic_labels: bool = False) -> str:
+                    semantic_labels: bool = False,
+                    legacy_wire: bool = False,
+                    source_reference_context: dict[str, Any] | None = None) -> str:
     identity_instruction = ('For each supplied requirement description select supported, contradicted or unresolved. '
                             'Requirement descriptions identify semantic claims, not their chronological positions. '
                             if semantic_labels else
@@ -504,7 +871,7 @@ def evidence_prompt(requirements: list[dict[str, Any]], frames: list[dict[str, A
                     if bound in row:
                         unique[label][bound] = max(row[bound], unique[label].get(bound, 0))
         display_requirements = list(unique.values())
-    return (
+    instruction = (
         'Inspect the supplied source images directly. Return structured source evidence, never an exercise name '
         'or another reviewer\'s description. Requirements below are exhaustive; do not invent start height, '
         'stance, catch or other variant requirements. Equipment roles specify required use and object count. '
@@ -546,10 +913,31 @@ def evidence_prompt(requirements: list[dict[str, Any]], frames: list[dict[str, A
         + 'Images are supplied in uniform order followed by motion order; image numbers in the inventory are local '
         'to each sampling group. tileNumber is the number printed in the image. '
         'Never invent timestamps or frame IDs. Return only JSON matching the supplied schema.\n'
-        'Requirements: ' + json.dumps(display_requirements) + '\nFrame inventory: ' + json.dumps(frames)
-        + '\nSchema: ' + json.dumps(evidence_schema(requirements, frames, cycle_choices=cycle_choices,
-                                                   semantic_labels=semantic_labels))
     )
+    if legacy_wire:
+        # Exact pre-projection serialization, used only to read prior review
+        # caches under their original prompt key. Never sent to the model.
+        return (instruction + 'Requirements: ' + json.dumps(display_requirements)
+                + '\nFrame inventory: ' + json.dumps(frames)
+                + '\nSchema: ' + json.dumps(evidence_schema(
+                    requirements, frames, cycle_choices=cycle_choices, semantic_labels=semantic_labels)))
+    identity_field = 'requirement' if semantic_labels else 'requirementId'
+    identity_kind = 'description' if semantic_labels else 'requirement ID'
+    object_count_shape = (', "observedObjectCount": <integer>' if any(
+        'minimumObjectCount' in row for row in requirements) else '')
+    response_shape = (
+        '{"observations": [{"' + identity_field + '": <exact supplied ' + identity_kind
+        + '>, "verdict": "supported" | "contradicted" | "unresolved", '
+        + '"evidenceFrameIds": [<exact supplied frame IDs>]' + object_count_shape + '}]}')
+    prompt = (
+        instruction + 'Response shape: ' + response_shape
+        + '. The structured response schema supplied to the decoder is authoritative; follow it exactly.\n'
+        'Requirements: ' + json.dumps(display_requirements)
+        + '\nFrame inventory: ' + json.dumps(evidence_prompt_inventory(frames), separators=(',', ':'))
+    )
+    if source_reference_context is not None and not legacy_wire:
+        prompt += source_reference_review_prompt_section(source_reference_context)
+    return prompt
 
 
 def resolve_semantic_evidence(payload: Any, requirements: list[dict[str, Any]],
@@ -610,6 +998,7 @@ def aggregate_evidence(payload: Any, requirements: list[dict[str, Any]],
                 or not isinstance(ids, list) or any(not isinstance(i, str) or i not in available for i in ids)
                 or len(set(ids)) != len(ids)):
             errors.append('invalid_verdict_or_frame_reference')
+            correction_ids.add(rid)
             continue
         if verdict != 'unresolved' and not ids:
             errors.append('missing_frame_evidence')
@@ -702,7 +1091,8 @@ _INTERVAL_ACTION_FIELDS = ('earlier_interval_action', 'later_interval_action')
 
 
 def cycle_semantic_question(requirements: list[dict[str, Any]], frames: list[dict[str, Any]],
-                            *, first_role_image: int) -> tuple[str, dict[str, Any]]:
+                            *, first_role_image: int,
+                            review_defining_action: bool = False) -> tuple[str, dict[str, Any]]:
     """Ask for observed actions, never a mapping between numbered phase namespaces."""
     phases = [row for row in requirements if row['id'].startswith('phase_')]
     labels = [row['description'] for row in phases]
@@ -712,6 +1102,13 @@ def cycle_semantic_question(requirements: list[dict[str, Any]], frames: list[dic
               'required': list(_INTERVAL_ACTION_FIELDS),
               'properties': {field: {'type': 'string', 'enum': [*labels, 'unresolved']}
                              for field in _INTERVAL_ACTION_FIELDS}}
+    action = next((row['description'] for row in requirements if row['id'] == 'action'), None)
+    if review_defining_action:
+        if not action:
+            raise ValueError('Measured action review needs the reviewed defining action')
+        schema['required'].append('reviewed_action_visibility')
+        schema['properties']['reviewed_action_visibility'] = {
+            'type': 'string', 'enum': ['supported', 'contradicted', 'unresolved']}
     prompt = (
         f'The three supplied images (attachments {first_role_image}, {first_role_image + 1}, '
         f'{first_role_image + 2}) are chronological source frames: start, measured interior '
@@ -722,17 +1119,110 @@ def cycle_semantic_question(requirements: list[dict[str, Any]], frames: list[dic
         'standing. Use unresolved if the action is not visually established. Code independently '
         'verified cycle timing and return; do not recalculate completeness or output any numeric '
         'references. Choices: ' + json.dumps([*labels, 'unresolved'])
+        + ('\nReviewed defining action (preserved in full): ' + action
+           + '\nJudge whether these source images visibly establish the entire reviewed action, '
+             'including its stated endpoint relationship. Use unresolved when that relationship '
+             'is occluded or unclear; motion toward an endpoint alone does not establish it. '
+             'Return only the qualitative reviewed_action_visibility verdict; code owns its '
+             'source-frame references.' if review_defining_action else '')
         + '\nOutput schema: ' + json.dumps(schema)
     )
     return prompt, schema
 
 
+def verified_source_pair_execution_unit(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Bind a source-owned unit through the existing verified selected-to-parent time map."""
+    authority = payload.get('preReconstructionSourceIntervalAuthority') or {}
+    unit = authority.get('sourcePairExecutionUnit')
+    mapping = (payload.get('sourcePoseCameraReference') or {}).get('sourceTimelineMapping') or {}
+    if not isinstance(unit, dict):
+        return None
+    hashes = [unit.get(key) for key in ('sourceVideoSha256', 'sourceOriginalVideoSha256',
+                                      'sourceManifestSha256', 'selectedFrameClockSha256')]
+    if not all(isinstance(value, str) and len(value) == 64
+               and all(char in '0123456789abcdefABCDEF' for char in value) for value in hashes):
+        return None
+    if not (authority.get('authoritative') is True and unit.get('executionUnitComplete') is True
+            and unit.get('requiredSourceExposuresRetained') is True and mapping.get('verified') is True
+            and unit.get('sourceVideoSha256') == mapping.get('selectedSegmentSha256')
+            and unit.get('sourceOriginalVideoSha256') == mapping.get('parentSourceSha256')
+            and unit.get('sourceManifestSha256') == mapping.get('selectionReceiptSha256')
+            and unit.get('selectedFrameClockSha256') == mapping.get('selectedFrameClockReceiptSha256')):
+        return None
+    members = unit.get('memberIntervals')
+    try:
+        if (len(members) != 2 or members[0]['endSeconds'] != members[1]['startSeconds']
+                or not all(math.isfinite(float(value)) for member in members for value in member.values())
+                or not all(member['startSeconds'] < member['peakSeconds'] < member['endSeconds']
+                           for member in members)):
+            return None
+    except (TypeError, KeyError):
+        return None
+    return unit
+
+
+def paired_cycle_semantic_question(requirements: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    """Review code-enumerated member actions and side coverage, never infer sides from signal sign."""
+    phases = [row['description'] for row in requirements if row['id'].startswith('phase_')]
+    if len(phases) != 2 or len(set(phases)) != 2:
+        raise ValueError('A paired return unit needs two distinct reviewed actions')
+    action = next(row['description'] for row in requirements if row['id'] == 'action')
+    qualifiers = [row['description'] for row in requirements if row['id'].startswith('variant_')]
+    properties = {f'{member}_{interval}_action': {'type': 'string', 'enum': [*phases, 'unresolved']}
+                  for member in ('first', 'second') for interval in ('earlier', 'later')}
+    properties.update({f'{member}_action_visibility': {'type': 'string',
+                       'enum': ['supported', 'contradicted', 'unresolved']}
+                       for member in ('first', 'second')})
+    properties['required_side_coverage'] = {'type': 'string', 'enum': [
+        'distinct_required_sides', 'same_side', 'not_required', 'unresolved']}
+    schema = {'type': 'object', 'additionalProperties': False,
+              'required': list(properties), 'properties': properties}
+    prompt = ('The five chronological source images show first start, first excursion, shared '
+              'return/second start, second excursion, final return. Code owns these exposures, '
+              'their order and measured return timing. For each member choose the visible action '
+              'from start to excursion and excursion to return. Judge the full reviewed action '
+              'for EACH member. Separately judge whether the reviewed qualifiers require both '
+              'sides and whether DISTINCT required sides are visibly demonstrated. Repeated '
+              'same-side actions, opposite image motion, PCA sign and an unseen body side do '
+              'not establish distinct-side coverage. Use unresolved for ambiguity. Do not output '
+              'timestamps, frame references or counts. Reviewed defining action: ' + action
+              + '\nReviewed qualifiers: ' + json.dumps(qualifiers)
+              + '\nAction choices: ' + json.dumps(phases)
+              + '\nOutput schema: ' + json.dumps(schema))
+    return prompt, schema
+
+
+def resolve_paired_cycle_semantics(payload: Any, requirements: list[dict[str, Any]]) -> dict[str, Any]:
+    """Code owns the number of members and accepts only complete, distinct-side observed actions."""
+    try:
+        _, schema = paired_cycle_semantic_question(requirements)
+    except (ValueError, StopIteration):
+        return {'passed': False, 'memberActionsPassed': [False, False],
+                'distinctRequiredSideCoverage': False}
+    valid = isinstance(payload, dict) and set(payload) == set(schema['properties'])
+    if valid:
+        valid = all(value in schema['properties'][key]['enum'] for key, value in payload.items())
+    phases = {row['description'] for row in requirements if row['id'].startswith('phase_')}
+    members = [bool(valid and payload[f'{member}_action_visibility'] == 'supported'
+                    and {payload[f'{member}_earlier_action'], payload[f'{member}_later_action']} == phases)
+               for member in ('first', 'second')]
+    return {'passed': bool(all(members) and payload.get('required_side_coverage') == 'distinct_required_sides'),
+            'memberActionsPassed': members,
+            'distinctRequiredSideCoverage': bool(valid and payload['required_side_coverage'] == 'distinct_required_sides')}
+
+
 def resolve_cycle_semantics(payload: Any, requirements: list[dict[str, Any]],
                             frames: list[dict[str, Any]], cycle_choices: dict[str, Any]) -> dict[str, Any]:
     """Bind semantic selections to measured spans and derive completion in code."""
+    action_review = isinstance(payload, dict) and 'reviewed_action_visibility' in payload
     semantic = [row for row in requirements if row['id'] != 'completion'
+                and (row['id'] != 'action' or not action_review)
                 and not row['id'].startswith('phase_')]
     expected = set(_INTERVAL_ACTION_FIELDS) | ({'observations'} if semantic else set())
+    if action_review:
+        expected.add('reviewed_action_visibility')
+        if payload['reviewed_action_visibility'] not in {'supported', 'contradicted', 'unresolved'}:
+            return {'observations': []}
     if not isinstance(payload, dict) or set(payload) != expected:
         return {'observations': []}
     rows = payload.get('observations', [])
@@ -754,6 +1244,9 @@ def resolve_cycle_semantics(payload: Any, requirements: list[dict[str, Any]],
         return {'observations': []}
     resolved = len(set(selections)) == 2 and set(selections) == set(by_label)
     result = list(rows)
+    if action_review:
+        result.append({'requirementId': 'action', 'verdict': payload['reviewed_action_visibility'],
+                       'evidenceFrameIds': [role_ids[key] for key in ('start', 'excursion', 'return')]})
     if resolved:
         result.extend({'requirementId': by_label[label], 'verdict': 'supported',
                        'evidenceFrameIds': list(span['frameIds'])}
@@ -780,7 +1273,8 @@ def correct_incomplete_evidence(payload: Any, requirements: list[dict[str, Any]]
                                  cycle_choices=cycle_choices)
     correction_ids = initial['correctionRequirementIds']
     correctable_errors = {'sequence_evidence_missing', 'phase_order_not_established',
-                          'cycle_role_evidence_missing', 'uniform_coverage_missing'}
+                          'cycle_role_evidence_missing', 'uniform_coverage_missing',
+                          'invalid_verdict_or_frame_reference'}
     if not correction_ids or any(error not in correctable_errors for error in initial['errors']):
         return payload, {'attempted': False, 'requirementIds': [], 'before': initial,
                          'after': initial}

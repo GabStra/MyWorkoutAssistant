@@ -8,6 +8,8 @@ from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES
 from exercise_motion_pkg.reconstruction_results import load_reconstruction_results, resolve_reconstruction_coordinate_keys, select_reconstruction_subject, validate_reconstruction_frame_rate
 
+NATIVE_FOOT_SIDE_AXIS_PROVENANCE = "gvhmr_ankle_global_smpl_rotation"
+
 
 def convert_reconstruction_results_to_motion_clip(
     *,
@@ -66,6 +68,8 @@ def convert_reconstruction_results_to_motion_clip(
             betas=betas,
             transl=translation,
         )
+    foot_marker_prior = _named_foot_marker_prior(
+        model, betas[:1], reconstruction_results_pkl, body_model_root, source_frame_clock)
 
     joints = output.joints[:, : len(SMPL_JOINT_NAMES), :].detach().cpu().tolist()
     if abs(output_rotation_degrees) > 1e-6:
@@ -84,6 +88,14 @@ def convert_reconstruction_results_to_motion_clip(
             for joint_row in joints
         ]
     normalized_frame_ids = _normalize_frame_ids(frame_ids, frame_count=frame_count)
+    native_foot_bone_sides = _native_foot_bone_sides(
+        pose=pose.detach().cpu().numpy(),
+        joints=joints,
+        parents=_model_parents(model),
+        foot_marker_prior=foot_marker_prior,
+        output_rotation_degrees=output_rotation_degrees,
+    )
+    camera_registration = reconstruction_camera_registration(payload, pose, coordinate_space)
     source_references = None
     if source_frame_clock is not None:
         from .source_frame_clock import source_references_for_frame_ids
@@ -106,6 +118,12 @@ def convert_reconstruction_results_to_motion_clip(
                 source_time_sec=(float(source_references[index]["sourceTimeSec"]) if source_references is not None else None),
                 source_frame_index=(int(source_references[index]["sourceFrameIndex"]) if source_references is not None else None),
                 inference_frame_index=(normalized_frame_ids[index] if source_references is not None else None),
+                bone_sides=(native_foot_bone_sides[index] if native_foot_bone_sides else None),
+                bone_side_provenance=(
+                    {key: NATIVE_FOOT_SIDE_AXIS_PROVENANCE
+                     for key in native_foot_bone_sides[index]}
+                    if native_foot_bone_sides else None
+                ),
             )
         )
 
@@ -127,6 +145,8 @@ def convert_reconstruction_results_to_motion_clip(
                 "subjectId": str(resolved_subject_id),
                 "frameIds": normalized_frame_ids,
                 "sourceFps": fps,
+                **({"footMarkerPrior": foot_marker_prior} if foot_marker_prior else {}),
+                **({"cameraRegistration": camera_registration} if camera_registration is not None else {}),
                 **({"sourceFrameClock": {
                     "sourceVideoPath": source_frame_clock.get("sourceVideoPath"),
                     "sourceVideoSha256": source_frame_clock.get("sourceVideoSha256"),
@@ -136,6 +156,161 @@ def convert_reconstruction_results_to_motion_clip(
             },
         },
     )
+
+
+def _model_parents(model) -> list[int]:
+    parents = getattr(model, "parents", None)
+    if parents is None:
+        return []
+    if hasattr(parents, "detach"):
+        parents = parents.detach().cpu().tolist()
+    return [int(value) for value in parents]
+
+
+def _native_foot_bone_sides(
+    *,
+    pose,
+    joints,
+    parents: list[int],
+    foot_marker_prior,
+    output_rotation_degrees: float,
+):
+    """Produce the ankle->foot bone side from the posed ankle global rotation.
+
+    The leg/ankle rotation owns the bone direction; the ball/foot joint rotation
+    only adds toe articulation and must not be used here. Arrays are model-pose
+    estimates, so downstream approved corrections may still change them.
+    """
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+
+    if not isinstance(foot_marker_prior, dict) or not parents:
+        return None
+    prior_sides = foot_marker_prior.get("sides")
+    if not isinstance(prior_sides, dict):
+        return None
+    pose_array = np.asarray(pose, dtype=np.float64)
+    joints_array = np.asarray(joints, dtype=np.float64)
+    if pose_array.ndim != 2 or pose_array.shape[1] != 72:
+        return None
+    frame_count = int(pose_array.shape[0])
+    if (joints_array.shape != (frame_count, len(SMPL_JOINT_NAMES), 3)
+            or len(parents) < len(SMPL_JOINT_NAMES)):
+        return None
+    rotations = Rotation.from_rotvec(
+        pose_array.reshape(-1, 3)).as_matrix().reshape(frame_count, len(SMPL_JOINT_NAMES), 3, 3)
+    rotation_z = None
+    if abs(output_rotation_degrees) > 1e-6:
+        rotation_z = Rotation.from_euler(
+            "z", output_rotation_degrees, degrees=True).as_matrix()
+    sides = {}
+    for side in ("left", "right"):
+        try:
+            side_prior = prior_sides[side]
+            model_frame = np.asarray(side_prior["modelFootFrame"], dtype=np.float64)
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (model_frame.shape != (3, 3) or not np.isfinite(model_frame).all()
+                or not np.allclose(np.linalg.norm(model_frame, axis=0), 1.0, atol=1e-4)
+                or not np.allclose(model_frame.T @ model_frame, np.eye(3), atol=1e-4)):
+            return None
+        ankle_name, foot_name = f"{side}_ankle", f"{side}_foot"
+        ankle_index, foot_index = SMPL_JOINT_NAMES.index(ankle_name), SMPL_JOINT_NAMES.index(foot_name)
+        global_rotation = np.broadcast_to(np.eye(3), (frame_count, 3, 3)).copy()
+        joint_index = ankle_index
+        chain = []
+        while joint_index >= 0:
+            chain.append(joint_index)
+            joint_index = int(parents[joint_index])
+        for joint_index in reversed(chain):
+            global_rotation = np.matmul(global_rotation, rotations[:, joint_index])
+        side_axis = np.einsum("fij,j->fi", global_rotation, model_frame[:, 1])
+        if rotation_z is not None:
+            side_axis = side_axis @ rotation_z.T
+        forward = joints_array[:, foot_index] - joints_array[:, ankle_index]
+        forward_length = np.linalg.norm(forward, axis=1, keepdims=True)
+        if np.any(forward_length <= 1e-9):
+            return None
+        forward = forward / forward_length
+        side_axis = side_axis - forward * np.sum(side_axis * forward, axis=1, keepdims=True)
+        side_length = np.linalg.norm(side_axis, axis=1, keepdims=True)
+        if np.any(side_length <= 1e-9) or not np.isfinite(side_axis).all():
+            return None
+        sides[side] = (side_axis / side_length)
+    return [
+        {
+            f"{side}_ankle->{side}_foot": sides[side][frame_index].tolist()
+            for side in ("left", "right")
+        }
+        for frame_index in range(frame_count)
+    ]
+
+
+def _named_foot_marker_prior(model, betas, reconstruction_path, model_root, clock):
+    """Retain numeric rest geometry; fitting never imports the body model."""
+    import hashlib
+    import numpy as np
+    import torch
+    from smplx.vertex_ids import vertex_ids
+
+    asset = Path(model_root) / 'smpl' / 'SMPL_NEUTRAL.pkl'
+    if not asset.is_file() or not isinstance(clock, dict):
+        return None
+    with torch.no_grad():
+        neutral = model(
+            global_orient=torch.zeros(1, 3), body_pose=torch.zeros(1, 69),
+            betas=betas, transl=torch.zeros(1, 3), return_verts=True)
+    vertices, joints = neutral.vertices[0].cpu().numpy(), neutral.joints[0].cpu().numpy()
+    owners = model.lbs_weights.argmax(dim=1).cpu().numpy()
+    sides = {}
+    for side, prefix, ankle, foot in (('left', 'L', 7, 10), ('right', 'R', 8, 11)):
+        forward = joints[foot] - joints[ankle]
+        bone_length = float(np.linalg.norm(forward))
+        forward /= np.linalg.norm(forward)
+        lateral = np.cross(forward, [0., 1., 0.])
+        lateral /= np.linalg.norm(lateral)
+        basis = np.stack([forward, lateral, np.cross(lateral, forward)], axis=1)
+        heel = int(vertex_ids['smplh'][prefix + 'Heel'])
+        toes = [int(vertex_ids['smplh'][prefix + name]) for name in ('BigToe', 'SmallToe')]
+        toe = vertices[toes].mean(axis=0)
+        region = vertices[np.isin(owners, [ankle, foot])] - joints[ankle]
+        sides[side] = {
+            'heelVertex': heel, 'toeVertices': toes,
+            'ankleToFootJointLengthMeters': bone_length,
+            'heelToToeLocalMeters': ((vertices[heel] - toe) @ basis).tolist(),
+            'toeFromAnkleLocalMeters': ((toe - joints[ankle]) @ basis).tolist(),
+            'modelFootFrame': basis.tolist(),
+            'regionMinimumModelMeters': region.min(axis=0).tolist(),
+            'regionMaximumModelMeters': region.max(axis=0).tolist(),
+        }
+    return {
+        'source': 'named_smpl_rest_heel_and_toe_vertices', 'modelType': 'smpl',
+        'modelVertexCount': int(len(vertices)),
+        'modelSha256': hashlib.sha256(asset.read_bytes()).hexdigest(),
+        'reconstructionSha256': hashlib.sha256(Path(reconstruction_path).read_bytes()).hexdigest(),
+        'sourceVideoSha256': clock.get('sourceVideoSha256'),
+        'modelInputVideoSha256': clock.get('outputVideoSha256'),
+        'sides': sides,
+    }
+
+
+def reconstruction_camera_registration(payload, pose, coordinate_space):
+    """Fit one camera orientation from paired reconstruction roots, never fitted limbs."""
+    if coordinate_space != "world" or "camera_global_orient" not in payload:
+        return None
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+
+    world = np.asarray(pose)[:, :3]
+    camera = np.asarray(payload["camera_global_orient"])
+    if camera.shape != world.shape or not np.isfinite(camera).all():
+        raise ValueError("Reconstruction camera roots must match finite world roots.")
+    rotations = Rotation.from_rotvec(camera).as_matrix() @ Rotation.from_rotvec(world).as_matrix().transpose(0, 2, 1)
+    fitted = Rotation.from_matrix(rotations).mean()
+    residual = (fitted.inv() * Rotation.from_matrix(rotations)).magnitude()
+    return {"rotationWorldToCamera": fitted.as_matrix().tolist(),
+            "policy": "paired_reconstruction_roots_fixed_camera_fit",
+            "p95AngularResidualDegrees": float(np.degrees(np.percentile(residual, 95)))}
 
 
 def normalize_reconstruction_output(

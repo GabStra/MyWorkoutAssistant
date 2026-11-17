@@ -10,6 +10,8 @@ import os
 import re
 import sys
 from collections import defaultdict
+from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write the package even when no generated movements can be attached.",
     )
+    parser.add_argument("--source-reference-mapping-json", help="Explicit approved source-to-target attachment bindings.")
     return parser
 
 
@@ -460,6 +463,218 @@ def existing_backups_by_key(workout_plan_package: dict[str, Any]) -> dict[tuple[
     return backups
 
 
+def json_identity(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def approved_motion_context_matches(actual: Any, expected: dict[str, Any]) -> bool:
+    if not isinstance(actual, dict):
+        return False
+    actual = deepcopy(actual)
+    definition, expected_definition = actual.get("exerciseDefinition", {}), expected.get("exerciseDefinition", {})
+    if not isinstance(definition, dict) or not isinstance(expected_definition, dict):
+        return False
+    review, expected_review = definition.get("review", {}), expected_definition.get("review", {})
+    if not isinstance(review, dict) or not isinstance(expected_review, dict):
+        return False
+    approved_at = expected_review.get("approvedAtUtc")
+    if approved_at is not None and review.get("approvedAtUtc") != approved_at:
+        try:
+            observed = datetime.fromisoformat(review["approvedAtUtc"])
+            approved = datetime.fromisoformat(approved_at)
+        except (KeyError, TypeError, ValueError):
+            return False
+        if observed.utcoffset() is None or approved.utcoffset() is None or observed != approved:
+            return False
+        # Older PowerShell converted this timestamp to local time while copying context.
+        review["approvedAtUtc"] = approved_at
+    return all(actual.get(key) == value for key, value in expected.items())
+
+
+def load_source_reference_bindings(path: Path | None, package: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    if path is None:
+        return {}
+    document = load_json_file(path)
+    bindings = document.get("bindings") if isinstance(document, dict) else None
+    if not isinstance(bindings, list) or not bindings:
+        raise ValueError("Source-reference mapping needs nonempty bindings.")
+    result = {}
+    target_ids = set()
+    for binding in bindings:
+        if not isinstance(binding, dict) or binding.get("motionReferenceOnly") is not True or binding.get("allowedDifference") != "external_load_not_shown":
+            raise ValueError("Source-reference binding must explicitly approve only external load not shown.")
+        source_id, target_id = binding.get("sourceReferenceDefinitionId"), binding.get("targetDefinitionId")
+        if not isinstance(source_id, str) or not source_id or not isinstance(target_id, str) or not target_id or source_id == target_id:
+            raise ValueError("Source-reference binding needs distinct source and target definition IDs.")
+        if source_id in result or target_id in target_ids:
+            raise ValueError("Ambiguous source-reference binding.")
+        def referenced_path(key: str) -> Path:
+            value = binding.get(key)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"Source-reference binding is missing {key}.")
+            candidate = Path(value)
+            return candidate if candidate.is_absolute() else path.parent / candidate
+        source_plan = load_json_file(referenced_path("sourcePlanPath"))
+        def definition(plan: dict[str, Any], identifier: str) -> dict[str, Any]:
+            matches = [row for row in plan.get("exerciseDefinitions", []) if isinstance(row, dict) and row.get("id") == identifier]
+            if len(matches) != 1:
+                raise ValueError(f"Source-reference definition missing or ambiguous: {identifier}")
+            return matches[0]
+        source, target = definition(source_plan, source_id), definition(package, target_id)
+        for label, value in (("sourceDefinition", source), ("targetDefinition", target),
+                             ("sourceMotionContext", source.get("motionContext")), ("targetMotionContext", target.get("motionContext"))):
+            if binding.get(label + "Sha256") != json_identity(value):
+                raise ValueError(f"Stale source-reference {label} identity.")
+        approval_path = referenced_path("approvalPath")
+        if binding.get("approvalSha256") != hashlib.sha256(approval_path.read_bytes()).hexdigest():
+            raise ValueError("Stale source-reference approval digest.")
+        approval = load_json_file(approval_path)
+        if (approval.get("authority") != "explicit_user_approval" or approval.get("exportedExerciseUnchanged") is not True
+            or approval.get("exerciseName") != target.get("name") or approval.get("sourceReferenceExerciseName") != source.get("name")
+            or not approval.get("allowedDifference") or not approval.get("userAnswer")):
+            raise ValueError("Source-reference approval does not authorize these identities.")
+        source_context, target_context = source.get("motionContext") or {}, target.get("motionContext") or {}
+        source_action, target_action = source_context.get("exerciseDefinition") or {}, target_context.get("exerciseDefinition") or {}
+        for key in ("completionMode", "requiredPhases", "bilateralExecution"):
+            if not source_action.get(key) or source_action.get(key) != target_action.get(key):
+                raise ValueError(f"Source-reference movement requirement differs: {key}")
+        for key in ("exerciseType", "bodyWeightPercentage", "requiredAccessoryEquipmentIds"):
+            if source.get(key) != target.get(key):
+                raise ValueError(f"Source-reference movement requirement differs: {key}")
+        if ({key: value for key, value in source.items() if key not in {"id", "name", "equipmentId", "motionContext"}}
+            != {key: value for key, value in target.items() if key not in {"id", "name", "equipmentId", "motionContext"}}):
+            raise ValueError("Source-reference contains other definition differences.")
+        for accessory_id in source.get("requiredAccessoryEquipmentIds") or []:
+            for plan in (source_plan, package):
+                accessories = [row for row in plan.get("accessoryEquipments", []) if row.get("id") == accessory_id]
+                if len(accessories) != 1:
+                    raise ValueError("Source-reference accessory identity is missing or ambiguous.")
+            source_type = next(row.get("type") for row in source_plan["accessoryEquipments"] if row.get("id") == accessory_id)
+            target_type = next(row.get("type") for row in package["accessoryEquipments"] if row.get("id") == accessory_id)
+            if source_type != target_type:
+                raise ValueError("Source-reference accessory type differs.")
+        equipment = [row for row in package.get("equipments", []) if isinstance(row, dict) and row.get("id") == target.get("equipmentId")]
+        if source.get("equipmentId") is not None or not target.get("equipmentId") or len(equipment) != 1 or not equipment[0].get("type"):
+            raise ValueError("Source-reference equipment difference must be an absent external load with a defined target equipment type.")
+        # Action wording and variant qualifiers may express the explicitly approved load difference.
+        def remaining_context(context: dict[str, Any]) -> dict[str, Any]:
+            action = {key: value for key, value in context.get("exerciseDefinition", {}).items()
+                      if key not in {"definingAction", "variantQualifiers", "review", "source"}}
+            return {**context, "exerciseDefinition": action}
+        if remaining_context(source_context) != remaining_context(target_context):
+            raise ValueError("Source-reference contains other motion-context differences.")
+        result[source_id] = {**binding, "sourceDefinition": source, "targetDefinition": target,
+                             "sourcePlan": source_plan, "approval": approval}
+        target_ids.add(target_id)
+    return result
+
+
+def source_reference_generation_plan(package: dict[str, Any], mapping_path: Path) -> dict[str, Any]:
+    """Use approved reference identities for generation while leaving the export untouched."""
+    bindings = load_source_reference_bindings(mapping_path, package)
+    from exercise_motion_pkg.youtube import extract_workout_plan_exercises
+    target_entries = {
+        entry.exercise_id: entry
+        for entry in extract_workout_plan_exercises(package)
+    }
+    source_entries_by_target: dict[str, Any] = {}
+    for binding in bindings.values():
+        source_id = binding["sourceReferenceDefinitionId"]
+        source_entries = [
+            entry for entry in extract_workout_plan_exercises(binding["sourcePlan"])
+            if entry.exercise_id == source_id
+        ]
+        if len(source_entries) != 1:
+            raise ValueError(f"Source-reference exercise entry missing or ambiguous: {source_id}")
+        source_context = source_entries[0].motion_context
+        sparse_context = binding["sourceDefinition"].get("motionContext") or {}
+
+        def contains_approved_fields(actual: Any, expected: Any) -> bool:
+            if isinstance(expected, dict):
+                return isinstance(actual, dict) and all(
+                    key in actual and contains_approved_fields(actual[key], value)
+                    for key, value in expected.items()
+                )
+            if isinstance(expected, list):
+                return isinstance(actual, list) and actual == expected
+            return type(actual) is type(expected) and actual == expected
+
+        if not contains_approved_fields(source_context, sparse_context):
+            raise ValueError(f"Source-reference sparse motion context is not contained in source exercise entry: {source_id}")
+        source_entries_by_target[binding["targetDefinitionId"]] = source_context
+    replacements = {binding["targetDefinitionId"]: binding["sourceDefinition"] for binding in bindings.values()}
+    existing_ids = {row.get("id") for row in package.get("exerciseDefinitions", [])}
+    if any(source["id"] in existing_ids for source in replacements.values()):
+        raise ValueError("Source-reference identity already exists in the target plan.")
+    plan = json.loads(json.dumps(package))
+    plan["exerciseDefinitions"] = json.loads(json.dumps([
+        replacements.get(row.get("id"), row) for row in plan["exerciseDefinitions"]]))
+    plan["motionSourceReferenceBindings"] = [
+        {"targetDefinitionId": binding["targetDefinitionId"],
+         "targetExerciseName": binding["targetDefinition"]["name"],
+         "sourceReferenceDefinitionId": binding["sourceReferenceDefinitionId"],
+         "sourceReferenceExerciseName": binding["sourceDefinition"]["name"],
+         # Generation rewrites prescription identity to the source exercise,
+         # but staged source review must still use the approved target motion
+         # requirements. Keep this validated pair in the derived plan so the
+         # staged-wave consumer can recover it without changing source keys.
+         "motionReferenceOnly": binding["motionReferenceOnly"],
+         "allowedDifference": binding["allowedDifference"],
+         "approvalPath": binding["approvalPath"],
+         "approvalSha256": binding["approvalSha256"],
+         "sourceMotionContext": json.loads(json.dumps(binding["sourceDefinition"].get("motionContext") or {})),
+         "sourceMotionContextSha256": binding["sourceMotionContextSha256"],
+         "sourceExerciseMotionContext": json.loads(json.dumps(
+             source_entries_by_target[binding["targetDefinitionId"]]
+         )),
+         "sourceExerciseMotionContextSha256": json_identity(
+             source_entries_by_target[binding["targetDefinitionId"]]
+         ),
+         "targetMotionContext": json.loads(json.dumps(binding["targetDefinition"].get("motionContext") or {})),
+         "targetMotionContextSha256": binding["targetMotionContextSha256"],
+         "sourceDefinitionSha256": binding["sourceDefinitionSha256"],
+         "targetDefinitionSha256": binding["targetDefinitionSha256"],
+         "targetDefinition": json.loads(json.dumps(binding["targetDefinition"])),
+         "targetExerciseMotionContext": json.loads(json.dumps(
+             target_entries[binding["targetDefinitionId"]].motion_context
+             if binding["targetDefinitionId"] in target_entries
+             else binding["targetDefinition"].get("motionContext") or {}
+         )),
+         "targetExerciseMotionContextSha256": json_identity(
+             target_entries[binding["targetDefinitionId"]].motion_context
+             if binding["targetDefinitionId"] in target_entries
+             else binding["targetDefinition"].get("motionContext") or {}
+         ),
+         "targetExerciseSlug": (
+             target_entries[binding["targetDefinitionId"]].slug
+             if binding["targetDefinitionId"] in target_entries else None
+         )}
+        for binding in bindings.values()
+    ]
+
+    def rewrite_references(value: Any) -> None:
+        if isinstance(value, dict):
+            target = value.get("exerciseDefinitionId")
+            if target in replacements:
+                source = replacements[target]
+                value["exerciseDefinitionId"] = source["id"]
+                for key in ("equipmentId", "motionContext", "name"):
+                    if key in value:
+                        if key in source:
+                            value[key] = json.loads(json.dumps(source[key]))
+                        else:
+                            value.pop(key)
+            for child in value.values():
+                rewrite_references(child)
+        elif isinstance(value, list):
+            for child in value:
+                rewrite_references(child)
+
+    rewrite_references(plan)
+    return plan
+
+
 def main() -> int:
     args = build_parser().parse_args()
 
@@ -474,6 +689,16 @@ def main() -> int:
     summary = load_json_file(summary_path)
     if not isinstance(summary, dict):
         raise ValueError("Motion summary JSON root must be an object.")
+    bindings = load_source_reference_bindings(
+        Path(args.source_reference_mapping_json).resolve() if args.source_reference_mapping_json else None,
+        workout_plan_package,
+    )
+    used_bindings: set[str] = set()
+    reference_audit = []
+    approved_ids = [item.get("exerciseId") for item in iter_motion_summary_items(summary)
+                    if isinstance(item, dict) and is_approved_summary_item(item)]
+    if any(binding["targetDefinitionId"] in approved_ids for binding in bindings.values()):
+        raise ValueError("Mapped target also has an approved direct source result; attachment is ambiguous.")
 
     id_index: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
     name_index: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
@@ -510,6 +735,10 @@ def main() -> int:
 
         exercise_id = summary_item.get("exerciseId")
         exercise_name = summary_item.get("exerciseName")
+        binding = bindings.get(exercise_id)
+        attachment_id = binding["targetDefinitionId"] if binding else exercise_id
+        if binding and exercise_id in used_bindings:
+            raise ValueError(f"Ambiguous duplicate mapped source result: {exercise_id}")
         selected_path = revalidated_selection_motion_path(
             summary_item,
             summary_path=summary_path,
@@ -520,11 +749,11 @@ def main() -> int:
 
         matches = []
         match_source = ""
-        if exercise_id is not None and str(exercise_id).strip():
-            matches = id_index.get(normalize_key(exercise_id), [])
+        if attachment_id is not None and str(attachment_id).strip():
+            matches = id_index.get(normalize_key(attachment_id), [])
             match_source = "id"
 
-        if not matches and not args.strict_id_match:
+        if not matches and not binding and not args.strict_id_match:
             normalized_name = normalize_name(exercise_name)
             if normalized_name:
                 matches = name_index.get(normalized_name, [])
@@ -545,6 +774,26 @@ def main() -> int:
             summary_path=summary_path,
             summary=summary,
         )
+        if binding:
+            manifest_path = selection_manifest_path_for_summary_item(summary_item, summary_path=summary_path, summary=summary)
+            selected = load_json_file(manifest_path)["selected"]
+            candidate = selected.get("candidate") or {}
+            ranking_payload = (selected.get("ranking") or {}).get("payload") or {}
+            contract = ranking_payload.get("exerciseMotionContract") or candidate.get("exerciseMotionContract") or {}
+            source = binding["sourceDefinition"]
+            selected_exercise_id = selected.get("exerciseId")
+            if selected_exercise_id is None or selected_exercise_id == "":
+                selected_exercise_id = exercise_id
+            if (exercise_name != source.get("name") or selected.get("exerciseName") != source.get("name")
+                or selected_exercise_id != exercise_id
+                or not approved_motion_context_matches(contract.get("motionContext"), source.get("motionContext", {}))):
+                raise ValueError("Mapped selected source does not match its approved source definition/context.")
+            used_bindings.add(exercise_id)
+            reference_audit.append({key: value for key, value in binding.items()
+                                    if key not in {"sourceDefinition", "targetDefinition"}} | {
+                "sourceExerciseName": exercise_name, "selectionManifestPath": str(manifest_path),
+                "selectedSkeletonSha256": hashlib.sha256(selected_path.read_bytes()).hexdigest(),
+            })
         movement_json = read_text_file(selected_path)
         packaged_artifact_state = build_packaged_artifact_state(
             movement_payload["artifactState"],
@@ -552,7 +801,7 @@ def main() -> int:
         )
 
         content_hash = hashlib.sha256(movement_json.encode("utf-8")).hexdigest()
-        movement_id = movement_id_for(args.movement_id_prefix, exercise_id, exercise_name)
+        movement_id = movement_id_for(args.movement_id_prefix, attachment_id, exercise_name)
         movement_ref = {
             "movementId": movement_id,
             "contentHash": content_hash,
@@ -576,6 +825,10 @@ def main() -> int:
             f"{len(matches)} exercise(s), {selected_path}"
         )
 
+    if set(bindings) != used_bindings and not args.allow_empty:
+        raise ValueError(f"Unused source-reference bindings: {sorted(set(bindings) - used_bindings)}")
+    if reference_audit:
+        workout_plan_package.setdefault("sourceReferenceAttachmentAudit", []).extend(reference_audit)
     workout_plan_package["exerciseMovements"] = list(movement_backups.values())
     workout_plan_package.pop("ExerciseMovements", None)
 

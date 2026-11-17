@@ -28,6 +28,7 @@ def build_source_frame_clock(
     crop_start_seconds: float,
     output_fps: float,
     source_origin_seconds: float = 0.0,
+    crop_end_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Describe the source exposures selected by the pipeline's CFR fps filter."""
     source_video_path = source_video_path.expanduser().resolve()
@@ -62,21 +63,29 @@ def build_source_frame_clock(
         )
     )
 
-    # Input-side -ss with accurate seeking keeps the first source frame at or
-    # after the crop boundary. FFmpeg's fps filter then rounds that frame's
-    # relative PTS to the nearest output tick; later frames are selected at
-    # those quantized ticks. Consequently output frame n does not map to simply
-    # round(n * source_fps / output_fps).
-    first_source_index = max(0, math.ceil(start * source_fps - 1e-7))
-    if first_source_index >= source_metadata.frame_count:
-        raise ValueError("crop begins after the last decodable source frame")
-    first_source_relative_time = first_source_index / source_fps - start
-    first_output_tick = int(math.floor(first_source_relative_time * target_fps + 0.5 + 1e-7))
+    end = (float(source_metadata.duration_seconds) if crop_end_seconds is None
+           else float(crop_end_seconds))
+    if not math.isfinite(end) or end <= start:
+        raise ValueError("crop_end_seconds must be finite and greater than the crop start")
+    # Input-side -ss/-to retain source exposures in [start, end). The fps
+    # filter quantizes SOURCE timestamps to output ticks (round=near), then
+    # emits the latest source frame at each output tick. Rounding output time
+    # back to the source lattice is not its inverse, especially when upsampling.
+    identical_copy = (start == 0.0 and source_metadata.frame_count == output_metadata.frame_count
+                      and source_fps == target_fps
+                      and sha256_file(source_video_path) == sha256_file(output_video_path))
+    if identical_copy:
+        source_indices = list(range(source_metadata.frame_count))
+    else:
+        source_indices = _ffmpeg_materialization_source_indices(
+            source_video_path, start=start, end=end, target_fps=target_fps,
+            source_fps=source_fps,
+            source_time_base=float(source_pts_verification['timeBaseSec']),
+            source_frame_count=source_metadata.frame_count,
+            output_frame_count=output_metadata.frame_count,
+        )
     frame_mappings = []
-    for output_index in range(output_metadata.frame_count):
-        source_time = start + (first_output_tick + output_index) / target_fps
-        source_index = int(math.floor(source_time * source_fps + 0.5 + 1e-7))
-        source_index = min(max(source_index, first_source_index), source_metadata.frame_count - 1)
+    for output_index, source_index in enumerate(source_indices):
         frame_mappings.append({
             "outputFrameIndex": output_index,
             "sourceFrameIndex": source_index,
@@ -95,10 +104,93 @@ def build_source_frame_clock(
         "outputFps": float(output_metadata.fps),
         "outputFrameCount": output_metadata.frame_count,
         "cropStartSeconds": start,
+        "cropEndSeconds": end,
         "sourcePtsVerification": source_pts_verification,
         "outputPtsVerification": output_pts_verification,
         "frames": frame_mappings,
     }
+
+
+def _ffmpeg_materialization_source_indices(
+    video_path: Path, *, start: float, end: float, target_fps: float,
+    source_fps: float, source_time_base: float,
+    source_frame_count: int, output_frame_count: int,
+) -> list[int]:
+    """Replay the production crop/fps timestamp decisions without encoding video.
+
+    Input seeking rounds to the stream time base, and decoder reordering can
+    expose a final frame beyond -to. The filter's actual read/write PTS own both
+    decisions; an inverse nearest-frame formula cannot reproduce them safely.
+    """
+    ffmpeg = resolve_ffmpeg_path()
+    if ffmpeg is None:
+        raise ValueError("FFmpeg is required to verify rate-changing source exposures")
+    changes_rate = abs(source_fps - target_fps) > 1e-7
+    video_filter = f'fps={target_fps:g}' if changes_rate else 'showinfo'
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-loglevel", "debug", "-debug_ts", "-ss", str(start),
+             "-to", str(end), "-i", str(video_path), "-map", "0:v:0", "-an",
+             "-vf", video_filter, "-f", "null", "-"],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError("cannot replay source fps timestamp decisions") from error
+    if result.returncode != 0:
+        raise ValueError("source fps timestamp replay failed")
+    source_ticks = []
+    source_pts = []
+    output_ticks = []
+    packet_pts = None
+    seek_offsets = set()
+    for line in result.stderr.splitlines():
+        if 'type:video' in line:
+            packet = re.search(r'pkt_pts:(-?\d+)', line)
+            if packet and 'demuxer ->' in line:
+                packet_pts = int(packet.group(1))
+            elif packet and 'demuxer+ffmpeg ->' in line and packet_pts is not None:
+                seek_offsets.add(packet_pts - int(packet.group(1)))
+                packet_pts = None
+        if "Parsed_fps_" in line:
+            read = re.search(r"Read frame with in pts (-?\d+), out pts (-?\d+)", line)
+            write = re.search(r"Writing frame with pts (-?\d+) to pts (-?\d+)", line)
+            if read:
+                source_pts.append(int(read.group(1)))
+                source_ticks.append(int(read.group(2)))
+            if write:
+                output_ticks.append(int(write.group(2)))
+        elif 'Parsed_showinfo_' in line:
+            read = re.search(r'n:\s*\d+\s+pts:\s*(-?\d+)', line)
+            if read:
+                source_pts.append(int(read.group(1)))
+    if not source_pts or len(seek_offsets) != 1:
+        raise ValueError('source materialization PTS seek offset is unresolved')
+    seek_pts = int(round(start / source_time_base))
+    # Decoder PTS are rebased by FFmpeg; restore the seek once, not the container start.
+    source_indices = [int(math.floor(
+        ((pts + seek_pts) * source_time_base) * source_fps + .5))
+        for pts in source_pts]
+    if (any(index < 0 or index >= source_frame_count for index in source_indices)
+            or any(b != a + 1 for a, b in zip(source_indices, source_indices[1:]))):
+        raise ValueError('materialized source PTS do not identify contiguous decoded exposures')
+    if not changes_rate:
+        if len(source_indices) != output_frame_count:
+            raise ValueError('native-rate materialization does not match prepared output')
+        return source_indices
+    if (not source_ticks or len(output_ticks) != output_frame_count
+            or any(b < a for a, b in zip(source_ticks, source_ticks[1:]))
+            or any(b != a + 1 for a, b in zip(output_ticks, output_ticks[1:]))
+            or len(source_ticks) != len(source_indices)):
+        raise ValueError("source fps timestamp replay does not match prepared output")
+    source_offset = 0
+    indices = []
+    for tick in output_ticks:
+        while (source_offset + 1 < len(source_ticks)
+               and source_ticks[source_offset + 1] <= tick):
+            source_offset += 1
+        indices.append(source_indices[source_offset])
+    return indices
 
 
 def write_source_frame_clock(receipt: dict[str, Any], *, output_path: Path) -> Path:
@@ -197,7 +289,18 @@ def source_exposure_crop_window(
     decoded source exposure. Crop model output by the verified exposure clocks,
     not by subtracting requested trim timestamps.
     """
-    for key in ("sourceVideoPath", "sourceVideoSha256", "sourceFps", "sourceOriginTimeSec"):
+    source_sha256 = selected_receipt.get("sourceVideoSha256")
+    inference_sha256 = inference_receipt.get("sourceVideoSha256")
+    if (
+        any(
+            not isinstance(value, str)
+            or re.fullmatch(r"[0-9a-fA-F]{64}", value) is None
+            for value in (source_sha256, inference_sha256)
+        )
+        or source_sha256.casefold() != inference_sha256.casefold()
+    ):
+        raise ValueError("selected and inference clocks do not share one verified source timeline")
+    for key in ("sourceFps", "sourceOriginTimeSec"):
         if selected_receipt.get(key) != inference_receipt.get(key):
             raise ValueError("selected and inference clocks do not share one verified source timeline")
     selected_frames = selected_receipt.get("frames")
@@ -263,8 +366,8 @@ def recover_materialized_cut_clock(
     selected_video_path = selected_video_path.expanduser().resolve()
     if not selected_video_path.is_file():
         raise ValueError("selected cut is unavailable for source-clock recovery")
-    if Path(str(selection.get("selectedSegmentPath") or "")).expanduser().resolve() != selected_video_path:
-        raise ValueError("selection receipt is not bound to the selected cut path")
+    # The path in the selection receipt records where the cut was first
+    # materialized. Current bytes are authorized below by their retained hash.
     selected_sha = sha256_file(selected_video_path)
     if str(selection.get("selectedSegmentSha256") or "").casefold() != selected_sha:
         raise ValueError("selection receipt is not bound to the selected cut bytes")
@@ -304,8 +407,6 @@ def recover_materialized_cut_clock(
     actual_parent_sha = sha256_file(parent_path)
     if recorded_parent_hash and actual_parent_sha != str(recorded_parent_hash).casefold():
         raise ValueError("selected cut parent source bytes changed since materialization")
-    if expected_parent_sha256 and actual_parent_sha != str(expected_parent_sha256).casefold():
-        raise ValueError("selected cut parent source hash conflicts with inference context clock")
     try:
         crop_start = float(crop_start_value)
         crop_end = float(crop_end_value)
@@ -327,6 +428,7 @@ def recover_materialized_cut_clock(
         source_video_path=parent_path,
         output_video_path=selected_video_path,
         crop_start_seconds=crop_start,
+        crop_end_seconds=crop_end,
         output_fps=float(selected_metadata.fps),
     )
     if recorded_parent_hash and receipt.get("sourceVideoSha256") != str(recorded_parent_hash).casefold():
@@ -350,6 +452,8 @@ def recover_materialized_cut_clock(
             expected_video_path=parent_path,
         )
         receipt = compose_source_frame_clocks(upstream, receipt)
+    if expected_parent_sha256 and receipt["sourceVideoSha256"] != str(expected_parent_sha256).casefold():
+        raise ValueError("selected cut parent source hash conflicts with inference context clock")
     return receipt
 
 
@@ -456,15 +560,200 @@ def verified_source_timeline_mapping(
             return None
         return number if number == value else None
 
+    def original_clock_authority_for_copy(
+        selected_clock: dict[str, Any],
+    ) -> tuple[Path, str] | None:
+        """Retain the original receipt identity only for a verified byte copy."""
+        original_video_value = selected_clock.get("parentOutputVideoPath")
+        original_video_sha = str(selected_clock.get("parentOutputVideoSha256") or "").casefold()
+        if (not original_video_value or not original_video_sha
+                or not selected_clock.get("timelinePreservingTransform")):
+            return None
+        original_video = Path(str(original_video_value)).expanduser().resolve()
+        if (not original_video.is_file()
+                or sha256_file(original_video) != selected_video_sha
+                or original_video_sha != selected_video_sha):
+            return None
+        original_receipt_path = source_frame_clock_path_for_video(original_video)
+        try:
+            original_clock = load_verified_source_frame_clock(
+                original_receipt_path, expected_video_path=original_video)
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+        semantic_fields = (
+            "schemaVersion", "sourceVideoSha256", "sourceFps", "sourceFrameCount",
+            "sourceOriginTimeSec", "outputVideoSha256", "outputFps", "outputFrameCount",
+            "cropStartSeconds", "cropEndSeconds", "sourcePtsVerification",
+            "outputPtsVerification", "frames",
+        )
+        if any(original_clock.get(key) != selected_clock.get(key) for key in semantic_fields):
+            return None
+        return original_receipt_path.resolve(), sha256_file(original_receipt_path)
+
+    def verified_nested_materialization(
+        selection: dict[str, Any], selected_clock: dict[str, Any],
+        selected_sha: str, parent_video: Path, parent_sha: str,
+    ) -> dict[str, Any] | None:
+        """Verify a reviewed local cut whose clock maps into its raw parent.
+
+        The selection span is local to the materialized cut.  The immutable
+        attempt manifest and current review receipt bind that cut to the raw
+        source and its crop clock; they must both agree before translating the
+        local interval into parent time.
+        """
+        provenance = selection.get("sourceAttemptProvenance")
+        if not isinstance(provenance, dict):
+            return None
+
+        def retained_json(path_key: str, sha_key: str) -> tuple[dict[str, Any], Path] | None:
+            raw_path = provenance.get(path_key)
+            expected_sha = str(provenance.get(sha_key) or "").casefold()
+            if not raw_path or len(expected_sha) != 64:
+                return None
+            path = Path(str(raw_path)).expanduser().resolve()
+            try:
+                data = path.read_bytes()
+                if hashlib.sha256(data).hexdigest() != expected_sha:
+                    return None
+                value = loads_reconstruction_metadata(data.decode("utf-8-sig"))
+            except (OSError, UnicodeError, ValueError, TypeError):
+                return None
+            return (value, path) if isinstance(value, dict) else None
+
+        manifest_item = retained_json("originalManifestPath", "originalManifestSha256")
+        review_item = retained_json("currentReviewReceipt", "currentReviewReceiptSha256")
+        if manifest_item is None or review_item is None:
+            return None
+        manifest, manifest_path = manifest_item
+        review, review_path = review_item
+        if manifest.get("sourceIdentityVerified") is not True:
+            return None
+
+        original_source = Path(str(manifest.get("sourcePath") or "")).expanduser().resolve()
+        candidate_video = Path(str(manifest.get("candidateVideo") or "")).expanduser().resolve()
+        original_clock_path = Path(str(manifest.get("clockPath") or "")).expanduser().resolve()
+        original_source_sha = str(manifest.get("sourceSha256") or "").casefold()
+        candidate_sha = str(manifest.get("candidateVideoSha256") or "").casefold()
+        clock_sha = str(manifest.get("clockSha256") or "").casefold()
+        span = selection.get("selectedSpanInOriginalSource")
+        local_start = optional_float(span.get("startSeconds")) if isinstance(span, dict) else None
+        local_end = optional_float(span.get("endSeconds")) if isinstance(span, dict) else None
+        selected_fps = optional_float(selected_clock.get("outputFps"))
+        selected_count = optional_int(selected_clock.get("outputFrameCount"))
+        crop_start = optional_float(selected_clock.get("cropStartSeconds"))
+        crop_end = optional_float(selected_clock.get("cropEndSeconds"))
+        selected_origin = optional_float(selected_clock.get("sourceOriginTimeSec"))
+        if (original_source != parent_video or original_source_sha != parent_sha
+                or not original_source.is_file() or sha256_file(original_source) != parent_sha
+                or candidate_sha != selected_sha or not candidate_video.is_file()
+                or sha256_file(candidate_video) != selected_sha
+                or not original_clock_path.is_file() or len(clock_sha) != 64
+                or sha256_file(original_clock_path) != clock_sha
+                or selected_fps is None or selected_fps <= 0 or selected_count is None
+                or selected_count <= 0 or crop_start is None or crop_end is None
+                or crop_end <= crop_start or selected_origin is None
+                or local_start is None or local_end is None or local_end <= local_start):
+            return None
+        try:
+            original_clock = load_verified_source_frame_clock(
+                original_clock_path, expected_video_path=candidate_video)
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+        semantic_fields = (
+            "schemaVersion", "sourceVideoSha256", "sourceFps", "sourceFrameCount",
+            "sourceOriginTimeSec", "outputVideoSha256", "outputFps", "outputFrameCount",
+            "cropStartSeconds", "cropEndSeconds", "sourcePtsVerification",
+            "outputPtsVerification", "frames",
+        )
+        if (any(original_clock.get(key) != selected_clock.get(key) for key in semantic_fields)
+                or str(original_clock.get("sourceVideoSha256") or "").casefold() != parent_sha
+                or str(original_clock.get("outputVideoSha256") or "").casefold() != selected_sha):
+            return None
+        frames = original_clock.get("frames")
+        if not isinstance(frames, list) or len(frames) != selected_count or not frames:
+            return None
+        frame_ids = [optional_int(row.get("sourceFrameIndex"))
+                     for row in frames if isinstance(row, dict)]
+        if len(frame_ids) != selected_count or any(index is None for index in frame_ids):
+            return None
+        if (manifest.get("sourceFramesHalfOpen") != [min(frame_ids), max(frame_ids) + 1]
+                or manifest.get("outputFrameCount") != selected_count
+                or str(manifest.get("clockSourceSha256") or "").casefold() != parent_sha
+                or optional_float(manifest.get("sourceFps")) is None
+                or abs(float(manifest["sourceFps"]) - float(original_clock["sourceFps"])) > 1e-7
+                or manifest.get("clockFirst") != frames[0]
+                or manifest.get("clockLast") != frames[-1]):
+            return None
+        manifest_times = manifest.get("sourceSeconds")
+        if (not isinstance(manifest_times, list) or len(manifest_times) != 2
+                or optional_float(manifest_times[0]) is None
+                or optional_float(manifest_times[1]) is None
+                or abs(float(manifest_times[0]) - crop_start) > 1e-6
+                or abs(float(manifest_times[1]) - crop_end) > 1e-6):
+            return None
+
+        # The review is authoritative for the currently selected local cut;
+        # the older manifest only establishes its immutable crop lineage.
+        review_cut_path = Path(str(review.get("selectedCutPath") or "")).expanduser().resolve()
+        if (str(review.get("selectedCutSha256") or "").casefold() != selected_sha
+                or str(review.get("parentChunkSha256") or "").casefold() != selected_sha
+                or str(review.get("rawSourceSha256") or "").casefold() != parent_sha
+                or not review_cut_path.is_file() or sha256_file(review_cut_path) != selected_sha
+                or Path(str(review.get("rawSourcePath") or "")).expanduser().resolve() != parent_video
+                or not Path(str(review.get("parentChunkPath") or "")).expanduser().resolve().is_file()
+                or sha256_file(Path(str(review["parentChunkPath"])).expanduser().resolve()) != selected_sha
+                or review.get("phasePassed") is not True):
+            return None
+        review_clock_path = review.get("sourceFrameClockPath")
+        review_clock_sha = str(review.get("sourceFrameClockSha256") or "").casefold()
+        if review_clock_path:
+            review_clock_path = Path(str(review_clock_path)).expanduser().resolve()
+            if (not review_clock_path.is_file() or len(review_clock_sha) != 64
+                    or sha256_file(review_clock_path) != review_clock_sha):
+                return None
+            try:
+                review_clock = load_verified_source_frame_clock(
+                    review_clock_path, expected_video_path=review_cut_path)
+            except (OSError, ValueError, TypeError, AttributeError):
+                return None
+            if any(review_clock.get(key) != selected_clock.get(key) for key in semantic_fields):
+                return None
+        elif review_clock_sha:
+            return None
+        review_start = optional_float(review.get("selectedStart"))
+        review_end = optional_float(review.get("selectedEnd"))
+        local_duration = selected_count / selected_fps
+        tolerance = 1.0 / selected_fps + 1e-6
+        if (review_start is None or review_end is None
+                or abs(review_start - local_start) > 1e-6
+                or abs(review_end - local_end) > 1e-6
+                or abs(local_start) > tolerance
+                or abs(local_end - local_duration) > tolerance):
+            return None
+        return {
+            "originSeconds": crop_start + selected_origin,
+            "endSeconds": crop_end + selected_origin,
+            "localStartSeconds": local_start,
+            "localEndSeconds": local_end,
+            "originalManifestPath": str(manifest_path),
+            "originalManifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            "reviewReceiptPath": str(review_path),
+            "reviewReceiptSha256": hashlib.sha256(review_path.read_bytes()).hexdigest(),
+            "materializationClockPath": str(original_clock_path),
+            "materializationClockSha256": clock_sha,
+        }
+
+    nested_materialization: dict[str, Any] | None = None
     try:
         selection_bytes = selection_path.read_bytes()
         selection = loads_reconstruction_metadata(selection_bytes.decode("utf-8-sig"))
         reference = loads_reconstruction_metadata(reference_path.read_text(encoding="utf-8"))
         selected_video_sha = sha256_file(selected_video_path)
-        selected_path_receipt = Path(str(selection.get("selectedSegmentPath") or "")).expanduser().resolve()
         selected_sha_receipt = str(selection.get("selectedSegmentSha256") or "").casefold()
         span = selection.get("selectedSpanInOriginalSource")
-        parent_video_path = Path(str(selection.get("sourceVideoPath") or "")).expanduser().resolve()
+        materialization_parent = selection.get("selectedSegmentSourceVideoPath")
+        parent_video_path = Path(str(materialization_parent or selection.get("sourceVideoPath") or "")).expanduser().resolve()
+        selection_source_video_path = parent_video_path
         origin = optional_float(span.get("startSeconds")) if isinstance(span, dict) else None
         source_pose_video_sha = str(reference.get("sourceVideoSha256") or "").casefold()
         source_pose_reference_sha = sha256_file(reference_path)
@@ -484,6 +773,7 @@ def verified_source_timeline_mapping(
                 return None
         parent_clock_sha = str(parent_clock.get("sourceVideoSha256") or "").casefold()
         parent_video_sha = sha256_file(parent_video_path)
+        selection_source_video_sha = parent_video_sha
         parent_clock_receipt_sha = sha256_file(parent_clock_path)
         selected_clock_path = source_frame_clock_path_for_video(selected_video_path)
         selected_clock = load_verified_source_frame_clock(
@@ -491,19 +781,67 @@ def verified_source_timeline_mapping(
             expected_video_path=selected_video_path,
         )
         selected_clock_sha = sha256_file(selected_clock_path)
+        selected_clock_receipt_path = selected_clock_path.resolve()
+        # Map in the nearest source domain shared by the selected-cut and
+        # motion-input clocks. A selection manifest may name an ancestor raw
+        # file while both verified clocks correctly map through an intermediate
+        # materialized parent; keep that ancestor as separate provenance.
+        clock_source_path = Path(str(selected_clock.get("sourceVideoPath") or "")).expanduser().resolve()
+        clock_source_sha = str(selected_clock.get("sourceVideoSha256") or "").casefold()
+        motion_clock_source_path = Path(str(parent_clock.get("sourceVideoPath") or "")).expanduser().resolve()
+        if (clock_source_path != parent_video_path or clock_source_sha != parent_video_sha):
+            selected_crop = optional_float(selected_clock.get("cropStartSeconds"))
+            selected_clock_origin = optional_float(selected_clock.get("sourceOriginTimeSec"))
+            local_start = optional_float(span.get("startSeconds")) if isinstance(span, dict) else None
+            if (not clock_source_path.is_file()
+                    or sha256_file(clock_source_path) != clock_source_sha
+                    or clock_source_path != motion_clock_source_path
+                    or clock_source_sha != parent_clock_sha
+                    or selected_crop is None or selected_clock_origin is None
+                    or local_start is None
+                    or abs(selected_crop + selected_clock_origin - local_start) > 1e-6
+                    or optional_float(selected_clock.get("sourceOriginTimeSec"))
+                    != optional_float(parent_clock.get("sourceOriginTimeSec"))):
+                return None
+            parent_video_path = clock_source_path
+            parent_video_sha = clock_source_sha
+        selected_crop_start = optional_float(selected_clock.get("cropStartSeconds"))
+        selected_clock_origin = optional_float(selected_clock.get("sourceOriginTimeSec"))
+        if (not materialization_parent and isinstance(span, dict)
+                and selected_crop_start is not None and selected_clock_origin is not None
+                and origin is not None
+                and abs(selected_crop_start + selected_clock_origin - origin) > 1e-6):
+            nested_materialization = verified_nested_materialization(
+                selection, selected_clock, selected_video_sha,
+                parent_video_path, parent_video_sha)
+            if nested_materialization is not None:
+                origin = nested_materialization["originSeconds"]
+        original_clock_authority = original_clock_authority_for_copy(selected_clock)
+        if original_clock_authority is not None:
+            selected_clock_receipt_path, selected_clock_sha = original_clock_authority
+        if materialization_parent:
+            crop_start = optional_float(selection.get("selectedSegmentCropStartSeconds"))
+            clock_origin = optional_float(selected_clock.get("sourceOriginTimeSec"))
+            if crop_start is None or clock_origin is None:
+                return None
+            origin = crop_start + clock_origin
+            recorded_parent_sha = selection.get("selectedSegmentSourceVideoSha256")
+            if recorded_parent_sha and str(recorded_parent_sha).casefold() != parent_video_sha:
+                return None
     except (OSError, ValueError, TypeError, AttributeError):
         return None
 
     if (
-        selected_path_receipt != selected_video_path.resolve()
-        or not selected_sha_receipt
+        # selectedSegmentPath is provenance; the current cut is authenticated
+        # by the exact recorded content hash and the verified frame clocks.
+        not selected_sha_receipt
         or selected_sha_receipt != selected_video_sha
         or not parent_video_path.is_file()
-        or Path(str(parent_clock.get("sourceVideoPath") or "")).expanduser().resolve() != parent_video_path
         or parent_clock_sha != parent_video_sha
-        or Path(str(selected_clock.get("sourceVideoPath") or "")).expanduser().resolve() != parent_video_path
         or str(selected_clock.get("sourceVideoSha256") or "").casefold() != parent_video_sha
         or source_pose_video_sha != selected_video_sha
+        or (source_pose.get("sourceVideoSha256") is not None
+            and str(source_pose["sourceVideoSha256"]).casefold() != selected_video_sha)
         or origin is None
         or origin < 0.0
     ):
@@ -534,13 +872,9 @@ def verified_source_timeline_mapping(
         return None
 
     try:
-        pose_text = json.dumps(
-            source_pose,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
+        from .pose_fidelity import _canonical_source_pose_sha256
+
+        pose_sha = _canonical_source_pose_sha256(source_pose)
     except (TypeError, ValueError):
         return None
     selected_output_fps = optional_float(selected_clock.get("outputFps"))
@@ -560,7 +894,7 @@ def verified_source_timeline_mapping(
         "selectedStartSeconds": origin,
         "originSeconds": origin,
         "selectedPoseLocalOriginSeconds": optional_float(source_pose.get("sourceTimeOriginSec")),
-        "selectedFrameClockReceiptPath": str(selected_clock_path.resolve()),
+        "selectedFrameClockReceiptPath": str(selected_clock_receipt_path),
         "selectedFrameClockReceiptSha256": selected_clock_sha,
         "parentSourceFps": parent_source_fps,
         "selectedOutputFps": selected_output_fps,
@@ -572,18 +906,24 @@ def verified_source_timeline_mapping(
         "parentSourceSha256": parent_video_sha,
         "sourceVideoPath": str(parent_video_path),
         "sourceVideoSha256": parent_video_sha,
+        "selectionSourceVideoPath": str(selection_source_video_path),
+        "selectionSourceVideoSha256": selection_source_video_sha,
         "selectionReceiptPath": str(selection_path.resolve()),
         "selectionReceiptSha256": hashlib.sha256(selection_bytes).hexdigest(),
         "sourcePoseReferencePath": str(reference_path.resolve()),
         "sourcePoseReferenceSha256": source_pose_reference_sha,
-        "sourcePosePayloadSha256": hashlib.sha256(pose_text.encode("utf-8")).hexdigest(),
+        "sourcePosePayloadSha256": pose_sha,
         "clockReceiptPath": str(parent_clock_path.resolve()),
         "clockReceiptSha256": parent_clock_receipt_sha,
         "parentClockOutputSha256": str(parent_clock.get("outputVideoSha256") or "").casefold(),
         "parentClockSourceVideoSha256": parent_clock_sha,
         "parentSourceFrameCount": optional_int(parent_clock.get("sourceFrameCount")),
         "parentSourceTimeOriginSec": optional_float(parent_clock.get("sourceOriginTimeSec")) or 0.0,
-        "selectedEndSeconds": optional_float(span.get("endSeconds")) if isinstance(span, dict) else None,
+        "selectedEndSeconds": (
+            nested_materialization["endSeconds"] if nested_materialization is not None
+            else optional_float(span.get("endSeconds")) if isinstance(span, dict) else None
+        ),
+        "nestedMaterialization": nested_materialization,
     }
 
 
@@ -873,6 +1213,10 @@ def _verify_constant_frame_rate_timestamps(
 ) -> dict[str, float | int]:
     """Reject a nominal-FPS clock unless real decoded frame PTS form a CFR grid."""
     timestamps, time_base = _read_decoded_frame_timestamps(video_path, video_role=video_role)
+    if len(timestamps) != expected_frame_count:
+        # A transient incomplete probe must not invalidate an otherwise verified
+        # immutable receipt; a second complete scan still has to pass every PTS check.
+        timestamps, time_base = _read_decoded_frame_timestamps(video_path, video_role=video_role)
     return _verify_timestamp_rows(
         timestamps,
         time_base,
@@ -895,7 +1239,9 @@ def _verify_timestamp_rows(
             or not math.isfinite(time_base) or time_base <= 0.0
             or not all(math.isfinite(value) for value in timestamps)):
         raise ValueError(
-            f"{video_role} frame PTS/count are incomplete; refusing an exact source clock"
+            f"{video_role} frame PTS/count are incomplete; refusing an exact source clock "
+            f"(expected frames={expected_frame_count}, decoded frames={len(timestamps)}, "
+            f"fps={expected_fps}, time base={time_base})"
         )
     # Account for container timestamp quantization, but never let a coarse time
     # base hide a meaningful fraction of a missing/duplicated source frame.
@@ -917,6 +1263,7 @@ def _verify_timestamp_rows(
         "fps": float(expected_fps),
         "timeBaseSec": float(time_base),
         "maximumGridErrorSec": float(maximum_grid_error),
+        "originPtsSec": float(origin),
     }
 
 

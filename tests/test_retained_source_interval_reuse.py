@@ -175,6 +175,24 @@ def test_retained_interval_reuses_exact_cut_without_downloading_or_redetecting(t
     assert imported["videoId"] == "video-1"
 
 
+def test_retained_interval_imports_authoritative_embedded_phase_evidence(tmp_path, monkeypatch):
+    retained, contract, reference = _retained_fixture(tmp_path)
+    _patch_existing_authority(monkeypatch)
+    (retained / "segment_detection" / "exact_source_phase_validation.json").unlink()
+    candidate = _candidate_for_retained(retained, reference)
+    destination = tmp_path / "imported"
+
+    selected = bake.materialize_retained_source_interval(
+        candidate, candidate_workspace=destination, exercise_motion_contract=contract,
+    )
+
+    phase = json.loads((destination / "segment_detection" / "exact_source_phase_validation.json").read_text())
+    assert phase["passed"] is True
+    assert phase["validationPolicyVersion"] == bake.EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION
+    assert phase["sourceVideoPath"] == str(selected.resolve())
+    assert not (retained / "segment_detection" / "exact_source_phase_validation.json").exists()
+
+
 def test_retained_interval_hash_mismatch_stays_unresolved(tmp_path, monkeypatch):
     _retained, contract, reference = _retained_fixture(tmp_path)
     _patch_existing_authority(monkeypatch)
@@ -633,3 +651,131 @@ def test_two_scale_review_reaggregates_retained_source_evidence_without_model_ca
         result["gates"]["structuredEvidence"]["response"], requirements, frame_inventory,
     )["reviewStatus"] == "passed"
     assert model_calls == []
+
+
+def test_source_motion_identity_approval_metadata_and_only_missing_capability_enrichment(tmp_path):
+    from exercise_motion_pkg.definition_ingestion import _has_trusted_explicit_definition
+    _, saved, _ = _retained_fixture(tmp_path)
+    saved["requiredPhases"] = ["Lower", "Return"]
+    saved["variantQualifiers"] = ["With the implement"]
+    saved["groundContactMode"] = "continuous"
+    saved["handRelationship"] = "rigid_pair"
+    saved["implementSupportMode"] = "hands_only"
+    saved["observableMotionSpec"] = {"primaryAxis": "vertical"}
+    definition = saved["motionContext"]["exerciseDefinition"]
+    definition.update(definingAction=saved["definingAction"], completionMode="return_to_start",
+                      requiredPhases=saved["requiredPhases"])
+    definition["review"].update(status="approved", reviewArtifactSha256="a" * 64,
+                                proposalContractSha256="b" * 64)
+    saved["motionContext"]["requiredAccessories"] = [
+        {"id": "bench-id", "type": "ACCESSORY", "name": "Bench"}]
+    current = deepcopy(saved)
+    current["motionContext"]["exerciseDefinition"]["review"].update(
+        approvedAtUtc="2026-11-11T10:00:00Z", reviewArtifactSha256="c" * 64,
+        proposalContractSha256="d" * 64)
+    current["motionContext"]["requiredAccessories"][0]["capabilities"] = ["BENCH"]
+    assert bake.exercise_motion_contract_prompt_identity_matches(saved, current)
+    assert _has_trusted_explicit_definition(current["motionContext"])
+    assert bake.exercise_motion_contract_prompt_sha256(saved) != bake.exercise_motion_contract_prompt_sha256(current)
+    for key, value in (
+        ("definingAction", "Jump"), ("requiredPhases", ["Leave ground", "Land"]),
+        ("variantQualifiers", ["One leg"]), ("completionMode", "alternating_pair"),
+        ("groundContactMode", "none"), ("handRelationship", "independent"),
+        ("implementSupportMode", "rack"), ("observableMotionSpec", {"primaryAxis": "horizontal"}),
+    ):
+        changed = deepcopy(current)
+        changed[key] = value
+        assert not bake.exercise_motion_contract_prompt_identity_matches(saved, changed), key
+    for key, value in (("id", "other-bench"), ("type", "CABLE")):
+        changed = deepcopy(current)
+        changed["motionContext"]["requiredAccessories"][0][key] = value
+        assert not bake.exercise_motion_contract_prompt_identity_matches(saved, changed)
+    explicit = deepcopy(saved)
+    explicit["motionContext"]["requiredAccessories"][0]["capabilities"] = []
+    assert not bake.exercise_motion_contract_prompt_identity_matches(explicit, current)
+    explicit["motionContext"]["requiredAccessories"][0]["capabilities"] = ["INCLINE_BENCH"]
+    assert not bake.exercise_motion_contract_prompt_identity_matches(explicit, current)
+    for status in ("pending", "withdrawn"):
+        changed = deepcopy(current)
+        changed["motionContext"]["exerciseDefinition"]["review"]["status"] = status
+        assert not bake.exercise_motion_contract_prompt_identity_matches(saved, changed)
+        assert not _has_trusted_explicit_definition(changed["motionContext"])
+
+
+def test_retained_interval_explicit_relocation_verifies_bytes_clock_and_lineage(tmp_path, monkeypatch):
+    import shutil
+    from exercise_motion_pkg import source_frame_clock
+    retained, contract, reference = _retained_fixture(tmp_path)
+    _patch_existing_authority(monkeypatch)
+    original = retained / "input" / "selected_segment.mp4"
+    relocated = tmp_path / "durable" / "same-cut.mp4"
+    relocated.parent.mkdir()
+    shutil.copy2(original, relocated)
+    original.write_bytes(b"a different later source cut")
+    selection_path = retained / "segment_detection" / "segment_selection.json"
+    receipt_before = selection_path.read_bytes()
+    rows = [{"outputFrameIndex": 0, "sourceFrameIndex": 10, "sourceTimeSec": 1.}]
+    monkeypatch.setattr(source_frame_clock, "load_verified_source_frame_clock",
+                        lambda *a, **k: {"sourceVideoSha256": reference["sourceVideoSha256"], "frames": rows})
+    monkeypatch.setattr(bake, "load_verified_source_pose_reference", lambda *a: {"verified": True})
+    monkeypatch.setattr(bake, "rebind_existing_source_frame_clock_for_video_copy",
+                        lambda **k: source_frame_clock.source_frame_clock_path_for_video(k["output_video_path"]))
+    monkeypatch.setattr(source_frame_clock, "recover_materialized_cut_clock", lambda **k: {"frames": rows})
+    authority_calls = []
+    monkeypatch.setattr(bake, "pre_reconstruction_source_interval_authority",
+                        lambda **k: authority_calls.append(k["candidate_workspace"]) or {"authoritative": True})
+    candidate = _candidate_for_retained(retained, reference)
+    result = bake.materialize_retained_source_interval(
+        candidate, candidate_workspace=tmp_path / "new", exercise_motion_contract=contract,
+        relocated_segment_path=relocated)
+    assert result.read_bytes() == b"exact approved interval"
+    assert authority_calls == [tmp_path / "new"]
+    assert selection_path.read_bytes() == receipt_before
+    assert original.read_bytes() == b"a different later source cut"
+    wrong = tmp_path / "wrong.mp4"
+    wrong.write_bytes(b"not the selected source bytes")
+    with pytest.raises(ValueError, match="approved segment bytes changed"):
+        bake.materialize_retained_source_interval(
+            candidate, candidate_workspace=tmp_path / "wrong-import", exercise_motion_contract=contract,
+            relocated_segment_path=wrong)
+    monkeypatch.setattr(source_frame_clock, "recover_materialized_cut_clock", lambda **k: {"frames": []})
+    with pytest.raises(ValueError, match="exposure lineage differs"):
+        bake.materialize_retained_source_interval(
+            candidate, candidate_workspace=tmp_path / "bad-lineage", exercise_motion_contract=contract,
+            relocated_segment_path=relocated)
+
+    monkeypatch.setattr(source_frame_clock, "load_verified_source_frame_clock",
+                        lambda *a, **k: {"sourceVideoSha256": "0" * 64, "frames": rows})
+    with pytest.raises(ValueError, match="clock names another original source"):
+        bake.materialize_retained_source_interval(
+            candidate, candidate_workspace=tmp_path / "wrong-clock", exercise_motion_contract=contract,
+            relocated_segment_path=relocated)
+
+@pytest.mark.parametrize('review_parent', [False, True])
+def test_retained_interval_uses_review_video_clock_and_verified_parent(tmp_path, monkeypatch, review_parent):
+    retained, contract, reference = _retained_fixture(tmp_path)
+    _patch_existing_authority(monkeypatch)
+    parent = retained / 'source' / 'parent_chunk.mp4'
+    parent.write_bytes(b'known reviewed parent chunk')
+    selection_path = retained / 'segment_detection' / 'segment_selection.json'
+    selection = json.loads(selection_path.read_text())
+    selection.update(selectedSegmentSourceVideoPath=str(parent.resolve()),
+                     selectedSegmentSourceVideoSha256=_sha(parent),
+                     selectedSpan={'startSeconds': 1., 'endSeconds': 3.},
+                     selectedSpanInOriginalSource={'startSeconds': 11., 'endSeconds': 13.})
+    ranking = selection['sourceCutRanking']['payload']
+    if review_parent:
+        ranking.update(sourceCutReviewVideoPath=str(parent.resolve()),
+                       sourceCutReviewVideoSha256=_sha(parent),
+                       sourceCutReviewVideoSha256After=_sha(parent))
+    else:
+        ranking.update(selected_section_start_seconds=11., selected_section_end_seconds=13.)
+    selection_path.write_text(json.dumps(selection))
+    reference['segmentSelectionSha256'] = _sha(selection_path)
+    candidate = _candidate_for_retained(retained, reference)
+    assert bake.materialize_retained_source_interval(
+        candidate, candidate_workspace=retained, exercise_motion_contract=contract)
+    parent.write_bytes(b'changed parent bytes')
+    with pytest.raises(ValueError, match='parent video changed|reviewed source video changed'):
+        bake.materialize_retained_source_interval(
+            candidate, candidate_workspace=retained, exercise_motion_contract=contract)

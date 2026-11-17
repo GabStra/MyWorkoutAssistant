@@ -504,6 +504,7 @@ def test_heel_image_observations_do_not_require_ankle_identity():
 @pytest.mark.parametrize('failure', [None, 'different_video', 'moving_toe', 'wrong_ankle'])
 def test_uncalibrated_visible_contact_requires_matching_video_and_independent_still_toe(failure):
     from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
+    from exercise_motion_pkg.body_support_observation import POLICY_VERSION
     from exercise_motion_pkg.sequence_stabilization import contact_mask
     joints = {
         'left_ankle': {'image': [.5, .8], 'world': [0., 0., 0.], 'confidence': .99},
@@ -514,18 +515,39 @@ def test_uncalibrated_visible_contact_requires_matching_video_and_independent_st
                     'frames': [{'timeSeconds': i / 30., 'joints': copy.deepcopy(joints)} for i in range(12)]}
     source = {'frames': [{'sourceTimeSec': i / 30., 'joints': {'left_ankle': [.5, .8]}}
                          for i in range(12)]}
-    evidence = {'contacts': [], 'bodySupportObservation': {
-        'status': 'observed', 'sourceVideoSha256': 'other' if failure == 'different_video' else 'same',
-        'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground'}}}
+    evidence = {
+        'footContactCandidates': [
+            {'jointName': 'left_ankle', 'contactMotion': 'stationary',
+             'startRatio': 0., 'endRatio': 1.},
+        ],
+        'bodySupportObservation': {
+            'status': 'observed', 'source': 'exact_source_visual_support_observation',
+            'policyVersion': POLICY_VERSION,
+            'sourceVideoSha256': 'other' if failure == 'different_video' else 'same',
+            'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground'}}}
     if failure == 'moving_toe':
-        observations['frames'][6]['joints']['left_toe']['image'][0] += .04
+            for frame in observations['frames'][6:]:
+                frame['joints']['left_toe']['image'][0] += .06
     if failure == 'wrong_ankle':
         for frame in source['frames']:
             frame['joints']['left_ankle'][0] = .4
     result = classify_foot_contacts(observations, evidence, source)
     mask = contact_mask({'sourceFootSupportEvidence': result}, ['left_ankle', 'left_foot'], 12)
-    if failure:
+    if failure in {'different_video', 'wrong_ankle'}:
         assert not result['contacts'] and not mask.any()
+    elif failure == 'moving_toe':
+        # A stationary ankle supports touch presence only. It cannot turn a
+        # visibly moving toe into a stationary material anchor.
+        contact, = [row for row in result['contacts'] if row['jointName'] == 'left_foot']
+        assert contact['contactMotion'] == 'stationary'
+        assert contact['verticalOnly'] is True
+        assert 'anchorGroupId' not in contact
+        assert contact['source'] == (
+            'exact_visual_contact_and_independent_stationary_ankle_height_only')
+        assert contact['worldHeightResolved'] is False
+        assert not mask.any()
+        height_only = vertical_only_contact_mask(result, ['left_ankle', 'left_foot'], 12)
+        assert height_only[:, 1].all() and not height_only[:, 0].any()
     else:
         assert mask[:, 1].all() and not mask[:, 0].any()
         assert result['contacts'][0]['minimumLiftRatio'] == 0.
@@ -667,3 +689,51 @@ def test_vertical_only_contact_targets_hold_height_and_leave_tangent_free():
         targets[2:6, names.index('left_foot'), [0, 2]],
         points[2:6, names.index('left_foot'), [0, 2]],
     )
+
+
+def test_reconstructed_support_cannot_calibrate_raised_heel_as_neutral_sole():
+    from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
+    from exercise_motion_pkg.body_support_observation import POLICY_VERSION
+
+    frames = []
+    for index in range(64):
+        raised = index >= 32
+        frames.append({'timeSeconds': index / 30., 'joints': {
+            'left_ankle': {'image': [.5, .5], 'world': [0., 0., 0.], 'confidence': .99},
+            'left_heel': {'image': [.5, .55 if raised else .6],
+                          'world': [0., -.1 if raised else 0., 0.], 'confidence': .99},
+            'left_toe': {'image': [.65, .6], 'world': [.2, 0., 0.], 'confidence': .99},
+        }})
+    observations = {'available': True, 'source': 'observed', 'fps': 30.,
+                    'sourceVideoSha256': 'same-video', 'frames': frames}
+    source = {'frames': [{'sourceTimeSec': row['timeSeconds'],
+                          'joints': {'left_ankle': [.5, .5]}} for row in frames]}
+    evidence = {'sourceVideoSha256': 'same-video', 'contacts': [
+        {'jointName': 'left_ankle', 'startRatio': 0., 'endRatio': 1.}],
+        'bodySupportObservation': {'status': 'observed',
+            'source': 'exact_source_visual_support_observation', 'policyVersion': POLICY_VERSION,
+            'sourceVideoSha256': 'same-video',
+            'observation': {'leftFoot': 'stationary_forefoot', 'leftFootSurface': 'ground'}}}
+    unverified = classify_foot_contacts(observations, evidence, source)
+    assert 'full_sole' not in unverified['feet']['left']['states']
+    evidence['stationarySoleIntervalReview'] = {'sourceVideoSha256': 'same-video',
+        'sourceFrameCount': 64, 'feet': {'left': {'confirmed': True,
+            'reviewedFrameCount': 64, 'decisions': [
+                'stationary_full_sole_ground', 'stationary_forefoot_ground']}}}
+    reviewed = classify_foot_contacts(observations, evidence, source)
+    assert reviewed['feet']['left']['imagePitchReference'] == pytest.approx(0.)
+    assert reviewed['feet']['left']['states'] == ['full_sole'] * 32 + ['toe_only'] * 32
+    evidence['stationarySoleIntervalReview']['sourceVideoSha256'] = 'other-video'
+    assert 'full_sole' not in classify_foot_contacts(observations, evidence, source)['feet']['left']['states']
+    evidence['stationarySoleIntervalReview']['sourceVideoSha256'] = 'same-video'
+    evidence['stationarySoleIntervalReview']['feet']['left']['decisions'] = [
+        'stationary_forefoot_ground', 'stationary_full_sole_ground']
+    for index, row in enumerate(frames):
+        raised = index < 32
+        row['joints']['left_heel']['image'][1] = .55 if raised else .6
+        row['joints']['left_heel']['world'][1] = -.1 if raised else 0.
+        if not raised:
+            for point in row['joints'].values():
+                point['image'][0] += .02  # A new observed stance, not the old toe anchor.
+    returned = classify_foot_contacts(observations, evidence, source)
+    assert returned['feet']['left']['states'][32:] == ['full_sole'] * 32

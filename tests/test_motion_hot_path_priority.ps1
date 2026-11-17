@@ -6,7 +6,6 @@ $runner = Join-Path $root 'scripts/run_exercise_motion_workout_plan.ps1'
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($runner, [ref]$null, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-
 function Get-FunctionText([string]$Name) {
     $node = $ast.Find({ param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name
@@ -23,6 +22,7 @@ foreach ($name in @(
     'Test-HasIdentityReviewedRecommendedCandidate',
     'Test-MotionProcessingResumeReady',
     'Test-SourceTurnResumePresent',
+    'Assert-StagedWaveWorkspaceIsQuiescent',
     'Get-BakeQueuePriority',
     'Optimize-PendingBakeQueue'
 )) {
@@ -110,6 +110,14 @@ try {
     if ($ordered[1].exerciseName -ne 'Cursor') { throw 'Source-turn cursor must dequeue second.' }
     if ($ordered[2].exerciseName -ne 'Cold') { throw 'Cold item must dequeue last.' }
 
+    $resume | Add-Member -NotePropertyName SourceWorkTurns -NotePropertyValue 2
+    $cursor | Add-Member -NotePropertyName SourceWorkTurns -NotePropertyValue 1
+    foreach ($item in @($resume, $cursor, $cold)) { $queue.Enqueue($item) }
+    Optimize-PendingBakeQueue -Queue $queue
+    foreach ($name in @('Cold', 'Cursor', 'Resume')) {
+        if ($queue.Dequeue().exerciseName -ne $name) { throw "Expected waiting item '$name' next." }
+    }
+
     # DisableStageResume must still leave discovery reuse gated in the runner source.
     $enqueueText = $ast.Extent.Text
     if ($enqueueText -notmatch 'Test-MotionProcessingResumeReady') {
@@ -140,6 +148,42 @@ try {
     if ($enqueueText -notmatch 'if \(-not \$DisableStageResume -and -not \$DisableMotionProcessingResume -and\s+\(Test-BakeStageReady') {
         throw 'Completed bake reuse must honor the motion-processing-only resume switch.'
     }
+
+    function Invoke-WithStagedWaveAdmissionLock {
+        param([string]$QueueRoot, [scriptblock]$Operation)
+        & $Operation
+    }
+    function Get-StagedBakeQueueServiceState {
+        param([string]$QueueRoot)
+        return [pscustomobject]@{
+            processState = 'stopped'
+            state = $null
+            matchingProcess = $false
+            healthy = $false
+        }
+    }
+    $queueRoot = Join-Path $fixture 'staged-wave-services\v1'
+    foreach ($directory in @('requests', 'processing', 'ambiguous')) {
+        New-Item -ItemType Directory -Path (Join-Path $queueRoot $directory) -Force | Out-Null
+    }
+    '{"status":"ambiguous_recovery"}' |
+        Set-Content -LiteralPath (Join-Path $queueRoot 'ambiguous\request.json') -Encoding UTF8
+    Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $fixture
+
+    '{"requestId":"active"}' |
+        Set-Content -LiteralPath (Join-Path $queueRoot 'processing\active.json') -Encoding UTF8
+    function Get-StagedBakeQueueServiceState {
+        param([string]$QueueRoot)
+        return [pscustomobject]@{
+            processState = 'running'
+            state = [pscustomobject]@{ status = 'busy'; currentRequestId = 'active'; currentWaveId = 'wave' }
+            matchingProcess = $true
+            healthy = $true
+        }
+    }
+    $activeBlocked = $false
+    try { Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $fixture } catch { $activeBlocked = $true }
+    if (-not $activeBlocked) { throw 'Active processing work must continue to block workspace startup.' }
 
     $script:priorityCalls = 0
     function Get-BakeQueuePriority { param($WorkItem); $script:priorityCalls++; return $WorkItem.priority }

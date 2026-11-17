@@ -27,6 +27,7 @@ from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
 from exercise_motion_pkg.preview import _build_wear_transformed_frames
 from exercise_motion_pkg.pipeline import (
     GenerateRequest,
+    _rebind_normalized_motion_source_frame_clock_paths,
     _source_pose_on_motion_clock,
     prepare_input_video,
 )
@@ -42,16 +43,49 @@ from exercise_motion_pkg.pose_fidelity import (
 from exercise_motion_pkg.structural_refinement import stabilize_distal_foot_heading
 from exercise_motion_pkg.source_frame_clock import (
     SOURCE_FRAME_CLOCK_SCHEMA_VERSION,
+    _verify_constant_frame_rate_timestamps,
     build_source_frame_clock,
     compose_source_frame_clocks,
     load_verified_source_frame_clock,
     rebind_source_frame_clock,
     rebind_source_frame_clock_for_exact_transcode,
+    rebind_existing_source_frame_clock_for_video_copy as rebind_verified_clock_copy,
     recover_materialized_cut_clock,
     source_exposure_crop_window,
     source_times_for_frame_ids,
     write_source_frame_clock,
 )
+
+
+def test_frame_clock_verification_retries_one_incomplete_pts_scan(monkeypatch) -> None:
+    scans = iter((
+        ([0.0, 0.04, 0.08, 0.12], 1 / 12_800),
+        ([0.0, 0.04, 0.08, 0.12, 0.16], 1 / 12_800),
+    ))
+    monkeypatch.setattr(
+        "exercise_motion_pkg.source_frame_clock._read_decoded_frame_timestamps",
+        lambda *_args, **_kwargs: next(scans),
+    )
+
+    verified = _verify_constant_frame_rate_timestamps(
+        Path("same-source.mp4"), expected_fps=25.0,
+        expected_frame_count=5, video_role="source",
+    )
+
+    assert verified["frameCount"] == 5
+
+
+def test_frame_clock_verification_keeps_rejecting_persistent_incomplete_pts(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "exercise_motion_pkg.source_frame_clock._read_decoded_frame_timestamps",
+        lambda *_args, **_kwargs: ([0.0, 0.04, 0.08, 0.12], 1 / 12_800),
+    )
+
+    with pytest.raises(ValueError, match="expected frames=5, decoded frames=4"):
+        _verify_constant_frame_rate_timestamps(
+            Path("same-source.mp4"), expected_fps=25.0,
+            expected_frame_count=5, video_role="source",
+        )
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 from exercise_motion_pkg.youtube import sanitize_downloaded_video
 
@@ -66,6 +100,97 @@ def _write_clock_test_video(path: Path, *, fps: float, frame_count: int = 120) -
         frame = np.full((64, 64, 3), frame_index % 255, dtype=np.uint8)
         writer.write(frame)
     writer.release()
+
+
+def test_source_clock_uses_container_start_for_nonzero_start_identity(tmp_path: Path) -> None:
+    source = tmp_path / "source-zero-start.mp4"
+    shifted_source = tmp_path / "source-nonzero-start.mp4"
+    output = tmp_path / "prepared-30fps.mp4"
+    _write_clock_test_video(source, fps=30000.0 / 1001.0, frame_count=67)
+    ffmpeg = resolve_ffmpeg_path()
+    assert ffmpeg is not None
+    result = subprocess.run(
+        [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(source),
+            "-map", "0:v:0", "-c", "copy", "-output_ts_offset", str(1.0 / 30.0),
+            "-avoid_negative_ts", "disabled", str(shifted_source),
+        ],
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    trim_video(
+        source_path=shifted_source, output_path=output, start_seconds=0.0,
+        end_seconds=3.0, target_fps=30.0,
+    )
+
+    receipt = build_source_frame_clock(
+        source_video_path=shifted_source, output_video_path=output,
+        crop_start_seconds=0.0, crop_end_seconds=3.0, output_fps=30.0,
+    )
+
+    assert receipt["sourcePtsVerification"]["originPtsSec"] == pytest.approx(0.0)
+    source_indices = [row["sourceFrameIndex"] for row in receipt["frames"]]
+    assert source_indices == list(range(len(source_indices)))
+
+
+def test_normalized_motion_rebinds_container_clock_paths_only_for_identical_receipt(tmp_path: Path) -> None:
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "selected.mp4"
+    _write_clock_test_video(source, fps=25.0, frame_count=3)
+    shutil.copy2(source, output)
+    receipt = build_source_frame_clock(
+        source_video_path=source,
+        output_video_path=output,
+        crop_start_seconds=0.0,
+        crop_end_seconds=3 / 25.0,
+        output_fps=25.0,
+    )
+    clock_path = source_frame_clock_path_for_video(output)
+    write_source_frame_clock(receipt, output_path=clock_path)
+    motion_path = tmp_path / "normalized.json"
+    container_receipt = {
+        key: receipt[key]
+        for key in ("sourceVideoSha256", "outputVideoSha256")
+    }
+    container_receipt.update({
+        "sourceVideoPath": "/workspace/source.mp4",
+        "outputVideoPath": "/workspace/selected.mp4",
+    })
+    frames = [{
+        "inferenceFrameIndex": row["outputFrameIndex"],
+        "sourceFrameIndex": row["sourceFrameIndex"],
+        "sourceTimeSec": row["sourceTimeSec"],
+    } for row in receipt["frames"]]
+    motion_path.write_text(json.dumps({
+        "frames": frames,
+        "metadata": {"reconstruction": {"sourceFrameClock": container_receipt}},
+    }), encoding="utf-8")
+
+    assert _rebind_normalized_motion_source_frame_clock_paths(
+        motion_path,
+        source_frame_clock_path=clock_path,
+        input_video_path=output,
+    )
+    rebound = json.loads(motion_path.read_text(encoding="utf-8"))[
+        "metadata"]["reconstruction"]["sourceFrameClock"]
+    assert rebound == {
+        **container_receipt,
+        "sourceVideoPath": receipt["sourceVideoPath"],
+        "outputVideoPath": receipt["outputVideoPath"],
+    }
+
+    payload = json.loads(motion_path.read_text(encoding="utf-8"))
+    payload["frames"][0]["sourceTimeSec"] += 0.01
+    motion_path.write_text(json.dumps({
+        **payload,
+    }), encoding="utf-8")
+    unchanged = motion_path.read_bytes()
+    assert not _rebind_normalized_motion_source_frame_clock_paths(
+        motion_path,
+        source_frame_clock_path=clock_path,
+        input_video_path=output,
+    )
+    assert motion_path.read_bytes() == unchanged
 
 
 def test_recover_materialized_cut_clock_requires_exact_selection_and_verifies_exposures(
@@ -110,6 +235,16 @@ def test_recover_materialized_cut_clock_requires_exact_selection_and_verifies_ex
     assert recovered["sourceVideoSha256"] == selection["selectedSegmentSourceVideoSha256"]
     assert recovered["frames"][0]["sourceFrameIndex"] == 30
     assert recovered["frames"][-1]["sourceFrameIndex"] == 74
+    relocated = tmp_path / "relocated-selected-copy.mp4"
+    relocated.write_bytes(selected.read_bytes())
+    relocated_recovery = recover_materialized_cut_clock(
+        selection=selection,
+        selected_video_path=relocated,
+    )
+    assert relocated_recovery["frames"] == recovered["frames"]
+    relocated.write_bytes(relocated.read_bytes() + b"different bytes")
+    with pytest.raises(ValueError, match="selected cut bytes"):
+        recover_materialized_cut_clock(selection=selection, selected_video_path=relocated)
     selection["selectedSegmentSha256"] = "0" * 64
     with pytest.raises(ValueError, match="selected cut bytes"):
         recover_materialized_cut_clock(selection=selection, selected_video_path=selected)
@@ -382,9 +517,44 @@ def test_normalize_reconstruction_input_composes_transcode_clock_to_parent(
     assert composed["frames"] == expected["frames"]
 
 
-@pytest.mark.parametrize("source_fps", [24.0, 25.0, 29.97])
+def test_paired_materialization_retains_last_required_exposure_with_next_actual_pts(tmp_path):
+    cv2 = pytest.importorskip('cv2')
+    if resolve_ffmpeg_path() is None:
+        pytest.skip('FFmpeg is required for actual source materialization')
+    from exercise_motion_pkg import bake_and_rank as b
+    from exercise_motion_pkg.source_frame_clock import load_verified_source_frame_clock, source_frame_clock_path_for_video
+    source = tmp_path / 'source.mp4'
+    writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*'mp4v'), 5., (128, 64))
+    assert writer.isOpened()
+    for index in range(10):
+        writer.write(np.full((64, 128, 3), index * 20, dtype=np.uint8))
+    writer.release()
+    candidate = {'candidateId': 'PAIR', 'startSeconds': 0., 'endSeconds': .8,
+                 'chunking': {'completeMemberIntervals': [
+                     {'startSeconds': 0., 'peakSeconds': .2, 'endSeconds': .4},
+                     {'startSeconds': .4, 'peakSeconds': .6, 'endSeconds': .8}]}}
+    output, status = b.materialize_source_cut_candidate_for_exact_validation(
+        source_video_path=source, candidate=candidate, output_dir=tmp_path / 'selected')
+    clock = load_verified_source_frame_clock(source_frame_clock_path_for_video(output), expected_video_path=output)
+    assert [row['sourceFrameIndex'] for row in clock['frames']] == [0, 1, 2, 3, 4]
+    metadata = json.loads((output.parent / 'materialization.json').read_text())
+    assert metadata['endSeconds'] == metadata['logicalEndSeconds'] == .8
+    assert metadata['materializedEndSeconds'] == 1.0
+    assert metadata['stopFrameExclusive'] == 5
+    assert candidate['endSeconds'] == .8 and status == 'computed'
+    _, status = b.materialize_source_cut_candidate_for_exact_validation(
+        source_video_path=source, candidate=candidate, output_dir=tmp_path / 'selected')
+    assert status == 'reused'
+
+
+@pytest.mark.parametrize("source_fps,start_seconds,end_seconds,target_fps", [
+    (24.0, 1.137, 3.977, 30.), (25.0, 1.137, 3.977, 30.),
+    (29.97, 1.137, 3.977, 30.), (24000.0 / 1001.0, 0.0, 3.977, 30.),
+    (59.94, 1.137, 3.977, 30.), (25., .34, 2.28, None),
+])
 def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
-    tmp_path: Path, source_fps: float,
+    tmp_path: Path, source_fps: float, start_seconds: float, end_seconds: float,
+    target_fps: float | None,
 ) -> None:
     cv2 = pytest.importorskip("cv2")
     ffmpeg = resolve_ffmpeg_path()
@@ -397,27 +567,28 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
         str(source), cv2.VideoWriter_fourcc(*"mp4v"), source_fps, (128, 64),
     )
     assert writer.isOpened()
-    for index in range(120):
+    for index in range(240):
         frame = np.empty((64, 128, 3), dtype=np.uint8)
         frame[:] = ((index * 67) % 256, (index * 113) % 256, (index * 181) % 256)
         cv2.putText(frame, str(index), (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         writer.write(frame)
     writer.release()
 
-    # Same trim and fps filter used by reconstruction input preparation.
-    start_seconds, end_seconds = 1.137, 3.977
+    output_fps = source_fps if target_fps is None else target_fps
+    # Actual production recipe, including native trims WITHOUT an fps filter.
     trim_video(
         source_path=source,
         output_path=output,
         start_seconds=start_seconds,
         end_seconds=end_seconds,
-        target_fps=30.0,
+        target_fps=target_fps,
     )
     receipt = build_source_frame_clock(
         source_video_path=source,
         output_video_path=output,
         crop_start_seconds=start_seconds,
-        output_fps=30.0,
+        crop_end_seconds=end_seconds,
+        output_fps=output_fps,
         source_origin_seconds=12.5,
     )
 
@@ -450,7 +621,7 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
         12.5 + selected_indices[0] / source_fps,
     )
     assert selected_indices == sorted(selected_indices)
-    if source_fps in {24.0, 25.0}:
+    if source_fps in {24.0, 25.0} and output_fps > source_fps:
         assert any(left == right for left, right in zip(selected_indices, selected_indices[1:]))
 
     receipt_path = write_source_frame_clock(receipt, output_path=output.with_suffix(".clock.json"))
@@ -473,7 +644,8 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
         source_video_path=source,
         output_video_path=selected_video,
         crop_start_seconds=start_seconds,
-        output_fps=30.0,
+        crop_end_seconds=end_seconds,
+        output_fps=output_fps,
         source_origin_seconds=12.5,
     )
     write_source_frame_clock(
@@ -482,8 +654,8 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
     )
     chosen_ids = [0, 1, len(selected_indices) - 1]
     retained_frames = [{
-        "timeSec": frame_id / 30.0,
-        "sourceTimeSec": frame_id / 30.0,
+        "timeSec": frame_id / output_fps,
+        "sourceTimeSec": frame_id / output_fps,
         "inferenceFrameIndex": frame_id,
         "joints": {"pelvis": [float(frame_id), 1.0, 0.0]},
     } for frame_id in chosen_ids]
@@ -519,7 +691,7 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
         "sourceVideoPath": str(source.resolve()),
         "selectedSpanInOriginalSource": {
             "startSeconds": 12.5 + start_seconds,
-            "endSeconds": 12.5 + start_seconds + len(selected_indices) / 30.0,
+            "endSeconds": 12.5 + start_seconds + len(selected_indices) / output_fps,
         },
     }), encoding="utf-8")
     (workspace / "segment_detection" / "exact_source_pose_reference.json").write_text(json.dumps({
@@ -532,6 +704,84 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
         clock_receipt=receipt,
     )
     assert camera_mapping is not None
+    # Rebind the verified selected clock to an exact byte copy. Its raw JSON
+    # digest changes, but the original verified receipt remains the lineage
+    # authority only while every exposure row and clock field stays identical.
+    original_selected_clock_path = source_frame_clock_path_for_video(selected_video)
+    original_selected_clock_sha = hashlib.sha256(
+        original_selected_clock_path.read_bytes()).hexdigest()
+    copied_workspace = tmp_path / "candidate-relocated-copy"
+    shutil.copytree(workspace, copied_workspace)
+    copied_selected_video = copied_workspace / "input" / "selected_segment.mp4"
+    rebound_clock_path = rebind_verified_clock_copy(
+        source_video_path=selected_video,
+        output_video_path=copied_selected_video,
+        transform="test_byte_identical_workspace_copy",
+        source_clock_path=original_selected_clock_path,
+    )
+    assert rebound_clock_path is not None
+    copied_mapping = verified_source_timeline_mapping(
+        workspace=copied_workspace, source_pose=source_pose, clock_receipt=receipt)
+    assert copied_mapping is not None
+    assert copied_mapping["selectedFrameClockReceiptSha256"] == original_selected_clock_sha
+    copied_cleaned_path = copied_workspace / "cleaned" / "motion.cleaned.json"
+    copied_cleaned = json.loads(copied_cleaned_path.read_text(encoding="utf-8"))
+    copied_camera = copied_cleaned["metadata"]["structuralRefinement"][
+        "sourceGuidedArticulation"]["cameraRegistration"]
+    copied_camera["sourceTimelineMappingIdentity"] = source_timeline_mapping_identity(
+        copied_mapping)
+    copied_cleaned_path.write_text(json.dumps(copied_cleaned), encoding="utf-8")
+    assert load_baked_source_camera_reference(copied_workspace, source_pose) is not None
+    changed_clock = json.loads(rebound_clock_path.read_text(encoding="utf-8"))
+    changed_row = changed_clock["frames"][len(changed_clock["frames"]) // 2]
+    changed_row["sourceFrameIndex"] += 1
+    changed_row["sourceTimeSec"] = (
+        changed_clock["sourceOriginTimeSec"]
+        + changed_row["sourceFrameIndex"] / changed_clock["sourceFps"])
+    rebound_clock_path.write_text(json.dumps(changed_clock), encoding="utf-8")
+    changed_lineage_mapping = verified_source_timeline_mapping(
+        workspace=copied_workspace, source_pose=source_pose, clock_receipt=receipt)
+    assert changed_lineage_mapping is not None
+    assert changed_lineage_mapping["selectedFrameClockReceiptSha256"] != original_selected_clock_sha
+    assert load_baked_source_camera_reference(copied_workspace, source_pose) is None
+    # Discovery's original-video span is not the immediate materialization clock.
+    selection_path = workspace / "segment_detection" / "segment_selection.json"
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    selection.update({"sourceVideoPath": str(tmp_path / "original-discovery-video.mp4"),
+        "selectedSpanInOriginalSource": {"startSeconds": 100., "endSeconds": 110.},
+        "selectedSegmentSourceVideoPath": str(source.resolve()),
+        "selectedSegmentSourceVideoSha256": source_video_sha,
+        "selectedSegmentCropStartSeconds": start_seconds})
+    selection_path.write_text(json.dumps(selection), encoding="utf-8")
+    camera_mapping = verified_source_timeline_mapping(
+        workspace=workspace, source_pose=source_pose, clock_receipt=receipt)
+    assert camera_mapping is not None
+    assert camera_mapping['originSeconds'] == pytest.approx(12.5 + start_seconds)
+    # The retained location is provenance; the copied selected video in this
+    # workspace is still admitted only by its exact recorded content hash.
+    selection['selectedSegmentPath'] = str(tmp_path / 'former-location' / 'selected_segment.mp4')
+    selection_path.write_text(json.dumps(selection), encoding="utf-8")
+    relocated_mapping = verified_source_timeline_mapping(
+        workspace=workspace, source_pose=source_pose, clock_receipt=receipt)
+    assert relocated_mapping is not None
+    assert relocated_mapping['selectedSegmentSha256'] == selected_sha
+    selection['selectedSegmentSha256'] = "0" * 64
+    selection_path.write_text(json.dumps(selection), encoding="utf-8")
+    assert verified_source_timeline_mapping(
+        workspace=workspace, source_pose=source_pose, clock_receipt=receipt) is None
+    selection['selectedSegmentSha256'] = selected_sha
+    # Relocating identical parent bytes must preserve independently verified clocks.
+    relocated_parent = tmp_path / "relocated-parent.mp4"
+    relocated_parent.write_bytes(source.read_bytes())
+    selection['selectedSegmentSourceVideoPath'] = str(relocated_parent.resolve())
+    selection_path.write_text(json.dumps(selection), encoding="utf-8")
+    camera_mapping = verified_source_timeline_mapping(
+        workspace=workspace, source_pose=source_pose, clock_receipt=receipt)
+    assert camera_mapping is not None
+    relocated_parent.write_bytes(b"different source bytes")
+    assert verified_source_timeline_mapping(
+        workspace=workspace, source_pose=source_pose, clock_receipt=receipt) is None
+    relocated_parent.write_bytes(source.read_bytes())
     mapped_pose, pipeline_mapping, timeline_error = _source_pose_on_motion_clock(
         source_pose,
         source_pose_reference_path=workspace / "segment_detection" / "exact_source_pose_reference.json",
@@ -542,7 +792,7 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
     assert pipeline_mapping is not None
     assert [frame["sourceTimeSec"] for frame in mapped_pose["frames"]] == pytest.approx([
         camera_mapping["selectedFrameLineage"][0]["parentSourceTimeSec"],
-        camera_mapping["selectedFrameLineage"][30]["parentSourceTimeSec"],
+        camera_mapping["selectedFrameLineage"][int(output_fps)]["parentSourceTimeSec"],
     ])
     cleaned_payload = json.loads(cleaned_path.read_text(encoding="utf-8"))
     camera_payload = cleaned_payload["metadata"]["structuralRefinement"][
@@ -551,6 +801,17 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
     cleaned_path.write_text(json.dumps(cleaned_payload), encoding="utf-8")
     camera_reference = load_baked_source_camera_reference(workspace, source_pose)
     assert camera_reference is not None
+    annotated_pose = {**source_pose, "sourceVideoSha256": selected_sha}
+    annotated_mapping = verified_source_timeline_mapping(
+        workspace=workspace, source_pose=annotated_pose, clock_receipt=receipt)
+    assert annotated_mapping["sourcePosePayloadSha256"] == camera_mapping["sourcePosePayloadSha256"]
+    assert load_baked_source_camera_reference(workspace, annotated_pose) is not None
+    assert verified_source_timeline_mapping(workspace=workspace,
+        source_pose={**source_pose, "sourceVideoSha256": "0" * 64}, clock_receipt=receipt) is None
+    for field in ("joints", "sourceTimeSec"):
+        changed = deepcopy(annotated_pose)
+        changed["frames"][0][field] = {"pelvis": [999., 200.]} if field == "joints" else .1
+        assert load_baked_source_camera_reference(workspace, changed) is None
     assert camera_reference["sourceTimelineMapping"]["parentSourceSha256"] == source_video_sha
     assert camera_reference["sourceTimelineMapping"]["selectedStartSeconds"] == pytest.approx(
         12.5 + start_seconds,
@@ -561,15 +822,16 @@ def test_source_clock_tracks_actual_ffmpeg_fps_filter_frames_with_trim_origin(
     assert first_selected_lineage["parentSourceTimeSec"] == pytest.approx(
         12.5 + selected_indices[0] / source_fps,
     )
-    assert first_selected_lineage["parentSourceTimeSec"] != pytest.approx(
-        camera_reference["sourceTimelineMapping"]["selectedStartSeconds"],
-    )
+    if start_seconds:
+        assert first_selected_lineage["parentSourceTimeSec"] != pytest.approx(
+            camera_reference["sourceTimelineMapping"]["selectedStartSeconds"],
+        )
     coordinate_frames = camera_reference["coordinateReference"]["frames"]
     assert [frame["sourceTimeSec"] for frame in coordinate_frames] == pytest.approx([
         receipt["frames"][frame_id]["sourceTimeSec"] for frame_id in chosen_ids
     ])
     assert [frame["timeSec"] for frame in coordinate_frames] == pytest.approx([
-        frame_id / 30.0 for frame_id in chosen_ids
+        frame_id / output_fps for frame_id in chosen_ids
     ])
     assert [frame["joints"] for frame in coordinate_frames] == [frame["joints"] for frame in retained_frames]
     camera_payload["sourceTimelineMappingIdentity"]["sourcePosePayloadSha256"] = "0" * 64
@@ -644,6 +906,36 @@ def test_materialized_non_aligned_cut_clock_uses_first_decoded_exposure(tmp_path
     ) is None
     assert not source_frame_clock_path_for_video(changed_copy).exists()
 
+
+def test_full_source_copy_uses_verified_exposure_boundaries(tmp_path: Path) -> None:
+    if resolve_ffmpeg_path() is None:
+        pytest.skip("FFmpeg is required to verify source exposure boundaries")
+    source = tmp_path / "source.mp4"
+    _write_clock_test_video(source, fps=30.0, frame_count=10)
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    covered = tmp_path / "covered.mp4"
+    # The decoded exposures are at 0.0 through 0.3. The logical end at 0.32
+    # retains every exposure even though it precedes container duration 1/3.
+    assert materialize_source_video_interval(
+        source_path=source, output_path=covered,
+        start_seconds=0.0, end_seconds=0.32,
+    ) == "source_copy_full_range"
+    assert hashlib.sha256(covered.read_bytes()).hexdigest() == source_sha
+
+    last_exposure_boundary = tmp_path / "excludes_last.mp4"
+    # The logical interval is half-open; an end equal to the last frame time
+    # excludes that sample, so retaining the whole source file is unsafe.
+    assert materialize_source_video_interval(
+        source_path=source, output_path=last_exposure_boundary,
+        start_seconds=0.0, end_seconds=0.3,
+    ) == "trimmed_source_window"
+
+    nonzero_start = tmp_path / "excludes_first.mp4"
+    assert materialize_source_video_interval(
+        source_path=source, output_path=nonzero_start,
+        start_seconds=1.0 / 30.0, end_seconds=0.34,
+    ) == "trimmed_source_window"
 
 def test_source_clock_rejects_receipt_when_prepared_video_changes(tmp_path: Path) -> None:
     source = tmp_path / "source.mp4"
@@ -905,6 +1197,12 @@ def test_selected_cut_pose_clock_rebases_only_with_hash_bound_parent_mapping() -
     }
 
     selected = source_pose_reference_for_motion(source, motion)
+    assert _canonical_source_pose_sha256({**source, "sourceVideoSha256": "a" * 64}) == _canonical_source_pose_sha256(source)
+    annotated = source_pose_reference_for_motion({**source, "sourceVideoSha256": "a" * 64}, motion)
+    assert annotated['frames'] == selected['frames']
+    wrong_video = source_pose_reference_for_motion({**source, "sourceVideoSha256": "0" * 64}, motion)
+    assert wrong_video['frames'] == []
+    assert wrong_video['sourcePoseTimelineError'] == 'source_timeline_mapping_identity_invalid'
 
     assert [frame["sourceTimeSec"] for frame in selected["frames"]] == [2.5, 3.0]
     assert selected["sourceTimeOriginSec"] == pytest.approx(2.5)
@@ -1162,8 +1460,11 @@ def test_prepare_input_video_rebinds_clock_through_byte_identical_sanitizer_copy
     }), encoding="utf-8")
 
     def byte_identical_sanitize(path: Path) -> Path:
+        from exercise_motion_pkg.youtube import _propagate_sanitized_video_source_clock
+
         sanitized = path.with_name(f"{path.stem}_sanitized{path.suffix}")
         shutil.copy2(path, sanitized)
+        _propagate_sanitized_video_source_clock(path, sanitized)
         return sanitized
 
     monkeypatch.setattr(
@@ -1190,7 +1491,7 @@ def test_prepare_input_video_rebinds_clock_through_byte_identical_sanitizer_copy
     assert prepared_clock["frames"] == selected_clock["frames"]
     assert prepared_clock["sourceVideoSha256"] == selected_clock["sourceVideoSha256"]
     assert prepared_clock["outputVideoSha256"] == selected_clock["outputVideoSha256"]
-    assert prepared_clock["timelinePreservingTransform"] == "prepare_input_video_sanitization_copy"
+    assert prepared_clock["timelinePreservingTransform"] == "sanitize_downloaded_video_copy"
 
     mapped_pose, mapping, error = _source_pose_on_motion_clock(
         pose,
@@ -1298,3 +1599,96 @@ def test_exact_transcode_clock_rejects_same_count_retimed_output(tmp_path: Path)
         transform="test_same_count_retime",
     ) is None
     assert not source_frame_clock_path_for_video(retimed_video).exists()
+
+
+def test_nested_materialized_cut_and_recovery_keep_original_source_clock(tmp_path: Path) -> None:
+    original = tmp_path / "original.mp4"
+    parent = tmp_path / "parent.mp4"
+    selected = tmp_path / "selected.mp4"
+    _write_clock_test_video(original, fps=30.0)
+    materialize_source_video_interval(source_path=original, output_path=parent,
+                                     start_seconds=1.0, end_seconds=3.0)
+    materialize_source_video_interval(source_path=parent, output_path=selected,
+                                     start_seconds=0.0, end_seconds=2.0)
+    original_sha = hashlib.sha256(original.read_bytes()).hexdigest()
+    clock = load_verified_source_frame_clock(source_frame_clock_path_for_video(selected),
+                                             expected_video_path=selected)
+    assert clock["sourceVideoSha256"] == original_sha
+    selection = {
+        "selectedSegmentPath": str(selected.resolve()),
+        "selectedSegmentSha256": hashlib.sha256(selected.read_bytes()).hexdigest(),
+        "selectedSegmentMaterialization": "source_copy_full_range",
+        "selectedSegmentSourceVideoPath": str(parent.resolve()),
+        "selectedSegmentSourceVideoSha256": hashlib.sha256(parent.read_bytes()).hexdigest(),
+        "selectedSegmentCropStartSeconds": 0.0,
+        "selectedSegmentCropEndSeconds": 2.0,
+    }
+    recovered = recover_materialized_cut_clock(selection=selection, selected_video_path=selected,
+                                               expected_parent_sha256=original_sha)
+    assert recovered["frames"] == clock["frames"]
+    with pytest.raises(ValueError, match="conflicts with inference context clock"):
+        recover_materialized_cut_clock(selection=selection, selected_video_path=selected,
+                                       expected_parent_sha256="0" * 64)
+
+def _source_timeline_clock(
+    source_path: str,
+    *,
+    source_sha: str | None = "a" * 64,
+    source_fps: float = 30.0,
+    source_origin: float = 0.0,
+    exposure_times: tuple[float, ...] = (0.0, 0.5, 1.0),
+) -> dict:
+    return {
+        "sourceVideoPath": source_path,
+        "sourceVideoSha256": source_sha,
+        "sourceFps": source_fps,
+        "sourceOriginTimeSec": source_origin,
+        "outputFps": 30.0,
+        "frames": [
+            {"sourceTimeSec": value, "sourceFrameIndex": index}
+            for index, value in enumerate(exposure_times)
+        ],
+    }
+
+
+def test_source_exposure_crop_accepts_same_hash_at_relocated_paths() -> None:
+    selected = _source_timeline_clock("C:/retained/source.mp4")
+    inference = _source_timeline_clock("C:/workspace-copy/source.mp4")
+
+    assert selected["sourceVideoPath"] != inference["sourceVideoPath"]
+    assert source_exposure_crop_window(selected, inference) == pytest.approx((0.0, 0.1))
+
+
+@pytest.mark.parametrize(
+    ("selected_sha", "inference_sha"),
+    [(None, None), ("", ""), ("a" * 64, None), (None, "a" * 64), ("not-a-sha256", "not-a-sha256")],
+)
+def test_source_exposure_crop_rejects_missing_or_invalid_hash(selected_sha, inference_sha) -> None:
+    selected = _source_timeline_clock("C:/a.mp4", source_sha=selected_sha)
+    inference = _source_timeline_clock("C:/b.mp4", source_sha=inference_sha)
+
+    with pytest.raises(ValueError, match="verified source timeline"):
+        source_exposure_crop_window(selected, inference)
+
+
+def test_source_exposure_crop_rejects_different_hash() -> None:
+    selected = _source_timeline_clock("C:/a.mp4")
+    inference = _source_timeline_clock("C:/b.mp4", source_sha="b" * 64)
+
+    with pytest.raises(ValueError, match="verified source timeline"):
+        source_exposure_crop_window(selected, inference)
+
+
+@pytest.mark.parametrize(
+    "inference",
+    [
+        _source_timeline_clock("C:/b.mp4", source_fps=29.97),
+        _source_timeline_clock("C:/b.mp4", source_origin=1.0),
+        _source_timeline_clock("C:/b.mp4", exposure_times=(10.0, 10.5, 11.0)),
+    ],
+)
+def test_source_exposure_crop_rejects_clock_drift_or_uncovered_interval(inference) -> None:
+    selected = _source_timeline_clock("C:/a.mp4")
+
+    with pytest.raises(ValueError):
+        source_exposure_crop_window(selected, inference)

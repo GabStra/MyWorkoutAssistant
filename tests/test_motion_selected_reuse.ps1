@@ -24,6 +24,7 @@ foreach ($name in @(
 . (Join-Path $root 'scripts/motion_validation_policy.ps1')
 $SelectionValidationPolicyVersion = 70
 $SourceSelectionPolicyVersion = Get-MotionPythonValidationPolicyConstant -Name 'SOURCE_SELECTION_POLICY_VERSION'
+$ExactSourcePhaseValidationPolicyVersion = Get-MotionPythonValidationPolicyConstant -Name 'EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION'
 $SourceSelectionClearancePolicyVersion = Get-MotionPythonValidationPolicyConstant -Name 'SOURCE_SELECTION_CLEARANCE_POLICY_VERSION'
 $ArtifactRetention = 'debug'
 $SkipPreReconstructionSourceValidation = $false
@@ -40,7 +41,8 @@ try {
     $sourceManifestPath = Join-Path $selected 'source_segment_selection.json'
     $sourceSegmentPath = Join-Path $selected 'source_selected_segment.mp4'
     $reviewImagePath = Join-Path $selected 'source_review_frame.jpg'
-    '{"sourcePrepReason":"pre_reconstruction_source_window_choice"}' | Set-Content $sourceManifestPath -NoNewline
+    $sourceManifest = @{ sourcePrepReason='pre_reconstruction_source_window_choice'; exactSourcePhaseValidation=@{ validationPolicyVersion=$ExactSourcePhaseValidationPolicyVersion } }
+    $sourceManifest | ConvertTo-Json -Compress -Depth 4 | Set-Content $sourceManifestPath -NoNewline
     'retained' | Set-Content $sourceSegmentPath
     'reviewed image' | Set-Content $reviewImagePath
     $segmentHash = (Get-FileHash $sourceSegmentPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -53,6 +55,20 @@ try {
     $marker | ConvertTo-Json | Set-Content $markerPath
     $item = [pscustomobject]@{ exerciseWorkspace=$fixture; bakeWorkspace=(Join-Path $fixture 'bake'); exerciseSlug='squat'; exerciseName='Squat'; exerciseId='squat-id'; currentContractSha256=('0' * 64) }
     if (-not (Get-ExistingSelectedSummary $item)) { throw 'Current validation must permit explicitly source-validation-disabled lineage.' }
+    $sourceManifest.exactSourcePhaseValidation.validationPolicyVersion = $ExactSourcePhaseValidationPolicyVersion - 1
+    $sourceManifest | ConvertTo-Json -Compress -Depth 4 | Set-Content $sourceManifestPath -NoNewline
+    $sourceClearance.sourceManifestSha256 = (Get-FileHash $sourceManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $selection = Get-Content $selectionPath -Raw | ConvertFrom-Json
+    $selection.selected.sourceSelectionClearance.sourceManifestSha256 = $sourceClearance.sourceManifestSha256
+    $selection | ConvertTo-Json -Depth 12 | Set-Content $selectionPath
+    if (Get-ExistingSelectedSummary $item) { throw 'A hash-consistent selection with stale exact-source validation must not be reused.' }
+    if (-not (Test-SelectionNeedsPolicyReaudit $item)) { throw 'Stale exact-source validation must trigger retained-artifact re-audit.' }
+    $sourceManifest.exactSourcePhaseValidation.validationPolicyVersion = $ExactSourcePhaseValidationPolicyVersion
+    $sourceManifest | ConvertTo-Json -Compress -Depth 4 | Set-Content $sourceManifestPath -NoNewline
+    $sourceClearance.sourceManifestSha256 = (Get-FileHash $sourceManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $selection.selected.sourceSelectionClearance.sourceManifestSha256 = $sourceClearance.sourceManifestSha256
+    $selection | ConvertTo-Json -Depth 12 | Set-Content $selectionPath
+    if (-not (Get-ExistingSelectedSummary $item)) { throw 'Current exact-source validation must permit reuse.' }
     $marker.status = 'needs_manual_review'
     $marker.selectionValidationPolicyVersion = 69
     $marker | ConvertTo-Json | Set-Content $markerPath
@@ -84,7 +100,7 @@ try {
     'retained' | Set-Content $sourceSegmentPath
     'changed manifest' | Set-Content $sourceManifestPath -NoNewline
     if (Get-ExistingSelectedSummary $item) { throw 'Changed source manifest bytes must invalidate reuse even when the selection manifest and marker are unchanged.' }
-    '{"sourcePrepReason":"pre_reconstruction_source_window_choice"}' | Set-Content $sourceManifestPath -NoNewline
+    $sourceManifest | ConvertTo-Json -Compress -Depth 4 | Set-Content $sourceManifestPath -NoNewline
     $marker.status='invalid'
     $marker | ConvertTo-Json | Set-Content $markerPath
     if (Get-ExistingSelectedSummary $item) { throw 'Invalid selection reused.' }

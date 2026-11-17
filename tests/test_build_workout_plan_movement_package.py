@@ -1,6 +1,8 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -559,3 +561,228 @@ def test_packager_rejects_manifest_with_invalid_final_review_window(
             summary_path=tmp_path / "summary.json",
             summary={},
         )
+
+
+def reference_binding_fixture(tmp_path):
+    source = {'id': 'source', 'name': 'Reference action', 'exerciseType': 'BODY_WEIGHT',
+              'equipmentId': None, 'bodyWeightPercentage': 100,
+              'requiredAccessoryEquipmentIds': ['setup'],
+              'motionContext': {'exerciseDefinition': {'definingAction': 'Unloaded action',
+                  'completionMode': 'return_to_start', 'requiredPhases': ['lower', 'return'],
+                  'bilateralExecution': {'legs': 'mirrored'}}}}
+    target = json.loads(json.dumps(source))
+    target.update(id='target', name='Loaded action', equipmentId='load')
+    target['motionContext']['exerciseDefinition']['definingAction'] = 'Loaded action'
+    setup = {'id': 'setup', 'type': 'ACCESSORY', 'name': 'Nordic Curl Setup'}
+    package = {'exerciseDefinitions': [target], 'equipments': [{'id': 'load', 'type': 'WEIGHTVEST'}],
+               'accessoryEquipments': [setup]}
+    source_path = tmp_path / 'source.json'
+    source_path.write_text(json.dumps({'exerciseDefinitions': [source], 'accessoryEquipments': [setup]}))
+    approval_path = tmp_path / 'approval.json'
+    approval_path.write_text(json.dumps({'authority': 'explicit_user_approval',
+        'exportedExerciseUnchanged': True, 'exerciseName': target['name'],
+        'sourceReferenceExerciseName': source['name'], 'allowedDifference': 'External load absent',
+        'userAnswer': 'Approved'}))
+    binding = {'sourceReferenceDefinitionId': 'source', 'targetDefinitionId': 'target',
+        'sourcePlanPath': str(source_path), 'approvalPath': str(approval_path),
+        'approvalSha256': hashlib.sha256(approval_path.read_bytes()).hexdigest(),
+        'motionReferenceOnly': True, 'allowedDifference': 'external_load_not_shown'}
+    for label, value in [('sourceDefinition', source), ('targetDefinition', target),
+                         ('sourceMotionContext', source['motionContext']), ('targetMotionContext', target['motionContext'])]:
+        binding[label + 'Sha256'] = BUILDER.json_identity(value)
+    mapping = tmp_path / 'mapping.json'
+    mapping.write_text(json.dumps({'bindings': [binding]}))
+    return package, source, binding, mapping
+
+
+@pytest.mark.parametrize('fault', [None, 'stale_definition', 'stale_approval', 'different_phases', 'duplicate'])
+def test_source_reference_binding_validates_identity_and_requirements(tmp_path, fault):
+    package, source, binding, mapping = reference_binding_fixture(tmp_path)
+    if fault == 'stale_definition':
+        package['exerciseDefinitions'][0]['name'] = 'Changed'
+    elif fault == 'stale_approval':
+        Path(binding['approvalPath']).write_text('{}')
+    elif fault == 'different_phases':
+        target = package['exerciseDefinitions'][0]
+        target['motionContext']['exerciseDefinition']['requiredPhases'] = ['different', 'return']
+        binding['targetDefinitionSha256'] = BUILDER.json_identity(target)
+        binding['targetMotionContextSha256'] = BUILDER.json_identity(target['motionContext'])
+        mapping.write_text(json.dumps({'bindings': [binding]}))
+    elif fault == 'duplicate':
+        mapping.write_text(json.dumps({'bindings': [binding, binding]}))
+    if fault:
+        with pytest.raises(ValueError):
+            BUILDER.load_source_reference_bindings(mapping, package)
+    else:
+        assert BUILDER.load_source_reference_bindings(mapping, package)['source']['targetDefinitionId'] == 'target'
+
+
+def test_source_reference_generation_preserves_target_and_nested_prescriptions(tmp_path):
+    package, source, binding, mapping = reference_binding_fixture(tmp_path)
+    package['workouts'] = [{'components': [{'exercises': [
+        {'id': 'prescription', 'exerciseDefinitionId': 'target', 'equipmentId': 'load', 'reps': 8}]}]}]
+    original = json.loads(json.dumps(package))
+    generated = BUILDER.source_reference_generation_plan(package, mapping)
+    assert package == original
+    assert generated['exerciseDefinitions'] == [source]
+    assert generated['workouts'][0]['components'][0]['exercises'] == [
+        {'id': 'prescription', 'exerciseDefinitionId': 'source', 'equipmentId': None, 'reps': 8}]
+    assert generated['motionSourceReferenceBindings'][0]['targetDefinitionId'] == 'target'
+    reference_binding = generated['motionSourceReferenceBindings'][0]
+    assert reference_binding['sourceReferenceDefinitionId'] == 'source'
+    assert reference_binding['sourceMotionContext'] == source['motionContext']
+    assert reference_binding['targetMotionContext'] == original['exerciseDefinitions'][0]['motionContext']
+    assert reference_binding['motionReferenceOnly'] is True
+    assert reference_binding['allowedDifference'] == 'external_load_not_shown'
+    assert reference_binding['targetDefinition']['id'] == 'target'
+    assert reference_binding['sourceExerciseMotionContext']['exerciseDefinition'] == source['motionContext']['exerciseDefinition']
+    assert reference_binding['sourceExerciseMotionContext']['exerciseType'] == 'BODY_WEIGHT'
+    assert reference_binding['sourceExerciseMotionContext']['requiredAccessories'] == [
+        {'id': 'setup', 'type': 'ACCESSORY', 'name': 'Nordic Curl Setup'}
+    ]
+    assert reference_binding['sourceExerciseMotionContextSha256'] == BUILDER.json_identity(
+        reference_binding['sourceExerciseMotionContext']
+    )
+    generated['exerciseDefinitions'][0]['name'] = 'changed'
+    assert package == original
+
+
+def test_source_reference_runner_preflight_and_partial_export(tmp_path, monkeypatch):
+    package, source, binding, mapping = reference_binding_fixture(tmp_path)
+    package_path = tmp_path / 'package.json'
+    package_path.write_text(json.dumps(package))
+    # A relative approval remains resolvable after the runner persists the mapping.
+    binding['sourcePlanPath'] = 'source.json'
+    binding['approvalPath'] = 'approval.json'
+    mapping.write_text(json.dumps({'bindings': [binding]}))
+    harness = tmp_path / 'preflight.ps1'
+    harness.write_text(r'''
+param($Root, $Target, $Mapping, $Out, $Python)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Root 'scripts/reconstruction_compat.ps1')
+$tokens = $null; $errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Root 'scripts/run_exercise_motion_workout_plan.ps1'), [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw $errors[0] }
+foreach ($name in @('ConvertTo-Slug', 'ConvertTo-StringSet', 'ConvertTo-SlugSet')) {
+    $definition = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)[0]
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
+function Resolve-StrictPath($Path) { (Resolve-Path -LiteralPath $Path).Path }
+function Invoke-PythonModule { param($Arguments) & $Python @Arguments; if ($LASTEXITCODE) { throw 'Python preflight failed' } }
+$resolvedWorkoutPlanJson = $Target; $SourceReferenceMappingJson = $Mapping
+$definitionPreflightDirectory = Join-Path $Out 'preflight'; $testScriptRoot = Join-Path $Root 'scripts'
+New-Item -ItemType Directory -Path $definitionPreflightDirectory | Out-Null
+$onlyExerciseIdSet = ConvertTo-StringSet @('target')
+$onlyExerciseNameSet = ConvertTo-StringSet @('Loaded action')
+$onlyExerciseSlugSet = ConvertTo-SlugSet @('loaded-action')
+$text = $ast.Extent.Text
+$start = $text.IndexOf('$resolvedGenerationPlanJson = $resolvedWorkoutPlanJson')
+$end = $text.IndexOf('$listArgs = @(', $start)
+. ([scriptblock]::Create($text.Substring($start, $end - $start).Replace('$PSScriptRoot', '$testScriptRoot')))
+if (-not $onlyExerciseIdSet.Contains('source') -or -not $onlyExerciseNameSet.Contains('reference action') -or -not $onlyExerciseSlugSet.Contains('reference-action')) { throw 'Target filters lost reference identity' }
+if (-not $sourceReferenceBuilderArguments.SourceReferenceMappingJson -or -not $sourceReferenceMappingSha256) { throw 'Packaging approval missing' }
+Copy-Item -LiteralPath $resolvedGenerationPlanJson -Destination (Join-Path $Out 'generation-plan.json')
+$resolvedWorkspaceRoot = Join-Path $Out 'workspace'
+New-Item -ItemType Directory -Path $resolvedWorkspaceRoot | Out-Null
+$persist = $ast.Find({ param($node)
+    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text.Contains('Workspace source-reference approval mapping differs from this invocation.')
+}, $true)
+. ([scriptblock]::Create($persist.Extent.Text))
+$definitionPreflightListPath = Join-Path $definitionPreflightDirectory 'workout_plan_exercises.json'
+$definitionPreflightEffectivePlanPath = Join-Path $definitionPreflightDirectory 'effective_workout_plan.json'
+$definitionPreflightReportPath = Join-Path $definitionPreflightDirectory 'definition_readiness_report.json'
+$start = $text.IndexOf('$preflightArtifactPaths = @(')
+$end = $text.IndexOf('$youtubeBaseArgs = @(', $start)
+. ([scriptblock]::Create($text.Substring($start, $end - $start)))
+if (Test-Path -LiteralPath $definitionPreflightDirectory) { throw 'Preflight temporary files survived cleanup' }
+if (-not (Test-Path -LiteralPath $sourceReferenceBuilderArguments.SourceReferenceMappingJson)) { throw 'Packaging lost its approval mapping during cleanup' }
+''')
+    result = subprocess.run(['pwsh', '-NoProfile', '-File', str(harness),
+        str(SCRIPT_PATH.parents[1]), str(package_path), str(mapping), str(tmp_path), sys.executable],
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    normalized = json.loads((tmp_path / 'workspace/source_reference_mapping.json').read_text())
+    assert Path(normalized['bindings'][0]['approvalPath']).is_absolute()
+    assert json.loads((tmp_path / 'generation-plan.json').read_text())['exerciseDefinitions'] == [source]
+    summary = tmp_path / 'summary.json'
+    summary.write_text(json.dumps({'exercises': []}))
+    output = tmp_path / 'partial.json'
+    monkeypatch.setattr('sys.argv', [str(SCRIPT_PATH), '--workout-plan-package-json', str(package_path),
+        '--motion-summary-json', str(summary), '--output-json', str(output),
+        '--source-reference-mapping-json', str(mapping), '--strict-id-match', '--allow-empty'])
+    assert BUILDER.main() == 0
+    assert json.loads(output.read_text())['exerciseDefinitions'] == package['exerciseDefinitions']
+
+
+@pytest.mark.parametrize("selected_time, matches", [
+    ("2026-11-12T01:03:18.404851+01:00", True),
+    ("2026-11-12T01:03:18.404851+00:00", False),
+    ("2026-11-12T00:03:18.404851", False),
+    ("not-a-timestamp", False),
+])
+def test_source_reference_context_keeps_approval_instant_and_other_fields_exact(selected_time, matches):
+    expected = {"exerciseDefinition": {"definingAction": "Pull and lower", "review": {
+        "approvedAtUtc": "2026-11-12T00:03:18.404851+00:00", "authority": "user",
+    }}}
+    actual = json.loads(json.dumps(expected))
+    actual["exerciseDefinition"]["review"]["approvedAtUtc"] = selected_time
+    assert BUILDER.approved_motion_context_matches(actual, expected) is matches
+    assert actual["exerciseDefinition"]["review"]["approvedAtUtc"] == selected_time
+    actual["exerciseDefinition"]["review"]["authority"] = "different"
+    assert not BUILDER.approved_motion_context_matches(actual, expected)
+
+
+@pytest.mark.parametrize(
+    ("exercise_id_is_present", "selected_exercise_id", "rejected"),
+    [
+        pytest.param(False, None, False, id="missing"),
+        pytest.param(True, None, False, id="none"),
+        pytest.param(True, "", False, id="empty"),
+        pytest.param(True, "other-source", True, id="wrong-id"),
+        pytest.param(True, 123, True, id="wrong-type"),
+    ],
+)
+def test_source_reference_attachment_preserves_reviewed_identity_and_target(
+    tmp_path, monkeypatch, exercise_id_is_present, selected_exercise_id, rejected
+):
+    package, source, binding, mapping = reference_binding_fixture(tmp_path)
+    movement, manifest = tmp_path / 'movement.json', tmp_path / 'selection_manifest.json'
+    write_reviewed_movement(movement, manifest)
+    selected_document = json.loads(manifest.read_text())
+    selected_document['selected'].update(exerciseName=source['name'],
+        candidate={'exerciseMotionContract': {'motionContext': source['motionContext']}})
+    if exercise_id_is_present:
+        selected_document['selected']['exerciseId'] = selected_exercise_id
+    manifest.write_text(json.dumps(selected_document))
+    summary = {'exercises': [{'exerciseId': source['id'], 'exerciseName': source['name'],
+        'status': 'completed', 'selectedWearSkeletonPath': str(movement), 'selectionManifestPath': str(manifest)}]}
+    package_path, summary_path, output = tmp_path / 'package.json', tmp_path / 'summary.json', tmp_path / 'output.json'
+    package_path.write_text(json.dumps(package)); summary_path.write_text(json.dumps(summary))
+    # The existing independent artifact validator remains mandatory and receives the original source result.
+    calls = []
+    def validate(path, item, **kwargs):
+        calls.append(item['exerciseId'])
+        return json.loads(path.read_text())
+    monkeypatch.setattr(BUILDER, 'validate_selected_movement', validate)
+    monkeypatch.setattr('sys.argv', [str(SCRIPT_PATH), '--workout-plan-package-json', str(package_path),
+        '--motion-summary-json', str(summary_path), '--output-json', str(output),
+        '--source-reference-mapping-json', str(mapping), '--strict-id-match'])
+    if rejected:
+        with pytest.raises(ValueError, match='approved source definition/context'):
+            BUILDER.main()
+        assert not output.exists()
+        assert json.loads(manifest.read_text()) == selected_document
+        return
+    assert BUILDER.main() == 0
+    result = json.loads(output.read_text())
+    assert calls == ['source']
+    definition = result['exerciseDefinitions'][0]
+    assert definition.pop('movementRef')['movementId'] == 'exercise-motion:target'
+    assert definition == package['exerciseDefinitions'][0]
+    assert result['sourceReferenceAttachmentAudit'][0]['sourceReferenceDefinitionId'] == 'source'
+    assert json.loads(manifest.read_text()) == selected_document
+    summary['exercises'] = []
+    summary_path.write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match='Unused'):
+        BUILDER.main()

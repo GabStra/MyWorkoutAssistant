@@ -3,6 +3,8 @@ from __future__ import annotations
 from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata, retained_reconstruction_path
 
 import json
+import math
+from numbers import Real
 from pathlib import Path
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame
@@ -26,6 +28,8 @@ def load_motion_json(path: Path) -> MotionClip:
                 source_time_sec=(float(frame["sourceTimeSec"]) if frame.get("sourceTimeSec") is not None else None),
                 source_frame_index=(int(frame["sourceFrameIndex"]) if frame.get("sourceFrameIndex") is not None else None),
                 inference_frame_index=(int(frame["inferenceFrameIndex"]) if frame.get("inferenceFrameIndex") is not None else None),
+                bone_sides=_optional_bone_sides(frame),
+                bone_side_provenance=_optional_bone_side_provenance(frame),
             )
             for frame in data["frames"]
         ]
@@ -73,6 +77,10 @@ def save_motion_json(path: Path, clip: MotionClip) -> None:
                     joint_name: [coords[0], coords[1], coords[2]]
                     for joint_name, coords in frame.joints.items()
                 },
+                **({"boneSides": {key: list(axis) for key, axis in frame.bone_sides.items()}}
+                   if frame.bone_sides is not None else {}),
+                **({"boneSideProvenance": dict(frame.bone_side_provenance)}
+                   if frame.bone_side_provenance is not None else {}),
             }
             for frame in clip.frames
         ],
@@ -86,6 +94,35 @@ def _tuple3(coords: list[float] | tuple[float, float, float]) -> tuple[float, fl
     if len(coords) != 3:
         raise ValueError(f"Expected 3 coordinates, got {len(coords)}")
     return (float(coords[0]), float(coords[1]), float(coords[2]))
+
+
+def _optional_bone_sides(frame: dict) -> dict[str, tuple[float, float, float]] | None:
+    if "boneSides" not in frame:
+        return None
+    value = frame["boneSides"]
+    if not isinstance(value, dict):
+        raise ValueError("boneSides must be an object when present.")
+    result = {}
+    for key, axis in value.items():
+        if not isinstance(key, str) or not isinstance(axis, (list, tuple)) or len(axis) != 3:
+            raise ValueError("boneSides entries must map string bone keys to 3-vectors.")
+        if any(isinstance(component, bool) or not isinstance(component, Real)
+               or not math.isfinite(float(component)) for component in axis):
+            raise ValueError("boneSides components must be finite numbers.")
+        result[key] = tuple(float(component) for component in axis)
+    return result
+
+
+def _optional_bone_side_provenance(frame: dict) -> dict[str, str] | None:
+    if "boneSideProvenance" not in frame:
+        return None
+    value = frame["boneSideProvenance"]
+    if not isinstance(value, dict):
+        raise ValueError("boneSideProvenance must be an object when present.")
+    if any(not isinstance(key, str) or not isinstance(source, str)
+           for key, source in value.items()):
+        raise ValueError("boneSideProvenance entries must map strings to strings.")
+    return dict(value)
 
 
 def _derive_joint_names(frames: list[MotionFrame]) -> list[str]:

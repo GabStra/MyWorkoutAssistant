@@ -248,7 +248,7 @@ def selected_artifact_identity(
     directory: Path, manifest: dict[str, Any], *, policies: dict[str, Any],
     context: dict[str, Any] | None = None, contract: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Paths are not identity; exactly one retained source and skeleton are."""
+    """Bind exact retained content and current policies for verdict comparison."""
     source_groups: dict[str, list[Path]] = {}
     for path in (
         *directory.glob("*_selected_input.mp4"),
@@ -291,17 +291,12 @@ def selected_artifact_identity(
                        if k not in {"cachePath", "cacheStatus", "generatedAt", "elapsedSeconds"}}
     try:
         expected_fit_strategy = policies.get("controlledMotionFit")
-        expected_bake_code = policies.get("bakeCode")
-        if isinstance(expected_fit_strategy, str) or isinstance(expected_bake_code, str):
+        if isinstance(expected_fit_strategy, str):
             skeleton_payload = json.loads(skeletons[0].read_text(encoding="utf-8"))
             if not isinstance(skeleton_payload, dict):
                 return None
             if isinstance(expected_fit_strategy, str) and selected_fit_receipt_problem(
                 skeleton_payload, expected_fit_strategy,
-            ) is not None:
-                return None
-            if isinstance(expected_bake_code, str) and selected_bake_code_problem(
-                skeleton_payload, expected_bake_code,
             ) is not None:
                 return None
         return {

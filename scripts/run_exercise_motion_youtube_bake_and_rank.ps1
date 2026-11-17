@@ -100,7 +100,7 @@
     [double]$SegmentConfidenceThreshold = 0.45,
     [double]$SegmentPaddingSeconds = 0.35,
     [double]$SegmentEndPaddingSeconds = 0.35,
-    [double]$SegmentMinSeconds = 2.0,
+    [Nullable[double]]$SegmentMinSeconds,
     [double]$SegmentMaxSeconds = 0.0,
     [switch]$ComparativeSegmentSelection,
     [switch]$SkipPreReconstructionSourceValidation,
@@ -911,7 +911,6 @@ $bakeArgs = @(
     "--segment-confidence-threshold", "$SegmentConfidenceThreshold",
     "--segment-padding-seconds", "$SegmentPaddingSeconds",
     "--segment-end-padding-seconds", "$SegmentEndPaddingSeconds",
-    "--segment-min-seconds", "$SegmentMinSeconds",
     "--segment-max-seconds", "$SegmentMaxSeconds",
     "--review-frames", "$ReviewFrames",
     "--review-llm-workers", "$ReviewLlmWorkers",
@@ -927,6 +926,9 @@ $bakeArgs = @(
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds",
     "--artifact-retention", $ArtifactRetention
 )
+if ($PSBoundParameters.ContainsKey('SegmentMinSeconds') -and $null -ne $SegmentMinSeconds) {
+    $bakeArgs += @("--segment-min-seconds", "$SegmentMinSeconds")
+}
 $bakeArgs += if (-not [string]::IsNullOrWhiteSpace($LlamaCppMtpModel)) {
     @("--llama-cpp-mtp-model", $LlamaCppMtpModel, "--llama-cpp-spec-draft-n-max", "$LlamaCppSpecDraftNMax")
 } else { @("--no-llama-cpp-mtp") }

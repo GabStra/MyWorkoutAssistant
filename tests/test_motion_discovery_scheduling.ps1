@@ -4,6 +4,22 @@ $runner = Join-Path $root 'scripts/run_exercise_motion_workout_plan.ps1'
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($runner, [ref]$null, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
+$sourceReviewTimeout = $ast.ParamBlock.Parameters | Where-Object {
+    $_.Name.VariablePath.UserPath -eq 'SourceReviewTimeoutSeconds'
+} | Select-Object -First 1
+if (-not $sourceReviewTimeout -or $sourceReviewTimeout.DefaultValue.SafeGetValue() -ne 240.0) {
+	throw 'The workout-plan wrapper must use the bounded source-review transport timeout by default.'
+}
+$speedProfileSwitch = $ast.Find({ param($node)
+    $node -is [System.Management.Automation.Language.SwitchStatementAst] -and
+    $node.Condition.Extent.Text -eq '$SpeedProfile'
+}, $true)
+$fastProfileClause = $speedProfileSwitch.Clauses | Where-Object { $_.Item1.Extent.Text -eq '"fast"' } | Select-Object -First 1
+if (-not $fastProfileClause) { throw 'Missing fast speed profile.' }
+if ($fastProfileClause.Item2.Extent.Text -notmatch '(?s)ContainsKey\("CandidateReviewBatchSize"\).*?\$CandidateReviewBatchSize = 1' -or
+    $fastProfileClause.Item2.Extent.Text -notmatch '(?s)ContainsKey\("PosePrefilterSampleFps"\).*?\$PosePrefilterSampleFps = 2\.0') {
+    throw 'Fast discovery must screen one candidate at a time using the existing coarse 2 FPS pose scan.'
+}
 function Get-AssignmentText([string]$Name) {
     $node = $ast.Find({ param($node)
         $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq $Name
@@ -24,8 +40,8 @@ $splitPlacementFunction = $ast.Find({ param($node)
 if (-not $splitPlacementFunction) { throw 'Missing verified exclusive GPU placement check.' }
 . ([scriptblock]::Create($splitPlacementFunction.Extent.Text))
 foreach ($functionName in @(
-    'Get-ArgumentArraySha256', 'Get-ObjectProperty', 'Resolve-WaveSourceSelectionPolicyVersion',
-    'Set-DiscoveryArgumentValue', 'Set-BoundedSourceRecoveryDiscovery'
+    'Get-ArgumentArraySha256', 'Get-DiscoverySemanticArgumentArraySha256', 'Get-ObjectProperty', 'Resolve-WaveSourceSelectionPolicyVersion',
+    'Set-DiscoveryArgumentValue', 'Write-CanonicalSourceTurnCursor', 'Set-BoundedSourceRecoveryDiscovery', 'Add-DiscoveryTurnUsage'
 )) {
     $functionAst = $ast.Find({ param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -33,6 +49,13 @@ foreach ($functionName in @(
     }.GetNewClosure(), $true)
     if (-not $functionAst) { throw "Missing source-recovery helper $functionName." }
     . ([scriptblock]::Create($functionAst.Extent.Text))
+}
+$PythonCommand = 'python'
+$sourceReviewTurnId = 'source-recovery-test-turn'
+function Invoke-PythonModule {
+    param([string[]]$Arguments)
+    & $PythonCommand @Arguments | Write-Output
+    if ($LASTEXITCODE -ne 0) { throw "python command failed with exit code $LASTEXITCODE." }
 }
 $SourceSelectionPolicyVersion = 64
 if ((Resolve-WaveSourceSelectionPolicyVersion -Source ([pscustomobject]@{})) -ne 64) {
@@ -46,6 +69,14 @@ $legacyDeferredBranch = $ast.Find({ param($node)
     }).Count -gt 0
 }, $true)
 if (-not $legacyDeferredBranch) { throw 'Legacy source_turn_deferred results must share the cursor continuation route.' }
+$initialNoSourceRecoveryBranch = $ast.Find({ param($node)
+    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text -match 'discoveryStopReason -ne .scheduler_yield.' -and
+    $node.Extent.Text -match 'Set-BoundedSourceRecoveryDiscovery'
+}, $true)
+if (-not $initialNoSourceRecoveryBranch) {
+    throw 'Initial discovery with no suitable source must spend the shared allowance on another bounded turn.'
+}
 $decision = [scriptblock]::Create((@(
     (Get-AssignmentText '$stagedWaveAdmission'),
     (Get-AssignmentText '$stagedWaveReady'),
@@ -84,39 +115,160 @@ $effectiveMaxConcurrentStagedWaves = 1
 
 $recoveryWorkspace = Join-Path ([System.IO.Path]::GetTempPath()) ("motion-source-recovery-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $recoveryWorkspace | Out-Null
-# Source exhaustion gets one bounded discovery turn while preserving exact
-# attempted windows for candidate-key filtering in the next source pass.
+$recoveryPlan = Join-Path $recoveryWorkspace 'exercise-plan.json'
+@{ exercises = @(@{ id = 'recovery-exercise'; name = 'Recovery exercise'; motionContext = @{} }) } |
+    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $recoveryPlan -Encoding UTF8
+# Source recovery spends down one per-exercise budget across turns and preserves
+# exact attempted windows while allowing other windows from the same video.
 $recoveryWorkItem = [pscustomobject]@{
     discoveryArgs = @('--discovery-candidate-budget', '0', '--out-json', 'recovery.json')
     discoveryArgumentsSha256 = ''
-    candidateReviewTargetSuitableCount = 2
+    discoverySemanticArgumentsSha256 = ''
+    candidateReviewTargetSuitableCount = 1
     bakeWorkspace = $recoveryWorkspace
+    exercisePlanPath = $recoveryPlan
+    exerciseCandidatesPath = (Join-Path $recoveryWorkspace 'youtube_candidates.json')
+    discoveryCandidatesReviewed = 0
+    lastDiscoveryTurnReviewed = 0
 }
-$recoveryWaveState = [pscustomobject]@{ source = [pscustomobject]@{
+$recoveryWaveState = [pscustomobject]@{
+    exerciseId = 'recovery-exercise'
+    exerciseName = 'Recovery exercise'
+    source = [pscustomobject]@{
     sourceSelectionPolicyVersion = 64
-    priorAttemptedCandidateKeys = @('old-video-window-a')
-    priorAttemptedVideoIds = @('previously-failed-video')
-    attempts = @([pscustomobject]@{ candidateKey = 'current-video-window-b'; videoId = 'current-failed-video' })
+    priorAttemptedCandidateKeys = @()
+    priorAttemptedVideoIds = @()
+    attempts = @(
+        [pscustomobject]@{ candidateKey = 'same-video-window-a'; videoId = 'same-video'; status = 'needs_source_review'; failureOwner = 'source_evidence' },
+        [pscustomobject]@{ candidateKey = 'same-video-window-b'; videoId = 'same-video'; status = 'needs_source_review'; failureOwner = 'source_evidence' },
+        [pscustomobject]@{ candidateKey = 'same-video-window-c'; videoId = 'same-video'; status = 'needs_source_review'; failureOwner = 'source_evidence' },
+        [pscustomobject]@{ candidateKey = 'same-video-window-d'; videoId = 'same-video'; status = 'rejected_source_validation' }
+    )
 }}
-if (-not (Set-BoundedSourceRecoveryDiscovery -WorkItem $recoveryWorkItem -WaveState $recoveryWaveState -CandidateBudget 0)) {
-    throw 'First bounded source-discovery continuation was refused.'
+@{ exercises = @(@{ candidateExpansion = @{ discoveryTurn = @{
+    reviewedThisTurn = 6; reviewedTotal = 6; timeBudgetSeconds = 180; remainingTimeSeconds = 155
+} } }) } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $recoveryWorkItem.exerciseCandidatesPath -Encoding UTF8
+Add-DiscoveryTurnUsage -WorkItem $recoveryWorkItem
+if ($recoveryWorkItem.discoveryCandidatesReviewed -ne 6 -or $recoveryWorkItem.lastDiscoveryTurnReviewed -ne 6) {
+    throw 'Completed discovery usage must be accumulated from the candidate manifest.'
 }
+if (-not (Set-BoundedSourceRecoveryDiscovery -WorkItem $recoveryWorkItem -WaveState $recoveryWaveState -CandidateBudget 48 -TimeBudgetSeconds 180)) {
+    throw 'Source recovery should continue while the shared candidate and time allowances remain.'
+}
+$candidateBudgetArgument = $recoveryWorkItem.discoveryArgs[[Array]::IndexOf($recoveryWorkItem.discoveryArgs, '--discovery-candidate-budget') + 1]
+$timeBudgetArgument = $recoveryWorkItem.discoveryArgs[[Array]::IndexOf($recoveryWorkItem.discoveryArgs, '--discovery-time-budget-seconds') + 1]
 if ($recoveryWorkItem.discoveryArgs -contains '--exclude-youtube-video-id' -or
-    $recoveryWorkItem.discoveryArgs[[Array]::IndexOf($recoveryWorkItem.discoveryArgs, '--discovery-candidate-budget') + 1] -ne '3' -or
-    $recoveryWorkItem.candidateReviewTargetSuitableCount -ne 1) {
-    throw 'Source recovery must keep alternate windows eligible and bound an unlimited discovery budget to one candidate.'
+    $candidateBudgetArgument -ne '42' -or
+    $timeBudgetArgument -ne '180' -or
+    $recoveryWorkItem.candidateReviewTargetSuitableCount -ne 2) {
+    throw 'Four failed windows from one video must require only one additional suitable video while preserving alternate windows and budget.'
+}
+
+# A resumed process has no in-memory retry counter. It must reconstruct the
+# target from the durable exact-window cursor instead of returning to one.
+$resumedWorkItem = [pscustomobject]@{
+    discoveryArgs = @('--discovery-candidate-budget', '48', '--discovery-time-budget-seconds', '180')
+    discoveryArgumentsSha256 = ''
+    discoverySemanticArgumentsSha256 = ''
+    candidateReviewTargetSuitableCount = 1
+    bakeWorkspace = $recoveryWorkspace
+    exercisePlanPath = $recoveryPlan
+    exerciseCandidatesPath = $recoveryWorkItem.exerciseCandidatesPath
+    discoveryCandidatesReviewed = 6
+    lastDiscoveryTurnReviewed = 6
+}
+if (-not (Set-BoundedSourceRecoveryDiscovery -WorkItem $resumedWorkItem -WaveState $null -CandidateBudget 48 -TimeBudgetSeconds 180) -or
+    $resumedWorkItem.candidateReviewTargetSuitableCount -ne 2) {
+    throw 'A process restart must recover the next suitable-source target from persisted failed windows.'
+}
+
+$recoveryWaveState.source.attempts += [pscustomobject]@{
+    candidateKey = 'next-video-window-c'; videoId = 'next-video'; status = 'rejected_source_validation'
+}
+if (-not (Set-BoundedSourceRecoveryDiscovery -WorkItem $recoveryWorkItem -WaveState $recoveryWaveState -CandidateBudget 48 -TimeBudgetSeconds 180) -or
+    $recoveryWorkItem.candidateReviewTargetSuitableCount -ne 3) {
+    throw 'A second distinct failed video must raise the suitable-video target to three.'
 }
 $resumePath = Join-Path $recoveryWorkspace 'source_turn_resume.json'
 $resume = Get-Content -LiteralPath $resumePath -Raw | ConvertFrom-Json
-if ($resume.attemptedCandidateKeys -notcontains 'old-video-window-a' -or
-    $resume.attemptedCandidateKeys -notcontains 'current-video-window-b' -or
-    $resume.attemptedVideoIds -notcontains 'previously-failed-video' -or
-    $resume.attemptedVideoIds -notcontains 'current-failed-video') {
+if (@($resume.attemptedCandidateKeys | Where-Object { $_ -like 'same-video-window-*' }).Count -ne 4 -or
+    $resume.attemptedCandidateKeys -notcontains 'next-video-window-c' -or
+    @($resume.attemptedVideoIds | Sort-Object -Unique).Count -ne 2 -or
+    $resume.attemptedVideoIds -notcontains 'same-video' -or
+    $resume.attemptedVideoIds -notcontains 'next-video') {
     throw 'Source recovery must persist exact attempted keys and video provenance for the next candidate pass.'
 }
 Remove-Item -LiteralPath $recoveryWorkspace -Recurse -Force
-if (Set-BoundedSourceRecoveryDiscovery -WorkItem $recoveryWorkItem -WaveState $recoveryWaveState -CandidateBudget 0) {
-    throw 'Source-discovery continuation must stop after one recovery turn.'
+
+# A discovery turn with no suitable candidate has no staged-wave receipt. It
+# still spends down the same per-exercise candidate allowance and resumes from
+# the DiscoveryBudget checkpoint without creating a fabricated source cursor.
+$initialRecoveryWorkspace = Join-Path ([System.IO.Path]::GetTempPath()) ("initial-no-source-recovery-" + [guid]::NewGuid().ToString('N'))
+[void][System.IO.Directory]::CreateDirectory($initialRecoveryWorkspace)
+$initialCandidatesPath = Join-Path $initialRecoveryWorkspace 'youtube_candidates.json'
+@{ exercises = @(@{ candidateExpansion = @{ discoveryTurn = @{
+    reviewedThisTurn = 12; stopReason = 'time_budget_exhausted'
+} } }) } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $initialCandidatesPath -Encoding UTF8
+$initialRecovery = [pscustomobject]@{
+    discoveryArgs = @('--discovery-candidate-budget', '48', '--discovery-time-budget-seconds', '180')
+    discoveryArgumentsSha256 = ''
+    discoverySemanticArgumentsSha256 = ''
+    candidateReviewTargetSuitableCount = 1
+    bakeWorkspace = $initialRecoveryWorkspace
+    exercisePlanPath = $recoveryPlan
+    exerciseCandidatesPath = $initialCandidatesPath
+    discoveryCandidatesReviewed = 0
+    lastDiscoveryTurnReviewed = 0
+}
+Add-DiscoveryTurnUsage -WorkItem $initialRecovery
+if (-not (Set-BoundedSourceRecoveryDiscovery -WorkItem $initialRecovery -WaveState $null -CandidateBudget 48 -TimeBudgetSeconds 180)) {
+    throw 'An initial no-source turn should continue when unused candidate allowance remains.'
+}
+$initialCandidateBudget = $initialRecovery.discoveryArgs[[Array]::IndexOf($initialRecovery.discoveryArgs, '--discovery-candidate-budget') + 1]
+if ($initialRecovery.discoveryCandidatesReviewed -ne 12 -or $initialCandidateBudget -ne '36' -or
+    $initialRecovery.candidateReviewTargetSuitableCount -ne 1 -or
+    (Test-Path -LiteralPath (Join-Path $initialRecoveryWorkspace 'source_turn_resume.json'))) {
+    throw 'Initial discovery recovery must reuse reviewed candidates without inventing a source cursor or increasing the winner target.'
+}
+$cappedRecoveryPlan = Join-Path $initialRecoveryWorkspace 'exercise-plan.json'
+@{ exercises = @(@{ id = 'recovery-exercise'; name = 'Recovery exercise'; motionContext = @{} }) } |
+    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $cappedRecoveryPlan -Encoding UTF8
+$cappedRecovery = [pscustomobject]@{
+    discoveryArgs = @('--discovery-candidate-budget', '0', '--out-json', 'recovery.json')
+    discoveryArgumentsSha256 = ''
+    discoverySemanticArgumentsSha256 = ''
+    candidateReviewTargetSuitableCount = 1
+    maxCandidateReviewTargetSuitableCount = 1
+    bakeWorkspace = $initialRecoveryWorkspace
+    exercisePlanPath = $cappedRecoveryPlan
+    exerciseCandidatesPath = $initialCandidatesPath
+    discoveryCandidatesReviewed = 0
+    lastDiscoveryTurnReviewed = 1
+}
+$cappedRecoveryWave = [pscustomobject]@{
+    exerciseId = 'recovery-exercise'
+    exerciseName = 'Recovery exercise'
+    source = [pscustomobject]@{
+    sourceSelectionPolicyVersion = 64
+    priorAttemptedCandidateKeys = @()
+    priorAttemptedVideoIds = @()
+    attempts = @([pscustomobject]@{ candidateKey = 'failed-window'; videoId = 'failed-video' })
+} }
+if (-not (Set-BoundedSourceRecoveryDiscovery -WorkItem $cappedRecovery -WaveState $cappedRecoveryWave -CandidateBudget 48 -TimeBudgetSeconds 180) -or
+    $cappedRecovery.candidateReviewTargetSuitableCount -ne 1) {
+    throw 'An explicit suitable-candidate maximum must still bound recovery selection.'
+}
+Remove-Item -LiteralPath $initialRecoveryWorkspace -Recurse -Force
+
+$recoveryWorkItem.discoveryCandidatesReviewed = 48
+$recoveryWorkItem.lastDiscoveryTurnReviewed = 6
+if (Set-BoundedSourceRecoveryDiscovery -WorkItem $recoveryWorkItem -WaveState $recoveryWaveState -CandidateBudget 48 -TimeBudgetSeconds 180) {
+    throw 'Source-discovery continuation must stop when the cumulative candidate allowance is exhausted.'
+}
+$recoveryWorkItem.discoveryCandidatesReviewed = 6
+$recoveryWorkItem.lastDiscoveryTurnReviewed = 0
+if (Set-BoundedSourceRecoveryDiscovery -WorkItem $recoveryWorkItem -WaveState $recoveryWaveState -CandidateBudget 48 -TimeBudgetSeconds 180) {
+    throw 'Source-discovery continuation must stop when the prior turn found no new candidates.'
 }
 $avoidGpuDiscoveryBakeOverlap = $true
 $pendingBakeItems = @(1)

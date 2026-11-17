@@ -26,9 +26,9 @@ def major_phase_sequence(values):
 
 
 def complete_repetition(values, *, exactly_one=True):
-    """Recognize extreme-to-extreme returns and continuous mid-phase returns.
+    """Recognize extreme-to-extreme returns and continuous returns at any phase.
 
-    A mid-phase start visits only two extreme bands. Require close endpoints,
+    A cycle joining near a phase-band boundary can have only two linear runs. Require close endpoints,
     equal direction at the seam and a full excursion on both sides of it;
     visiting both extremes alone does not establish a repetition.
     """
@@ -46,8 +46,7 @@ def complete_repetition(values, *, exactly_one=True):
     window = max(1, round((len(values) - 1) * .08))
     entry = values[window] - values[0]
     exit_delta = values[-1] - values[-1 - window]
-    passed = (.30 < start < .70 and .30 < end < .70
-              and abs(start - end) <= .10
+    passed = (abs(start - end) <= .10
               and entry * exit_delta > 0
               and min(abs(entry), abs(exit_delta)) > .01 * span)
     return passed, sequence

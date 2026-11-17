@@ -352,7 +352,7 @@ def correct_distal_chain_depth(
                 joints[name] = tuple(
                     root_point + matrix @ (np.asarray(point, dtype=float) - root_point)
                 )
-            corrected_frames[index] = replace(frame, joints=joints)
+            corrected_frames[index] = frame.with_joints(joints)
     report["applied"] = applied_chains > 0
     if applied_chains > 0:
         report["reason"] = "distal_chain_depth_corrected"

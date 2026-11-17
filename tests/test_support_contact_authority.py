@@ -4,9 +4,25 @@ import pytest
 from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg.contact_constraints import is_observed_ground_contact, motion_space_support_evidence
 from exercise_motion_pkg.body_support_observation import (
+    CONTACT_TIMELINE_POLICY_VERSION,
+    POLICY_VERSION,
     _confirmed_observed_ground_sole_sides,
     materialize_body_support,
 )
+
+
+@pytest.mark.parametrize('mode,passed', [
+    ('continuous', False), ('intermittent', False),
+    ('none', True), ('unknown', True), (None, True),
+])
+def test_pre_reconstruction_ground_mode_requires_observed_contact(mode, passed):
+    from exercise_motion_pkg.support_geometry import pre_reconstruction_source_support_readiness
+
+    readiness = pre_reconstruction_source_support_readiness({}, ground_contact_mode=mode)
+    assert readiness['passed'] is passed
+    if not passed:
+        assert readiness['status'] == 'incomplete'
+        assert readiness['rejectionReasons'] == ['stationary_contact_evidence_unavailable']
 
 
 def test_stationary_unobserved_sole_is_not_promoted_to_ground_contact():
@@ -17,7 +33,7 @@ def test_stationary_unobserved_sole_is_not_promoted_to_ground_contact():
             'frames': [{'joints': deepcopy(joints)} for _ in range(12)]}
     evidence = {'bodySupport': {'status': 'confirmed', 'sourceVideoSha256': 'same'},
                 'bodySupportObservation': {'status': 'observed', 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'same',
-                'policyVersion': 5,
+                'policyVersion': POLICY_VERSION,
                     'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
                                     'rightFoot': 'stationary_full_sole', 'rightFootSurface': 'ground'}},
                 'footPatchEvidence': {'available': True, 'feet': {
@@ -37,7 +53,7 @@ def test_pre_reconstruction_source_gate_matches_final_contact_requirements():
         'bodySupportObservation': {'status': 'observed', 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture', 'observation': {
             'leftFoot': 'moving', 'leftFootSurface': 'unknown',
             'rightFoot': 'stationary_full_sole', 'rightFootSurface': 'ground',
-        }, 'policyVersion': 5},
+        }, 'policyVersion': POLICY_VERSION},
         'footPatchEvidence': {'available': True, 'policyVersion': 16, 'feet': {
             'left': {'states': ['unknown'] * 8},
             'right': {'states': ['unknown'] * 8},
@@ -83,7 +99,7 @@ def test_stationary_ankle_track_alone_stays_incomplete_but_observed_contact_is_p
     evidence = {
         'bodySupportObservation': {
             'status': 'observed', 'source': 'exact_source_visual_support_observation',
-            'sourceVideoSha256': 'fixture', 'policyVersion': 5,
+            'sourceVideoSha256': 'fixture', 'policyVersion': POLICY_VERSION,
             'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
                             'rightFoot': 'moving', 'rightFootSurface': 'unknown'},
         },
@@ -108,17 +124,48 @@ def test_stationary_ankle_track_alone_stays_incomplete_but_observed_contact_is_p
     assert readiness['resolvedSides'] == ['left']
 
 
+def test_observed_stationary_ankle_restraint_counts_as_support_coverage(tmp_path):
+    from exercise_motion_pkg.support_geometry import support_contact_readiness
+    from exercise_motion_pkg.body_support_observation import materialize_ankle_support
+    from exercise_motion_pkg.contact_constraints import _fit_local_timed_support_evidence
+    from nonfoot_support_fixture import build_nonfoot_support_fixture
+
+    video, _reference_path, reference, payload = build_nonfoot_support_fixture(
+        tmp_path, sample_frames=tuple(range(12)),
+        observation_overrides={
+            'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
+            'rightFoot': 'unknown', 'rightFootSurface': 'unknown',
+        })
+    evidence = payload['sourceFootSupportEvidence']
+    evidence['bodySupport'] = {
+        'required': True, 'status': 'confirmed',
+        'sourceVideoSha256': evidence['sourceVideoSha256'],
+        'stationaryJoints': ['left_ankle'],
+    }
+    materialize_ankle_support(payload, reference, source_video_path=video)
+    assert len(evidence['supportContacts']) == 12
+
+    mapped = _fit_local_timed_support_evidence(payload, evidence)
+    readiness = support_contact_readiness(payload, evidence=mapped)
+
+    assert readiness['status'] == 'ready'
+    assert readiness['resolvedSides'] == ['left']
+    assert readiness['stationaryContactCoverage']['left'] == {
+        'coveredFrames': 12, 'requiredFrames': 12,
+    }
+
+
 def test_same_time_observer_patch_disagreement_is_unresolved_not_source_rejection():
     from exercise_motion_pkg.support_geometry import pre_reconstruction_source_support_readiness
 
     digest = 'a' * 64
     observation = {
         'status': 'observed', 'source': 'exact_source_visual_support_observation',
-        'sourceVideoSha256': digest, 'policyVersion': 5,
+        'sourceVideoSha256': digest, 'policyVersion': POLICY_VERSION,
         'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
                         'rightFoot': 'moving', 'rightFootSurface': 'unknown'},
         'contactTimeline': {
-            'schemaVersion': 1, 'policyVersion': 1,
+            'schemaVersion': 1, 'policyVersion': CONTACT_TIMELINE_POLICY_VERSION,
             'source': 'exact_source_visual_contact_timeline',
             'sourceClock': 'video_frame_zero_seconds', 'status': 'observed',
             'sourceVideoSha256': digest,
@@ -160,11 +207,11 @@ def test_timed_contact_readiness_maps_source_side_to_swapped_rig_side():
         'sourceVideoSha256': digest,
         'bodySupportObservation': {
             'status': 'observed', 'source': 'exact_source_visual_support_observation',
-            'sourceVideoSha256': digest, 'policyVersion': 5,
+            'sourceVideoSha256': digest, 'policyVersion': POLICY_VERSION,
             'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
                             'rightFoot': 'moving', 'rightFootSurface': 'unknown'},
             'contactTimeline': {
-                'schemaVersion': 1, 'policyVersion': 1,
+                'schemaVersion': 1, 'policyVersion': CONTACT_TIMELINE_POLICY_VERSION,
                 'source': 'exact_source_visual_contact_timeline',
                 'sourceClock': 'video_frame_zero_seconds', 'status': 'observed',
                 'sourceVideoSha256': digest,
@@ -188,7 +235,8 @@ def test_timed_contact_readiness_maps_source_side_to_swapped_rig_side():
     assert readiness['resolvedSides'] == ['right']
 
 
-def test_nonzero_cut_origin_timed_contact_joins_parent_clock_fit_frame():
+@pytest.mark.parametrize('surface', ['ground', 'raised_surface'])
+def test_nonzero_cut_origin_timed_contact_joins_parent_clock_fit_frame(surface):
     from exercise_motion_pkg.body_support_observation import materialize_stationary_sole_support
     from exercise_motion_pkg.support_geometry import support_contact_readiness
 
@@ -197,11 +245,11 @@ def test_nonzero_cut_origin_timed_contact_joins_parent_clock_fit_frame():
         'sourceVideoSha256': selected_digest,
         'bodySupportObservation': {
             'status': 'observed', 'source': 'exact_source_visual_support_observation',
-            'sourceVideoSha256': selected_digest, 'policyVersion': 5,
+            'sourceVideoSha256': selected_digest, 'policyVersion': POLICY_VERSION,
             'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
                             'rightFoot': 'moving', 'rightFootSurface': 'unknown'},
             'contactTimeline': {
-                'schemaVersion': 1, 'policyVersion': 1,
+                'schemaVersion': 1, 'policyVersion': CONTACT_TIMELINE_POLICY_VERSION,
                 'source': 'exact_source_visual_contact_timeline',
                 'sourceClock': 'video_frame_zero_seconds', 'status': 'observed',
                 'sourceVideoSha256': selected_digest,
@@ -244,12 +292,17 @@ def test_nonzero_cut_origin_timed_contact_joins_parent_clock_fit_frame():
              'joints': {'left_ankle': [0.0, 0.1, 0.0], 'left_foot': [0.1, 0.0, 0.0]}},
         ],
     }
+    evidence['bodySupportObservation']['observation']['leftFootSurface'] = surface
+    evidence['bodySupportObservation']['contactTimeline']['samples'][0].update(
+        surface=surface, contactState='forefoot' if surface == 'raised_surface' else 'full_sole')
     materialized = materialize_stationary_sole_support(payload)
     contact = next(c for c in materialized['supportContacts']
                    if c.get('contactTimelineSampleId') == 'left-cut-30')
     assert contact['contactTimelineSourceTimeSec'] == 1.0
     assert contact['sourceTimeSec'] == 3.0
     assert contact['_fitFrameBounds'] == [1, 1]
+    assert contact['surfaceKind'] == surface
+    assert is_observed_ground_contact(contact, materialized) == (surface == 'ground')
     from exercise_motion_pkg.support_geometry import support_contact_masks
     import numpy as np
     active, _ = support_contact_masks(materialized, ['left_ankle', 'left_foot'], 3)
@@ -257,6 +310,12 @@ def test_nonzero_cut_origin_timed_contact_joins_parent_clock_fit_frame():
     readiness = support_contact_readiness(payload, evidence=materialized)
     assert readiness['status'] == 'ready'
     assert readiness['resolvedSides'] == ['left']
+
+    from exercise_motion_pkg.support_geometry import pre_reconstruction_source_support_readiness
+    native = pre_reconstruction_source_support_readiness(
+        evidence, source_frames=[{'sourceTimeSec': index / 30.0} for index in (29, 30, 31)])
+    assert native['status'] == 'ready'
+    assert native['resolvedSides'] == ['left']
 
 
 @pytest.mark.parametrize(('contact_state', 'surface'), [
@@ -269,11 +328,11 @@ def test_unmaterialized_timed_contact_geometry_stays_incomplete(contact_state, s
     evidence = {
         'bodySupportObservation': {
             'status': 'observed', 'source': 'exact_source_visual_support_observation',
-            'sourceVideoSha256': digest, 'policyVersion': 5,
+            'sourceVideoSha256': digest, 'policyVersion': POLICY_VERSION,
             'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
                             'rightFoot': 'moving', 'rightFootSurface': 'unknown'},
             'contactTimeline': {
-                'schemaVersion': 1, 'policyVersion': 1,
+                'schemaVersion': 1, 'policyVersion': CONTACT_TIMELINE_POLICY_VERSION,
                 'source': 'exact_source_visual_contact_timeline',
                 'sourceClock': 'video_frame_zero_seconds', 'status': 'observed',
                 'sourceVideoSha256': digest,
@@ -298,7 +357,7 @@ def test_explicit_observed_raised_foot_surface_overrides_legacy_shared_ground_pl
             'bodySupportObservation': {
                 'status': 'observed',
                 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture',
-                'policyVersion': 5,
+                'policyVersion': POLICY_VERSION,
                 'observation': {
                     'leftFootSurface': 'ground',
                     'rightFootSurface': 'raised_surface',
@@ -376,7 +435,7 @@ def test_unknown_patch_cannot_be_promoted_by_reconstruction_or_approved_as_no_su
               'right_foot': [.3, 0., 0.]}
     evidence = {'feet': {side: {'continuousSupport': False, 'chunkCenterRangeRatio': .01,
                                'endpointDisplacementRatio': .01} for side in ('left', 'right')},
-                'bodySupportObservation': {'status': 'observed', 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture', 'policyVersion': 5, 'observation': {
+                'bodySupportObservation': {'status': 'observed', 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture', 'policyVersion': POLICY_VERSION, 'observation': {
                     'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
                     'rightFoot': 'stationary_forefoot', 'rightFootSurface': 'ground'}},
                 'footPatchEvidence': {'available': True, 'feet': {
@@ -415,7 +474,7 @@ def test_observed_toe_support_pins_only_its_contact_interval_and_preserves_heel_
                              'contactState': 'toe_only', 'contactMotion': 'stationary',
                              'verticalOnly': False, 'startFrame': 2, 'endFrame': 7}],
                 'feet': {'left': {'jointName': 'left_ankle', 'continuousSupport': True}},
-                'bodySupportObservation': {'status': 'observed', 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture', 'policyVersion': 5, 'observation': {
+                'bodySupportObservation': {'status': 'observed', 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture', 'policyVersion': POLICY_VERSION, 'observation': {
                     'leftFoot': 'stationary_forefoot', 'leftFootSurface': 'ground',
                     'rightFoot': 'moving', 'rightFootSurface': 'unknown'}},
                 'footPatchEvidence': {'available': True, 'feet': {'left': {

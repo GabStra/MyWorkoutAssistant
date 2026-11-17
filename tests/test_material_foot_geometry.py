@@ -40,6 +40,59 @@ def test_calibrated_shoe_is_flat_at_rest_and_pivots_at_the_forefoot():
     assert shoe_vertices(raised_ankle, toe, lateral, pitch, .2)[:, 1].min() == pytest.approx(0., abs=1e-12)
 
 
+@pytest.mark.parametrize('policy', ['mirrored', 'unconstrained'])
+def test_bilateral_bind_calibration_shares_geometry_without_adding_observations(policy):
+    import copy
+    from exercise_motion_pkg.foot_geometry import canonical_shoe_calibration_evidence
+
+    names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot']
+    points = np.zeros((16, 4, 3))
+    pitch = np.deg2rad(-20.)
+    points[:, 1] = [.2 * np.cos(pitch), .2 * np.sin(pitch), 0.]
+    points[:, 3] = points[:, 1]
+    evidence = {'contacts': [
+        {'jointName': f'{side}_foot', 'contactState': 'full_sole',
+         'contactMotion': 'stationary', 'surfaceKind': 'ground',
+         'startRatio': 0., 'endRatio': end}
+        for side, end in [('left', 1. / 15.), ('right', 1.)]
+    ]}
+    original = copy.deepcopy(evidence)
+    original_points = points.copy()
+    calibrated = calibrated_foot_rest_pitches(
+        points, names, evidence, canonical_execution={'legs': policy})
+    assert calibrated['right'] == pytest.approx(pitch)
+    assert ('left' in calibrated) is (policy == 'mirrored')
+    assert evidence == original
+    np.testing.assert_array_equal(points, original_points)
+    payload = {'canonicalExecution': {'legs': policy}, 'footRestPitchRadians': calibrated}
+    assert canonical_shoe_calibration_evidence(payload)['passed'] is True
+    if policy == 'mirrored':
+        assert calibrated['left'] == calibrated['right']
+        payload['footRestPitchRadians'] = {'right': pitch}
+        assert canonical_shoe_calibration_evidence(payload)['passed'] is False
+        payload['footRestPitchRadians'] = {'left': 0., 'right': pitch}
+        assert canonical_shoe_calibration_evidence(payload)['passed'] is False
+
+
+def test_mirrored_shoe_bind_guard_does_not_invent_ground_or_reject_native_articulation():
+    from exercise_motion_pkg.foot_geometry import canonical_shoe_calibration_evidence
+
+    payload = {'canonicalExecution': {'legs': 'mirrored'}}
+    assert canonical_shoe_calibration_evidence(payload)['required'] is False
+    assert canonical_shoe_calibration_evidence(payload)['passed'] is True
+    payload['footRestPitchRadians'] = {'left': -.3, 'right': -.3}
+    payload['frames'] = [{
+        'joints': {'left_hip': [-.1, 0., 0.], 'right_hip': [.1, 0., 0.]},
+        'shoeOrientation': {
+            'left': {'forward': [0., np.sin(.3), np.cos(.3)]},
+            'right': {'forward': [0., 0., 1.]},
+        },
+    }]
+    evidence = canonical_shoe_calibration_evidence(payload)
+    assert evidence['passed'] is True
+    assert evidence['maximumReflectedMaterialForwardErrorDegrees'] == pytest.approx(np.rad2deg(.3))
+
+
 def test_rest_pitch_uses_anchored_fullsole_track_and_excludes_unknown_patch_samples():
     names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot']
     count = 6
@@ -447,7 +500,8 @@ def test_material_foot_sampler_without_candidate_uses_fixed_rig_playback():
     np.testing.assert_allclose(sampled['toe'], expected_toe)
 
 
-def test_production_shoe_vertices_match_validation_in_rotated_poses(tmp_path):
+@pytest.mark.parametrize('shoe_mode', ['explicit_orientation', 'pitched_calibration', 'neutral_calibration', 'uncalibrated'])
+def test_production_shoe_vertices_match_validation_in_rotated_poses(tmp_path, shoe_mode):
     root = Path(__file__).resolve().parents[1]
     three = root / 'build/exercise_motion/web-assets/three.module.0.169.0.js'
     if not shutil.which('node') or not three.is_file():
@@ -466,12 +520,14 @@ def test_production_shoe_vertices_match_validation_in_rotated_poses(tmp_path):
             orientation_side = rotation.apply([-.03, 0., 1.])
             orientation_side -= orientation_forward * np.dot(orientation_side, orientation_forward)
             orientation_side /= np.linalg.norm(orientation_side)
-            orientation = {'forward': orientation_forward, 'side': orientation_side}
+            orientation = ({'forward': orientation_forward, 'side': orientation_side}
+                           if shoe_mode == 'explicit_orientation' else None)
+            pitch = None if shoe_mode == 'uncalibrated' else (0. if shoe_mode == 'neutral_calibration' else pitch)
             expected.append(shoe_vertices(
                 ankle, toe, lateral, pitch, .2, orientation=orientation))
             cases.append({'ankle': ankle.tolist(), 'toe': toe.tolist(), 'knee': knee.tolist(),
                           'lateral': lateral.tolist(), 'pitch': pitch,
-                          'orientation': {key: value.tolist() for key, value in orientation.items()},
+                          'orientation': ({key: value.tolist() for key, value in orientation.items()} if orientation else None),
                           'axes': [rotation.apply(v).tolist() for v in np.eye(3)]})
     source = tmp_path / 'cases.json'
     source.write_text(json.dumps(cases))
@@ -486,7 +542,7 @@ const result = JSON.parse(fs.readFileSync(process.argv[4])).map(c => {
   const vec = v => new THREE.Vector3(...v), mesh = build.mesh();
   build.shoe(mesh, vec(c.ankle), vec(c.toe), {side:vec(c.axes[0]),up:vec(c.axes[1]),forward:vec(c.axes[2])},
     .2, 'primary', vec(c.knee), vec(c.lateral), c.pitch,
-    {forward:c.orientation.forward,side:c.orientation.side});
+    c.orientation ? {forward:c.orientation.forward,side:c.orientation.side} : null);
   return {vertices:mesh.vertices.map(v => v.toArray()), fills:mesh.faces.map(face => face.fill)};
 });
 console.log(JSON.stringify(result));
@@ -497,3 +553,87 @@ console.log(JSON.stringify(result));
     for row, vertices in zip(actual, expected):
         np.testing.assert_allclose(row['vertices'], vertices, atol=1e-12)
     assert set(actual[0]['fills']) == {'primary'}
+
+
+def test_material_shoes_does_not_pass_when_no_side_was_evaluated():
+    payload = {'frames': [{'joints': {'root': [0., 1., 0.]}}],
+               'jointNames': ['root'], 'renderFloorY': 0.}
+    result = validate_material_shoes(payload, np.array([[[0., 1., 0.]]]),
+                                    np.array([0.]), floor_limit=.005, contact_limit=.005)
+    assert result['required'] is True
+    assert result['passed'] is False
+    assert result['evaluatedSides'] == []
+
+
+def test_heel_unobserved_shoe_orientation_mirrors_only_uncertain_nonowned_rows():
+    from exercise_motion_pkg.foot_geometry import shoe_orientation_tracks
+
+    names = ['left_hip', 'right_hip', 'left_ankle', 'left_foot',
+             'right_ankle', 'right_foot']
+    pose = np.array([[-.3, 1., 0.], [.3, 1., 0.], [-.15, .1, 0.],
+                     [-.15, .4, 0.], [.15, .1, 0.], [.2, .12, 1.]])
+    points = np.repeat(pose[None], 5, axis=0)
+    contacts = []
+    for frame in (0, 2, 4):
+        contacts.append({
+            'jointName': 'right_foot', 'contactState': 'full_sole',
+            'contactMotion': 'stationary', 'surfaceKind': 'ground',
+            'startFrame': frame, 'endFrame': frame,
+        })
+    contacts.append({
+        'jointName': 'left_foot', 'contactState': 'full_sole',
+        'contactMotion': 'stationary', 'surfaceKind': 'ground',
+        'startFrame': 0, 'endFrame': 0,
+    })
+    states = {'left': ['full_sole'] + ['toe_only'] * 4,
+              'right': ['full_sole', 'toe_only', 'full_sole',
+                        'toe_only', 'full_sole']}
+    evidence = {
+        'contacts': contacts,
+        'footPatchEvidence': {'available': True, 'feet': {
+            'left': {'states': states['left'],
+                     'pitchReferenceSource': 'heel_unobserved',
+                     'heelImageObservations': [
+                         {'state': 'toe_only', 'stationaryAnchorGroupId': 'left:toe:0'}
+                         for _ in range(4)]},
+            'right': {'states': states['right'],
+                      'pitchReferenceSource': 'relative_stance',
+                      'heelImageObservations': [
+                          {'state': 'full_sole', 'stationaryAnchorGroupId': 0}
+                          for _ in range(3)]},
+        }},
+        '_fitFrameFootPatchStatesBySide': states,
+    }
+    frames = [{
+        'timeSec': index / 30.,
+        'joints': dict(zip(names, points[index].tolist())),
+        'boneSides': {f'{side}_ankle->{side}_foot': [0., 0., 1.]
+                      for side in ('left', 'right')},
+    } for index in range(len(points))]
+    payload = {
+        'frames': frames, 'jointNames': names,
+        'sourceFootSupportEvidence': evidence,
+        'canonicalExecution': {'legs': 'mirrored'},
+        'renderFloorY': 0., 'groundContactMode': 'continuous',
+        'footRestPitchRadians': {'left': 0., 'right': 0.},
+    }
+
+    tracks = shoe_orientation_tracks(payload, points)
+
+    assert tracks['left']['modelMirroredFrom'] == 'right'
+    # Only non-owned uncertain rows take the reflected observed orientation.
+    expected = np.array([-.05, .02, 1.])
+    np.testing.assert_allclose(
+        tracks['left']['forward'][1], expected / np.linalg.norm(expected), atol=1e-10)
+    np.testing.assert_allclose(
+        tracks['left']['forward'][3], expected / np.linalg.norm(expected), atol=1e-10)
+    # The target's own full-sole row and contact mask remain its own evidence.
+    assert tracks['left']['contactMask'].tolist() == [True, False, False, False, False]
+    np.testing.assert_allclose(tracks['left']['forward'][0], [0., 1., 0.], atol=1e-10)
+    # No contact is invented for the mirrored side.
+    np.testing.assert_array_equal(
+        tracks['left']['contactMask'], [True, False, False, False, False])
+
+    evidence['footPatchEvidence']['feet']['left']['pitchReferenceSource'] = 'relative_stance'
+    measured_tracks = shoe_orientation_tracks(payload, points)
+    assert 'modelMirroredFrom' not in measured_tracks['left']

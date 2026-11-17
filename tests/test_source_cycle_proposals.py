@@ -10,17 +10,40 @@ def phase_only_boundary_fixture(monkeypatch):
                         lambda *_args, **_kwargs: {'passed': True})
 
 
-@pytest.mark.parametrize('boundary_passed', [True, False])
-def test_source_validated_cycle_proposals_uses_full_interval_only_when_both_phases_pass(monkeypatch, boundary_passed):
-    payload = {"frames": [{} for _ in range(7)], "jointNames": []}
+@pytest.mark.parametrize(('boundary_passed', 'support_verified', 'boundary_reasons', 'endpoint_gap'), [
+    (True, False, [], 0.0),
+    (True, True, [], 0.0),
+    (False, False, ['source_support_wrap_unrepairable'], 0.0),
+    (False, True, ['source_support_wrap_unrepairable'], 0.0),
+    (False, True, ['source_boundary_tangents_incompatible'], 0.0),
+    (False, True, ['source_support_wrap_unrepairable', 'source_boundary_tangents_incompatible'], 0.0),
+    (True, False, [], 0.2),
+    (False, True, ['source_support_wrap_unrepairable'], 0.2),
+])
+def test_source_validated_cycle_proposals_defers_only_supported_wrap_failures(
+        monkeypatch, boundary_passed, support_verified, boundary_reasons, endpoint_gap):
+    payload = {"frames": [{"joints": {"pelvis": [endpoint_gap if i == 6 else 0., 0., 0.]}}
+                           for i in range(7)], "jointNames": ["pelvis"]}
     monkeypatch.setattr(bake_and_rank, "observable_motion_spec_for_contract", lambda _contract: object())
     monkeypatch.setattr(bake_and_rank, "dominant_observable_motion_phase_track", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(bake_and_rank, "body_height_from_payload_frames", lambda _frames: 1.0)
-    monkeypatch.setattr(loop_cycles, "rank_loop_cycles", lambda *_args, **_kwargs: [])
+    def no_cycle(*_args, **kwargs):
+        kwargs['diagnostics']['endpointGapLimitMeters'] = 0.1
+        return []
+    monkeypatch.setattr(loop_cycles, "rank_loop_cycles", no_cycle)
     monkeypatch.setattr(loop_cycles, "slice_loop_cycle", lambda original, _choice: original)
     monkeypatch.setattr(loop_cycles, 'cycle_boundary_motion_metrics',
-                        lambda *_args, **_kwargs: {'passed': boundary_passed})
-    monkeypatch.setattr(bake_and_rank, "source_pose_reference_for_motion", lambda *_args: {})
+                        lambda *_args, **_kwargs: {
+                            'passed': boundary_passed,
+                            'rejectionReasons': boundary_reasons,
+                        })
+    from exercise_motion_pkg import controlled_motion
+    monkeypatch.setattr(controlled_motion, '_verified_support_wrap_deferral',
+                        lambda *_args, **_kwargs: support_verified)
+    def boundary_reference(*_args, include_adjacent_boundary_evidence=False):
+        assert include_adjacent_boundary_evidence is True
+        return {}
+    monkeypatch.setattr(bake_and_rank, "source_pose_reference_for_motion", boundary_reference)
     monkeypatch.setattr(
         bake_and_rank,
         "full_repetition_phase_completeness_metrics_from_source_pose_payload",
@@ -45,7 +68,9 @@ def test_source_validated_cycle_proposals_uses_full_interval_only_when_both_phas
         "stopFrameExclusive": 7,
         "score": 1.0,
         "endpointGapMeters": 0.0,
-    }] if boundary_passed else [])
+        **({"sourceWrapDeferredToSupportInitialization": True} if support_verified and not boundary_passed else {}),
+    }] if endpoint_gap <= 0.1 and (boundary_passed or (
+        support_verified and boundary_reasons == ['source_support_wrap_unrepairable'])) else [])
     assert diagnostics[-1]["selectionSource"] == "whole_interval_source_and_output_phase"
     assert diagnostics[-1]['boundaryMotion']['passed'] is boundary_passed
 
@@ -57,7 +82,7 @@ def test_source_validated_cycle_proposals_rejects_unconfirmed_full_interval(monk
     monkeypatch.setattr(bake_and_rank, "body_height_from_payload_frames", lambda _frames: 1.0)
     monkeypatch.setattr(loop_cycles, "rank_loop_cycles", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(loop_cycles, "slice_loop_cycle", lambda original, _choice: original)
-    monkeypatch.setattr(bake_and_rank, "source_pose_reference_for_motion", lambda *_args: {})
+    monkeypatch.setattr(bake_and_rank, "source_pose_reference_for_motion", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         bake_and_rank,
         "full_repetition_phase_completeness_metrics_from_source_pose_payload",
@@ -78,15 +103,15 @@ def test_source_validated_cycle_proposals_rejects_unconfirmed_full_interval(monk
 
 
 def test_source_validated_cycle_proposals_rejects_partial_crop_and_keeps_full_interval_first(monkeypatch):
-    payload = {"frames": [{} for _ in range(9)], "jointNames": []}
+    payload = {"frames": [{"joints": {"pelvis": [0., 0., 0.]}} for _ in range(9)],
+               "jointNames": ["pelvis"]}
     monkeypatch.setattr(bake_and_rank, "observable_motion_spec_for_contract", lambda _contract: object())
     monkeypatch.setattr(bake_and_rank, "dominant_observable_motion_phase_track", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(bake_and_rank, "body_height_from_payload_frames", lambda _frames: 1.0)
-    monkeypatch.setattr(
-        loop_cycles,
-        "rank_loop_cycles",
-        lambda *_args, **_kwargs: [{"startFrame": 2, "stopFrameExclusive": 7, "score": 3.0}],
-    )
+    def one_crop(*_args, **kwargs):
+        kwargs['diagnostics']['endpointGapLimitMeters'] = 0.1
+        return [{"startFrame": 2, "stopFrameExclusive": 7, "score": 3.0}]
+    monkeypatch.setattr(loop_cycles, "rank_loop_cycles", one_crop)
     monkeypatch.setattr(
         loop_cycles,
         "slice_loop_cycle",
@@ -98,7 +123,7 @@ def test_source_validated_cycle_proposals_rejects_partial_crop_and_keeps_full_in
     monkeypatch.setattr(
         bake_and_rank,
         "source_pose_reference_for_motion",
-        lambda _source, motion: {"frames": motion["frames"], "jointNames": []},
+        lambda _source, motion, **_kwargs: {"frames": motion["frames"], "jointNames": []},
     )
 
     def phase_metrics(actual, **_kwargs):

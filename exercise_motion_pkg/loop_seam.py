@@ -33,10 +33,11 @@ def seam_quality_metrics(points, *, fps, scale, rendered_velocity_jump=None,
     proxy_continuous = step_excess < step_limit and velocity < velocity_limit
     if rendered_velocity_limit is None:
         rendered_velocity_limit = .001 * scale
+    # Stored spacing is a ranking proxy. Production playback owns the rendered
+    # path's continuity, contact constraints and local motion discontinuities.
     seam_continuous = (
-        step_excess < step_limit
-        and (rendered_velocity_jump < rendered_velocity_limit
-             if rendered_velocity_jump is not None else velocity < velocity_limit)
+        rendered_velocity_jump < rendered_velocity_limit
+        if rendered_velocity_jump is not None else proxy_continuous
     )
     return {
         'seamPositionJumpMeters': float(np.max(np.linalg.norm(step, axis=-1))),

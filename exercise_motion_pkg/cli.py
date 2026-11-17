@@ -78,6 +78,8 @@ from exercise_motion_pkg.reconstruction_runner import (
     DEFAULT_RECONSTRUCTION_TIMEOUT_SECONDS,
 )
 from exercise_motion_pkg.youtube import (
+    DEFAULT_DISCOVERY_CANDIDATE_BUDGET,
+    DEFAULT_DISCOVERY_TIME_BUDGET_SECONDS,
     DEFAULT_YOUTUBE_SEARCH_TIMEOUT_SECONDS,
     YouTubeRankingSettings,
     discover_and_rank_youtube_candidates,
@@ -313,7 +315,7 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--max-frame-width", type=int, default=640)
     detect.add_argument("--merge-gap-seconds", type=float, default=2.0)
     detect.add_argument("--confidence-threshold", type=float, default=0.45)
-    detect.add_argument("--min-segment-seconds", type=float, default=2.0)
+    detect.add_argument("--min-segment-seconds", type=float, default=None)
     detect.add_argument("--max-segment-seconds", type=float, default=20.0)
     detect.add_argument("--refinement-window-seconds", type=float, default=2.0)
     detect.add_argument("--refinement-overlap-seconds", type=float, default=1.0)
@@ -354,10 +356,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for cached low-resolution YouTube previews shared by YOLO and VLM ranking.",
     )
     youtube_search.add_argument("--max-candidates", type=int, default=8)
-    youtube_search.add_argument("--discovery-candidate-budget", type=int, default=0,
-                                help="New candidates per discovery turn, across all expansions; 0 disables the limit.")
-    youtube_search.add_argument("--discovery-time-budget-seconds", type=float, default=0.0,
-                                help="Review time per turn, checked between batches; 0 disables the limit.")
+    youtube_search.add_argument(
+        "--discovery-candidate-budget",
+        type=int,
+        default=DEFAULT_DISCOVERY_CANDIDATE_BUDGET,
+        help="New candidates per discovery turn across all expansions (default: 48); 0 disables the limit.",
+    )
+    youtube_search.add_argument(
+        "--discovery-time-budget-seconds",
+        type=float,
+        default=DEFAULT_DISCOVERY_TIME_BUDGET_SECONDS,
+        help="Review time per turn, checked between batches (default: 180); 0 disables the limit.",
+    )
     youtube_search.add_argument(
         "--candidate-review-batch-size",
         type=int,
@@ -637,10 +647,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional movement workspace used to check each exercise's retained source-review budget offline.",
     )
-    list_plan_exercises.add_argument("--source-review-timeout-seconds", type=float, default=180.0)
+    list_plan_exercises.add_argument(
+        "--source-review-timeout-seconds",
+        type=float,
+        default=DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
+    )
     list_plan_exercises.add_argument("--source-review-turn-id", default=None)
     list_plan_exercises.add_argument("--exercise-timeout-seconds", type=float, default=0.0)
-    list_plan_exercises.add_argument("--max-source-window-attempts", type=int, default=0)
+    list_plan_exercises.add_argument(
+        "--max-source-window-attempts",
+        type=int,
+        default=DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS,
+    )
 
     definition_review = subparsers.add_parser(
         "review-motion-definition", help="Export a provisional definition, or explicitly approve an edited review into a new plan.",
@@ -671,6 +689,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--candidates-json", required=True)
     bake_and_rank.add_argument(
+        "--exercise-plan-json",
+        type=Path,
+        help=(
+            "Authoritative single-exercise plan whose motionContext is the current "
+            "approved definition. Prepared candidates may carry stale metadata; "
+            "contract resolution must use this plan instead of that snapshot."
+        ),
+    )
+    bake_and_rank.add_argument(
         "--exercise-motion-contract-cache-dir",
         type=Path,
         help=(
@@ -692,7 +719,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS,
         help=(
-            "Maximum source-window variants to try per ranked video before moving on. "
+            "Maximum source-window candidates to try per exercise review turn. "
             "Use 0 to try every reviewed source window."
         ),
     )
@@ -824,7 +851,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--segment-confidence-threshold", type=float, default=0.45)
     bake_and_rank.add_argument("--segment-padding-seconds", type=float, default=0.35)
     bake_and_rank.add_argument("--segment-end-padding-seconds", type=float, default=0.35)
-    bake_and_rank.add_argument("--segment-min-seconds", type=float, default=2.0)
+    bake_and_rank.add_argument("--segment-min-seconds", type=float, default=None)
     bake_and_rank.add_argument(
         "--segment-max-seconds",
         type=float,
@@ -1336,7 +1363,171 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "llama_cpp_cont_batching": not args.no_llama_cpp_cont_batching,
         "llama_cpp_auto_start_server": not args.no_llama_cpp_auto_start_server,
     }
+    if getattr(args, "exercise_plan_json", None) is not None:
+        plan_exercises = load_workout_plan_exercises(Path(args.exercise_plan_json))
+        if len(plan_exercises) != 1:
+            raise ValueError(
+                f"--exercise-plan-json must resolve to exactly one exercise: {args.exercise_plan_json}"
+            )
+        overrides["authoritative_exercise_motion_context"] = (
+            plan_exercises[0].motion_context
+        )
     return BakeAndRankRequest(**_request_kwargs(args, BakeAndRankRequest, overrides))
+
+
+class ApprovedSourceReferenceContextError(ValueError):
+    """A mapped source item failed its bound source/target authority preflight."""
+
+
+def approved_source_reference_target_for_staged_plan(
+    *, exercise_plan_path: Path, item_workspace: Path, source_exercise_id: str,
+    source_exercise_name: str, source_motion_context: dict[str, object],
+    expected_mapping_sha256: str | None,
+) -> dict[str, object] | None:
+    try:
+        return _approved_source_reference_target_for_staged_plan(
+            exercise_plan_path=exercise_plan_path,
+            item_workspace=item_workspace,
+            source_exercise_id=source_exercise_id,
+            source_exercise_name=source_exercise_name,
+            source_motion_context=source_motion_context,
+            expected_mapping_sha256=expected_mapping_sha256,
+        )
+    except ApprovedSourceReferenceContextError:
+        raise
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError) as exc:
+        raise ApprovedSourceReferenceContextError(
+            f"Mapped source-reference preflight failed: {exc}"
+        ) from exc
+
+
+def _approved_source_reference_target_for_staged_plan(
+    *, exercise_plan_path: Path, item_workspace: Path, source_exercise_id: str,
+    source_exercise_name: str, source_motion_context: dict[str, object],
+    expected_mapping_sha256: str | None,
+) -> dict[str, object] | None:
+    """Resolve target motion authority while retaining a source candidate identity."""
+    plan_document = json.loads(exercise_plan_path.read_text(encoding="utf-8"))
+    mapped_plan_path = Path(str(plan_document.get("sourcePlanPath") or ""))
+    if not mapped_plan_path.is_absolute():
+        mapped_plan_path = (exercise_plan_path.parent / mapped_plan_path).resolve()
+    mapped_plan = json.loads(mapped_plan_path.read_text(encoding="utf-8"))
+    bindings = mapped_plan.get("motionSourceReferenceBindings")
+    if not isinstance(bindings, list):
+        return None
+    matches = [value for value in bindings if isinstance(value, dict)
+               and value.get("sourceReferenceDefinitionId") == source_exercise_id]
+    if not matches:
+        same_name = [value for value in bindings if isinstance(value, dict)
+                     and str(value.get("sourceReferenceExerciseName") or "").strip().casefold()
+                     == source_exercise_name.strip().casefold()]
+        if same_name:
+            raise ApprovedSourceReferenceContextError(
+                "Mapped source-reference name matches but source definition identity differs"
+            )
+        return None
+    if len(matches) != 1:
+        raise ValueError("Ambiguous approved source-reference binding for staged exercise")
+    derived = matches[0]
+
+    def identity(value: object) -> str:
+        raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    source_context = derived.get("sourceMotionContext")
+    source_exercise_context = derived.get("sourceExerciseMotionContext")
+    target_context = derived.get("targetMotionContext")
+    target_definition = derived.get("targetDefinition")
+    target_exercise_context = derived.get("targetExerciseMotionContext")
+
+    def contains_approved_fields(actual: object, expected: object) -> bool:
+        if isinstance(expected, dict):
+            return isinstance(actual, dict) and all(
+                key in actual and contains_approved_fields(actual[key], value)
+                for key, value in expected.items()
+            )
+        if isinstance(expected, list):
+            return isinstance(actual, list) and actual == expected
+        return type(actual) is type(expected) and actual == expected
+
+    if (not isinstance(source_context, dict) or not isinstance(target_context, dict)
+            or not isinstance(source_exercise_context, dict)
+            or not isinstance(target_exercise_context, dict)
+            or not isinstance(target_definition, dict)
+            or not contains_approved_fields(source_exercise_context, source_context)
+            or source_exercise_context != source_motion_context
+            or derived.get("sourceReferenceExerciseName") != source_exercise_name
+            or derived.get("motionReferenceOnly") is not True
+            or derived.get("allowedDifference") != "external_load_not_shown"
+            or target_definition.get("id") != derived.get("targetDefinitionId")
+            or target_definition.get("name") != derived.get("targetExerciseName")
+            or target_definition.get("motionContext") != target_context
+            or identity(source_context) != derived.get("sourceMotionContextSha256")
+            or identity(source_exercise_context) != derived.get("sourceExerciseMotionContextSha256")
+            or identity(target_context) != derived.get("targetMotionContextSha256")
+            or identity(target_exercise_context) != derived.get("targetExerciseMotionContextSha256")
+            or identity(target_definition) != derived.get("targetDefinitionSha256")):
+        raise ApprovedSourceReferenceContextError(
+            "Approved source-reference context does not match staged item"
+        )
+
+    mapping_path = next((parent / "source_reference_mapping.json"
+                         for parent in (item_workspace.resolve(), *item_workspace.resolve().parents)
+                         if (parent / "source_reference_mapping.json").is_file()), None)
+    if mapping_path is None:
+        raise ValueError("Approved source-reference mapping is missing from staged workspace")
+    mapping_sha256 = hashlib.sha256(mapping_path.read_bytes()).hexdigest()
+    if (not isinstance(expected_mapping_sha256, str) or len(expected_mapping_sha256) != 64
+            or mapping_sha256.casefold() != expected_mapping_sha256.casefold()):
+        raise ValueError("Staged source-reference mapping does not match invocation digest")
+    mapping_document = json.loads(mapping_path.read_text(encoding="utf-8"))
+    mapping_bindings = mapping_document.get("bindings") if isinstance(mapping_document, dict) else None
+    mapped = [value for value in (mapping_bindings or []) if isinstance(value, dict)
+              and value.get("sourceReferenceDefinitionId") == source_exercise_id]
+    if len(mapped) != 1:
+        raise ValueError("Staged source-reference mapping has no unique binding")
+    approved = mapped[0]
+    for key in ("targetDefinitionId", "motionReferenceOnly", "allowedDifference",
+                "approvalSha256", "sourceMotionContextSha256", "targetMotionContextSha256",
+                "sourceDefinitionSha256", "targetDefinitionSha256"):
+        if approved.get(key) != derived.get(key):
+            raise ValueError(f"Staged source-reference mapping mismatch for {key}")
+    approval_path = Path(str(approved.get("approvalPath") or ""))
+    if not approval_path.is_absolute():
+        approval_path = (mapping_path.parent / approval_path).resolve()
+    if (not approval_path.is_file()
+            or hashlib.sha256(approval_path.read_bytes()).hexdigest() != approved.get("approvalSha256")):
+        raise ValueError("Staged source-reference approval is missing or stale")
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    if (approval.get("authority") != "explicit_user_approval"
+            or approval.get("exportedExerciseUnchanged") is not True
+            or approval.get("exerciseName") != derived.get("targetExerciseName")
+            or approval.get("sourceReferenceExerciseName") != source_exercise_name
+            or not approval.get("allowedDifference")
+            or not approval.get("userAnswer")):
+        raise ValueError("Source-reference approval does not cover staged source/target")
+    return {
+        "exerciseId": derived["targetDefinitionId"],
+        "exerciseName": derived["targetExerciseName"],
+        "exerciseSlug": derived.get("targetExerciseSlug"),
+        "motionContext": target_exercise_context,
+        "sourceMotionContext": source_context,
+        "sourceMotionContextSha256": derived["sourceMotionContextSha256"],
+        "sourceExerciseMotionContext": source_exercise_context,
+        "sourceExerciseMotionContextSha256": derived["sourceExerciseMotionContextSha256"],
+        "sourceExerciseId": source_exercise_id,
+        "sourceExerciseName": source_exercise_name,
+        "mappingPath": str(mapping_path),
+        "mappingSha256": mapping_sha256,
+        "approvalSha256": approved["approvalSha256"],
+        "approvalAuthority": approval["authority"],
+        "exportedExerciseUnchanged": approval["exportedExerciseUnchanged"],
+        "approvalAllowedDifference": approval["allowedDifference"],
+        "approvalUserAnswerPresent": bool(approval.get("userAnswer")),
+        "motionReferenceOnly": True,
+        "allowedDifference": "external_load_not_shown",
+    }
 
 
 def run_staged_bake_wave_manifest(
@@ -1346,6 +1537,7 @@ def run_staged_bake_wave_manifest(
     progress=None,
     render_executor=None,
     accelerator_phase=None,
+    source_review_input_supersessions=None,
 ):
     """Execute one serialized staged-wave manifest using shared CLI settings."""
     if args.staged_wave_manifest is None:
@@ -1396,10 +1588,19 @@ def run_staged_bake_wave_manifest(
                 f"Staged-wave exercise plan at index {index} does not match "
                 f"exercise '{exercise_id}' / '{exercise_name}'"
             )
+        source_reference_target = approved_source_reference_target_for_staged_plan(
+            exercise_plan_path=exercise_plan_path,
+            item_workspace=item_workspace,
+            source_exercise_id=plan_exercise.exercise_id,
+            source_exercise_name=plan_exercise.name,
+            source_motion_context=plan_exercise.motion_context,
+            expected_mapping_sha256=wave_payload.get("sourceReferenceMappingSha256"),
+        )
         wave_items.append(
             StagedWaveItem(
                 exercise_id=exercise_id,
                 exercise_name=exercise_name,
+                source_reference_target=source_reference_target,
                 run_id=str(wave_payload.get("runId") or "") or None,
                 source_review_turn_id=str(wave_payload.get("sourceReviewTurnId") or "") or None,
                 request=replace(
@@ -1417,6 +1618,7 @@ def run_staged_bake_wave_manifest(
         progress=progress,
         render_executor=render_executor,
         accelerator_phase=accelerator_phase,
+        source_review_input_supersessions=source_review_input_supersessions,
     )
 
 

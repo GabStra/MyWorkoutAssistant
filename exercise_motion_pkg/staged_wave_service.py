@@ -612,15 +612,22 @@ def _run_staged_wave_service_locked(
                         activity = item_state.get("sourceActivity")
                         if isinstance(activity, dict):
                             deadline = activity.get("operationDeadlineEpoch")
-                            if isinstance(deadline, (int, float)) and deadline > 0:
-                                source_activities.append({
-                                    "deadlineEpoch": float(deadline),
-                                    "exerciseName": item_state.get("exerciseName"),
-                                    "operation": activity.get("operation"),
-                                    "videoId": activity.get("videoId"),
-                                    "candidateKey": activity.get("candidateKey"),
-                                    "threadId": activity.get("threadId"),
-                                })
+                            source_activities.append({
+                                "deadlineEpoch": (
+                                    float(deadline)
+                                    if isinstance(deadline, (int, float)) and deadline > 0
+                                    else None
+                                ),
+                                "elapsedSeconds": max(
+                                    0.0,
+                                    now_epoch - float(activity["operationStartedEpoch"]),
+                                ) if isinstance(activity.get("operationStartedEpoch"), (int, float)) else None,
+                                "exerciseName": item_state.get("exerciseName"),
+                                "operation": activity.get("operation"),
+                                "videoId": activity.get("videoId"),
+                                "candidateKey": activity.get("candidateKey"),
+                                "threadId": activity.get("threadId"),
+                            })
                 except (OSError, ValueError, TypeError, json.JSONDecodeError):
                     pass
             active_phase_deadlines = list((entry.get("activeDeadlines") or {}).values())
@@ -632,6 +639,7 @@ def _run_staged_wave_service_locked(
                 *[
                     {**activity, "owner": "source_activity_checkpoint"}
                     for activity in source_activities
+                    if isinstance(activity.get("deadlineEpoch"), (int, float))
                 ],
             ]
             known_deadlines.sort(key=lambda value: float(value["deadlineEpoch"]))
@@ -665,6 +673,15 @@ def _run_staged_wave_service_locked(
                         stalled = state.get("stalledOperation")
                         if isinstance(stalled, dict) and stalled.get("requestId") == entry.get("requestId"):
                             state.pop("stalledOperation", None)
+                        if source_activities:
+                            current["phase"] = checkpoint_stage or current.get("phase")
+                            latest = source_activities[-1]
+                            elapsed = latest.get("elapsedSeconds")
+                            age = f" ({float(elapsed):.0f}s)" if isinstance(elapsed, (int, float)) else ""
+                            current["lastProgress"] = (
+                                f"{latest.get('exerciseName', '')}: "
+                                f"{latest.get('operation', current.get('phase'))}{age}"
+                            )[:1000]
             publish_active_state()
             deadline_epoch = earliest_deadline.get("deadlineEpoch") if earliest_deadline else None
             if (

@@ -242,6 +242,71 @@ def test_untrusted_contract_keeps_phase_proposal_as_review_checklist():
     assert youtube.exercise_motion_action_definition_review_reason(contract) == "target_action_definition_unresolved"
 
 
+def test_source_cut_phase_prompt_binds_ordered_phase_ids_to_contract_descriptions(candidate):
+    contract = {
+        "definingAction": "Pull upward from the hang.",
+        "requiredPhases": ["Pull upward from the hang", "Lower back to the starting hang"],
+        "completionMode": "return_to_start",
+        "actionDefinitionStatus": "defined",
+        "actionDefinitionAuthority": "structured_definition",
+        "phaseEvidenceHardGate": True,
+    }
+    prompt = bake.build_source_cut_candidate_choice_prompt(
+        exercise_name="Pull-Up", candidate_title="ignored", candidate=candidate,
+        exercise_motion_contract=contract,
+    )
+    assert '"id": "phase_01", "description": "Pull upward from the hang"' in prompt
+    assert '"id": "phase_02", "description": "Lower back to the starting hang"' in prompt
+    assert prompt.index('"id": "phase_01"') < prompt.index('"id": "phase_02"')
+
+
+def test_source_cut_request_debug_preserves_classifier_before_correction_error(candidate, tmp_path, monkeypatch):
+    frame = candidate.frame_paths[0]
+    frame.write_bytes(b"prepared image bytes")
+    original = response()
+    ranking = bake.LoopRanking(1, [], payload={"sourceCutScorecardCandidates": [{
+        "movementTopologyEvidence": {
+            "expectedPhaseIds": ["phase_01", "phase_02"],
+            "phaseTimingEvidence": {"status": "unresolved"},
+        },
+    }]})
+    monkeypatch.setattr(bake, "source_cut_candidate_evidence_inventory", lambda _candidate: [
+        {"id": "A:1"}, {"id": "A:2"},
+    ])
+    monkeypatch.setattr(bake, "source_review_model_identity", lambda _settings: None)
+    calls = []
+
+    def caption_images(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return original
+        raise RuntimeError("bounded test stop during citation correction")
+
+    result = bake.rank_cut_candidate_with_caption_images(
+        candidate=candidate,
+        caption_images=caption_images,
+        prompt_builder=lambda _candidate: "source classifier prompt",
+        parser=lambda _raw, _candidate: ranking,
+    )
+    debug_path = bake.cut_candidate_review_debug_path(candidate)
+    debug = json.loads(debug_path.read_text(encoding="utf-8"))
+    records = debug["captionRequestRecords"]
+    assert len(records) == 2
+    assert records[0]["stage"] == "source_cut_classifier_attempt_1"
+    assert records[0]["rawResponse"] == original
+    assert records[0]["parseOutcome"] == "parsed"
+    assert records[0]["imageContentIds"][0]["contentSha256"]
+    assert records[1]["stage"] == "source_cut_citation_correction"
+    assert records[1]["requestSchema"]
+    assert records[1]["error"]["message"] == "bounded test stop during citation correction"
+    assert debug["rawResponse"] == original
+    assert debug["ranking"]["score"] == ranking.score
+    assert debug["unresolvedEvidenceGroups"] == [{
+        "field": "phaseEvidence", "ids": ["phase_01", "phase_02"],
+    }]
+    assert result.errors
+
+
 def test_structured_minimal_action_definition_is_trusted_and_reuses_phase_topology():
     exercise = youtube.ExerciseEntry(
         exercise_id="high-pull", name="Barbell High Pull", slug="barbell-high-pull",
@@ -551,3 +616,66 @@ def test_replay_inventory_preserves_selected_exercises(tmp_path):
     selected.write_text("{}")
     assert authority.source_authority_replay_plan(tmp_path) == []
     assert selected.read_text() == "{}" and path.exists()
+
+@pytest.mark.parametrize('repair_case', ['existing', 'missing', 'blank', 'bad_id'])
+def test_positive_invalid_evidence_gets_citation_correction(candidate, monkeypatch, repair_case):
+    original = json.loads(response())
+    original['candidates'][0]['phaseEvidence'] = [
+        {'phaseId': 'phase_01', 'visible': True, 'evidence': 'Lower the bar', 'evidenceFrameIds': ['A:1', 'A:2']},
+        {'phaseId': 'phase_02', 'visible': True, 'evidence': 'Raise the bar', 'evidenceFrameIds': ['A:1', 'A:2']},
+    ]
+    correction = {'phase_01': ['A:1'], 'phase_02': ['A:2']}
+    if repair_case != 'existing':
+        original['candidates'][0]['phaseEvidence'].pop()
+        correction['phase_02'] = {
+            'evidence': '' if repair_case == 'blank' else 'Raise the bar',
+            'evidenceFrameIds': ['A:99'] if repair_case == 'bad_id' else ['A:2'],
+        }
+    ranking = bake.LoopRanking(0, [], payload={'sourceCutScorecardCandidates': [{
+        'movementTopologyEvidence': {'expectedPhaseIds': ['phase_01', 'phase_02'],
+                                    'phaseTimingEvidence': {'status': 'unresolved'}},
+    }]})
+    monkeypatch.setattr(bake, 'source_cut_candidate_evidence_inventory', lambda _: [{'id':'A:1'}, {'id':'A:2'}])
+    monkeypatch.setattr(bake, 'source_review_model_identity', lambda _: None)
+    parsed = []
+    def parse(raw, _candidate):
+        parsed.append(json.loads(raw)['candidates'][0])
+        return bake.LoopRanking(1, [], payload={'selectedCandidateId':'A'})
+    result, corrections = bake.correct_source_cut_evidence(
+        candidate=candidate, ranking=ranking, raw=json.dumps(original), parser=parse,
+        caption_images=lambda **kwargs: json.dumps(correction),
+        request_kwargs={}, original_prompt='Reviewed source requirements',
+    )
+    assert len(corrections) == 1
+    if repair_case in {'blank', 'bad_id'}:
+        assert result is ranking
+        assert parsed == []
+        return
+    assert result.score == 1
+    assert parsed[0]['confidence'] == original['candidates'][0]['confidence']
+    assert parsed[0]['phaseEvidence'][0]['evidenceFrameIds'] == ['A:1']
+    assert parsed[0]['phaseEvidence'][1]['evidenceFrameIds'] == ['A:2']
+    assert parsed[0]['phaseEvidence'][1]['evidence'] == 'Raise the bar'
+    assert not bake.review_source_cut_is_negative(json.dumps(original))
+
+
+def test_negative_source_verdict_remains_negative():
+    assert bake.review_source_cut_is_negative(response(approved=False))
+    assert not bake.review_source_cut_is_negative('invalid JSON')
+
+
+def test_current_unresolved_source_receipt_is_resumable_but_rejection_stays_excluded(tmp_path):
+    payload = {'selectedSpan': None, 'sourceCutRanking': {
+        'reasons': ['source_candidate_window_choice_failed', authority.SOURCE_REVIEW_REQUIRED],
+        'payload': {'sourceReviewAuthorityVersion': authority.SOURCE_REVIEW_AUTHORITY_VERSION,
+                    'sourceReviewStatus': 'needs_review'}}}
+    path = tmp_path / 'segment_detection' / 'segment_selection.json'
+    path.parent.mkdir()
+    path.write_text(json.dumps(payload))
+    assert authority.retained_source_attempt_keys(['source'], {'source': tmp_path}) == []
+    from exercise_motion_pkg.wave_pipeline import wave_retry_disposition
+    assert wave_retry_disposition({'source': {'failureReason': 'source_review_incomplete'}}) == 'retry_review'
+    payload['sourceCutRanking']['reasons'].remove(authority.SOURCE_REVIEW_REQUIRED)
+    payload['sourceCutRanking']['payload']['sourceReviewStatus'] = 'model_rejected'
+    path.write_text(json.dumps(payload))
+    assert authority.retained_source_attempt_keys(['source'], {'source': tmp_path}) == ['source']

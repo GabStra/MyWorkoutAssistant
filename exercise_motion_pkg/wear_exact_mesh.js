@@ -12,6 +12,7 @@
     scene.add(wearExactMesh);
     let wearStableBodyProportions = null;
     const wearStableSegmentLengths = new Map();
+    let wearDimensionFrames = null;
 
     const wearLimbs = [
       ["left_hip", "left_knee", .27, .215, .46, 1.38, .34],
@@ -34,6 +35,31 @@
     let wearStableSidesByFrame = null;
     let wearStableFrames = null;
     let wearStableBodyAxesByFrame = null;
+
+    function wearBindClipDimensions(frames) {
+      if (wearDimensionFrames === frames) return;
+      wearDimensionFrames = frames;
+      wearStableBodyProportions = { hipWidth: 0, shoulderWidth: 0 };
+      wearStableSegmentLengths.clear();
+      const length = (a, b) => Math.hypot(...a.map((value, index) => value - b[index]));
+      for (const frame of frames ?? []) {
+        const joints = frame.joints ?? {};
+        const required = ["left_hip", "right_hip", "left_shoulder", "right_shoulder"];
+        if (!required.every(name => Array.isArray(joints[name])
+          && joints[name].length === 3 && joints[name].every(Number.isFinite))) continue;
+        const hipWidth = length(joints.right_hip, joints.left_hip);
+        const shoulderWidth = length(joints.right_shoulder, joints.left_shoulder);
+        if (hipWidth <= .0001 || shoulderWidth <= .0001) continue;
+        wearStableBodyProportions = { hipWidth, shoulderWidth };
+        for (const [start, end] of [...wearLimbs,
+          ["neck", "head"], ["left_wrist", "left_hand"], ["right_wrist", "right_hand"]]) {
+          if (joints[start] && joints[end]) {
+            wearStableSegmentLengths.set(`${start}->${end}`, length(joints[start], joints[end]));
+          }
+        }
+        break;
+      }
+    }
 
     function wearUnit(vector, fallback) {
       return vector.lengthSq() > 1e-8 ? vector.normalize() : fallback.clone();
@@ -530,7 +556,7 @@
       }
     }
 
-    function wearShoe(mesh, ankle, foot, axes, footScale, fill, knee = null, preferredSide = null, restPitch = null, materialOrientation = null) {
+    function wearShoe(mesh, ankle, foot, axes, footScale, fill, knee = null, preferredSide = null, restPitch = null, materialOrientation = null, nativeSideGeometry = null) {
       if (!ankle || !foot) return null;
       const worldUp = new THREE.Vector3(0, 1, 0);
       const footVector = foot.clone().sub(ankle);
@@ -538,6 +564,53 @@
       let footForward = footLength > .0001
         ? footVector.multiplyScalar(1 / footLength)
         : wearUnit(axes.forward, new THREE.Vector3(0, 0, 1));
+      if (nativeSideGeometry && footLength > .0001) {
+        const sideAxis = materialOrientation?.side
+          ? new THREE.Vector3(...materialOrientation.side)
+          : preferredSide;
+        const footSide = sideAxis
+          ? wearUnit(sideAxis.clone().addScaledVector(footForward, -sideAxis.dot(footForward)), axes.side)
+          : wearUnit(axes.side.clone().addScaledVector(footForward, -axes.side.dot(footForward)), axes.side);
+        const shoeUp = wearUnit(footSide.clone().cross(footForward), axes.up);
+        const factor = footLength / nativeSideGeometry.ankleToFootJointLengthMeters;
+        const heel = nativeSideGeometry.heelFromAnkleLocalMeters.map(value => value * factor);
+        const toe = nativeSideGeometry.toeFromAnkleLocalMeters.map(value => value * factor);
+        const halfWidth = Math.max(footLength * .26, footScale * .15);
+        const height = Math.max(footLength * .28, footScale * .15);
+        const profile = [
+          [0, -.05, .78, .55],
+          [.36, .12, 1, .72],
+          [1, -.25, .76, .35],
+        ];
+        const rings = profile.map(([fraction, upScale, widthScale, heightScale]) => {
+          const local = heel.map((value, axis) => value * (1 - fraction) + toe[axis] * fraction);
+          const center = ankle.clone()
+            .addScaledVector(footForward, local[0])
+            .addScaledVector(footSide, local[1])
+            .addScaledVector(shoeUp, local[2] + height * (upScale + .60));
+          const w = footSide.clone().multiplyScalar(halfWidth * widthScale);
+          const h = shoeUp.clone().multiplyScalar(height * heightScale);
+          const topW = w.clone().multiplyScalar(.88);
+          const corners = [
+            center.clone().add(topW).add(h),
+            center.clone().addScaledVector(topW, -1).add(h),
+            center.clone().addScaledVector(w, -1).addScaledVector(h, -1),
+            center.clone().add(w).addScaledVector(h, -1),
+          ];
+          const ring = [];
+          for (let index = 0; index < corners.length; index += 1) {
+            ring.push(wearVertex(mesh, corners[index].clone().lerp(corners[(index + corners.length - 1) % corners.length], .30)));
+            ring.push(wearVertex(mesh, corners[index].clone().lerp(corners[(index + 1) % corners.length], .30)));
+          }
+          return ring;
+        });
+        for (let index = 0; index < rings.length - 1; index += 1) wearStrip(mesh, rings[index], rings[index + 1], fill);
+        const rearTip = wearVertex(mesh, mesh.vertices[rings[0][0]].clone().add(mesh.vertices[rings[0][4]]).multiplyScalar(.5));
+        const toeTip = wearVertex(mesh, mesh.vertices[rings[2][0]].clone().add(mesh.vertices[rings[2][4]]).multiplyScalar(.5));
+        wearFan(mesh, rearTip, rings[0], fill);
+        wearFan(mesh, toeTip, [...rings[2]].reverse(), fill);
+        return;
+      }
       const hasMaterialOrientation = Array.isArray(materialOrientation?.forward)
         && materialOrientation.forward.length >= 3
         && Array.isArray(materialOrientation?.side)
@@ -601,7 +674,7 @@
       wearFan(mesh, toeTip, [...toeRing].reverse(), fill);
     }
 
-    function wearBuildHumanoid(joints, preferredLimbSides = null, preferredBodyAxes = null, footRestPitches = {}, shoeOrientation = {}) {
+    function wearBuildHumanoid(joints, preferredLimbSides = null, preferredBodyAxes = null, footRestPitches = {}, shoeOrientation = {}, nativeFootGeometry = activeNativeFootGeometry) {
       const required = [
         "pelvis", "neck", "head", "left_hip", "right_hip",
         "left_shoulder", "right_shoulder",
@@ -613,24 +686,13 @@
       const axes = preferredBodyAxes ?? wearAxes(joints);
       const limbSides = wearLimbSides(joints, axes, preferredLimbSides);
       const hipCenter = joints.left_hip.clone().lerp(joints.right_hip, .5);
-      if (!wearStableBodyProportions) {
-        wearStableBodyProportions = {
-          hipWidth: joints.right_hip.distanceTo(joints.left_hip),
-          shoulderWidth: joints.right_shoulder.distanceTo(joints.left_shoulder),
-        };
-      }
       const hipWidth = wearStableBodyProportions.hipWidth;
       const shoulderWidth = wearStableBodyProportions.shoulderWidth;
       const stableSegmentLength = (startName, endName) => {
         if (!joints[startName] || !joints[endName]) return 0;
         const key = `${startName}->${endName}`;
-        if (!wearStableSegmentLengths.has(key)) {
-          wearStableSegmentLengths.set(
-            key,
-            joints[startName].distanceTo(joints[endName])
-          );
-        }
-        return wearStableSegmentLengths.get(key);
+        return wearStableSegmentLengths.get(key)
+          ?? joints[startName].distanceTo(joints[endName]);
       };
       // Widen the display rig without stretching the arm bones or changing saved joints.
       const shoulderOffset = wearUnit(
@@ -804,6 +866,7 @@
         neckUpperHalfWidth, shoulderWidth * .075,
         shoulderWidth * .075, null, .38
       );
+
       const displayHead = wearNeutralHeadPitchJoint(joints.neck, joints.head,
         joints.spine3 ?? joints.spine2, shoulderSide);
       const neckMidPoint = joints.neck.clone().lerp(displayHead, .5);
@@ -927,9 +990,11 @@
       addHand("left_wrist", "left_hand", "left_elbow");
       addHand("right_wrist", "right_hand", "right_elbow");
       wearShoe(mesh, joints.left_ankle, joints.left_foot, axes, footScale, primary,
-        joints.left_knee, limbSides.get("left_ankle->left_foot"), footRestPitches.left ?? null, shoeOrientation.left ?? null);
+        joints.left_knee, limbSides.get("left_ankle->left_foot"), footRestPitches.left ?? null, shoeOrientation.left ?? null,
+        nativeFootGeometry?.sides?.left ?? null);
       wearShoe(mesh, joints.right_ankle, joints.right_foot, axes, footScale, primary,
-        joints.right_knee, limbSides.get("right_ankle->right_foot"), footRestPitches.right ?? null, shoeOrientation.right ?? null);
+        joints.right_knee, limbSides.get("right_ankle->right_foot"), footRestPitches.right ?? null, shoeOrientation.right ?? null,
+        nativeFootGeometry?.sides?.right ?? null);
       if (joints.left_elbow) wearSphere(mesh, joints.left_elbow, axes, Math.max(
         segmentWidth("left_shoulder", "left_elbow", .225),
         segmentWidth("left_elbow", "left_wrist", .235)
@@ -992,6 +1057,7 @@
     }
 
     function updateWearExactMesh(frame, frameTranslation) {
+      wearBindClipDimensions(playbackState.frames);
       if (wearStableFrames !== playbackState.frames) {
         wearStableFrames = playbackState.frames;
         wearStableSidesByFrame = null;

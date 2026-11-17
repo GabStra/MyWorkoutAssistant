@@ -52,7 +52,7 @@ def test_reconstruction_camera_inverts_recorded_transforms_and_keeps_pose_errors
     assert refinement.reconstruction_camera_orientation(malformed) is None
 
 
-def test_cleanup_camera_tracks_rigid_placement_but_exposes_pose_and_root_errors(monkeypatch):
+def test_cleanup_camera_does_not_follow_pose_rotation_or_hide_pose_and_root_errors(monkeypatch):
     joints = {
         'left_shoulder': (-.2, .8, .1), 'right_shoulder': (.2, .8, .05),
         'left_hip': (-.15, .4, 0.), 'right_hip': (.15, .4, .03),
@@ -79,7 +79,7 @@ def test_cleanup_camera_tracks_rigid_placement_but_exposes_pose_and_root_errors(
         assert 'sourcePoseRegistration' in mapped.metadata
         return registered_camera_pose_fidelity_metrics(source, refinement._motion_clip_pose_payload(mapped))
 
-    assert evaluate(after)['p90JointErrorBodyRatio'] < 1e-8
+    assert evaluate(after)['p90JointErrorBodyRatio'] > .05
     drifting = replace(after, frames=[MotionFrame(f.time_sec, {
         n: (p[0], p[1] + i * .1, p[2]) for n, p in f.joints.items()
     }) for i, f in enumerate(after.frames)])
@@ -93,4 +93,24 @@ def test_cleanup_camera_tracks_rigid_placement_but_exposes_pose_and_root_errors(
         n: (p[0], p[1] + .1, p[2]) if n == 'left_shoulder' else p
         for n, p in f.joints.items()
     }) for f in after.frames])
-    assert refinement.retain_camera_through_cleanup(before, changed_core, source) is changed_core
+    assert 'sourcePoseRegistration' in refinement.retain_camera_through_cleanup(before, changed_core, source).metadata
+
+
+def test_world_reconstruction_camera_uses_paired_roots_instead_of_articulated_limbs():
+    from scipy.spatial.transform import Rotation
+    from exercise_motion_pkg.reconstruction_convert import reconstruction_camera_registration
+    import pytest
+
+    world = Rotation.from_euler('xyz', [[10, 20, 30], [15, 25, 35]], degrees=True)
+    camera = Rotation.from_euler('xyz', [170, 10, -20], degrees=True)
+    pose = np.zeros((2, 72))
+    pose[:, :3] = world.as_rotvec()
+    payload = {'camera_global_orient': (camera * world).as_rotvec()}
+    registration = reconstruction_camera_registration(payload, pose, 'world')
+    clip = MotionClip(30., [], [], source={'extractor': 'GVHMR'}, metadata={
+        'reconstruction': {'coordinateSpace': 'world', 'cameraRegistration': registration},
+        'coordinateNormalization': {'transform': 'identity_y_up_world'}})
+    assert np.allclose(refinement.reconstruction_camera_orientation(clip), camera.as_matrix())
+    assert registration['p95AngularResidualDegrees'] < 1e-8
+    with pytest.raises(ValueError, match='camera roots'):
+        reconstruction_camera_registration({'camera_global_orient': [[float('nan')]*3]*2}, pose, 'world')

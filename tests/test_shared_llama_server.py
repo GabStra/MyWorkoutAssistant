@@ -555,6 +555,45 @@ def test_shared_ranker_never_stops_or_spawns_the_server(tmp_path, monkeypatch):
         ranker.close()
 
 
+def test_shared_ranker_uses_supervisor_readiness_without_inference_probe(monkeypatch):
+    from exercise_motion_pkg import youtube as youtube_module
+
+    settings = youtube_module.YouTubeRankingSettings(
+        llama_cpp_base_url="http://127.0.0.1:18090",
+        llama_cpp_shared_server=True,
+        vision_llm_workers=1,
+    )
+    chat_probes = []
+    monkeypatch.setattr(
+        youtube_module.LlamaCppVisionRanker,
+        "_server_models_payload",
+        lambda self: {"data": [{"id": "model.gguf"}]},
+    )
+    monkeypatch.setattr(
+        youtube_module.LlamaCppVisionRanker,
+        "_raise_if_server_model_mismatch",
+        lambda self, payload: None,
+    )
+    monkeypatch.setattr(
+        youtube_module.LlamaCppVisionRanker,
+        "_raise_if_server_runtime_mismatch",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        youtube_module.LlamaCppVisionRanker,
+        "_wait_for_chat_completions_ready",
+        lambda self: chat_probes.append(True),
+    )
+    monkeypatch.setattr(youtube_module, "install_shared_llama_request_publisher", lambda **_kwargs: None)
+    monkeypatch.setattr(youtube_module, "detach_shared_llama_request_publisher", lambda: None)
+
+    ranker = youtube_module.LlamaCppVisionRanker(settings)
+    try:
+        assert chat_probes == []
+    finally:
+        ranker.close()
+
+
 def test_shared_ranker_waits_for_supervised_restart_instead_of_spawning(tmp_path, monkeypatch):
     from exercise_motion_pkg import youtube as youtube_module
 
@@ -595,7 +634,7 @@ def test_shared_ranker_waits_for_supervised_restart_instead_of_spawning(tmp_path
     )
     ranker = youtube_module.LlamaCppVisionRanker(settings)
     try:
-        assert chat_ready == [True]
+        assert chat_ready == []
     finally:
         ranker.close()
 

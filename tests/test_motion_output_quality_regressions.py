@@ -52,7 +52,7 @@ def test_export_audit_detects_cleanup_distortion_but_allows_source_asymmetry():
     assert "materialized_leg_articulation_changed_by_cleanup" in b.FINAL_OUTPUT_HARD_DETERMINISTIC_REJECTION_REASONS
 
 
-def test_leg_audit_uses_validated_support_correction_and_rejects_corrupt_reference():
+def test_leg_audit_keeps_source_articulation_and_validates_actual_support_geometry():
     import json
     import numpy as np
     from exercise_motion_pkg.controlled_motion import FixedRig
@@ -78,9 +78,11 @@ def test_leg_audit_uses_validated_support_correction_and_rejects_corrupt_referen
     legacy.pop('fixedRig')
     assert b.baked_leg_articulation_preservation_metrics(legacy)['maximumPreventedExcessDegrees'] > 5.
     corrected = b.baked_leg_articulation_preservation_metrics(payload)
-    assert corrected['referenceField'] == 'supportCorrectedReferenceJoints'
-    assert corrected.get('maximumPreventedExcessDegrees', 0.) < 1e-6
+    assert corrected['referenceField'] == 'sourceJoints'
+    assert corrected['maximumPreventedExcessDegrees'] > 5.
     payload['frames'][1]['supportCorrectedReferenceJoints']['pelvis'][1] += .04
+    assert b.baked_leg_articulation_preservation_metrics(payload)['maximumPreventedExcessDegrees'] > 5.
+    payload['frames'][1]['joints']['pelvis'][1] += .04
     assert b.baked_leg_articulation_preservation_metrics(payload)['invalidSupportReference']
 
 

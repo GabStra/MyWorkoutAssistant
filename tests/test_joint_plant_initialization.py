@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from exercise_motion_pkg.controlled_motion import FixedRig, support_initialization_articulation_regressions
+from exercise_motion_pkg.controlled_motion import initialized_root_seed_decision
 from exercise_motion_pkg import joint_plant_initialization
 from exercise_motion_pkg.joint_plant_initialization import initialize_joint_plant_coordinates
 
@@ -937,6 +938,80 @@ def test_root_track_keeps_feasible_seed_when_smoothing_projection_fails(monkeypa
     assert report['perFrameFeasibleSeedMinimumMarginDegrees'] >= 0.
 
 
+def test_initialized_root_seed_decision_prefers_smoothed_only_when_admitted():
+    smoothed, seed = 'smoothed', 'seed'
+    reencoded = []
+
+    def seed_factory():
+        reencoded.append(seed)
+        return seed
+
+    selected, evidence = initialized_root_seed_decision(
+        smoothed, seed_factory, admit=lambda candidate: (True, {'passed': True}))
+    assert selected == smoothed
+    assert evidence['adopted'] == 'smoothed'
+    # A contract-preserving smoothed track is preferred without re-encoding.
+    assert reencoded == []
+
+    def admit(candidate):
+        return candidate == seed, {'passed': candidate == seed}
+
+    selected, evidence = initialized_root_seed_decision(
+        smoothed, seed_factory, admit=admit)
+    assert selected == seed
+    assert evidence['adopted'] == 'per_frame_feasible_root_seed'
+    assert evidence['seedAdmitted'] is True
+    assert evidence['temporalQuality'] == 'unvalidated_seed_needs_temporal_refinement'
+    assert evidence['coupledFitOwnsTemporalValidation'] is True
+
+    # If the seed fails the same gate, the smoothed artifact is retained so the
+    # normal rejection path reports it; no second retry is attempted.
+    selected, evidence = initialized_root_seed_decision(
+        smoothed, seed_factory, admit=lambda candidate: (False, {'passed': False}))
+    assert selected == smoothed
+    assert evidence['seedAdmitted'] is False
+    assert reencoded == [seed, seed]
+
+
+def test_root_track_reuses_provided_feasible_seed_without_smoothing(monkeypatch):
+    count = 5
+    required_x = np.array([0., .06, 0., 0., 0.])
+    spec = {
+        'rootSeed': np.zeros((count, 3)),
+        'kneeTolerance': .1,
+        'ankleTolerance': .1,
+        'targetAnkle': np.zeros((count, 3)),
+        'targetToe': np.zeros((count, 3)),
+        'ankle': np.zeros((count, 3)),
+        'toe': np.zeros((count, 3)),
+    }
+
+    def frame_state(_specs, frame, translation):
+        return np.array([translation[0] - required_x[frame], 1.]), None
+
+    def no_solver(*_args, **_kwargs):
+        raise AssertionError('provided seed must be re-encoded, not re-solved')
+
+    monkeypatch.setattr(joint_plant_initialization, '_frame_state', frame_state)
+    monkeypatch.setattr(joint_plant_initialization, 'minimize', no_solver)
+
+    seed = np.column_stack((required_x + .02, np.zeros(count), np.zeros(count)))
+    offsets, report = joint_plant_initialization._root_track(
+        [spec], count, monotonic() + 5., cyclic=False, fps=30., seed_offsets=seed)
+    assert offsets is not None, report
+    np.testing.assert_array_equal(offsets, seed)
+    assert report['providedSeedOffsets'] is True
+    assert 'perFrameFeasibleSeedOffsetsMeters' not in report
+
+    infeasible = seed.copy()
+    infeasible[0, 0] = -0.1
+    offsets, report = joint_plant_initialization._root_track(
+        [spec], count, monotonic() + 5., cyclic=False, fps=30.,
+        seed_offsets=infeasible)
+    assert offsets is None
+    assert report['reason'] == 'provided_root_seed_not_feasible'
+
+
 def test_joint_plant_preserves_registered_vertical_excursion_during_contact_release():
     names, source = _stance()
     lift = np.array([0., 0., 0., .04, .08, .10, .08, .04, 0., 0., 0., 0.])
@@ -979,3 +1054,190 @@ def test_joint_plant_deadline_leaves_input_and_rig_unchanged():
 
     np.testing.assert_array_equal(baseline, original_rig)
     np.testing.assert_array_equal(rig.initial, original_rig)
+
+
+def test_joint_plant_checks_uncalibrated_free_shoe_geometry():
+    from exercise_motion_pkg.joint_plant_initialization import _make_specs
+    names, source = _stance(4)
+    pins = np.zeros(source.shape[:2], dtype=bool)
+    pins[0, names.index('left_ankle')] = True
+    axes = np.zeros((len(source), 2, 3), dtype=float)
+    axes[..., 2] = 1.
+    specs, report = _make_specs(
+        names, source, pins, source.copy(), source,
+        floor_y=1., rest_pitch_radians={}, foot_scale=.1, side_axis_by_side=axes)
+    assert report['feet']['left']['materialFloorCorrection']['frameCount'] > 0
+    assert next(row for row in specs if row['side'] == 'left')['targetAnkle'][1, 1] > source[1, names.index('left_ankle'), 1]
+
+
+@pytest.mark.parametrize('legacy_contact', [False, True])
+def test_root_track_requires_encodable_pose_targets_between_observed_contacts(monkeypatch, legacy_contact):
+    count = 5
+    spec = {
+        'rootSeed': np.zeros((count, 3)),
+        'kneeTolerance': .1, 'ankleTolerance': .1,
+        **{key: np.zeros((count, 3)) for key in
+           ('targetAnkle', 'targetToe', 'ankle', 'toe')},
+        'activeContact': np.full(count, legacy_contact),
+    }
+    if not legacy_contact:
+        spec['activePoseTarget'] = np.ones(count, dtype=bool)
+    original_contacts = spec['activeContact'].copy()
+
+    def frame_state(_specs, frame, translation):
+        # A free-frame pose target can be outside exact reach while its signed
+        # residual is inside the existing optimizer numerical tolerance.
+        reachable = frame != 1 or translation[0] >= .06
+        return (np.array([.01, .01]) if reachable else np.full(2, -1e-11),
+                np.zeros((1, 3)) if reachable else None)
+
+    def project(_fun, x0, **_kwargs):
+        value = np.array([.061, 0., 0.]) if np.allclose(x0, 0.) else np.asarray(x0)
+        return type('Result', (), {'x': value, 'success': True})()
+
+    monkeypatch.setattr(joint_plant_initialization, '_frame_state', frame_state)
+    monkeypatch.setattr(joint_plant_initialization, 'minimize', project)
+    offsets, report = joint_plant_initialization._root_track(
+        [spec], count, monotonic() + 5., cyclic=False, fps=30.)
+    assert offsets is not None, report
+    assert all(frame_state([spec], frame, offsets[frame])[1] is not None
+               for frame in range(count))
+    np.testing.assert_array_equal(spec['activeContact'], original_contacts)
+    assert report['rejectedSmoothingProjectionCount'] > 0
+
+def test_joint_plant_root_feasibility_uses_same_source_knee_envelope_as_fitter():
+    from exercise_motion_pkg.contact_heel_repair import _frame_state
+    from exercise_motion_pkg.controlled_motion import source_knee_envelope_metrics
+    from exercise_motion_pkg.physical_validation import source_articulation_fit_bounds
+
+    names, source = _stance(4)
+    rig = FixedRig(source, names)
+    baseline = rig.initial.copy()
+    points = rig.decode(baseline)
+    pins = np.zeros(points.shape[:2], dtype=bool)
+    pins[:, [names.index('left_ankle'), names.index('left_foot')]] = True
+    specs, preflight = joint_plant_initialization._make_specs(
+        names, points, pins, points.copy(), source)
+    assert preflight['feasible']
+    spec = specs[0]
+    reference = spec['referenceKneeAngle'][:, None]
+    low, high = source_articulation_fit_bounds(reference, [('left_knee', spec['indices'][:3], 12.)])
+    np.testing.assert_allclose(spec['kneeLower'], low[:, 0])
+    np.testing.assert_allclose(spec['kneeUpper'], high[:, 0])
+    # This small root movement is geometrically reachable and inside the old
+    # broad phase allowance, but already violates the independent source gate.
+    broad = {key: value for key, value in spec.items() if key not in ('kneeLower', 'kneeUpper')}
+    offset = np.array([0., -.005, 0.])
+    broad_margins, knees = _frame_state([broad], 0, offset)
+    bounded_margins, _ = _frame_state([spec], 0, offset)
+    assert knees is not None
+    assert broad_margins[0] > 0.
+    assert bounded_margins[0] < 0.
+
+    initialized, report = initialize_joint_plant_coordinates(
+        rig, baseline, pins, points.copy(), articulation_reference=source,
+        fps=30., cyclic=False, deadline=monotonic() + 10.)
+    assert initialized is not None, report
+    assert source_knee_envelope_metrics(source, rig.decode(initialized), names)['passed']
+    assert report['maximumContactErrorMeters'] < 1e-5
+
+
+def test_source_direction_transport_groups_repeated_exposures_preserving_owned_rows():
+    from exercise_motion_pkg.joint_plant_initialization import source_conditioned_foot_direction_reference
+
+    names, source = _stance(5)
+    ankle, toe = names.index('left_ankle'), names.index('left_foot')
+    directions = np.zeros((5, 2, 3))
+    directions[:, 1] = source[:, names.index('right_foot')] - source[:, names.index('right_ankle')]
+    for frame, angle in enumerate((0., 10., 12., 20., 30.)):
+        radians = np.deg2rad(angle)
+        directions[frame, 0] = [0., np.sin(radians), np.cos(radians)]
+    owned = np.array([True, True, True, False, True])
+    conditioned, counts, _ = source_conditioned_foot_direction_reference(
+        source, np.zeros(source.shape[:2], bool), names, directions,
+        {'left': owned}, source_reference=source, frame_times=[0., 1., 1., 2., 3.])
+    actual = conditioned[:, toe] - conditioned[:, ankle]
+    actual /= np.linalg.norm(actual, axis=1)[:, None]
+    np.testing.assert_allclose(actual[owned], directions[owned, 0], atol=1e-12)
+    assert counts['left'] == 4
+    np.testing.assert_array_equal(conditioned[:, ankle], source[:, ankle])
+    assert np.isfinite(conditioned).all()
+
+
+def test_released_foot_target_uses_same_transported_direction_as_source_guard():
+    names, points = _stance(5)
+    ankle, toe = names.index('right_ankle'), names.index('right_foot')
+    pins = np.zeros(points.shape[:2], dtype=bool)
+    pins[[0, 4], ankle] = True
+    pins[[0, 4], toe] = True
+    reference = points.copy()
+    vector = points[:, toe] - points[:, ankle]
+    length = np.linalg.norm(vector, axis=1)
+    heading = vector.copy()
+    heading[:, 1] = 0.
+    heading /= np.linalg.norm(heading, axis=1)[:, None]
+    reference[:, toe] = reference[:, ankle] + length[:, None] * (
+        heading * np.cos(.3) + np.array([0., -np.sin(.3), 0.]))
+    reference[[0, 4], toe] = points[[0, 4], toe]
+    trajectory = np.array([False, False, True, False, False])
+    directions = np.zeros((5, 2, 3))
+    directions[:, 1] = reference[:, toe] - reference[:, ankle]
+    specs, report = joint_plant_initialization._make_specs(
+        names, points, pins, points.copy(), reference,
+        desired_world_foot_directions=directions,
+        pitch_trajectory_mask_by_side={'right': trajectory})
+    assert report['feasible']
+    spec = next(item for item in specs if item['side'] == 'right')
+    # Frames1/3 have transported geometry, not observed direction/contact authority.
+    np.testing.assert_array_equal(spec['activeContact'], [True, False, False, False, True])
+    np.testing.assert_allclose(
+        (spec['targetToe'] - spec['targetAnkle'])[[1, 3]],
+        (reference[:, toe] - reference[:, ankle])[[1, 3]], atol=1e-12)
+    np.testing.assert_allclose(spec['targetToe'][[0, 4]], points[[0, 4], toe], atol=1e-12)
+    np.testing.assert_allclose(spec['targetAnkle'][[0, 4]], points[[0, 4], ankle], atol=1e-12)
+
+
+def test_contact_transport_separates_anchor_translation_and_preserves_hinge_plane():
+    from scipy.spatial.transform import Rotation
+    names, source = _stance(12)
+    source[:, names.index('left_knee'), 2] += .12
+    rig = FixedRig(source, names)
+    points = rig.decode(rig.initial)
+    ankle, toe = names.index('left_ankle'), names.index('left_foot')
+    reference = points.copy()
+    vector = points[:, toe]-points[:, ankle]
+    reference[:, toe] = points[:, ankle] + Rotation.from_rotvec(
+        np.tile([0., .1, 0.], (len(points), 1))).apply(vector)
+    pins = np.zeros(points.shape[:2], dtype=bool)
+    pins[[0, -1], [ankle, ankle]] = True
+    pins[[0, -1], [toe, toe]] = True
+    targets = points.copy()
+    targets[:, ankle] += [0., .02, 0.]
+    targets[:, toe] = targets[:, ankle] + reference[:, toe]-reference[:, ankle]
+    original = reference.copy()
+    specs, report = joint_plant_initialization._make_specs(
+        names, points, pins, targets, reference)
+    assert report['feasible']
+    spec = specs[0]
+    np.testing.assert_allclose(spec['targetAnkle']-points[:, ankle],
+                               np.tile([0., .02, 0.], (len(points), 1)), atol=1e-12)
+    np.testing.assert_allclose(spec['targetToe']-spec['targetAnkle'],
+                               reference[:, toe]-reference[:, ankle], atol=1e-12)
+    np.testing.assert_array_equal(reference, original)
+    np.testing.assert_array_equal(spec['activeContact'], pins[:, ankle])
+
+    # A pole twist preserves scalar angles and bone lengths, but the existing
+    # reliable source hinge-plane guard must participate in root feasibility.
+    specs, _ = joint_plant_initialization._make_specs(
+        names, points, pins, points.copy(), points)
+    spec = specs[0]
+    spec['pole'] = Rotation.from_rotvec(spec['sourceAxis']*.5).apply(spec['pole'])
+    scalar, _ = joint_plant_initialization._closed_chain_frame_state(specs, 0, np.zeros(3))
+    guarded, _ = joint_plant_initialization._frame_state(specs, 0, np.zeros(3))
+    assert scalar.min() > 0.
+    assert guarded.min() < 0.
+    spec['targetAnkle'] += [5., 0., 0.]
+    spec['targetToe'] += [5., 0., 0.]
+    unreachable, knees = joint_plant_initialization._frame_state(specs, 0, np.zeros(3))
+    assert knees is None
+    assert unreachable.shape == guarded.shape  # SLSQP's constraint dimension is fixed.

@@ -96,3 +96,54 @@ def test_cursor_writer_rejects_missing_next_candidate(tmp_path):
             tmp_path / "cursor.json", wave_state=receipt, exercise_plan_path=plan_path,
             source_review_turn_id="review-7", transition="next_source_candidate",
         )
+
+
+def test_cursor_keeps_unresolved_attempt_resumable_without_resetting_budget(tmp_path):
+    plan = tmp_path / 'plan.json'
+    plan.write_text(json.dumps({'exercises': [{'id': 'source', 'name': 'Source', 'motionContext': {}}]}))
+    (tmp_path / 'source_turn_budget.json').write_text(json.dumps({
+        'sourceTurnExerciseIdentity': _source_turn_exercise_identity('source', 'Source', {}),
+        'sourceTurnScopeIdentity': 'same-turn', 'sourceTurnBudgetPolicyVersion': SOURCE_TURN_BUDGET_POLICY_VERSION,
+        'sourceTurnAttemptsUsed': 2, 'sourceTurnElapsedSeconds': 75.,
+    }))
+    receipt = {'exerciseId': 'source', 'exerciseName': 'Source', 'source': {
+        'sourceSelectionPolicyVersion': 69,
+        'attempts': [{'candidateKey': 'pending', 'videoId': 'pending-video', 'status': 'needs_source_review'},
+                     {'candidateKey': 'rejected', 'videoId': 'rejected-video', 'status': 'rejected_source_validation'}],
+        'turn': {'attemptsUsed': 2, 'elapsedSeconds': 75., 'excludedWaitSeconds': 3.}}}
+    cursor = write_source_turn_cursor_from_wave_state(tmp_path / 'source_turn_resume.json',
+        wave_state=receipt, exercise_plan_path=plan, source_review_turn_id='same-turn',
+        transition='bounded_source_discovery')
+    assert cursor['attemptedCandidateKeys'] == ['rejected']
+    assert cursor['attemptedVideoIds'] == ['rejected-video']
+    assert cursor['sourceTurnAttemptsUsed'] == 2
+    assert cursor['sourceTurnElapsedSeconds'] == 75.
+
+
+def test_bounded_discovery_excludes_support_evidence_windows_but_keeps_video_eligible(tmp_path):
+    plan = tmp_path / 'plan.json'
+    plan.write_text(json.dumps({'exercises': [{'id': 'source', 'name': 'Source', 'motionContext': {}}]}))
+    receipt = {'exerciseId': 'source', 'exerciseName': 'Source', 'source': {
+        'sourceSelectionPolicyVersion': 69,
+        'attempts': [
+            {'candidateKey': 'source:window-1', 'videoId': 'same-video',
+             'status': 'needs_source_review', 'failureOwner': 'source_evidence'},
+            {'candidateKey': 'source:window-2', 'videoId': 'same-video',
+             'status': 'needs_source_review', 'failureOwner': 'source_evidence'},
+            {'candidateKey': 'source:window-3', 'videoId': 'same-video',
+             'status': 'needs_source_review', 'failureOwner': 'source_evidence'},
+            {'candidateKey': 'source:window-4', 'videoId': 'same-video',
+             'status': 'rejected_source_validation'},
+            {'candidateKey': 'source:window-5', 'videoId': 'same-video',
+             'status': 'needs_source_review', 'failureOwner': 'review'},
+        ],
+    }}
+    cursor = write_source_turn_cursor_from_wave_state(
+        tmp_path / 'source_turn_resume.json', wave_state=receipt,
+        exercise_plan_path=plan, source_review_turn_id='turn-1',
+        transition='bounded_source_discovery',
+    )
+    assert cursor['attemptedCandidateKeys'] == [
+        'source:window-1', 'source:window-2', 'source:window-3', 'source:window-4',
+    ]
+    assert cursor['attemptedVideoIds'] == ['same-video']

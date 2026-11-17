@@ -89,6 +89,10 @@ def test_current_approved_definition_reconciles_cached_and_seeded_contract_autho
     definition = {
         "definingAction": "Roll the wheel forward from a kneeling brace, then draw it back to the kneeling start.",
         "completionMode": "return_to_start",
+        "bilateralExecution": {
+            "arms": "unconstrained", "legs": "unconstrained",
+            "torso": "unconstrained", "stance": "unconstrained",
+        },
         "variantQualifiers": ["kneeling"],
         "review": {
             "status": "approved", "approvedAtUtc": "2026-10-25T08:48:08.692542+01:00",
@@ -103,8 +107,10 @@ def test_current_approved_definition_reconciles_cached_and_seeded_contract_autho
         "status": "generated", "source": "seeded_candidates_json", "exerciseName": target.name,
         "contractScope": "definition_only", "contractPolicyVersion": module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
         "advisoryText": "Complete: Extend torso forward; Retract torso rolling implement back",
-        "movementType": "cyclic", "completionMode": "return_to_start", "requiresReturnToStart": True,
+        "movementType": "repetition", "completionMode": "return_to_start", "requiresReturnToStart": True,
         "actionDefinitionStatus": "defined", "actionDefinitionAuthority": "unresolved",
+        "bilateralExecution": definition["bilateralExecution"],
+        "bilateralExecutionAuthority": "structured_definition",
         "definingAction": "Extend torso forward rolling implement",
         "requiredPhases": ["Extend torso forward rolling implement", "Retract torso rolling implement back"],
         "primaryMovingRegions": ["torso", "hips"],

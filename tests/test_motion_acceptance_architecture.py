@@ -10,6 +10,7 @@ from exercise_motion_pkg.acceptance import (decide_acceptance, selected_artifact
                                            invalidate_retained_acceptance, promote_verified_artifact,
                                            selected_bake_code_problem)
 from exercise_motion_pkg.contract_authority import contract_field_authority
+from exercise_motion_pkg.controlled_motion import CONTROLLED_MOTION_STRATEGY
 from exercise_motion_pkg.review_consensus import corroborate_rejection
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.structural_refinement import enforce_final_structural_invariant
@@ -112,7 +113,7 @@ def test_identity_changes_for_source_skeleton_contract_and_policy(tmp_path):
             "controlled_motion_fit_strategy_mismatch",
         ),
         (
-            {"applied": True, "strategy": "fixed_rig_controlled_motion_v126_unknown_heel_direction_continuity"},
+            {"applied": True, "strategy": CONTROLLED_MOTION_STRATEGY},
             "controlled_motion_fit_receipt_invalid",
         ),
     ],
@@ -189,7 +190,7 @@ def test_selected_artifact_identity_allows_no_applied_fit_with_current_fit_polic
     assert identity["policies"]["controlledMotionFit"] == CONTROLLED_MOTION_STRATEGY
 
 
-def test_selected_artifact_identity_rejects_old_bake_processing_signature(tmp_path):
+def test_processing_code_change_requires_new_verdict_for_same_artifact(tmp_path):
     source = tmp_path / "x_selected_input.mp4"
     skeleton = tmp_path / "x_wear_skeleton.json"
     source.write_bytes(b"source")
@@ -218,14 +219,15 @@ def test_selected_artifact_identity_rejects_old_bake_processing_signature(tmp_pa
     assert selected_bake_code_problem(
         {"selectedSectionBakePathCodeDigest": "current"}, "current",
     ) is None
-    assert selected_artifact_identity(
-        tmp_path, manifest, policies={"bakeCode": "current"},
-    ) is None
+    prior = selected_artifact_identity(tmp_path, manifest, policies={"bakeCode": "old"})
+    current = selected_artifact_identity(tmp_path, manifest, policies={"bakeCode": "current"})
+    assert prior is not None and current is not None
+    assert prior["skeletonSha256"] == current["skeletonSha256"]
+    assert prior != current
 
     skeleton.write_text(json.dumps({"selectedSectionBakePathCodeDigest": "current"}))
-    assert selected_artifact_identity(
-        tmp_path, manifest, policies={"bakeCode": "current"},
-    ) is not None
+    regenerated = selected_artifact_identity(tmp_path, manifest, policies={"bakeCode": "current"})
+    assert regenerated is not None and regenerated != current
 
 
 def test_selected_bake_processing_signature_tracks_pipeline_and_chain_depth_code(tmp_path, monkeypatch):

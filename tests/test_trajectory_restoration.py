@@ -12,6 +12,172 @@ from exercise_motion_pkg.trajectory_restoration import (
 )
 
 
+def test_gate_backtracking_finds_curved_descent_and_stops_at_stagnation():
+    from exercise_motion_pkg.trajectory_restoration import representable_backtracking_trials
+    # The analytic descent direction overshoots this curved objective through
+    # all five formerly attempted fractions; the next fraction improves it.
+    objective = lambda values: float((values[0] - .02) ** 2)
+    before = np.array([0.])
+    accepted = next((alpha, trial) for alpha, trial in
+                    representable_backtracking_trials(before, np.array([1.]))
+                    if objective(trial) < objective(before))
+    assert accepted[0] == .03125
+    assert not list(representable_backtracking_trials(before, before))
+    before = np.array([1.])
+    trials = list(representable_backtracking_trials(before, np.nextafter(before, np.inf)))
+    assert len(trials) == 1
+    assert not np.array_equal(trials[0][1], before)
+
+
+def test_vector_norm_exchange_uses_norm_minimizing_step_on_bounded_direction():
+    class LinearRig:
+        width = 2
+
+        def decode(self, coordinates):
+            q = np.asarray(coordinates, dtype=float).reshape(-1, 2)
+            return np.stack((q[:, 0], q[:, 1], np.zeros(len(q))), axis=1)[:, None, :]
+
+        def fk_jacobian(self, coordinates):
+            rows = np.array([[1., 0.], [0., 1.], [0., 0.]])
+            return csr_matrix(rows)
+
+    rig = LinearRig()
+    base = np.zeros((1, 2))
+    pinned = np.zeros((1, 1), dtype=bool)
+    violations = np.array([.01, .5])
+    jacobian = csr_matrix([[1., 0.], [0., 1.]])
+    model = {
+        'name': 'jerk', 'row_index': 0,
+        'residual': np.array([1.01, 0.]),
+        'apply_delta': lambda delta: np.asarray(delta, dtype=float),
+        'tangent_row': lambda direction: csr_matrix(
+            np.asarray(direction, dtype=float).reshape(1, 2)),
+    }
+
+    legacy, _ = inequality_gate_restoration_step(
+        base, rig, pinned, violations, jacobian,
+        numerical_margin=.001, max_point_shift_meters=2.)
+    legacy_norm = np.linalg.norm(model['residual'] + legacy.reshape(-1))
+    assert legacy_norm > 1.
+
+    candidate, evidence = inequality_gate_restoration_step(
+        base, rig, pinned, violations, jacobian,
+        numerical_margin=.001, max_point_shift_meters=2.,
+        vector_norm_models=[model])
+    assert evidence['vectorNormModels'][0]['status'] == 'affine_norm_feasible'
+    assert evidence['vectorNormModels'][0]['uncappedPredictedNorm'] <= .999 + 1e-10
+    assert np.linalg.norm(model['residual'] + candidate.reshape(-1)) <= legacy_norm
+    assert candidate[0, 1] < 0.
+
+    partial, partial_evidence = inequality_gate_restoration_step(
+        base, rig, pinned, violations, jacobian,
+        numerical_margin=.001, max_point_shift_meters=2.,
+        vector_norm_models=[model], max_vector_norm_cuts=1)
+    partial_model = partial_evidence['vectorNormModels'][0]
+    assert partial_model['status'] == 'affine_norm_feasible'
+    assert partial_model['modelGateFeasible'] is True
+    assert partial_model['uncappedModelGateFeasible'] is False
+    assert partial_model['cappedPredictedNorm'] < np.linalg.norm(model['residual'])
+    assert np.linalg.norm(model['residual'] + partial.reshape(-1)) <= .999 + 1e-10
+    assert len(partial_evidence['normalizedViolationsBefore']) == len(violations)
+    assert len(partial_evidence['normalizedViolationsAfterLinearization']) == len(violations)
+    assert 'normExchangeQpMeritAfter' in partial_evidence
+    assert partial_evidence['cappedNormModelMeritAfter'] < partial_evidence['cappedNormModelMeritBefore']
+    assert not np.allclose(partial, legacy)
+
+    fallback, fallback_evidence = inequality_gate_restoration_step(
+        base, rig, pinned, violations, jacobian,
+        numerical_margin=.001, max_point_shift_meters=2.,
+        vector_norm_models=[model], max_vector_norm_cuts=0)
+    fallback_model = fallback_evidence['vectorNormModels'][0]
+    assert fallback_model['status'] == 'affine_norm_progress'
+    assert fallback_model['lineMinimized'] is True
+    assert 0. < fallback_model['lineScale'] < 1.
+    assert np.linalg.norm(model['residual'] + fallback.reshape(-1)) < legacy_norm
+    assert fallback_evidence['cappedNormModelMeritAfter'] < fallback_evidence['cappedNormModelMeritBefore']
+
+
+def test_gate_restoration_preserves_active_chest_bound_with_analytic_gradient():
+    from exercise_motion_pkg.physical_validation import CHEST_ATTACHMENT_MAX_ANGLE_RADIANS
+    from scipy.sparse import vstack
+    class ChestRig:
+        names = ['pelvis', 'spine3', 'neck', 'left_collar', 'right_collar']
+        width = 15
+        def decode(self, values):
+            return np.asarray(values).reshape(-1, 5, 3)
+        def fk_jacobian(self, values):
+            return csr_matrix(np.eye(np.asarray(values).size))
+    rig = ChestRig()
+    limit = CHEST_ATTACHMENT_MAX_ANGLE_RADIANS
+    points = np.tile([[0., 0., 0.], [0., 1., 0.],
+                      [.3*np.sin(limit), 1.+.3*np.cos(limit), 0.],
+                      [-.2, 1.3, 0.], [.2, 1.3, 0.]], (6, 1, 1))
+    coordinates = points.reshape(6, -1)
+    options = dict(world_d3=csr_matrix(np.diff(np.eye(6), n=3, axis=0)),
+                   jerk_limit=10., joint_shake_limits={}, relative_shake_limits={}, ankle_episodes=[])
+    labels, values, jacobian = temporal_gate_metrics_and_jacobian(
+        coordinates, rig, chest_attachment_limit_radians=limit, **options)
+    row = labels.index('anatomyChestAttachment:neck:0')
+    step = 1e-6
+    plus, minus = coordinates.copy(), coordinates.copy()
+    plus[0, 9] += step; minus[0, 9] -= step
+    positive = temporal_gate_metrics_and_jacobian(plus, rig, chest_attachment_limit_radians=limit, **options)[1][row]
+    negative = temporal_gate_metrics_and_jacobian(minus, rig, chest_attachment_limit_radians=limit, **options)[1][row]
+    assert jacobian[row, 9] == pytest.approx((positive-negative)/(2*step), abs=1e-7)
+    # Quiet-hold correction can move one collar inward. At the active chest
+    # boundary it must use the other free collar too, rather than move the neck.
+    objective = csr_matrix(([100.], ([0], [9])), shape=(1, coordinates.size))
+    pinned = np.zeros((6, 5), dtype=bool); pinned[:, :3] = True
+    unprotected, _ = inequality_gate_restoration_step(
+        coordinates, rig, pinned, np.array([1.]), objective,
+        numerical_margin=0., max_point_shift_meters=.001)
+    protected, evidence = inequality_gate_restoration_step(
+        coordinates, rig, pinned, np.r_[values, 1.], vstack([jacobian, objective]),
+        numerical_margin=0., max_point_shift_meters=.001)
+    def angle(value):
+        pose = rig.decode(value)[0]
+        a, b = pose[2]-pose[1], (pose[3]+pose[4])*.5-pose[1]
+        return np.arccos(np.clip(np.dot(a,b)/(np.linalg.norm(a)*np.linalg.norm(b)), -1., 1.))
+    assert angle(unprotected) > limit+1e-4
+    assert evidence['applied'] and protected[0, 9] < coordinates[0, 9]
+    assert angle(protected) <= limit+1e-8
+    np.testing.assert_allclose(rig.decode(protected)[pinned], points[pinned], atol=1e-12)
+    class TorsoRig:
+        names = ['pelvis', 'left_hip', 'right_hip', 'spine1', 'spine2', 'spine3',
+                 'neck', 'left_shoulder', 'right_shoulder']
+        width = 27
+        def decode(self, values):
+            return np.asarray(values).reshape(-1, 9, 3)
+        def fk_jacobian(self, values):
+            return csr_matrix(np.eye(np.asarray(values).size))
+    torso = TorsoRig()
+    def torso_pose(degrees):
+        theta = np.deg2rad(degrees)
+        spine = np.array([0., 1., 0.])
+        neck = spine + .5*np.array([np.sin(theta), -np.cos(theta), 0.])
+        return np.tile([[0., 0., 0.], [-.2, 0., 0.], [.2, 0., 0.], spine,
+                        spine+(neck-spine)/3., spine+2*(neck-spine)/3., neck,
+                        neck+[-.1, 0., -.2], neck+[.1, 0., .2]], (6, 1, 1))
+    reference, current = torso_pose(130.), torso_pose(129.)
+    options.update(preserve_torso_bend=True, anatomy_reference=reference)
+    labels, values, derivative = temporal_gate_metrics_and_jacobian(current.reshape(6,-1),torso,**options)
+    for label, column in [('spine1', 18), ('shoulders', 21)]:
+        row = labels.index(f'anatomyTorsoBend:{label}:0')
+        assert abs(values[row]) < 1e-12  # The source-relative floor is 129°, not 145°.
+        plus, minus = current.reshape(6,-1).copy(), current.reshape(6,-1).copy()
+        plus[0,column] += step; minus[0,column] -= step
+        high = temporal_gate_metrics_and_jacobian(plus,torso,**options)[1][row]
+        low = temporal_gate_metrics_and_jacobian(minus,torso,**options)[1][row]
+        assert derivative[row,column] == pytest.approx((high-low)/(2*step),abs=1e-7)
+    labels, values, derivative = temporal_gate_metrics_and_jacobian(
+        torso_pose(180.).reshape(6,-1),torso,**options)
+    assert np.isfinite(values).all() and np.isfinite(derivative.data).all()
+    for label in ('spine1', 'shoulders'):
+        row = labels.index(f'anatomyTorsoBend:{label}:0')
+        assert values[row] < 0.
+        assert np.max(np.abs(derivative[row].toarray())) < 1e-9
+
+
 def test_gate_restoration_reduces_jerk_in_key_pin_tangent_space():
     fixture = json.loads(
         (Path(__file__).parent / "fixtures" / "sequence_stabilization_stance.json")
@@ -73,7 +239,7 @@ class _LinearTrajectoryRig:
         return csr_matrix(np.eye(np.asarray(coordinates).size))
 
 
-def test_source_knee_envelope_uses_two_extrema_rows_with_finite_difference_jacobian():
+def test_source_knee_envelope_reports_extrema_and_protects_frames_with_finite_difference_jacobian():
     class KneeRig:
         names = ["pelvis", "right_hip", "right_knee", "right_ankle"]
         width = len(names) * 3
@@ -110,11 +276,12 @@ def test_source_knee_envelope_uses_two_extrema_rows_with_finite_difference_jacob
         joint_angle_envelopes=envelope,
     )
 
-    assert names == [
+    assert names[:3] == [
         "jerk",
         "sourceJointAngleEnvelopeLower:rightKnee",
         "sourceJointAngleEnvelopeUpper:rightKnee",
     ]
+    assert len(names) == 3 + frame_count * 2
     lower_index = names.index("sourceJointAngleEnvelopeLower:rightKnee")
     upper_index = names.index("sourceJointAngleEnvelopeUpper:rightKnee")
     assert violations[lower_index] < 0.
@@ -305,3 +472,48 @@ def test_inequality_gate_step_backtracks_nonlinear_fk_to_trust_cap():
     assert evidence["finalMaximumPointShiftMeters"] <= trust_radius + 1e-12
     assert np.linalg.norm(rig.decode(candidate) - rig.decode(coordinates)) <= trust_radius + 1e-12
     assert evidence["normalizedViolationsAfterLinearization"][0] < violations[0]
+
+
+def test_tied_knee_envelope_protects_each_frame_without_losing_inward_directions():
+    class KneeRig:
+        names = ['pelvis', 'right_hip', 'right_knee', 'right_ankle']
+        width = len(names) * 3
+
+        def decode(self, coordinates):
+            return np.asarray(coordinates).reshape(-1, len(self.names), 3)
+
+        def fk_jacobian(self, coordinates):
+            return csr_matrix(np.eye(np.asarray(coordinates).size))
+
+    rig = KneeRig()
+    points = np.zeros((4, len(rig.names), 3))
+    points[:, 0] = [0., 2., 0.]
+    points[:, 1] = [1., 0., 0.]
+    theta = np.deg2rad([176., 176., 174., 172.])
+    points[:, 3] = np.column_stack([np.cos(theta), np.sin(theta), np.zeros(4)])
+    options = dict(world_d3=csr_matrix((1, 4)), jerk_limit=1.,
+                   joint_shake_limits={}, relative_shake_limits={}, ankle_episodes=[],
+                   joint_angle_envelopes=[dict(name='rightKnee', parent='right_hip',
+                       hinge='right_knee', child='right_ankle',
+                       sourceAnglesRadians=np.deg2rad([164., 166., 168., 170.]),
+                       allowedExcessDegrees=6.)])
+    coordinates = points.reshape(4, -1)
+    names, violations, jacobian = temporal_gate_metrics_and_jacobian(coordinates, rig, **options)
+    direction = np.zeros_like(points)
+    tangent = np.column_stack([-np.sin(theta), np.cos(theta), np.zeros(4)])
+    direction[0, 3] = tangent[0]
+    direction[1, 3] = -2. * tangent[1]
+    predicted = np.asarray(jacobian @ direction.ravel())
+    # The old averaged row says this improves; frame zero actually leaves bounds.
+    assert predicted[names.index('sourceJointAngleEnvelopeUpper:rightKnee')] < 0.
+    assert predicted[names.index('sourceJointAngleFrameUpper:rightKnee:0')] > 0.
+    inward = np.zeros_like(points)
+    inward[:, 3] = -tangent
+    active = np.abs(violations) < 1e-10
+    assert np.all(np.asarray(jacobian @ inward.ravel())[active] <= 0.)
+    candidate, evidence = inequality_gate_restoration_step(
+        coordinates, rig, np.zeros(points.shape[:2], dtype=bool), violations, jacobian,
+        numerical_margin=.001, max_point_shift_meters=.001)
+    assert evidence['applied']
+    _, after, _ = temporal_gate_metrics_and_jacobian(candidate, rig, **options)
+    assert np.max(after) <= 0.

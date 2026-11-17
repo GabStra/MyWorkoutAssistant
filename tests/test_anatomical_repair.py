@@ -410,26 +410,51 @@ def test_shoulder_girdle_span_swing_is_repaired_to_a_rigid_width():
     assert np.max(np.abs(span(corrected)-np.median(span(points)))) <= limit + 1e-6
 
 
-def test_bounded_repair_preserves_source_head_direction_and_structure():
+def test_bounded_repair_preserves_source_head_direction_and_structure(monkeypatch):
     from exercise_motion_pkg.temporal_quality import body_local_head_direction
+    from exercise_motion_pkg import support_geometry
 
     names, source = stance()
     rig = FixedRig(source, names)
     source, baseline = repair_rig_anatomy(
         rig, rig.decode(rig.initial), deadline=monotonic() + 10.)
     assert baseline['passed']
-    neck = rig.slots[names.index('neck')]
-    rig.initial[:, neck] += .5
+    head = rig.slots[names.index('head')]
+    rig.initial[:, head] += .5
+    observed_coordinates = rig.initial.copy()
     observed = rig.decode(rig.initial)
     before = body_local_head_direction(observed, names)
     reference = body_local_head_direction(source, names)
     assert np.rad2deg(np.arccos(np.clip(np.sum(before * reference, axis=1), -1., 1.))).max() > 15.25
-    corrected, report = repair_rig_anatomy(
-        rig, observed, reference=source, deadline=monotonic() + 10.)
+    pinned = np.zeros(observed.shape[:2], dtype=bool)
+    corrected, report = support_geometry.repair_supported_motion_anatomy(
+        rig, observed, {}, source[0], {}, monotonic()+10.,
+        pinned=pinned, contact_targets=observed, articulation_reference=source)
+    assert report['strategy'].startswith('fixed_rig_anatomical_projection')
     assert 'repair_head_articulation_distortion:head' in report['sourceViolations']
     assert report['passed'], report
     after = body_local_head_direction(corrected, names)
-    assert np.rad2deg(np.arccos(np.clip(np.sum(after * reference, axis=1), -1., 1.))).max() < 15.25
-    from exercise_motion_pkg.anatomical_repair import free_rotation_columns
-    assert free_rotation_columns(rig, ['repair_head_articulation_distortion:head']) == list(range(neck, neck + 3))
-    np.testing.assert_allclose(corrected[:, names.index('pelvis')], observed[:, names.index('pelvis')], atol=1e-10)
+    assert np.arccos(np.clip(np.sum(after * reference, axis=1), -1., 1.)).max() <= np.deg2rad(14.) + 1e-6
+    other_joints = [index for index, name in enumerate(names) if name != 'head']
+    np.testing.assert_array_equal(corrected[:, other_joints], observed[:, other_joints])
+    np.testing.assert_allclose(
+        np.linalg.norm(corrected[:, names.index('head')]-corrected[:, names.index('neck')], axis=1),
+        np.linalg.norm(observed[:, names.index('head')]-observed[:, names.index('neck')], axis=1),
+        atol=1e-12, rtol=0.)
+
+    class CoupledHeadSupport(Exception):
+        pass
+
+    def coupled(*args, **kwargs):
+        raise CoupledHeadSupport
+
+    monkeypatch.setattr(support_geometry, 'initialize_supported_motion', coupled)
+    for pinned_head, stationary_head in ((True, False), (False, True)):
+        rig.initial[:] = observed_coordinates
+        pinned[:] = False
+        pinned[:, names.index('head')] = pinned_head
+        evidence = {'stationaryJoints': ['head']} if stationary_head else {}
+        with pytest.raises(CoupledHeadSupport):
+            support_geometry.repair_supported_motion_anatomy(
+                rig, observed, evidence, source[0], {}, monotonic()+10.,
+                pinned=pinned, contact_targets=observed, articulation_reference=source)

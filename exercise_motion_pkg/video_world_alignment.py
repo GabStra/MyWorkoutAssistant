@@ -670,9 +670,9 @@ def apply_rigid_transform_to_clip(
                 float(aligned[1]),
                 float(aligned[2]),
             )
-        transformed_frames.append(
-            MotionFrame(time_sec=frame.time_sec, joints=transformed_joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
-        )
+        transformed_frames.append(frame.with_joints(
+            transformed_joints, rigid_rotation=tuple(tuple(float(value) for value in row)
+                                                       for row in rotation)))
     return replace(clip, frames=transformed_frames)
 
 

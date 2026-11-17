@@ -14,6 +14,7 @@ from typing import Any
 
 SOURCE_TURN_BUDGET_POLICY_VERSION = 3
 DEFAULT_SOURCE_TURN_WAIT_TIMEOUT_SECONDS = 180.0
+MAX_RECOVERABLE_SOURCE_REVIEW_FAILURES_PER_TURN = 2
 
 
 class SourceTurnWaitBudgetExpired(TimeoutError):
@@ -63,19 +64,20 @@ class _SourceTurnBudget:
             self.attempts_before = max(0, int(resume.get("sourceTurnAttemptsUsed") or 0))
         except (TypeError, ValueError):
             self.attempts_before = 0
+        try:
+            self.recoverable_failures = max(
+                0, int(resume.get("sourceTurnRecoverableFailures") or 0)
+            )
+        except (TypeError, ValueError):
+            self.recoverable_failures = 0
         previous_timeout = resume.get("sourceTurnTimeoutSeconds")
         previous_attempt_limit = resume.get("sourceTurnAttemptLimit")
-        limits = [
-            float(getattr(request, "source_review_timeout_seconds", 0.0) or 0.0),
-            float(getattr(request, "exercise_timeout_seconds", 0.0) or 0.0),
-        ]
-        positive_limits = [limit for limit in limits if limit > 0.0]
-        self.timeout_seconds = min(positive_limits) if positive_limits else None
-        self.wait_timeout_seconds = (
-            self.timeout_seconds
-            if self.timeout_seconds is not None
-            else DEFAULT_SOURCE_TURN_WAIT_TIMEOUT_SECONDS
-        )
+        # A per-request timeout must not cap the sum of successful review calls.
+        exercise_limit = float(getattr(request, "exercise_timeout_seconds", 0.0) or 0.0)
+        self.timeout_seconds = exercise_limit if exercise_limit > 0.0 else None
+        request_limit = float(getattr(request, "source_review_timeout_seconds", 0.0) or 0.0)
+        wait_limits = [limit for limit in (exercise_limit, request_limit) if limit > 0.0]
+        self.wait_timeout_seconds = min(wait_limits) if wait_limits else DEFAULT_SOURCE_TURN_WAIT_TIMEOUT_SECONDS
         self.wait_budget_expired = (
             self.excluded_wait_before >= self.wait_timeout_seconds
         )
@@ -111,10 +113,16 @@ class _SourceTurnBudget:
             return "source_turn_deadline"
         if self.attempt_limit is not None and self.attempts_used >= self.attempt_limit:
             return "source_turn_attempt_budget"
+        if self.recoverable_failures >= MAX_RECOVERABLE_SOURCE_REVIEW_FAILURES_PER_TURN:
+            return "recoverable_vlm_retry_budget_exhausted"
         return None
 
     def begin_attempt(self) -> None:
         self.attempts_used += 1
+
+    def record_recoverable_failure(self) -> bool:
+        self.recoverable_failures += 1
+        return self.recoverable_failures < MAX_RECOVERABLE_SOURCE_REVIEW_FAILURES_PER_TURN
 
     def elapsed(self, now: float | None = None) -> float:
         now = time.perf_counter() if now is None else now
@@ -165,6 +173,7 @@ class _SourceTurnBudget:
             "sourceTurnWaitTimeoutSeconds": self.wait_timeout_seconds,
             "sourceTurnActivePlusWaitSeconds": round(elapsed + excluded_wait, 3),
             "sourceTurnAttemptsUsed": self.attempts_used,
+            "sourceTurnRecoverableFailures": self.recoverable_failures,
             "sourceTurnTimeoutSeconds": self.timeout_seconds,
             "sourceTurnAttemptLimit": self.attempt_limit,
         }
@@ -302,13 +311,22 @@ def write_source_turn_cursor_from_wave_state(
         raise ValueError("Staged-wave receipt has no valid source-selection policy version.")
 
     attempts = source.get("attempts") if isinstance(source.get("attempts"), list) else []
+    candidate_scoped_evidence_gaps = (
+        transition == "bounded_source_discovery"
+    )
+    attempted = [
+        attempt for attempt in attempts
+        if isinstance(attempt, dict)
+        and (attempt.get("status") != "needs_source_review"
+             or (candidate_scoped_evidence_gaps and attempt.get("failureOwner") == "source_evidence"))
+    ]
     attempted_keys = _unique_nonblank([
         *_list_values(source.get("priorAttemptedCandidateKeys")),
-        *(attempt.get("candidateKey") for attempt in attempts if isinstance(attempt, dict)),
+        *(attempt.get("candidateKey") for attempt in attempted),
     ])
     attempted_video_ids = _unique_nonblank([
         *_list_values(source.get("priorAttemptedVideoIds")),
-        *(attempt.get("videoId") for attempt in attempts if isinstance(attempt, dict)),
+        *(attempt.get("videoId") for attempt in attempted),
     ])
     next_candidate_key = None
     if transition == "next_source_candidate":
@@ -350,6 +368,32 @@ def write_source_turn_cursor_from_wave_state(
         "cursorExerciseId": exercise_id,
         "cursorExerciseName": exercise_name,
     }
+    for field in (
+        "acknowledgedSourceReviewEvidenceByCandidateKey",
+        "sourceReviewReplayReservationsByCandidateKey",
+        "sourceReviewInputReservationsByCandidateKey",
+    ):
+        existing = prior.get(field)
+        if isinstance(existing, dict):
+            cursor[field] = {
+                str(key): str(value)
+                for key, value in existing.items()
+                if str(key).strip() and isinstance(value, str)
+            }
+    reservation_details = prior.get("sourceReviewInputReservationDetailsByCandidateKey")
+    if isinstance(reservation_details, dict):
+        cursor["sourceReviewInputReservationDetailsByCandidateKey"] = {
+            str(key): dict(value)
+            for key, value in reservation_details.items()
+            if str(key).strip() and isinstance(value, dict)
+        }
+    reservation_history = prior.get("sourceReviewInputReservationHistoryByCandidateKey")
+    if isinstance(reservation_history, dict):
+        cursor["sourceReviewInputReservationHistoryByCandidateKey"] = {
+            str(key): [value for value in values if isinstance(value, str)]
+            for key, values in reservation_history.items()
+            if str(key).strip() and isinstance(values, list)
+        }
     if budget_matches:
         cursor.update({key: value for key, value in budget.items() if key.startswith("sourceTurn")})
     cursor_path.parent.mkdir(parents=True, exist_ok=True)

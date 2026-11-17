@@ -333,7 +333,8 @@ def overhead_reach_samples(pose: dict[str, Any] | None, *, single_arm: bool = Fa
 def action_pose_grounding(requirements: list[dict[str, Any]],
                           pose: dict[str, Any] | None, *,
                           frames: list[dict[str, Any]] | None = None,
-                          observations: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+                          observations: list[dict[str, Any]] | None = None,
+                          reviewed_phase_ids: tuple[str, ...] = ()) -> dict[str, Any]:
     checks = []
     for requirement in requirements:
         for check in required_pose_checks(requirement['description']):
@@ -341,8 +342,23 @@ def action_pose_grounding(requirements: list[dict[str, Any]],
             # Unspecified laterality cannot acquire a bilateral obligation here.
             bilateral = bool(re.search(r'\bboth (?:arms|hands)\b|\bdumbbells\b|\bbarbell\b', text))
             result = overhead_reach_samples(pose, single_arm=not bilateral)
-            if observations is not None and result['status'] == 'corroborated':
+            # Variant citations establish configuration, not the time of an action endpoint.
+            if (observations is not None and result['status'] == 'corroborated'
+                    and (requirement['id'] == 'action' or requirement['id'].startswith('phase_'))):
                 claim = next((row for row in observations if row.get('requirementId') == requirement['id']), {})
+                cited_ids = set(claim.get('evidenceFrameIds', []))
+                corroborating_phases = []
+                if requirement['id'] == 'action':
+                    for phase in requirements:
+                        if phase['id'] not in reviewed_phase_ids or check not in required_pose_checks(phase['description']):
+                            continue
+                        phase_claim = next((row for row in observations
+                                            if row.get('requirementId') == phase['id']), {})
+                        if phase_claim.get('verdict') == 'supported':
+                            cited_ids.update(phase_claim.get('evidenceFrameIds', []))
+                            corroborating_phases.append(phase['id'])
+                result['citedFrameIds'] = sorted(cited_ids)
+                result['phaseEvidenceRequirementIds'] = corroborating_phases
                 sample_times = sorted({float(frame['sourceTimeSec']) for frame in (pose or {}).get('frames', [])
                                        if type(frame.get('sourceTimeSec')) in (int, float)
                                        and math.isfinite(frame['sourceTimeSec'])})
@@ -358,7 +374,7 @@ def action_pose_grounding(requirements: list[dict[str, Any]],
                     if sample_times[index] in supported_times and abs(sample_times[index] - time) <= tolerance + 1e-6:
                         matched.append(frame['id'])
                 result['corroboratedFrameIds'] = matched
-                if claim.get('verdict') == 'supported' and not set(claim.get('evidenceFrameIds', [])).intersection(matched):
+                if claim.get('verdict') == 'supported' and not cited_ids.intersection(matched):
                     result.update(status='unresolved', reason='cited_frames_do_not_establish_overhead_reach')
             checks.append({'requirementId': requirement['id'], 'check': check, **result})
     unresolved = sorted({row['requirementId'] for row in checks if row['status'] != 'corroborated'})

@@ -25,9 +25,16 @@ def _build_shoe_orientation_context(payload, evidence=None):
     body_support = evidence.get('bodySupport') or payload.get('bodySupport') or {}
     support_geometry = (body_support if body_support.get('status') == 'confirmed'
                         else evidence if evidence.get('status') == 'confirmed' else {})
+    mirrored_partial_sides = set()
+    if (payload.get('canonicalExecution') or {}).get('legs') == 'mirrored':
+        observed_partial_sides = _source_partial_foot_observation_sides(
+            payload, evidence, states, len(frames))
+        if len(observed_partial_sides) == 1:
+            mirrored_partial_sides = observed_partial_sides
     return {'states': states, 'ground': ground,
             'planeGroups': support_geometry.get('coplanarGroups') or [],
-            'evidence': evidence}
+            'evidence': evidence,
+            'mirroredPartialSides': mirrored_partial_sides}
 
 
 @contextmanager
@@ -39,7 +46,7 @@ def shoe_orientation_context(context):
         _SHOE_ORIENTATION_CONTEXT.reset(token)
 
 
-def calibrated_foot_rest_pitches(points, names, evidence, frame_times=None):
+def calibrated_foot_rest_pitches(points, names, evidence, frame_times=None, *, canonical_execution=None):
     """Only timed, observed full-sole ground samples define each rig-side neutral."""
     points = np.asarray(points, dtype=float)
     from .contact_constraints import (
@@ -94,30 +101,249 @@ def calibrated_foot_rest_pitches(points, names, evidence, frame_times=None):
         flat &= length > 1e-8
         if np.count_nonzero(flat) >= 3:
             result[side] = float(np.median(np.arcsin(np.clip(vector[flat, 1] / length[flat], -1., 1.))))
+    if (canonical_execution or {}).get('legs') == 'mirrored' and result:
+        # Bind geometry is shared technique intent, not additional contact evidence.
+        common_pitch = float(np.mean(list(result.values())))
+        result = {'left': common_pitch, 'right': common_pitch}
     return result
 
 
-def material_foot_points(ankle, toe, side, rest_pitch, orientation=None):
-    """Mirror wearShoe/addShoe: rotate out the bind pitch, pivot at the forefoot."""
+def canonical_shoe_calibration_evidence(payload):
+    """Require complete shared bind geometry; report motion symmetry separately."""
+    if (payload.get('canonicalExecution') or {}).get('legs') != 'mirrored':
+        return {'required': False, 'passed': True}
+    pitches = payload.get('footRestPitchRadians') or {}
+    if not any(side in pitches for side in ('left', 'right')):
+        return {'required': False, 'passed': True, 'reason': 'neutral_shoe_bind_calibration_unavailable'}
+    values = [pitches.get(side) for side in ('left', 'right')]
+    complete = all(isinstance(value, (int, float)) and np.isfinite(value) for value in values)
+    passed = bool(complete and values[0] == values[1])
+    result = {'required': True, 'passed': passed,
+              'reason': None if passed else 'canonical_bilateral_shoe_bind_calibration_incomplete_or_inconsistent',
+              'bindPitchRadians': dict(pitches)}
+    errors = []
+    for frame in payload.get('frames') or []:
+        orientations = frame.get('shoeOrientation') or {}
+        joints = frame.get('joints') or {}
+        if not ({'left', 'right'} <= set(orientations)
+                and {'left_hip', 'right_hip'} <= set(joints)):
+            continue
+        lateral = np.asarray(joints['right_hip']) - joints['left_hip']
+        length = np.linalg.norm(lateral)
+        if length <= 1e-9:
+            continue
+        lateral = lateral / length
+        left = np.asarray(orientations['left'].get('forward'), dtype=float)
+        right = np.asarray(orientations['right'].get('forward'), dtype=float)
+        if (left.shape != (3,) or right.shape != (3,) or not np.isfinite(left).all()
+                or not np.isfinite(right).all()):
+            continue
+        mirrored = right - 2 * np.dot(right, lateral) * lateral
+        errors.append(float(np.rad2deg(np.arccos(np.clip(np.dot(left, mirrored), -1., 1.)))))
+    if errors:
+        # Native temporal articulation remains owned by its independent evidence gates.
+        result['medianReflectedMaterialForwardErrorDegrees'] = float(np.median(errors))
+        result['maximumReflectedMaterialForwardErrorDegrees'] = max(errors)
+    return result
+
+
+def canonical_material_shoe_evidence(payload, points=None, cursors=None):
+    """Verify the rendered material shoes are reflection-symmetric on mirrored legs."""
+    if (payload.get('canonicalExecution') or {}).get('legs') != 'mirrored':
+        return {'required': False, 'passed': True}
+    from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS
+    frames = payload.get('frames') or []
+    names = list(payload.get('jointNames')
+                 or (payload.get('fixedRig') or {}).get('jointNames') or [])
+    if not frames or not names:
+        return {'required': True, 'passed': False,
+                'reason': 'canonical_material_shoe_frame_geometry_unavailable'}
+    required_joints = ('left_hip', 'right_hip', 'left_ankle', 'left_foot',
+                       'right_ankle', 'right_foot')
+    missing_joints = [name for name in required_joints if name not in names]
+    if missing_joints:
+        return {'required': True, 'passed': False,
+                'reason': 'canonical_material_shoe_joint_geometry_unavailable',
+                'missingJoints': missing_joints}
+    try:
+        if points is None:
+            rig = payload.get('fixedRig')
+            if isinstance(rig, dict) and rig.get('coordinates') and rig.get('jointNames'):
+                count = len(rig['coordinates'])
+                cyclic = bool((payload.get('loop') or {}).get('enabled'))
+                cursors = np.arange(count * 4 if cyclic else (count - 1) * 4 + 1) / 4
+                from .rig_playback import _native_sampling_rig, sample_rig
+                points, side_axes = sample_rig(
+                    _native_sampling_rig(payload), cursors, wrap=cyclic,
+                    return_side_axes=True)
+                sampling = 'fixedRigQuarterFrame'
+            else:
+                points = np.asarray([
+                    [frame['joints'][name] for name in names] for frame in frames
+                ], dtype=float)
+                cursors = np.arange(len(frames), dtype=float)
+                sampling = 'storedFramePoints'
+                side_axes = None
+        else:
+            points = np.asarray(points, dtype=float)
+            if cursors is None:
+                if points.shape != (len(frames), len(names), 3):
+                    return {'required': True, 'passed': False,
+                            'reason': 'canonical_material_shoe_cursors_unavailable'}
+                cursors = np.arange(len(frames), dtype=float)
+            cursors = np.asarray(cursors, dtype=float).reshape(-1)
+            sampling = 'explicitPlaybackSamples'
+            side_axes = None
+            rig = payload.get('fixedRig')
+            if isinstance(rig, dict) and rig.get('contactFootTracks', {}).get('version') == 2:
+                from .rig_playback import _native_sampling_rig, sample_rig
+                _, side_axes = sample_rig(
+                    _native_sampling_rig(payload), cursors,
+                    wrap=bool((payload.get('loop') or {}).get('enabled')),
+                    return_side_axes=True)
+        cursors = np.asarray(cursors, dtype=float).reshape(-1)
+        if (points.ndim != 3 or points.shape[1:] != (len(names), 3)
+                or not len(cursors) or points.shape[0] != len(cursors)
+                or not np.isfinite(points).all() or not np.isfinite(cursors).all()):
+            raise ValueError('canonical material shoe samples are malformed')
+        # Inspect what the renderer receives, not a newly inferred export.
+        for side in ('left', 'right'):
+            stored = [(frame.get('shoeOrientation') or {}).get(side) for frame in frames]
+            if any(value is not None for value in stored):
+                if not all(isinstance(value, dict) for value in stored):
+                    raise ValueError('incomplete serialized shoe orientation track')
+                for key in ('forward', 'side'):
+                    values = np.asarray([value[key] for value in stored], dtype=float)
+                    if values.shape != (len(frames), 3) or not np.isfinite(values).all():
+                        raise ValueError('malformed serialized shoe orientation track')
+        geometry = _sample_material_foot_geometry(
+            payload, cursors, points, serialized_only=True, side_axes_override=side_axes)
+        missing_sides = [side for side in ('left', 'right') if side not in geometry]
+        if missing_sides:
+            return {'required': True, 'passed': False,
+                    'reason': 'canonical_material_shoe_sampled_geometry_unavailable',
+                    'missingSides': missing_sides}
+        scale = float(foot_scale_from_pose(points[0], names))
+        if not np.isfinite(scale) or scale < 0.:
+            raise ValueError('canonical material shoe scale is unavailable')
+        pitches = payload.get('footRestPitchRadians') or {}
+        vertices = {}
+        for side in ('left', 'right'):
+            pitch = float(pitches[side]) if side in pitches else None
+            ankle, toe = names.index(f'{side}_ankle'), names.index(f'{side}_foot')
+            vertices[side] = shoe_vertices(
+                points[:, ankle], points[:, toe], geometry[side]['lateral'], pitch,
+                scale, orientation=geometry[side]['orientation'],
+                native_geometry=geometry[side].get('nativeGeometry'))
+        if not all(np.isfinite(value).all() for value in vertices.values()):
+            raise ValueError('canonical material shoe vertices are not finite')
+        midpoint = .5 * (points[:, names.index('left_hip')]
+                         + points[:, names.index('right_hip')])
+        lateral = points[:, names.index('right_hip')] - points[:, names.index('left_hip')]
+        lengths = np.linalg.norm(lateral, axis=1, keepdims=True)
+        if not np.isfinite(lengths).all() or not np.all(lengths > 1e-9):
+            return {'required': True, 'passed': False,
+                    'reason': 'canonical_material_shoe_hip_axis_unavailable'}
+        lateral = lateral / lengths
+        offset = vertices['right'] - midpoint[:, None, :]
+        reflected = vertices['right'] - 2 * np.sum(
+            offset * lateral[:, None, :], axis=-1, keepdims=True) * lateral[:, None, :]
+        distances = np.linalg.norm(
+            vertices['left'][:, :, None, :] - reflected[:, None, :, :], axis=-1)
+        error = max(float(np.min(distances, axis=2).max()),
+                    float(np.min(distances, axis=1).max()))
+    except (KeyError, TypeError, ValueError, IndexError, FloatingPointError, OverflowError):
+        return {'required': True, 'passed': False,
+                'reason': 'canonical_material_shoe_geometry_unavailable'}
+    passed = bool(np.isfinite(error) and error <= PLAYBACK_CONTACT_LIMIT_METERS)
+    return {'required': True, 'passed': passed,
+            'reason': None if passed else 'canonical_material_shoe_mirror_error_exceeds_tolerance',
+            'maximumReflectedVertexErrorMeters': error,
+            'toleranceMeters': PLAYBACK_CONTACT_LIMIT_METERS,
+            'sampleCount': int(len(cursors)),
+            'sampling': sampling,
+            'evaluatedSides': ['left', 'right']}
+
+
+def material_foot_points(ankle, toe, side, rest_pitch, orientation=None,
+                         native_geometry=None):
+    """Mirror native shoe origins: calibrated forefoot or uncalibrated ankle."""
+    if native_geometry is not None:
+        from .native_foot_geometry import native_foot_marker_world
+
+        return native_foot_marker_world(ankle, toe, side, native_geometry)
     vector = np.asarray(toe) - np.asarray(ankle)
     length = np.linalg.norm(vector, axis=-1, keepdims=True)
     forward = vector / np.maximum(length, 1e-12)
     lateral = np.asarray(side) - forward * np.sum(np.asarray(side) * forward, axis=-1, keepdims=True)
     lateral /= np.maximum(np.linalg.norm(lateral, axis=-1, keepdims=True), 1e-12)
     up = np.cross(lateral, forward)
-    sole_forward = forward * np.cos(rest_pitch) - up * np.sin(rest_pitch)
+    pitch = 0. if rest_pitch is None else float(rest_pitch)
+    sole_forward = forward * np.cos(pitch) - up * np.sin(pitch)
     if orientation is not None:
         sole_forward = np.asarray(orientation['forward'], dtype=float)
         lateral = np.asarray(orientation['side'], dtype=float)
+    if rest_pitch is None and orientation is None:
+        return np.asarray(ankle) - .08 * length * forward, np.asarray(toe)
     return np.asarray(toe) - SHOE_LENGTH_RATIO * length * sole_forward, np.asarray(toe)
 
 
-def shoe_vertices(ankle, toe, side, rest_pitch, foot_scale, orientation=None):
+def _native_shoe_vertices(ankle, toe, side, foot_scale, native_geometry):
+    """Native-ring shape shared by every Python physical consumer."""
+    from .native_foot_geometry import native_foot_bone_frame, native_foot_marker_world
+
+    ankle = np.asarray(ankle, dtype=float)
+    forward, lateral, up, length = native_foot_bone_frame(ankle, toe, side)
+    heel, toe_marker = native_foot_marker_world(ankle, toe, side, native_geometry)
+
+    def components(point):
+        delta = point - ankle
+        return (np.sum(delta * forward, axis=-1, keepdims=True),
+                np.sum(delta * lateral, axis=-1, keepdims=True),
+                np.sum(delta * up, axis=-1, keepdims=True))
+
+    heel_f, heel_l, heel_u = components(heel)
+    toe_f, toe_l, toe_u = components(toe_marker)
+    width = np.maximum(length * .26, foot_scale * .15)
+    height = np.maximum(length * .28, foot_scale * .15)
+
+    def lerp(start, stop, fraction):
+        return start + (stop - start) * fraction
+
+    rings = []
+    for fraction, center_height, width_scale, height_scale in (
+            (0., -.05, .78, .55), (.36, .12, 1., .72), (1., -.25, .76, .35)):
+        center = (ankle + forward * lerp(heel_f, toe_f, fraction)
+                  + lateral * lerp(heel_l, toe_l, fraction)
+                  + up * (lerp(heel_u, toe_u, fraction)
+                          + height * (center_height + .60)))
+        w, h = lateral * width * width_scale, up * height * height_scale
+        top_width = w * .88
+        corners = np.stack([center + top_width + h, center - top_width + h,
+                            center - w - h, center + w - h], axis=-2)
+        ring = np.stack([corners * .7 + np.roll(corners, shift, axis=-2) * .3
+                         for shift in (1, -1)], axis=-2).reshape(
+                             *corners.shape[:-2], 8, 3)
+        rings.append(ring)
+    # Caps sit on the physical extrema; no extra legacy forward margin.
+    rear_tip = (rings[0][..., 0, :] + rings[0][..., 4, :]) * .5
+    toe_tip = (rings[-1][..., 0, :] + rings[-1][..., 4, :]) * .5
+    return np.concatenate([*rings, rear_tip[..., None, :], toe_tip[..., None, :]],
+                          axis=-2)
+
+
+def shoe_vertices(ankle, toe, side, rest_pitch, foot_scale, orientation=None,
+                  native_geometry=None):
     """The production shoe's three beveled rings and two tips, in vertex order."""
+    if native_geometry is not None:
+        return _native_shoe_vertices(
+            ankle, toe, side, foot_scale, native_geometry)
     heel, toe = material_foot_points(ankle, toe, side, rest_pitch, orientation)
     length = np.linalg.norm(toe - ankle, axis=-1, keepdims=True)
     forward = (np.asarray(orientation['forward'], dtype=float) if orientation is not None
-               else (toe - heel) / np.maximum(SHOE_LENGTH_RATIO * length, 1e-12))
+               else ((np.asarray(toe) - np.asarray(ankle)) / np.maximum(length, 1e-12)
+                     if rest_pitch is None else
+                     (toe - heel) / np.maximum(SHOE_LENGTH_RATIO * length, 1e-12)))
     side_axis = np.asarray(orientation['side'], dtype=float) if orientation is not None else np.asarray(side)
     lateral = side_axis - forward * np.sum(side_axis * forward, axis=-1, keepdims=True)
     lateral /= np.maximum(np.linalg.norm(lateral, axis=-1, keepdims=True), 1e-12)
@@ -149,13 +375,14 @@ def free_foot_floor_translation(ankle, toe, *, floor_y, rest_pitch_radians,
     if any(value.shape != (3,) or not np.isfinite(value).all() for value in values):
         raise ValueError('foot geometry inputs must be finite 3D vectors')
     try:
-        floor_y, rest_pitch_radians, foot_scale = map(
-            float, (floor_y, rest_pitch_radians, foot_scale))
+        floor_y, foot_scale = map(float, (floor_y, foot_scale))
+        rest_pitch_radians = (None if rest_pitch_radians is None else float(rest_pitch_radians))
     except (TypeError, ValueError, OverflowError) as error:
         raise ValueError('floor, pitch, and scale must be finite numbers') from error
     foot_forward = toe - ankle
     foot_length_squared = float(np.dot(foot_forward, foot_forward))
-    if (not np.isfinite([floor_y, rest_pitch_radians, foot_scale]).all()
+    if (not np.isfinite([floor_y, foot_scale]).all()
+            or (rest_pitch_radians is not None and not np.isfinite(rest_pitch_radians))
             or foot_scale <= 0. or foot_length_squared <= 1e-16):
         raise ValueError('floor, pitch, scale, and foot axes must be valid')
     side_projection = side_axis - foot_forward * (
@@ -179,21 +406,53 @@ def material_floor_heights(points, names, rest_pitches, foot_scale, side_axes):
     for side in ('left', 'right'):
         if f'{side}_ankle' not in names or f'{side}_foot' not in names:
             continue
-        pitch = float(rest_pitches.get(side, 0.))
+        pitch = (float(rest_pitches[side]) if side in rest_pitches else None)
         ankle, toe = names.index(f'{side}_ankle'), names.index(f'{side}_foot')
         value = side_axes[side]
         lateral = np.asarray(value.get('lateral') if isinstance(value, dict) else value,
                              dtype=float)
         orientation = value.get('orientation') if isinstance(value, dict) else None
         vertices = shoe_vertices(points[:, ankle], points[:, toe], lateral, pitch, foot_scale,
-                                 orientation=orientation)
+                                 orientation=orientation,
+                                 native_geometry=(value.get('nativeGeometry')
+                                                  if isinstance(value, dict) else None))
         heights[:, ankle] = np.minimum(heights[:, ankle], np.min(vertices[:, :, 1], axis=1))
     return heights
 
 
 def _sample_material_foot_geometry(payload, cursors, points, *, resolved_sides=None,
-                                   keyframe_points=None):
+                                   keyframe_points=None, serialized_only=False,
+                                   side_axes_override=None):
     """Resolve rendered shoe heel/toe points and side axes at rig samples."""
+    if 'materialFrames' in (payload.get('fixedRig') or {}):
+        from .native_material_frames import material_axes
+        from .native_foot_geometry import validated_native_foot_geometry
+        rig = payload['fixedRig']
+        axes = material_axes(rig, cursors, wrap=bool((payload.get('loop') or {}).get('enabled')))
+        native = validated_native_foot_geometry(payload.get('nativeFootGeometry'))
+        if native is None:
+            raise ValueError('materialFrames requires native foot geometry')
+        names = payload['jointNames']
+        points = np.asarray(points, dtype=float)
+        result = {}
+        for side, axis in axes.items():
+            ankle, foot = [names.index(f'{side}_{part}') for part in ('ankle', 'foot')]
+            override = (side_axes_override or {}).get(side)
+            if override is not None:
+                axis = np.asarray(override, dtype=float).copy()
+            forward = points[:, foot] - points[:, ankle]
+            forward /= np.maximum(np.linalg.norm(forward, axis=1, keepdims=True), 1e-12)
+            axis = axis - forward*np.sum(axis*forward, axis=1, keepdims=True)
+            length = np.linalg.norm(axis, axis=1, keepdims=True)
+            if np.any(length < 1e-8) or not np.isfinite(axis).all():
+                raise ValueError('materialFrames returned side is degenerate')
+            axis /= length
+            heel, toe = material_foot_points(points[:, ankle], points[:, foot], axis, None,
+                                             native_geometry=native['sides'][side])
+            result[side] = {'heel': heel, 'toe': toe, 'lateral': axis,
+                            'forward': forward, 'orientation': {'forward': forward, 'side': axis},
+                            'nativeGeometry': native['sides'][side]}
+        return result
     from .temporal_quality import rendered_leg_sides
 
     frames, names = payload['frames'], payload['jointNames']
@@ -211,12 +470,16 @@ def _sample_material_foot_geometry(payload, cursors, points, *, resolved_sides=N
         raise ValueError('keyframe points must match frame and joint counts')
     resolved = (rendered_leg_sides(frames) if resolved_sides is None
                 else resolved_sides)
+    from .native_foot_geometry import validated_native_foot_geometry
+    native = validated_native_foot_geometry(payload.get('nativeFootGeometry'))
+    if side_axes_override is not None and not isinstance(side_axes_override, dict):
+        raise ValueError('sampled native side axes must be a side-keyed mapping')
     first = np.floor(cursors).astype(int)
     last = np.ceil(cursors).astype(int) % len(frames)
     alpha = cursors - first
     pitches = payload.get('footRestPitchRadians') or {}
-    orientation_tracks = shoe_orientation_tracks(
-        payload, keyframe_points, resolved_sides=resolved)
+    orientation_tracks = ({} if serialized_only else shoe_orientation_tracks(
+        payload, keyframe_points, resolved_sides=resolved))
     stored_keyframe_points = np.asarray([
         [frame['joints'][name] for name in names] for frame in frames
     ], dtype=float)
@@ -292,14 +555,36 @@ def _sample_material_foot_geometry(payload, cursors, points, *, resolved_sides=N
                 start_side * np.cos(angle)[:, None]
                 + np.cross(sample_axis, start_side) * np.sin(angle)[:, None]
             )
+        override = (side_axes_override or {}).get(side)
+        if override is not None:
+            override = np.asarray(override, dtype=float)
+            if override.shape != lateral.shape:
+                raise ValueError(f'{side} sampled side axes must match sampled cursors')
+            valid_override = np.isfinite(override).all(axis=1)
+            # Serialized frame axes own exact keys. Playback-only inferred axes
+            # are used between keys where native contact sampling changed the chain.
+            valid_override &= np.abs(cursors - np.round(cursors)) > 1e-12
+            if np.any(valid_override):
+                sample_axis = points[:, toe] - points[:, ankle]
+                sample_axis /= np.maximum(np.linalg.norm(sample_axis, axis=1, keepdims=True), 1e-12)
+                transported = override.copy()
+                transported -= sample_axis * np.sum(
+                    transported * sample_axis, axis=1, keepdims=True)
+                transported /= np.maximum(np.linalg.norm(transported, axis=1, keepdims=True), 1e-12)
+                lateral[valid_override] = transported[valid_override]
         orientation = _sample_orientation_track(orientation_tracks.get(side), first, last, alpha)
-        material_side = orientation['side'] if orientation is not None else lateral
+        material_side = orientation['side'].copy() if orientation is not None else lateral
+        if override is not None and np.any(valid_override):
+            material_side[valid_override] = lateral[valid_override]
+            if orientation is not None:
+                orientation['side'][valid_override] = lateral[valid_override]
+        native_side = native['sides'][side] if native is not None else None
         heel, forefoot = material_foot_points(
-            points[:, ankle], points[:, toe], material_side, float(pitches.get(side, 0.)),
-            orientation=orientation)
+            points[:, ankle], points[:, toe], material_side, (float(pitches[side]) if side in pitches else None),
+            orientation=orientation, native_geometry=native_side)
         result[side] = {'heel': heel, 'toe': forefoot, 'lateral': material_side,
                         'forward': (orientation['forward'] if orientation else None),
-                        'orientation': orientation}
+                        'orientation': orientation, 'nativeGeometry': native_side}
     return result
 
 
@@ -326,6 +611,51 @@ def _sample_orientation_track(track, first, last, alpha):
     return {'forward': forward, 'side': side}
 
 
+def _source_partial_foot_observation_sides(payload, evidence, states, frame_count):
+    """Return sides with a current, pose-bound source foot-patch observation."""
+    patch = (evidence or {}).get('footPatchEvidence') or {}
+    source_sha = str((evidence or {}).get('sourceVideoSha256') or '').casefold()
+    if (patch.get('available') is not True
+            or patch.get('source') != 'mediapipe_full_heel_forefoot'
+            or not source_sha
+            or str(patch.get('sourceVideoSha256') or '').casefold() != source_sha
+            or patch.get('sourceTimeBasis') != 'absolute_source_video'):
+        return set()
+    source_pose = (payload.get('sourcePoseCameraReference') or {}).get('sourcePose')
+    if not isinstance(source_pose, dict):
+        return set()
+    from .foot_contact_observation import foot_patch_pose_binding_failure
+    if foot_patch_pose_binding_failure(patch, source_pose):
+        return set()
+    patch_feet = patch.get('feet') or {}
+    result = set()
+    for side in ('left', 'right'):
+        missing = 'right' if side == 'left' else 'left'
+        patch_states = (patch_feet.get(side) or {}).get('states') or []
+        aligned_states = states.get(side) or ()
+        missing_patch_states = (patch_feet.get(missing) or {}).get('states') or []
+        missing_aligned_states = states.get(missing) or ()
+        if (len(patch_states) != patch.get('sourceFrameCount')
+                or len(aligned_states) != frame_count
+                or len(missing_patch_states) != patch.get('sourceFrameCount')
+                or len(missing_aligned_states) != frame_count):
+            continue
+        source_states = [str(state).casefold() for state in patch_states]
+        fit_states = [str(state).casefold() for state in aligned_states]
+        absent_source_states = [str(state).casefold() for state in missing_patch_states]
+        absent_fit_states = [str(state).casefold() for state in missing_aligned_states]
+        source_partial_count = sum(
+            state in {'toe_only', 'heel_only'} for state in source_states)
+        aligned_partial_count = sum(
+            state in {'toe_only', 'heel_only'} for state in fit_states)
+        if (source_partial_count >= 3 and aligned_partial_count >= 3
+                and 'full_sole' not in source_states and 'full_sole' not in fit_states
+                and all(state in {'', 'unknown'} for state in absent_source_states)
+                and all(state in {'', 'unknown'} for state in absent_fit_states)):
+            result.add(side)
+    return result
+
+
 def shoe_orientation_tracks(payload, points, *, resolved_sides=None):
     """Build material shoe axes from verified full-sole states and preserve free pitch.
 
@@ -341,9 +671,9 @@ def shoe_orientation_tracks(payload, points, *, resolved_sides=None):
     if context is None or context['ground'].shape != (len(frames), len(names)):
         context = _build_shoe_orientation_context(payload)
     states, ground = context['states'], context['ground']
-    floor = payload.get('renderFloorY')
     mode = str(payload.get('groundContactMode') or '').casefold()
     plane_groups = context['planeGroups']
+    mirrored_partial_sides = set(context.get('mirroredPartialSides') or ())
     from .temporal_quality import rendered_leg_sides
     resolved = rendered_leg_sides(frames) if resolved_sides is None else resolved_sides
     pitches = payload.get('footRestPitchRadians') or {}
@@ -380,18 +710,31 @@ def shoe_orientation_tracks(payload, points, *, resolved_sides=None):
                         and np.linalg.norm(candidate_normal) > 1e-8):
                     normal = candidate_normal / np.linalg.norm(candidate_normal)
                     break
-        ground_plane = floor is not None and mode in {'continuous', 'intermittent'}
-        if normal is None and ground_plane:
-            normal = np.array([0., 1., 0.])
+        # Only an observed continuous/intermittent ground mask owns the
+        # horizontal sole plane; the render-floor height is not an orientation
+        # input, so its absence must not disable the observed-ground producer.
+        if normal is None and mode in {'continuous', 'intermittent'}:
             grounded = (ground[:, toe] if ground.shape == (len(frames), len(names))
                         else np.zeros(len(frames), dtype=bool))
+            if not np.any(grounded):
+                if side in mirrored_partial_sides:
+                    result[side] = {'forward': free_forward.copy(), 'side': fallback_side.copy(),
+                                    'contactMask': np.zeros(len(frames), dtype=bool)}
+                continue
+            normal = np.array([0., 1., 0.])
         elif normal is not None:
             grounded = np.ones(len(frames), dtype=bool)
         else:
+            if side in mirrored_partial_sides:
+                result[side] = {'forward': free_forward.copy(), 'side': fallback_side.copy(),
+                                'contactMask': np.zeros(len(frames), dtype=bool)}
             continue
         contact = full & grounded
         anchors = np.flatnonzero(contact)
         if not anchors.size:
+            if side in mirrored_partial_sides:
+                result[side] = {'forward': free_forward.copy(), 'side': fallback_side.copy(),
+                                'contactMask': np.zeros(len(frames), dtype=bool)}
             continue
         for index in anchors:
             projected = bone_forward[index] - normal * np.dot(bone_forward[index], normal)
@@ -431,6 +774,95 @@ def shoe_orientation_tracks(payload, points, *, resolved_sides=None):
         side_axis = _unit_rows(side_axis)
         result[side] = {'forward': forward, 'side': side_axis,
                         'contactMask': contact}
+    if ((payload.get('canonicalExecution') or {}).get('legs') == 'mirrored'
+            and len(result) == 1):
+        # A single observed shoe is shared technique intent only when the
+        # absent side has no contrary native state. This models the missing
+        # material basis without inventing a contact or copying observed facts.
+        source = next(iter(result))
+        missing = 'right' if source == 'left' else 'left'
+        allowed_states = {'', 'unknown', 'full_sole'}
+        if (all(str(state).casefold() in allowed_states
+                for state in states.get(missing, ()))
+                and 'left_hip' in names and 'right_hip' in names):
+            lateral = (points[:, names.index('right_hip')]
+                       - points[:, names.index('left_hip')])
+            lengths = np.linalg.norm(lateral, axis=1, keepdims=True)
+            if np.isfinite(lateral).all() and np.all(lengths > 1e-9):
+                lateral = lateral / lengths
+                observed = result[source]
+                # Forward is polar and reflects directly. The material side is
+                # axial, so negate its reflected vector to keep
+                # up = cross(side, forward) reflection-correct.
+                forward = observed['forward'] - 2 * np.sum(
+                    observed['forward'] * lateral, axis=1, keepdims=True) * lateral
+                side_axis = -(observed['side'] - 2 * np.sum(
+                    observed['side'] * lateral, axis=1, keepdims=True) * lateral)
+                forward, side_axis = _unit_rows(forward), _unit_rows(side_axis)
+                if np.isfinite(forward).all() and np.isfinite(side_axis).all():
+                    result[missing] = {
+                        'forward': forward,
+                        'side': side_axis,
+                        'contactMask': np.zeros(len(frames), dtype=bool),
+                        'modelMirroredFrom': source,
+                    }
+    if ((payload.get('canonicalExecution') or {}).get('legs') == 'mirrored'
+            and len(result) == 2 and {'left_hip', 'right_hip'} <= set(names)):
+        # Heel-unobserved sides have no measured pitch authority. Where the
+        # opposite side has genuine calibrated full-sole anchors, its reflected
+        # orientation is the only canonical basis for the unobservable shoe.
+        # Replace only uncertain, non-owned rows; keep the target's own anchors,
+        # contact mask and any contrary observed state untouched.
+        evidence = context.get('evidence') or {}
+        patch = evidence.get('footPatchEvidence') or {}
+        feet = (patch.get('feet') or {}) if patch.get('available') is True else {}
+        pitch_sources = {
+            side: str((feet.get(side) or {}).get('pitchReferenceSource') or 'unknown')
+            for side in ('left', 'right')
+        }
+        unobserved = [side for side in result
+                      if pitch_sources.get(side, '').casefold() == 'heel_unobserved']
+        if len(unobserved) == 1:
+            target = unobserved[0]
+            source = 'right' if target == 'left' else 'left'
+            source_states = [str(state).casefold() for state in states.get(source, ())]
+            target_states = [str(state).casefold() for state in states.get(target, ())]
+            source_heel_rows = (
+                (feet.get(source) or {}).get('heelImageObservations') or [])
+            source_calibrated = sum(
+                str(row.get('state') or '').casefold() == 'full_sole'
+                and row.get('stationaryAnchorGroupId') is not None
+                for row in source_heel_rows
+            )
+            if (source in result
+                    and len(source_states) == len(frames)
+                    and len(target_states) == len(frames)
+                    and source_states.count('full_sole') >= 3
+                    and source_calibrated >= 3
+                    and pitch_sources.get(source, '').casefold() in {'relative_stance', 'observed_ground_plane'}):
+                lateral = (points[:, names.index('right_hip')]
+                           - points[:, names.index('left_hip')])
+                lengths = np.linalg.norm(lateral, axis=1, keepdims=True)
+                if np.isfinite(lateral).all() and np.all(lengths > 1e-9):
+                    lateral = lateral / lengths
+                    observed = result[source]
+                    forward = observed['forward'] - 2 * np.sum(
+                        observed['forward'] * lateral, axis=1, keepdims=True) * lateral
+                    side_axis = -(observed['side'] - 2 * np.sum(
+                        observed['side'] * lateral, axis=1, keepdims=True) * lateral)
+                    forward, side_axis = _unit_rows(forward), _unit_rows(side_axis)
+                    target_track = result[target]
+                    uncertain = np.asarray([
+                        state in {'', 'unknown', 'toe_only'} for state in target_states
+                    ], dtype=bool)
+                    replace = uncertain & ~target_track['contactMask']
+                    if np.any(replace) and np.isfinite(forward).all() and np.isfinite(side_axis).all():
+                        target_track['forward'] = np.where(
+                            replace[:, None], forward, target_track['forward'])
+                        target_track['side'] = np.where(
+                            replace[:, None], side_axis, target_track['side'])
+                        target_track['modelMirroredFrom'] = source
+                        target_track['modelAuthority'] = True
     return result
 
 
@@ -466,10 +898,12 @@ def sample_material_foot_points(payload, cursors, *, points=None):
     cursors = np.asarray(cursors, dtype=float).reshape(-1)
     wrap = bool((payload.get('loop') or {}).get('enabled'))
     if points is None:
-        from .rig_playback import sample_rig
-        points = sample_rig(
-            payload['fixedRig'], cursors, wrap=wrap)
+        from .rig_playback import _native_sampling_rig, sample_rig
+        points, side_axes = sample_rig(
+            _native_sampling_rig(payload), cursors, wrap=wrap,
+            return_side_axes=True)
     else:
+        side_axes = None
         points = np.asarray(points, dtype=float)
         frame_count = len(payload['frames'])
         if points.shape != (frame_count, len(payload['jointNames']), 3):
@@ -480,7 +914,14 @@ def sample_material_foot_points(payload, cursors, *, points=None):
             last = (first + 1) % frame_count if wrap else np.minimum(first + 1, frame_count - 1)
             amount = cursors - first
             points = points[first] * (1. - amount[:, None, None]) + points[last] * amount[:, None, None]
-    geometry = _sample_material_foot_geometry(payload, cursors, points)
+        rig = payload.get('fixedRig')
+        if isinstance(rig, dict) and rig.get('contactFootTracks', {}).get('version') == 2:
+            from .rig_playback import _native_sampling_rig, sample_rig
+            _, side_axes = sample_rig(
+                _native_sampling_rig(payload), cursors, wrap=wrap,
+                return_side_axes=True)
+    geometry = _sample_material_foot_geometry(
+        payload, cursors, points, side_axes_override=side_axes)
     return {side: {'heel': values['heel'], 'toe': values['toe'],
                    'sideAxis': values['lateral'], 'forwardAxis': values['forward']}
             for side, values in geometry.items()}
@@ -494,7 +935,16 @@ def validate_material_shoes(payload, points, cursors, *, floor_limit, contact_li
         return {'required': False, 'passed': True}
     from .contact_constraints import motion_space_support_evidence
     frames, names = payload['frames'], payload['jointNames']
-    geometry = _sample_material_foot_geometry(payload, cursors, points)
+    from .rig_playback import _native_sampling_rig, sample_rig
+    rig = payload.get('fixedRig')
+    side_axes = None
+    if isinstance(rig, dict) and rig.get('contactFootTracks', {}).get('version') == 2:
+        _, side_axes = sample_rig(
+            _native_sampling_rig(payload), cursors,
+            wrap=bool((payload.get('loop') or {}).get('enabled')),
+            return_side_axes=True)
+    geometry = _sample_material_foot_geometry(
+        payload, cursors, points, side_axes_override=side_axes)
     first = np.floor(cursors).astype(int)
     last = np.ceil(cursors).astype(int) % len(frames)
     evidence = motion_space_support_evidence(payload)
@@ -506,20 +956,24 @@ def validate_material_shoes(payload, points, cursors, *, floor_limit, contact_li
             full[start:end + 1, names.index(contact['jointName'])] = True
     scale = foot_scale_from_pose(np.asarray([frames[0]['joints'][n] for n in names]), names)
     penetration, contact_error = 0., 0.
+    evaluated_sides = []
     for side in ('left', 'right'):
         if side not in geometry:
             continue
-        pitch = float(pitches.get(side, 0.))
+        evaluated_sides.append(side)
+        pitch = (float(pitches[side]) if side in pitches else None)
         ankle, toe = names.index(f'{side}_ankle'), names.index(f'{side}_foot')
         axes = geometry[side]['lateral']
         vertices = shoe_vertices(points[:, ankle], points[:, toe], axes, pitch, scale,
-                                 orientation=geometry[side]['orientation'])
+                                 orientation=geometry[side]['orientation'],
+                                 native_geometry=geometry[side].get('nativeGeometry'))
         penetration = max(penetration, float(floor) - float(vertices[:, :, 1].min()))
         active = (full[first, toe] & full[last, toe] & ground[first, toe] & ground[last, toe])
         if np.any(active):
             heel, forefoot = geometry[side]['heel'], geometry[side]['toe']
             contact_error = max(contact_error, float(np.max(np.abs(
                 np.stack([heel[active, 1], forefoot[active, 1]]) - float(floor)))))
-    return {'required': True, 'passed': penetration <= floor_limit and contact_error <= contact_limit,
+    return {'required': True, 'passed': bool(evaluated_sides) and penetration <= floor_limit and contact_error <= contact_limit,
+            'evaluatedSides': evaluated_sides,
             'maximumSurfacePenetrationMeters': max(0., penetration),
             'maximumFullSoleContactErrorMeters': contact_error}

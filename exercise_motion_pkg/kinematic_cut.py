@@ -114,7 +114,7 @@ class CutProposal:
     end_seconds: float
     policy: str
     confidence: float
-    stats: dict[str, float] = field(default_factory=dict)
+    stats: dict[str, Any] = field(default_factory=dict)
 
     @property
     def duration_seconds(self) -> float:
@@ -640,6 +640,7 @@ def _cycle_proposals(
     contract: dict[str, Any],
     *,
     max_proposals: int,
+    include_complete_pairs: bool = False,
 ) -> list[CutProposal]:
     cycles = detect_cycles(signal)
     if not cycles:
@@ -683,6 +684,11 @@ def _cycle_proposals(
                 end_constraints=end_constraints if isinstance(end_constraints, dict) else None,
                 looping=looping,
             )
+        observed_indices = [index for index, time in enumerate(signal.times)
+                            if start_seconds <= time <= end_seconds]
+        boundary_baseline = (signal.signal[observed_indices[0]] + signal.signal[observed_indices[-1]]) / 2.0
+        measured_peak = max(observed_indices,
+                            key=lambda index: abs(signal.signal[index] - boundary_baseline))
         proposals.append(
             CutProposal(
                 start_seconds=start_seconds,
@@ -693,11 +699,36 @@ def _cycle_proposals(
                     "amplitudeTorsoUnits": cycle.amplitude,
                     "durationSeconds": end_seconds - start_seconds,
                     "cycleCount": float(len(cycles)),
+                    "peakSeconds": signal.times[measured_peak],
                     "explainedVarianceRatio": signal.explained_variance_ratio,
                 },
             )
         )
-    return proposals
+    pairs: list[CutProposal] = []
+    if include_complete_pairs or contract_completion_mode(contract) == "alternating_pair":
+        ordered = sorted(proposals, key=lambda proposal: proposal.start_seconds)
+        for first, second in ((first, second) for first in ordered for second in ordered
+                              if first.end_seconds == second.start_seconds):
+            # Only adjacent observed cycles qualify. Side identity is deliberately
+            # not inferred from PCA sign: the qualitative source review owns it.
+            if first.end_seconds != second.start_seconds:
+                continue
+            if not all(member.start_seconds < member.stats['peakSeconds'] < member.end_seconds
+                       for member in (first, second)):
+                continue
+            members = [
+                {"startSeconds": cycle.start_seconds, "peakSeconds": cycle.stats["peakSeconds"],
+                 "endSeconds": cycle.end_seconds}
+                for cycle in (first, second)
+            ]
+            pairs.append(CutProposal(first.start_seconds, second.end_seconds,
+                "alternating_pair", min(first.confidence, second.confidence),
+                {"completeMemberIntervals": members, "distinctSideCoverageRequired": True,
+                 "durationSeconds": second.end_seconds - first.start_seconds,
+                 "cycleCount": 2.0}))
+    if contract_completion_mode(contract) == "alternating_pair":
+        return pairs
+    return [*proposals, *pairs]
 
 
 def _has_usable_pose_constraints(constraints: dict[str, Any] | None) -> bool:
@@ -1526,6 +1557,7 @@ def propose_source_cut(
     span_start_seconds: float | None = None,
     span_end_seconds: float | None = None,
     span_pad_seconds: float = DEFAULT_SPAN_PAD_SECONDS,
+    include_complete_pairs: bool = False,
 ) -> list[CutProposal]:
     """Propose source cuts from pose samples, using the contract cut policy."""
     if max_proposals <= 0:
@@ -1543,6 +1575,8 @@ def propose_source_cut(
         return []
     safe_contract = contract if isinstance(contract, dict) else {}
     request_count = max_proposals
+    if include_complete_pairs or contract_completion_mode(safe_contract) == "alternating_pair":
+        request_count = max(request_count, 8)
     if span_start_seconds is not None and span_end_seconds is not None:
         request_count = max(max_proposals, 8)
     supported: list[CutProposal] = []
@@ -1554,6 +1588,7 @@ def propose_source_cut(
                 run,
                 safe_contract,
                 max_proposals=request_count,
+                include_complete_pairs=include_complete_pairs,
             )
         )
 
@@ -1592,13 +1627,15 @@ def _propose_contiguous_run(
     contract: dict[str, Any],
     *,
     max_proposals: int,
+    include_complete_pairs: bool = False,
 ) -> list[CutProposal]:
     signal = dominant_motion_signal(frames)
     mode = contract_completion_mode(contract)
     if signal is None or signal.quality < MIN_SIGNAL_QUALITY:
         proposals: list[CutProposal] = []
     elif mode in _CYCLE_POLICIES:
-        proposals = _cycle_proposals(frames, signal, contract, max_proposals=max_proposals)
+        proposals = _cycle_proposals(frames, signal, contract, max_proposals=max_proposals,
+                                     include_complete_pairs=include_complete_pairs)
     elif mode == "distinct_end_state":
         proposals = _distinct_end_state_proposals(frames, signal, contract, max_proposals=max_proposals)
         if not proposals:
@@ -1645,6 +1682,9 @@ def _propose_contiguous_run(
                     stats={**proposal.stats, **evidence},
                 )
             )
+    if mode == "alternating_pair":
+        supported = [proposal for proposal in supported
+                     if proposal.stats.get("completeMemberIntervals")]
     return _deduplicate_proposals(supported)
 
 

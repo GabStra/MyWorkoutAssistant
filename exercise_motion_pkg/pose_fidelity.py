@@ -61,14 +61,47 @@ def _payload_digest(payload: Any) -> str:
 
 
 def _canonical_source_pose_sha256(payload: dict[str, Any]) -> str:
+    # Video bytes are bound separately; this transport annotation is not pose content.
     encoded = json.dumps(
-        payload,
+        {key: value for key, value in payload.items() if key != "sourceVideoSha256"},
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
         allow_nan=False,
     )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def apply_source_observation_vetoes(source_payload, *, source_video_sha256, vetoes):
+    """Preserve raw points while marking independently reviewed mismatches unknown.
+
+    _pose_frames already applies confidence to calibration and source fidelity;
+    a veto supplies no replacement measurement and never edits retained caches.
+    """
+    if source_payload.get('sourceVideoSha256') != source_video_sha256:
+        raise ValueError('Observation review belongs to different source bytes')
+    result = copy.deepcopy(source_payload)
+    records = []
+    for veto in vetoes:
+        index = veto.get('sourcePoseSampleIndex')
+        if (veto.get('sourceVideoSha256') != source_video_sha256
+                or not isinstance(index, int) or not 0 <= index < len(result.get('frames', []))
+                or not veto.get('reviewAuthority')):
+            raise ValueError('Source observation veto lacks exact reviewed identity')
+        frame = result['frames'][index]
+        joint = veto.get('jointName')
+        if (joint not in frame.get('joints', {}) or
+                abs(float(frame.get('sourceTimeSec'))-float(veto.get('sourceTimeSec'))) > 1e-9):
+            raise ValueError('Source observation veto does not match its sampled exposure')
+        confidence = frame.setdefault('jointConfidence', {})
+        records.append({**veto, 'originalPoint': copy.deepcopy(frame['joints'][joint]),
+                        'originalConfidence': confidence.get(joint)})
+        confidence[joint] = 0.
+    if records:
+        audit = result.setdefault('sourcePoseEvidenceAudit', {})
+        audit['observationParentPayloadSha256'] = _canonical_source_pose_sha256(source_payload)
+        audit['observationVetoes'] = records
+    return result
 
 
 def _canonical_source_pose_timeline(source_payload, motion_payload):
@@ -94,6 +127,9 @@ def _canonical_source_pose_timeline(source_payload, motion_payload):
     ):
         return None, "source_timeline_mapping_unverified"
     selected_sha = str(mapping.get("selectedSegmentSha256") or "").casefold()
+    annotated_sha = source_payload.get("sourceVideoSha256")
+    if annotated_sha is not None and str(annotated_sha).casefold() != selected_sha:
+        return None, "source_timeline_mapping_identity_invalid"
     parent_sha = str(mapping.get("parentSourceSha256") or "").casefold()
     pose_sha = str(mapping.get("sourcePosePayloadSha256") or "").casefold()
     receipt_sha = str(mapping.get("selectedFrameClockReceiptSha256") or "").casefold()

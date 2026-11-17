@@ -14,6 +14,7 @@ from .temporal_quality import body_local_head_direction
 
 
 SOCKET_ALIGNMENT_MAX_LATERAL_RATIO = .06
+CHEST_ATTACHMENT_MAX_ANGLE_RADIANS = np.deg2rad(30.)
 
 # Girdle spans (shoulders/hips) are not single bones: rotating the collar or
 # pelvis joints swings the width while every parent-child bone stays rigid.
@@ -223,6 +224,14 @@ def support_balance(points, names, fps, support_mask=None):
             "limitations": "No equipment mass, contact forces, or angular momentum; not full dynamics validation."}, outside
 
 
+def torso_bend_floor(proximal, hinge, distal, *, source_conditioned=True):
+    """The shared physical torso floor, including observed intentional flexion."""
+    absolute = np.deg2rad(145.)
+    if not source_conditioned:
+        return absolute
+    return np.minimum(absolute, angles(proximal, hinge, distal) - np.deg2rad(1.))
+
+
 def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0., reference=None):
     """Source-independent limits for our simplified exercise rig.
 
@@ -262,13 +271,6 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.,
 
     def reference_point(name):
         return reference_points[:, index[name]]
-
-    def torso_bend_floor(proximal, hinge, distal):
-        absolute = np.deg2rad(145.)
-        if reference_points is None:
-            return absolute
-        observed = angles(proximal, hinge, distal)
-        return np.minimum(absolute, observed - np.deg2rad(1.))
 
     from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
     lengths = {}
@@ -315,7 +317,7 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.,
                 ref_hips = (reference_point('left_hip')+reference_point('right_hip'))*.5
                 spine_floor = torso_bend_floor(ref_hips, reference_point('spine1'), reference_point('neck'))
             else:
-                spine_floor = torso_bend_floor(hips, point('spine1'), point('neck'))
+                spine_floor = torso_bend_floor(hips, point('spine1'), point('neck'), source_conditioned=False)
             add('anatomy_torso_bend:spine1', spine_floor - angles(hips, point('spine1'), point('neck')))
         if all(n in index for n in ('left_collar', 'right_collar', 'left_shoulder', 'right_shoulder')):
             collars = (point('left_collar')+point('right_collar'))*.5
@@ -324,7 +326,7 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.,
             collar_axis = collars-point('spine3')
             cosine = np.sum(neck_axis*collar_axis, axis=-1)/np.maximum(
                 np.linalg.norm(neck_axis, axis=-1)*np.linalg.norm(collar_axis, axis=-1), 1e-9)
-            add('anatomy_chest_attachment:neck', np.cos(np.deg2rad(30.))-cosine)
+            add('anatomy_chest_attachment:neck', np.cos(CHEST_ATTACHMENT_MAX_ANGLE_RADIANS)-cosine)
             progress = np.sum((shoulders-point('spine3'))*neck_axis, axis=-1)/np.maximum(np.sum(neck_axis**2, axis=-1), 1e-9)
             add('anatomy_chest_attachment:shoulders', np.maximum(.35-progress, progress-1.25))
             if all(n in index for n in ('left_hip', 'right_hip')):
@@ -333,7 +335,7 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.,
                     ref_shoulders = (reference_point('left_shoulder')+reference_point('right_shoulder'))*.5
                     shoulder_floor = torso_bend_floor(ref_hips, reference_point('spine1'), ref_shoulders)
                 else:
-                    shoulder_floor = torso_bend_floor(hips, point('spine1'), shoulders)
+                    shoulder_floor = torso_bend_floor(hips, point('spine1'), shoulders, source_conditioned=False)
                 add('anatomy_torso_bend:shoulders',
                     shoulder_floor - angles(hips, point('spine1'), shoulders))
         axis = point('neck')-point('pelvis')
@@ -361,7 +363,74 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.,
     return (np.stack(rows, axis=1) if rows else np.empty((len(points), 0))), labels
 
 
-def hinge_direction_events(points, names, reference, *, fps=30.):
+def source_hinge_direction_authority(payload, names):
+    """Only explicit, identity-bound observation vetoes qualify 3D direction.
+
+    Scalar joint angles, lengths and physical anatomy remain independent.
+    Rejected exposure joins qualify both adjacent reference samples; dense
+    consumers combine the same endpoint authority without inventing contacts.
+    """
+    frames = payload.get('frames') or []
+    authority = np.ones((len(frames), len(names)), dtype=bool)
+    retained = payload.get('sourcePoseCameraReference') or {}
+    source = retained.get('sourcePose') or {}
+    vetoes = (source.get('sourcePoseEvidenceAudit') or {}).get('observationVetoes') or []
+    if not vetoes:
+        return authority
+    from .contact_constraints import _foot_patch_times_in_parent_clock, _source_timeline_mapping_for_payload
+    from .pose_fidelity import _bilateral_name, source_pose_reference_for_motion
+    mapping = _source_timeline_mapping_for_payload(payload)
+    times = np.asarray([frame.get('sourceTimeSec', np.nan) for frame in frames], dtype=float)
+    if mapping is None or not np.isfinite(times).all() or np.any(np.diff(times) < 0):
+        raise ValueError('Rejected source direction requires verified exposure joins')
+    assignment = (retained.get('camera') or {}).get('bilateralAssignment')
+    if assignment not in {'identity', 'swapped'}:
+        raise ValueError('Rejected source direction requires verified bilateral identity')
+    window = source_pose_reference_for_motion(source, payload, include_adjacent_boundary_evidence=True)
+    if window.get('sourcePoseTimelineError'):
+        raise ValueError('Rejected source direction timeline unavailable')
+    selected_exposures = {float(frame['sourceTimeSec']) for frame in window.get('frames', [])}
+    for veto in vetoes:
+        sample = veto.get('sourcePoseSampleIndex')
+        joint = veto.get('jointName')
+        if (veto.get('sourceVideoSha256') != source.get('sourceVideoSha256')
+                or not veto.get('reviewAuthority') or not isinstance(sample, int)
+                or not 0 <= sample < len(source.get('frames', []))):
+            raise ValueError('Rejected source direction identity mismatch')
+        observed = source['frames'][sample]
+        if (observed.get('sourceTimeSec') != veto.get('sourceTimeSec')
+                or observed.get('jointConfidence', {}).get(joint) != 0.):
+            raise ValueError('Rejected source direction observation mismatch')
+        joined = _foot_patch_times_in_parent_clock(
+            payload.get('sourceFootSupportEvidence') or {}, mapping, [veto['sourceTimeSec']])
+        if joined is None:
+            raise ValueError('Rejected source direction exposure unavailable')
+        if float(joined[0]) not in selected_exposures:
+            continue
+        name = _bilateral_name(joint, swap=assignment == 'swapped')
+        if name not in names or not len(times):
+            continue
+        right = min(int(np.searchsorted(times, joined[0], side='left')), len(times)-1)
+        left = max(0, right-1) if times[right] > joined[0] else right
+        authority[[left, right], names.index(name)] = False
+    return authority
+
+
+def foot_direction_mask(authority, names):
+    """An ankle-to-foot direction needs both constituent observations."""
+    return np.column_stack([np.all(np.asarray(authority)[:, [names.index(side+'_ankle'),
+                                                            names.index(side+'_foot')]], axis=1)
+                            for side in ('left', 'right')])
+
+
+def hinge_direction_mask(authority, names):
+    """Constituent-joint authority for existing hinge specifications."""
+    specs = [spec for spec in ARTICULATIONS if spec[0].endswith(('_knee', '_elbow'))]
+    return np.stack([np.all(authority[:, [names.index(n) for n in (a, b, c)]], axis=1)
+                     for _, a, b, c, _ in specs], axis=1)
+
+
+def hinge_direction_events(points, names, reference, *, fps=30., direction_authority=None):
     """Preserve reliable observed knee bend planes as well as hinge branches."""
     index = {name: i for i, name in enumerate(names)}
     events = []
@@ -378,6 +447,8 @@ def hinge_direction_events(points, names, reference, *, fps=30.):
         proposed_track=[_local_hinge_bend(f,a,h,b) for f in target_frames]
         reliable=(np.sin(angles(*(reference[:,index[n]] for n in (a,h,b))))>np.sin(np.deg2rad(15.))) & (
             np.sin(angles(*(points[:,index[n]] for n in (a,h,b))))>np.sin(np.deg2rad(15.)))
+        if direction_authority is not None:
+            reliable &= np.all(np.asarray(direction_authority)[:, [index[n] for n in (a, h, b)]], axis=1)
         for frame in np.flatnonzero(reliable):
             source_bend,proposed_bend=source_track[frame],proposed_track[frame]
             if source_bend is None or proposed_bend is None or not _source_branch_is_temporally_supported(
@@ -404,6 +475,7 @@ def validate_physical_motion(
     anatomy_reference=None,
     fps=30.,
     support_mask=None,
+    direction_authority=None,
 ):
     """Evaluate final coordinates, independently of optimizer success/cost."""
     if not np.isfinite(points).all():
@@ -433,7 +505,7 @@ def validate_physical_motion(
             events.append({'reason': 'anatomy_span_variation', 'span': label,
                            'frameIndex': int(frame), 'deviationMeters': float(deviation[frame])})
     if reference is not None:
-        events.extend(hinge_direction_events(points, names, reference, fps=fps))
+        events.extend(hinge_direction_events(points, names, reference, fps=fps, direction_authority=direction_authority))
         for a,b in body_bones(names):
             lengths=np.linalg.norm(reference[:,a]-reference[:,b],axis=1)
             changes=np.abs(np.linalg.norm(points[:,a]-points[:,b],axis=1)-lengths)
@@ -475,18 +547,24 @@ def validate_physical_motion(
 
 
 def _joint_array_from_frames(frames, key, names):
-    if not all(all(n in frame.get(key, {}) for n in names) for frame in frames):
+    if not all(isinstance(frame.get(key), dict) and all(n in frame[key] for n in names)
+               for frame in frames):
         return None
-    return np.asarray([[frame[key][n] for n in names] for frame in frames], dtype=float)
+    try:
+        points = np.asarray([[frame[key][n] for n in names] for frame in frames], dtype=float)
+    except (TypeError, ValueError):
+        return None
+    return points if points.shape == (len(frames), len(names), 3) and np.isfinite(points).all() else None
 
 
-def anatomical_reference_is_usable(points, names):
+def anatomical_reference_is_usable(points, names, *, reference=None):
     """True when a stored source-repair pose may still authorise output checks."""
     from .anatomical_repair import repair_residuals
 
     if points is None or not np.isfinite(points).all():
         return False
-    residuals, labels = repair_residuals(points, names)
+    residuals, labels = (repair_residuals(points, names) if reference is None else
+                         repair_residuals(points, names, reference=reference))
     if residuals.size == 0 or not np.any(residuals > 1e-6):
         return True
     leftover = residuals.max(axis=0)
@@ -500,6 +578,15 @@ def anatomical_reference_is_usable(points, names):
     return True
 
 
+
+def source_articulation_reference_field(frames):
+    """Select immutable/contact-conditioned angular authority, never support output."""
+    for field in ('controlledArticulationReferenceJoints', 'controlledSourceJoints', 'sourceJoints'):
+        if any(field in frame for frame in frames):
+            return field
+    return 'joints'
+
+
 def physical_metrics_from_payload(payload):
     frames = payload.get('frames') or []
     names = payload.get('jointNames') or []
@@ -510,11 +597,16 @@ def physical_metrics_from_payload(payload):
     reference = None
     if all(all(n in f.get('sourceJoints', {}) for n in names) for f in frames):
         reference = np.asarray([[f['sourceJoints'][n] for n in names] for f in frames], dtype=float)
+    anatomy_reference = reference
     fixed_rig = payload.get('fixedRig')
     if fixed_rig:
-        if not all(all(n in f.get('controlledSourceJoints',{}) for n in names) for f in frames):
+        if _joint_array_from_frames(frames, 'controlledSourceJoints', names) is None:
             return {'passed':False,'reasons':['fixed_rig_reference_unavailable'],'events':[]}
-        reference=np.asarray([[f.get('controlledArticulationReferenceJoints',f['controlledSourceJoints'])[n] for n in names] for f in frames],dtype=float)
+        field = source_articulation_reference_field(frames)
+        reference = _joint_array_from_frames(frames, field, names)
+        if reference is None:
+            return {'passed': False, 'reasons': ['fixed_rig_reference_unavailable'], 'events': []}
+        anatomy_reference = reference
         if payload.get('anatomicalSourceRepair'):
             corrected = _joint_array_from_frames(frames, 'correctedAnatomicalReferenceJoints', names)
             if corrected is None:
@@ -522,12 +614,9 @@ def physical_metrics_from_payload(payload):
             if not anatomical_reference_is_usable(corrected, names):
                 return {'passed': False, 'reasons': ['anatomical_reference_invalid'],
                         'events': [{'reason': 'anatomical_reference_invalid'}]}
-            reference = corrected
-    from .support_geometry import support_evidence, validated_support_reference
-    if fixed_rig and support_evidence(payload).get('required'):
-        reference, reason = validated_support_reference(payload)
-        if reason:
-            return {'passed': False, 'reasons': [reason], 'events': []}
+            anatomy_reference = corrected
+    # Support geometry is validated on the actual stored/dense candidate by
+    # playback. Its placement target must not replace source anatomy bounds.
     supported={side:np.zeros(len(frames),dtype=bool) for side in ('left','right')}
     other_support=False
     from .contact_constraints import motion_space_support_evidence
@@ -543,8 +632,9 @@ def physical_metrics_from_payload(payload):
     support_mask=supported['left'] & supported['right']
     if other_support:
         support_mask[:]=False
-    report=validate_physical_motion(points, names, reference=reference,
-                                   fps=float(payload.get('fps') or 30.),support_mask=support_mask)
+    report=validate_physical_motion(points, names, reference=reference, anatomy_reference=anatomy_reference,
+                                   fps=float(payload.get('fps') or 30.),support_mask=support_mask,
+                                   direction_authority=source_hinge_direction_authority(payload, names))
     if not fixed_rig:
         # Raw SMPL spans jitter with occlusion; only the calibrated fixed rig
         # owns a girdle width it must keep stable across frames.
@@ -578,3 +668,20 @@ def physical_metrics_from_payload(payload):
         report['reasons']=sorted({e['reason'] for e in report['events']})
         report['passed']=not report['events']
     return report
+
+
+def source_articulation_fit_bounds(reference_angles, specs, *, global_reference_angles=None):
+    """Fit within both phase allowance and the existing final knee envelope."""
+    from .structural_refinement import SOURCE_ARTICULATION_FIT_ALLOWANCE_DEGREES
+
+    reference_angles = np.asarray(reference_angles, dtype=float)
+    global_angles = (reference_angles if global_reference_angles is None
+                     else np.asarray(global_reference_angles, dtype=float))
+    tolerance = np.deg2rad([min(tolerance, 10.) - .5 for _, _, tolerance in specs])
+    low, high = reference_angles - tolerance, reference_angles + tolerance
+    for column, (label, _, _) in enumerate(specs):
+        if label.endswith('_knee'):
+            allowance = np.deg2rad(SOURCE_ARTICULATION_FIT_ALLOWANCE_DEGREES)
+            low[:, column] = np.maximum(low[:, column], global_angles[:, column].min() - allowance)
+            high[:, column] = np.minimum(high[:, column], global_angles[:, column].max() + allowance)
+    return low, high

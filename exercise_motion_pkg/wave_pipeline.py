@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata
+from exercise_motion_pkg import bake_and_rank as _bake_and_rank
 
 import json
 import hashlib
@@ -12,7 +13,7 @@ from collections import deque
 from contextlib import nullcontext
 from contextvars import copy_context
 from queue import Empty, Queue
-from types import MethodType
+from types import MethodType, SimpleNamespace
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,12 +43,13 @@ from exercise_motion_pkg.bake_and_rank import (
     limit_bake_fallback_candidates,
     load_ranked_candidates_manifest,
     prepare_candidate_input_video,
+    resolve_source_review_request_timeout_seconds,
     prioritize_ranked_candidates_for_reconstruction,
     run_bake_and_rank_pipeline,
     apply_artifact_retention_policy,
     callable_accepts_keyword,
 )
-from exercise_motion_pkg.vlm_errors import critical_vlm_interaction_error
+from exercise_motion_pkg.vlm_errors import critical_vlm_interaction_error, vlm_error_payload
 from exercise_motion_pkg.gvhmr_runner import GvhmrWarmWorkerInterruptedAmbiguous
 from exercise_motion_pkg.shared_llama_server import (
     clear_generation_holder_marker,
@@ -57,6 +59,7 @@ from exercise_motion_pkg.shared_llama_server import (
 )
 from exercise_motion_pkg.source_outcomes import update_source_outcome_index
 from exercise_motion_pkg.source_review_preflight import SourceReviewIncomplete, review_prepared_source
+from exercise_motion_pkg import source_review_authority as _source_review_authority
 from exercise_motion_pkg.source_review_authority import retained_source_attempt_keys
 from exercise_motion_pkg.process_lock import exclusive_workspace_lease
 from exercise_motion_pkg.storage import is_storage_failure, require_storage_reserve
@@ -66,6 +69,15 @@ from exercise_motion_pkg.source_turn_budget import (
     _source_turn_exercise_identity,
     load_source_turn_cursor,
     source_turn_budget_readiness,
+)
+from exercise_motion_pkg.source_support_stage import (
+    contact_timeline_repair_key as _contact_timeline_repair_key,
+    observe_source_support_stage,
+    persist_exact_source_support_evidence as _persist_exact_source_support_evidence,
+    refresh_source_foot_contacts_from_dense_sole_review as _refresh_source_foot_contacts_from_dense_sole_review,
+    reclassify_source_foot_contacts_from_timeline as _reclassify_source_foot_contacts_from_timeline,
+    source_support_readiness_route as _shared_source_support_readiness_route,
+    write_json_atomic as _write_json_atomic,
 )
 
 
@@ -146,6 +158,318 @@ class StagedWaveItem:
     request: BakeAndRankRequest
     run_id: str | None = None
     source_review_turn_id: str | None = None
+    source_reference_target: dict[str, Any] | None = None
+
+
+def _source_review_request(item: StagedWaveItem) -> BakeAndRankRequest | SimpleNamespace:
+    """Use approved target requirements for source review, keeping source item identity."""
+    target = item.source_reference_target
+    if not isinstance(target, dict):
+        return item.request
+    values = dict(vars(item.request))
+    values.update({
+        "authoritative_exercise_motion_context": target["motionContext"],
+        "source_reference_target_exercise_id": target["exerciseId"],
+        "source_reference_target_exercise_name": target["exerciseName"],
+        "source_reference_target_exercise_slug": target.get("exerciseSlug"),
+        "source_reference_mapping": target,
+    })
+    return SimpleNamespace(**values)
+
+
+def _source_review_request_input_identity(
+    candidate: RankedCandidate,
+    request: BakeAndRankRequest | SimpleNamespace,
+    *,
+    caption_images: Callable[..., str],
+) -> tuple[str, str, int, str, str] | None:
+    """Build a pre-review identity from validated current inputs, never verdict text."""
+    target_mapping = getattr(request, "source_reference_mapping", None)
+    if not isinstance(target_mapping, dict):
+        return None
+    workspace = Path(request.workspace) / candidate.workspace_slug
+    source_paths = [
+        candidate.video_path,
+        workspace / "source" / "source.mp4",
+        workspace / "input" / "selected_segment.mp4",
+    ]
+    source_path = next((Path(path).expanduser() for path in source_paths
+                        if path is not None and Path(path).is_file()), None)
+    if source_path is None:
+        return None
+    try:
+        source_sha256 = _bake_and_rank.file_sha256(source_path)
+        contract = _bake_and_rank._current_cached_contract_for_source_resume(candidate, request)
+        if not isinstance(contract, dict):
+            return None
+        settings = getattr(getattr(caption_images, "__self__", None), "settings", None)
+        model_identity = _bake_and_rank.source_review_model_identity(settings)
+        if not isinstance(model_identity, dict) or not model_identity:
+            return None
+
+        def semantic_model_identity(value: Any) -> Any:
+            if isinstance(value, dict):
+                if isinstance(value.get("sha256"), str) and value.get("sizeBytes") is not None:
+                    return {"sha256": value["sha256"].casefold(), "sizeBytes": value["sizeBytes"]}
+                return {
+                    str(key): semantic_model_identity(nested)
+                    for key, nested in value.items()
+                    if str(key).casefold() not in {"path", "mtime", "mtimens", "fileid", "device", "updatedat"}
+                }
+            if isinstance(value, (list, tuple)):
+                return [semantic_model_identity(nested) for nested in value]
+            return value
+
+        model_identity = semantic_model_identity(model_identity)
+        from exercise_motion_pkg.source_evidence import (
+            POLICY_VERSION as source_evidence_policy_version,
+            SOURCE_REFERENCE_VISUAL_REVIEW_SPEC_POLICY_VERSION,
+            source_reference_review_context,
+            source_reference_review_context_sha256,
+            source_reference_visual_review_spec_sha256,
+        )
+        target_name = str(getattr(request, "source_reference_target_exercise_name", "") or "").strip()
+        if not target_name:
+            return None
+        mapping_context = source_reference_review_context(
+            target_mapping,
+            target_exercise_name=target_name,
+            target_contract=contract,
+        )
+        mapping_context_sha256 = source_reference_review_context_sha256(mapping_context)
+        visual_spec_sha256 = source_reference_visual_review_spec_sha256(
+            contract, mapping_context,
+        )
+        if (
+            mapping_context is None
+            or mapping_context.get("sourceExerciseId") != candidate.exercise_id
+            or mapping_context.get("targetExerciseId")
+            != getattr(request, "source_reference_target_exercise_id", None)
+            or not isinstance(visual_spec_sha256, str)
+            or len(visual_spec_sha256) != 64
+        ):
+            return None
+        model_canonical = json.dumps(
+            model_identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        hint = candidate.source_chunk_hint
+        requested_window = {
+            "sourceWindowAttemptIndex": candidate.candidate.get("sourceWindowAttemptIndex"),
+            "sourceWindowHint": (
+                {"startSeconds": hint.start_seconds, "endSeconds": hint.end_seconds}
+                if hint is not None else None
+            ),
+            "retainedSourceInterval": candidate.candidate.get("retainedSourceInterval"),
+            "wholeCandidateSource": hint is None and candidate.candidate.get("retainedSourceInterval") is None,
+        }
+        phase_input_identity = None
+        phase_path = workspace / "segment_detection" / "exact_source_phase_validation.json"
+        if phase_path.is_file():
+            try:
+                phase = loads_reconstruction_metadata(phase_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                phase = None
+            if isinstance(phase, dict):
+                phase_inputs = phase.get("inputIdentity") or phase.get("inputs")
+                if isinstance(phase_inputs, dict):
+                    phase_input_identity = _source_review_authority._semantic_source_review_value(phase_inputs)
+                else:
+                    phase_input_identity = {
+                        key: phase.get(key)
+                        for key in (
+                            "sourceVideoSha256", "sourceIntervalSeconds", "contractPromptSha256",
+                            "contractPolicyVersion", "phasePolicyVersion",
+                        ) if phase.get(key) is not None
+                    } or None
+        response_owner_identity = _source_review_response_owner_identity(request)
+        if response_owner_identity is None:
+            return None
+        identity_inputs = {
+            "sourceVideoSha256": source_sha256,
+            "sourceCandidateKey": _candidate_key(candidate),
+            "requestedWindow": requested_window,
+            "currentContractSha256": mapping_context.get("targetContractSha256"),
+            "contractPolicyVersion": contract.get("contractPolicyVersion"),
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceReviewPolicyVersion": _source_review_authority.SOURCE_REVIEW_AUTHORITY_VERSION,
+            "sourceEvidencePolicyVersion": source_evidence_policy_version,
+            "modelIdentity": model_identity,
+            "modelIdentitySha256": hashlib.sha256(model_canonical).hexdigest(),
+            "sourceReferenceReviewContext": mapping_context,
+            "sourceReferenceReviewContextSha256": mapping_context_sha256,
+            "sourceReferenceVisualReviewSpecPolicyVersion": SOURCE_REFERENCE_VISUAL_REVIEW_SPEC_POLICY_VERSION,
+            "sourceReferenceVisualReviewSpecSha256": visual_spec_sha256,
+            "targetExerciseId": target_mapping.get("exerciseId"),
+            "phaseInputIdentity": phase_input_identity,
+            "responseOwnerIdentity": response_owner_identity,
+        }
+        identity = _source_review_authority.source_review_input_identity(identity_inputs)
+        legacy_identity = _source_review_authority.source_review_input_identity_before_visual_spec(
+            identity_inputs,
+        )
+        return (
+            identity, mapping_context_sha256,
+            SOURCE_REFERENCE_VISUAL_REVIEW_SPEC_POLICY_VERSION, visual_spec_sha256,
+            legacy_identity,
+        ) if identity and mapping_context_sha256 and legacy_identity else None
+    except (OSError, TypeError, ValueError, AttributeError, ImportError):
+        return None
+
+
+def _source_review_response_owner_identity(request: Any) -> dict[str, Any] | None:
+    """Bind review decisions to the selected backend and its semantic policies.
+
+    Diagnostic ``clef_visual_decision_*`` kwargs are deliberately excluded: the
+    request's selected backend controls dispatch, and those kwargs may be
+    stripped by ``invoke_cut_caption_images`` before the caption callback.
+    """
+    backend = getattr(request, "visual_decision_backend", "qwen-chat") or "qwen-chat"
+    if backend not in {"qwen-chat", "clef-systemone"}:
+        return None
+    return {
+        "visualDecisionBackend": backend,
+        "sourceCutPromptPolicyVersion": _bake_and_rank.SOURCE_CUT_APPROVAL_CACHE_POLICY_VERSION,
+        "equipmentObserverPolicyVersion": _bake_and_rank.PRE_RECONSTRUCTION_EQUIPMENT_OBSERVATION_POLICY_VERSION,
+        "exactSourcePhaseValidationPolicyVersion": _bake_and_rank.EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
+    }
+
+
+_EXPLICIT_VISUAL_SPEC_SUPERSESSION_REASON = (
+    "canonical_source_visual_spec_v1_added_after_prior_invocation"
+)
+
+
+def _validated_source_review_input_supersession(
+    candidate_key: str,
+    explicit_supersessions: dict[str, dict[str, Any]] | None,
+    *,
+    prior_identity: str | None,
+    current_identity: str,
+    current_context_sha256: str,
+    visual_spec_policy_version: int,
+    visual_spec_sha256: str,
+    target_exercise_id: str | None,
+    historical_attempt: bool,
+    acknowledged: bool,
+    current_validated_pass: bool,
+    prior_details_present: bool,
+    prior_reservation_details: dict[str, Any] | None = None,
+    input_history: list[str],
+) -> dict[str, Any] | None:
+    """Validate one owner-supplied identity supersession for a legacy request.
+
+    This is deliberately opt-in at the staged-wave API boundary. Normal runs
+    continue to require an exact legacy input identity match. The record cannot
+    waive source-review gates; it only admits the newly identified request.
+    """
+    record = (explicit_supersessions or {}).get(candidate_key)
+    if not isinstance(record, dict):
+        return None
+    expected_prior = record.get("priorInputIdentitySha256")
+    expected_current = record.get("currentInputIdentitySha256")
+    expected_context = record.get("sourceReferenceReviewContextSha256")
+    expected_spec = record.get("sourceReferenceVisualReviewSpecSha256")
+    expected_target = record.get("targetExerciseId")
+    expected_policy = record.get("sourceReferenceVisualReviewSpecPolicyVersion")
+    stored_supersession = (
+        prior_reservation_details.get("supersession")
+        if isinstance(prior_reservation_details, dict) else None
+    )
+    prior_details_match = (
+        not prior_details_present
+        or (
+            isinstance(prior_reservation_details, dict)
+            and isinstance(stored_supersession, dict)
+            and str(prior_reservation_details.get("inputIdentitySha256") or "").casefold()
+            == str(prior_identity or "").casefold()
+            and str(prior_reservation_details.get("sourceReferenceReviewContextSha256") or "").casefold()
+            == str(current_context_sha256 or "").casefold()
+            and prior_reservation_details.get("sourceReferenceVisualReviewSpecPolicyVersion")
+            == visual_spec_policy_version
+            and str(prior_reservation_details.get("sourceReferenceVisualReviewSpecSha256") or "").casefold()
+            == str(visual_spec_sha256 or "").casefold()
+            and any(
+                isinstance(value, str)
+                and value.casefold() == str(stored_supersession.get("priorInputIdentitySha256") or "").casefold()
+                for value in input_history
+            )
+            and str(stored_supersession.get("currentInputIdentitySha256") or "").casefold()
+            == str(prior_identity or "").casefold()
+            and str(stored_supersession.get("sourceReferenceReviewContextSha256") or "").casefold()
+            == str(current_context_sha256 or "").casefold()
+            and stored_supersession.get("sourceReferenceVisualReviewSpecPolicyVersion")
+            == visual_spec_policy_version
+            and str(stored_supersession.get("sourceReferenceVisualReviewSpecSha256") or "").casefold()
+            == str(visual_spec_sha256 or "").casefold()
+            and stored_supersession.get("targetExerciseId") == target_exercise_id
+            and stored_supersession.get("sourceApprovalGranted") is False
+            and any(
+                isinstance(value, str) and value.casefold() == str(prior_identity or "").casefold()
+                for value in input_history
+            )
+        )
+    )
+    if (
+        not historical_attempt
+        or acknowledged
+        or current_validated_pass
+        or not prior_details_match
+        or not _source_review_authority._is_sha256_identity(prior_identity)
+        or not _source_review_authority._is_sha256_identity(current_identity)
+        or not _source_review_authority._is_sha256_identity(expected_prior)
+        or not _source_review_authority._is_sha256_identity(expected_current)
+        or not _source_review_authority._is_sha256_identity(expected_context)
+        or not _source_review_authority._is_sha256_identity(expected_spec)
+        or str(expected_prior).casefold() != str(prior_identity).casefold()
+        or str(expected_current).casefold() != str(current_identity).casefold()
+        or str(expected_context).casefold() != current_context_sha256.casefold()
+        or str(expected_spec).casefold() != visual_spec_sha256.casefold()
+        or type(expected_policy) is not int
+        or expected_policy != visual_spec_policy_version
+        or not isinstance(target_exercise_id, str)
+        or expected_target != target_exercise_id
+        or record.get("reason") != _EXPLICIT_VISUAL_SPEC_SUPERSESSION_REASON
+        or current_identity.casefold() == str(prior_identity).casefold()
+        or any(
+            isinstance(value, str) and value.casefold() == current_identity.casefold()
+            for value in input_history
+        )
+    ):
+        return None
+    return {
+        "priorInputIdentitySha256": str(prior_identity).casefold(),
+        "currentInputIdentitySha256": current_identity.casefold(),
+        "reason": _EXPLICIT_VISUAL_SPEC_SUPERSESSION_REASON,
+        "sourceReferenceReviewContextSha256": current_context_sha256.casefold(),
+        "sourceReferenceVisualReviewSpecPolicyVersion": visual_spec_policy_version,
+        "sourceReferenceVisualReviewSpecSha256": visual_spec_sha256.casefold(),
+        "targetExerciseId": target_exercise_id,
+        "sourceApprovalGranted": False,
+    }
+
+
+def _legacy_source_review_mapping_context_is_new(
+    candidate_workspace: Path,
+    current_context_sha256: str,
+) -> bool:
+    """Allow the one legacy migration only when the prior review lacked this authority."""
+    selection_path = candidate_workspace / "segment_detection" / "segment_selection.json"
+    if not selection_path.is_file():
+        # Older interrupted turns may have only a durable candidate cursor.
+        return True
+    try:
+        payload = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(payload, dict) or not _source_review_authority.rejection_needs_authority_replay(payload):
+        return False
+    ranking = payload.get("sourceCutRanking")
+    details = ranking.get("payload") if isinstance(ranking, dict) else None
+    previous = (
+        details.get("sourceReferenceReviewContextSha256")
+        if isinstance(details, dict) else None
+    ) or payload.get("sourceReferenceReviewContextSha256")
+    return not isinstance(previous, str) or previous.casefold() != current_context_sha256.casefold()
 
 
 def generation_failure_status(error: Exception) -> str:
@@ -214,8 +538,19 @@ def artifact_disposition(manifest: dict[str, Any]) -> str:
         manifest.get("selectionStatus") == "needs_manual_review"
         and isinstance(manifest.get("manualReviewFallback"), dict)
     ):
-        return "manual_review"
+        from .artifact_state import validate_artifact_state
+        try:
+            state = validate_artifact_state(manifest["manualReviewFallback"].get("artifactState"))
+        except (TypeError, ValueError):
+            return "retryable"
+        # A reviewable intermediate is not a completed movement.
+        return "manual_review" if state["terminal"] else "retryable"
     diagnostics = final_processing_diagnostics(manifest).get("candidateDiagnostics", [])
+    if any(item.get("status") == "pending_support_inference" for item in diagnostics):
+        # Raw reconstruction exists, but required support geometry is still
+        # awaiting inference. Preserve a nonterminal incomplete state; this is
+        # never an accepted or reviewable final movement.
+        return "processing_incomplete"
     if any(item.get("status") == "needs_definition_review" for item in diagnostics):
         return "retryable"
     if any(item.get("status") == "needs_motion_processing" for item in diagnostics):
@@ -252,7 +587,48 @@ def wave_retry_disposition(state: dict[str, Any]) -> str:
         return "repair_contract"
     if state.get("source", {}).get("failureReason") == "needs_definition_review":
         return "needs_definition_review"
-    if state.get("source", {}).get("failureReason") == "source_review_incomplete":
+    source = state.get("source", {})
+    if source.get("failureReason") == "source_review_incomplete":
+        attempts = source.get("attempts") if isinstance(source.get("attempts"), list) else []
+        def candidate_support_gap(attempt: dict[str, Any]) -> bool:
+            tags = [str(tag) for tag in attempt.get("reasonTags") or [] if str(tag)]
+            return (
+                attempt.get("status") == "needs_source_review"
+                and attempt.get("failureOwner") == "source_evidence"
+                and bool(tags)
+                and all(
+                    tag in {
+                        "source_support_contact_evidence_incomplete",
+                        "stationary_contact_evidence_unavailable",
+                        "exact_source_support_observation_unavailable",
+                    }
+                    or (
+                        tag.startswith(("required_", "prohibited_"))
+                        and tag.endswith("_support_unobserved")
+                    )
+                    for tag in tags
+                )
+            )
+
+        evidence_gaps = [
+            attempt for attempt in attempts
+            if isinstance(attempt, dict) and candidate_support_gap(attempt)
+        ]
+        # An exact source that cannot prove required contact evidence is not
+        # approved, but it also should not block trying another source. Keep
+        # true review/infrastructure failures on the human review path.
+        if evidence_gaps and all(
+            bool(attempt.get("candidateKey"))
+            for attempt in evidence_gaps
+        ):
+            unresolved_reviews = [
+                attempt for attempt in attempts
+                if isinstance(attempt, dict)
+                and attempt.get("status") == "needs_source_review"
+                and not candidate_support_gap(attempt)
+            ]
+            if not unresolved_reviews:
+                return "next_source"
         return "retry_review"
     if state.get("source", {}).get("failureReason") == "source_turn_deferred":
         return "continue_source"
@@ -295,6 +671,11 @@ def wave_retry_disposition(state: dict[str, Any]) -> str:
             # Disagreement between contact evidence producers is unresolved
             # evidence, not proof that the source itself is unsuitable.
             return "retry_review"
+        if diagnostics and all(
+            item.get("status") == "rejected_baked_motion_validation"
+            for item in diagnostics
+        ):
+            return "next_source"
         if reasons.intersection({
             "source_confirmed_support_unrepaired",
             "source_confirmed_baseline_support_drift",
@@ -342,11 +723,11 @@ def wave_retry_disposition(state: dict[str, Any]) -> str:
                         for item in attempts):
         return "next_source"
     if attempts and all(item.get("status") == "rejected_raw_reconstruction_validation" for item in attempts):
-        # The source passed approval; keep this in the local motion-processing lane.
-        return "retry_processing"
+        return "next_source"
     if state.get("source", {}).get("failureReason") in {
         "no_source_passed_exact_window_validation", "source_turn_deferred",
         "no_reconstruction_ready_source", "no_approved_discovery_candidates",
+        "same_input_progress_budget_exhausted",
     }:
         return "next_source"
     return "retry_infrastructure"
@@ -359,14 +740,240 @@ def source_support_readiness_route(readiness: dict[str, Any]) -> tuple[str, list
     evidence, not a verified contract violation. Source rejection remains owned
     by the independent source/contract gates. Older payloads are unresolved.
     """
-    reasons_value = readiness.get("rejectionReasons") if isinstance(readiness, dict) else None
-    reasons = [str(reason) for reason in reasons_value or [] if str(reason).strip()]
-    status = str(readiness.get("status") or "").strip().casefold() if isinstance(readiness, dict) else ""
-    if status == "ready" or (isinstance(readiness, dict) and readiness.get("passed") is True):
-        return "ready", reasons
-    if not reasons:
-        reasons = ["source_support_contact_evidence_incomplete"]
-    return "incomplete", reasons
+    return _shared_source_support_readiness_route(readiness)
+
+
+def _reconstruction_only_pending_support_is_valid(
+    stage: dict[str, Any], *, selected_video: Path, source_pose_reference_path: Path,
+    contract: dict[str, Any],
+) -> bool:
+    """Allow raw reconstruction for typed, source-bound unknown contacts only.
+
+    This does not promote contract evidence or readiness. It is a narrow entry
+    route to the normal inference stage; the downstream support gate remains
+    responsible for qualification before any bake or export.
+    """
+    if (not isinstance(stage, dict)
+            or stage.get("reconstructionOnlyPendingInference") is not True
+            or stage.get("contradiction") is True
+            or stage.get("timelineError") is not None
+            or stage.get("contractInsufficient") is not True):
+        return False
+    status = stage.get("contractStatus")
+    readiness = stage.get("readiness")
+    if (not isinstance(status, dict)
+            or status.get("status") != "insufficient_evidence"
+            or not isinstance(readiness, dict)):
+        return False
+    failures = status.get("failures")
+    contract_pending = status.get("pendingInferenceRequirements")
+    pending = stage.get("pendingInferenceRequirements")
+    if (not isinstance(failures, list) or not failures
+            or not isinstance(contract_pending, list) or not contract_pending
+            or not isinstance(pending, list) or not pending):
+        return False
+    video_path = Path(selected_video).expanduser().resolve()
+    pose_path = Path(source_pose_reference_path).expanduser().resolve()
+    if not video_path.is_file() or not pose_path.is_file():
+        return False
+    video_sha = hashlib.sha256(video_path.read_bytes()).hexdigest()
+    pose_sha = hashlib.sha256(pose_path.read_bytes()).hexdigest()
+
+    def valid_unobserved_requirement(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        requirement = item.get("requirement")
+        is_foot_inference = item.get("kind") == "required_foot_ground_material_inference"
+        states = item.get("observedPatchStates") if is_foot_inference else item.get("observedStates")
+        return bool(
+            isinstance(requirement, dict)
+            and requirement.get("region")
+            and requirement.get("side") in {"left", "right", "center", "both", "either"}
+            and item.get("sourceVideoSha256") == video_sha
+            and item.get("sourcePoseReferenceSha256") == pose_sha
+            and item.get("sourceApproval") is False
+            and item.get("geometryApproval") is False
+            and isinstance(states, list)
+            and "unknown" in states
+            and not {"no_contact", "airborne"}.intersection(states)
+            and (
+                is_foot_inference
+                or (isinstance(item.get("reviewContactIds"), list)
+                    and bool(item.get("reviewContactIds")))
+            )
+        )
+
+    # Every contract failure must map to one current, source-bound contract
+    # requirement. The normal source-stage owner uses this exact failure form.
+    requirements = [item.get("requirement") for item in contract_pending if isinstance(item, dict)]
+    expected_failures = {
+        f"required_{item.get('region')}_{item.get('side')}_support_unobserved"
+        for item in requirements if isinstance(item, dict)
+    }
+    if (len(requirements) != len(contract_pending)
+            or len(set(str(value) for value in failures)) != len(failures)
+            or set(failures) != expected_failures
+            or not all(valid_unobserved_requirement(item) for item in contract_pending)):
+        return False
+    if not all(any(item.get("requirement") == requirement for item in pending)
+               for requirement in requirements):
+        return False
+
+    evidence = stage.get("evidence")
+    if not isinstance(evidence, dict):
+        return False
+    from .bake_and_rank import source_pose_support_contract_fingerprint
+
+    if (evidence.get("sourceVideoSha256") != video_sha
+            or evidence.get("sourcePoseSupportEvidencePolicyVersion") != 3
+            or evidence.get("sourcePoseSupportContractFingerprint")
+            != source_pose_support_contract_fingerprint(contract)):
+        return False
+    pose_reference = None
+    try:
+        pose_reference = json.loads(pose_path.read_text(encoding="utf-8-sig"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    pose_payload = pose_reference.get("pose") if isinstance(pose_reference, dict) else None
+    if (not isinstance(pose_payload, dict)
+            or pose_reference.get("sourceVideoSha256") != video_sha
+            or not isinstance(pose_payload.get("frames"), list)
+            or not pose_payload.get("frames")):
+        return False
+    patch = evidence.get("footPatchEvidence") or {}
+    foot_pending = [item for item in pending if isinstance(item, dict)
+                    and item.get("kind") == "required_foot_ground_material_inference"]
+    if not foot_pending:
+        return readiness.get("passed") is True
+
+    from .body_support_observation import (
+        validated_body_support_answer,
+        validated_body_support_contact_timeline,
+    )
+    from .foot_contact_observation import POLICY_VERSION as FOOT_PATCH_POLICY_VERSION
+    from .pose_fidelity import _canonical_source_pose_sha256
+    from .source_frame_clock import load_verified_source_frame_clock, source_frame_clock_path_for_video
+    from .source_support_tracking import FOOT_MATERIAL_POLICY_VERSION
+    observation = evidence.get("bodySupportObservation")
+    answer = validated_body_support_answer(observation)
+    if (not isinstance(observation, dict)
+            or observation.get("sourceVideoSha256") != video_sha
+            or evidence.get("sourceVideoSha256") != video_sha
+            or not isinstance(answer, dict)):
+        return False
+    timeline = validated_body_support_contact_timeline(observation, expected_video_sha256=video_sha) or []
+    if any(row.get("contactState") in {"airborne", "no_contact"}
+           and row.get("visible") is True
+           and row.get("landmark", "foot") == "foot" for row in timeline):
+        return False
+    pose_payload_sha = _canonical_source_pose_sha256(pose_payload)
+    clock_path = source_frame_clock_path_for_video(video_path)
+    if not clock_path.is_file():
+        return False
+    clock_sha = hashlib.sha256(clock_path.read_bytes()).hexdigest()
+    try:
+        clock = load_verified_source_frame_clock(clock_path, expected_video_path=video_path)
+    except (OSError, TypeError, ValueError):
+        return False
+    clock_frames = clock.get("frames")
+    frame_count = clock.get("outputFrameCount")
+    if (type(frame_count) is not int or frame_count <= 0
+            or not isinstance(clock_frames, list) or len(clock_frames) != frame_count
+            or patch.get("available") is not True
+            or patch.get("policyVersion") != FOOT_PATCH_POLICY_VERSION
+            or patch.get("materialStationarityPolicyVersion") != FOOT_MATERIAL_POLICY_VERSION
+            or patch.get("sourceVideoSha256") != video_sha
+            or patch.get("sourcePoseVideoSha256") != video_sha
+            or patch.get("sourcePosePayloadSha256") != pose_payload_sha
+            or patch.get("sourcePoseFrameCount") != len(pose_payload["frames"])
+            or patch.get("sourceFrameCount") != frame_count
+            or len(patch.get("sourceTimesSec") or []) != frame_count):
+        return False
+    try:
+        if any(abs(float(patch["sourceTimesSec"][index]) - float(clock_frames[index]["sourceTimeSec"])) > 1e-6
+               for index in range(frame_count)):
+            return False
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+    required_foot: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for requirement in ((contract.get("bodySupportRequirements") or {}).get("required") or []):
+        if (not isinstance(requirement, dict)
+                or requirement.get("region") != "foot"
+                or requirement.get("surface") not in {"ground", "floor"}
+                or requirement.get("side") not in {"both", "left", "right"}):
+            continue
+        sides = ["left", "right"] if requirement["side"] == "both" else [requirement["side"]]
+        for side in sides:
+            required_foot[(side, requirement["surface"], requirement.get("contactMode", "stationary"))] = {
+                "region": "foot", "side": side,
+                "surface": requirement["surface"],
+                "contactMode": requirement.get("contactMode", "stationary"),
+            }
+    readiness_passed = readiness.get("passed") is True
+    readiness_reasons = readiness.get("rejectionReasons") or []
+    if not readiness_passed and (not readiness_reasons or any(not isinstance(reason, str) for reason in readiness_reasons)):
+        return False
+
+    foot_pending_sides: set[str] = set()
+    accounted_readiness_reasons: set[str] = set()
+    feet = patch.get("feet") or {}
+    for item in pending:
+        if not isinstance(item, dict):
+            return False
+        requirement = item.get("requirement")
+        if not valid_unobserved_requirement(item):
+            return False
+        if item.get("kind") != "required_foot_ground_material_inference":
+            # Contract-level requirements may remain pending while the raw
+            # reconstruction stage gathers their missing 3D evidence.
+            continue
+        side = requirement.get("side") if isinstance(requirement, dict) else None
+        key = (side, requirement.get("surface"), requirement.get("contactMode", "stationary"))
+        if (key not in required_foot
+                or requirement != required_foot[key]
+                or side not in {"left", "right"}
+                or side in foot_pending_sides
+                or item.get("sourcePosePayloadSha256") != pose_payload_sha
+                or item.get("sourceFrameClockReceiptSha256") != clock_sha
+                or item.get("footPatchEvidencePolicyVersion") != FOOT_PATCH_POLICY_VERSION
+                or item.get("materialStationarityPolicyVersion") != FOOT_MATERIAL_POLICY_VERSION
+                or item.get("sourceFrameCount") != frame_count
+                or item.get("sourcePoseFrameCount") != len(pose_payload["frames"])):
+            return False
+        foot = feet.get(side)
+        states = foot.get("states") if isinstance(foot, dict) else None
+        if not isinstance(states, list) or len(states) != frame_count or any(
+            state not in {"unknown", "toe_only", "full_sole", "heel_only"} for state in states
+        ):
+            return False
+        unknown_indexes = [index for index, state in enumerate(states) if state == "unknown"]
+        selected_unknown_indexes = [clock_frames[index].get("sourceFrameIndex") for index in unknown_indexes]
+        if (not unknown_indexes
+                or item.get("unknownFrameIndexes") != unknown_indexes
+                or item.get("unknownSelectedSourceFrameIndexes") != selected_unknown_indexes
+                or item.get("observedPatchStates") != sorted(set(states))):
+            return False
+        coarse_state = answer.get(f"{side}Foot")
+        coarse_surface = answer.get(f"{side}FootSurface")
+        if (coarse_state not in {"unknown", "stationary_full_sole", "stationary_forefoot", "supported_dorsum"}
+                or coarse_surface not in {"unknown", "ground", "floor"}
+                or item.get("coarseObservedState") != coarse_state
+                or item.get("coarseObservedSurface") != coarse_surface):
+            return False
+        reasons = item.get("accountsForReadinessReasons")
+        if reasons != ["source_support_contact_evidence_incomplete"]:
+            return False
+        accounted_readiness_reasons.update(reasons)
+        foot_pending_sides.add(side)
+    unresolved = set(readiness.get("unresolvedSides") or [])
+    if (not readiness_passed
+            and (not unresolved or not unresolved.issubset({"left", "right"})
+                 or not unresolved.issubset(foot_pending_sides)
+                 or not unresolved.issubset(set(readiness.get("requiredSides") or []))
+                 or not set(readiness_reasons).issubset(accounted_readiness_reasons))):
+        return False
+    return True
 
 
 def finalize_with_bounded_review_retry(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -413,37 +1020,35 @@ def _controlled_motion_report_from_result(result: dict[str, Any]) -> dict[str, A
     return controlled if isinstance(controlled, dict) else None
 
 
-# Leftover below a real support-init / solve floor cannot finish another fit.
-MIN_USEFUL_CANDIDATE_FIT_REMAINING_SECONDS = 30.0
 # Final bake may run two processing attempts, each with fit + browser + review.
 
 
 def exhausted_candidate_fit_session(manifest: dict[str, Any]) -> bool:
-    """True when incomplete processing already spent the full candidate fit budget."""
-    from .controlled_motion import controlled_fit_processing_incomplete
+    """Stop only when every unfinished candidate has spent its useful fit budget."""
+    from .controlled_motion import (
+        controlled_fit_processing_incomplete, controlled_retry_minimum_budget_seconds,
+    )
 
+    exhausted = False
     for result in manifest.get("candidateResults") or []:
         if not isinstance(result, dict) or result.get("status") != "needs_motion_processing":
             continue
+        controlled = _controlled_motion_report_from_result(result)
+        if controlled is not None and not controlled_fit_processing_incomplete(controlled):
+            continue
         budget = _candidate_fit_budget_from_result(result)
         if budget is None:
-            continue
+            return False
         remaining = budget.get("remainingSeconds")
         if not isinstance(remaining, (int, float)):
-            continue
-        budget_seconds = budget.get("seconds")
-        useful_floor = MIN_USEFUL_CANDIDATE_FIT_REMAINING_SECONDS
-        if isinstance(budget_seconds, (int, float)) and budget_seconds > 0:
-            useful_floor = min(useful_floor, max(1.0, 0.1 * float(budget_seconds)))
-        if remaining > useful_floor:
-            continue
-        controlled = _controlled_motion_report_from_result(result)
-        if controlled is None:
-            # Budget exhausted and disposition is needs_motion_processing.
-            return True
-        if controlled_fit_processing_incomplete(controlled):
-            return True
-    return False
+            return False
+        # A retry can only use routes the report left open. Funding a 117.5s
+        # retry when the only remaining route needs 120s burns the reserve.
+        route_minimum = controlled_retry_minimum_budget_seconds(controlled)
+        if remaining >= route_minimum:
+            return False
+        exhausted = True
+    return exhausted
 
 
 def _processing_attempt_diagnostics(manifest: dict[str, Any], *, attempt_number: int) -> dict[str, Any]:
@@ -516,21 +1121,48 @@ def _processing_attempt_diagnostics(manifest: dict[str, Any], *, attempt_number:
             ],
         })
 
-    disposition_state = {
-        "finalValidation": {
-            "status": "selected" if manifest.get("selected") else "no_selection",
-            **final_processing_diagnostics(manifest),
-        }
-    }
     return {
         "attemptNumber": attempt_number,
         "processingAttemptId": PROCESSING_ATTEMPT_ID,
         "processingSeconds": (manifest.get("timings") or {}).get("totalSeconds"),
         "reviewAttemptCount": manifest.get("reviewAttemptCount"),
         "status": final_validation_outcome_status(manifest),
-        "retryDisposition": wave_retry_disposition(disposition_state),
+        "retryDisposition": _processing_retry_disposition(manifest),
         "candidateResults": candidate_attempts,
     }
+
+
+def _deterministic_browser_bake_failure(result: dict[str, Any]) -> bool:
+    return (
+        result.get("status") == "failed"
+        and result.get("failureStage") == "browser_bake"
+        and result.get("failureOwner") == "motion_output"
+        and result.get("failureExceptionType") == "ValueError"
+        and result.get("processingRetryPolicy") == "terminal_deterministic"
+    )
+
+
+def _candidate_processing_retry_available(result: dict[str, Any]) -> bool:
+    if not isinstance(result, dict) or _deterministic_browser_bake_failure(result):
+        return False
+    manifest = {"candidateResults": [result]}
+    return wave_retry_disposition({"finalValidation": {
+        "status": "no_selection", **final_processing_diagnostics(manifest),
+    }}) == "retry_processing" and not exhausted_candidate_fit_session(manifest)
+
+
+def _processing_retry_disposition(manifest: dict[str, Any]) -> str:
+    if manifest.get("selected"):
+        return "export_selected"
+    disposition = wave_retry_disposition({"finalValidation": {
+        "status": "no_selection", **final_processing_diagnostics(manifest),
+    }})
+    if disposition != "needs_definition_review" and any(
+        _candidate_processing_retry_available(result)
+        for result in manifest.get("candidateResults") or []
+    ):
+        return "retry_processing"
+    return disposition
 
 
 def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -538,9 +1170,9 @@ def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any
 
     Prefetch may hand final processing a one-shot incomplete bake. Invalidate that
     attempt and retry once so deferred library work is not required for a finished
-    pass/fail verdict. Skip the second burn when the candidate session was already
-    fully exhausted on timeout-style incompleteness. Deterministic browser-bake
-    ValueErrors are terminal for this processing turn; library resume keeps the source.
+    pass/fail verdict. Stop when all unfinished candidates exhausted their useful
+    budgets. A deterministic browser-bake ValueError must not block an unfinished
+    sibling; when no sibling can retry, library resume keeps the source.
     """
     from .stage_cache import advance_processing_attempt
 
@@ -550,34 +1182,26 @@ def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any
             advance_processing_attempt()
         manifest = finalize_with_bounded_review_retry(operation)
         manifest["processingAttemptCount"] = attempt + 1
-        state = {
-            "finalValidation": {
-                "status": "selected" if manifest.get("selected") else "no_selection",
-                **final_processing_diagnostics(manifest),
-            }
-        }
-        retry_disposition = wave_retry_disposition(state)
-        deterministic_browser_failure = any(
-            isinstance(result, dict)
-            and result.get("status") == "failed"
-            and result.get("failureStage") == "browser_bake"
-            and result.get("failureOwner") == "motion_output"
-            and result.get("failureExceptionType") == "ValueError"
-            and result.get("processingRetryPolicy") == "terminal_deterministic"
+        retry_disposition = _processing_retry_disposition(manifest)
+        if retry_disposition in {"export_selected", "needs_definition_review"}:
+            processing_attempts.append(_processing_attempt_diagnostics(
+                manifest, attempt_number=attempt + 1))
+            break
+        deterministic_browser_results = [
+            result for result in manifest.get("candidateResults") or []
+            if isinstance(result, dict)
+            and _deterministic_browser_bake_failure(result)
+        ]
+        deterministic_browser_failure = bool(deterministic_browser_results) and not any(
+            _candidate_processing_retry_available(result)
             for result in manifest.get("candidateResults") or []
         )
         if deterministic_browser_failure:
             manifest["processingRetrySkippedReason"] = (
                 "deterministic_browser_bake_failure"
             )
-            for result in manifest.get("candidateResults") or []:
-                if (isinstance(result, dict)
-                        and result.get("status") == "failed"
-                        and result.get("failureStage") == "browser_bake"
-                        and result.get("failureOwner") == "motion_output"
-                        and result.get("failureExceptionType") == "ValueError"
-                        and result.get("processingRetryPolicy") == "terminal_deterministic"):
-                    result["status"] = "needs_motion_processing"
+            for result in deterministic_browser_results:
+                result["status"] = "needs_motion_processing"
         processing_attempts.append(_processing_attempt_diagnostics(
             manifest,
             attempt_number=attempt + 1,
@@ -687,6 +1311,7 @@ def final_processing_diagnostics(manifest: dict[str, Any]) -> dict[str, Any]:
         stage = result.get("failureStage") or {
             "rejected_raw_reconstruction_validation": "raw_reconstruction_validation",
             "rejected_incomplete_reconstruction_tracking": "raw_reconstruction_validation",
+            "pending_support_inference": "support_inference",
             "rejected_baked_motion_validation": "baked_motion_validation",
             "skipped_no_baked_clip": "baked_motion_validation",
             "skipped_no_usable_baked_motion": "baked_motion_validation",
@@ -745,95 +1370,6 @@ def run_timed_final_processing(*, queued_at: float, wait_for_prefetch: Callable[
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    require_storage_reserve(path, reserve_bytes=64 * 1024**2)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(f"{path.suffix}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    for attempt in range(5):
-        try:
-            temporary.replace(path)
-            break
-        except PermissionError:
-            # Windows readers can briefly deny replacement of the checkpoint.
-            if attempt == 4:
-                raise
-            time.sleep(0.05 * (attempt + 1))
-
-
-def _contact_timeline_repair_key(source_video_sha256: str, source_pose: Any,
-                                 support_evidence: dict[str, Any]) -> str:
-    """Stable identity for one bounded contact-timeline repair attempt."""
-    from .body_support_observation import (
-        CONTACT_TIMELINE_CROP_POLICY,
-        CONTACT_TIMELINE_POLICY_VERSION,
-    )
-
-    evidence_identity = {
-        key: value for key, value in support_evidence.items()
-        if key != "bodySupportObservation"
-    }
-    body_observation = support_evidence.get("bodySupportObservation")
-    if isinstance(body_observation, dict):
-        evidence_identity["bodySupportObservation"] = {
-            key: value for key, value in body_observation.items()
-            if key not in {"contactTimeline", "contactTimelineRepairEvidenceKey",
-                           "contactTimelineAttempt"}
-        }
-    payload = {
-        "policyVersion": CONTACT_TIMELINE_POLICY_VERSION,
-        "cropPolicy": CONTACT_TIMELINE_CROP_POLICY,
-        "sourceVideoSha256": source_video_sha256,
-        "sourcePose": source_pose,
-        "sourceFootSupportEvidence": evidence_identity,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-def _persist_exact_source_support_evidence(candidate_workspace: Path, source_video_sha256: str,
-                                           support_evidence: dict[str, Any]) -> bool:
-    """Persist refreshed evidence only into artifacts bound to the exact cut."""
-    segment_detection = candidate_workspace / "segment_detection"
-    validation_path = segment_detection / "exact_source_phase_validation.json"
-    try:
-        validation = loads_reconstruction_metadata(validation_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    metrics = validation.get("metrics") if isinstance(validation, dict) else None
-    if (not isinstance(metrics, dict)
-            or str(metrics.get("sourceVideoSha256") or "").casefold() != source_video_sha256.casefold()
-            or str(support_evidence.get("sourceVideoSha256") or "").casefold() != source_video_sha256.casefold()):
-        return False
-
-    selection_path = segment_detection / "segment_selection.json"
-    try:
-        selection = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        selection = None
-    selected_metrics = (selection.get("exactSourcePhaseValidation")
-                        if isinstance(selection, dict) else None)
-    if (isinstance(selected_metrics, dict)
-            and str(selected_metrics.get("sourceVideoSha256") or "").casefold()
-            != source_video_sha256.casefold()):
-        # The loader may prefer this newer receipt over exact validation. Never
-        # persist to only one side and then let the downstream loader select a
-        # different cut's metrics.
-        return False
-
-    metrics["sourceFootSupportEvidence"] = support_evidence
-    if (isinstance(selected_metrics, dict)
-            and str(selected_metrics.get("sourceVideoSha256") or "").casefold()
-            == source_video_sha256.casefold()):
-        selected_metrics["sourceFootSupportEvidence"] = support_evidence
-        # This artifact can outrank exact validation in the loader, so update it
-        # first. A later validation-write failure still leaves one reusable,
-        # exact-hash-bound copy for downstream stages.
-        _write_json_atomic(selection_path, selection)
-    _write_json_atomic(validation_path, validation)
-    return True
 
 
 def _candidate_key(candidate: RankedCandidate) -> str:
@@ -1360,9 +1896,11 @@ def prepare_cpu_render_cache(item: StagedWaveItem, candidate: RankedCandidate, r
     from .body_support_observation import source_support_observation_needed, observe_body_support
     source_pose = bake.load_verified_source_pose_reference(
         workspace/'segment_detection/exact_source_pose_reference.json', workspace/'input/selected_segment.mp4')
-    if source_support_observation_needed(source_pose, support):
+    if source_support_observation_needed(source_pose, support, contract):
         observation = observe_body_support(workspace/'input/selected_segment.mp4', None,
-                                           workspace/'segment_detection/body_support')
+                                           workspace/'segment_detection/body_support',
+                                           existing_observation=(support or {}).get('bodySupportObservation'),
+                                           require_knee_observation=True)
         if observation.get('status') != 'observed':
             return {'status': 'skipped', 'reason': 'source_contact_observation_unavailable'}
     from .fit_runtime import SpeculativePrefetchAbandoned, speculative_fit_context, speculative_workspace
@@ -1404,6 +1942,7 @@ def run_staged_bake_wave(
     progress: Callable[[str], None] | None = None,
     render_executor: ThreadPoolExecutor | None = None,
     accelerator_phase: Callable | None = None,
+    source_review_input_supersessions: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     wave_started = time.perf_counter()
     if accelerator_phase is None:
@@ -1432,6 +1971,7 @@ def run_staged_bake_wave(
                 render_futures=render_futures,
                 render_workspaces=render_workspaces,
                 heartbeat_stop=heartbeat_stop,
+                source_review_input_supersessions=source_review_input_supersessions,
             )
         else:
             with ThreadPoolExecutor(
@@ -1450,6 +1990,7 @@ def run_staged_bake_wave(
                     render_futures=render_futures,
                     render_workspaces=render_workspaces,
                     heartbeat_stop=heartbeat_stop,
+                    source_review_input_supersessions=source_review_input_supersessions,
                 )
     except BaseException:
         _drain_render_prefetch_futures(
@@ -1578,6 +2119,7 @@ def _run_staged_bake_wave(
     render_prefetch_workers: int | None = None,
     render_prefetch_enabled: bool = True,
     accelerator_phase: Callable | None = None,
+    source_review_input_supersessions: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run one cache-first VLM -> RECONSTRUCTION -> VLM wave.
 
@@ -1715,9 +2257,6 @@ def _run_staged_bake_wave(
         tuple[StagedWaveItem, list[tuple[RankedCandidate, Path]]],
     ] = {}
     ready_source_ids: set[str] = set()
-    source_candidates_by_exercise = {
-        item.exercise_id: _wave_candidates_for_item(item) for item in items
-    }
     # One approved source is enough to start downstream work. Requiring a
     # second ready exercise lets queued source reviews start another decision
     # solely because of thread completion order.
@@ -1872,6 +2411,7 @@ def _run_staged_bake_wave(
                     with checkpoint_lock:
                         item_states[item.exercise_id]["sourceActivity"] = {
                             "startedAt": _utc_now(),
+                            "operationStartedEpoch": time.time(),
                             "operation": "checking source candidates",
                             "threadId": threading.get_ident(),
                         }
@@ -1900,16 +2440,34 @@ def _run_staged_bake_wave(
                             progress_state,
                             configured_limit_seconds=exercise_limit,
                         )
+                    source_request_timeout_seconds = resolve_source_review_request_timeout_seconds(
+                        item.request
+                    )
+
+                    def _source_caption_images(_session: object, *args: Any, **kwargs: Any) -> str:
+                        # Source observers and preflight helpers call this callback
+                        # directly, outside the request-aware wrappers in
+                        # bake_and_rank. Keep their transport timeout under the
+                        # same source-stage policy as the primary review calls.
+                        # Bind it to the session so review-cache identity code
+                        # can still inspect caption_images.__self__.settings.
+                        kwargs.setdefault("request_timeout_seconds", source_request_timeout_seconds)
+                        return source_session.caption_images(*args, **kwargs)
+
+                    source_caption_images = MethodType(_source_caption_images, source_session)
+
+                    source_review_request = _source_review_request(item)
                     requested_portfolio_size: int | None = None
                     resolver = build_exercise_motion_contract_resolver(
-                        request=item.request,
-                        caption_images=source_session.caption_images,
+                        request=source_review_request,
+                        caption_images=source_caption_images,
                         run_llama_exclusive=source_session.run_without_llama_overlap,
                     )
                     candidates = _prioritize_previously_prepared_sources(
-                        list(source_candidates_by_exercise[item.exercise_id]),
+                        _wave_candidates_for_item(item),
                         preferred_keys=previous_selected_candidate_keys.get(item.exercise_id, []),
                     )
+                    source_progress_stop_reasons: list[str] = []
                     # When an exact cut is already materialized, use the same
                     # content-bound decision identity as bake terminal reuse to
                     # avoid repeating unchanged terminal work across waves.
@@ -1934,6 +2492,8 @@ def _run_staged_bake_wave(
                             )
                             if allowed:
                                 reusable_candidates.append(candidate)
+                            elif _reason:
+                                source_progress_stop_reasons.append(str(_reason))
                         candidates = reusable_candidates
                     resume_path = item.request.workspace / "source_turn_resume.json"
                     budget_path = item.request.workspace / "source_turn_budget.json"
@@ -1943,7 +2503,7 @@ def _run_staged_bake_wave(
                         item.request.authoritative_exercise_motion_context,
                     )
                     source_review_turn_id = str(item.source_review_turn_id or item.run_id or "").strip() or None
-                    prior_attempt_keys: list[str] = []
+                    historical_attempt_keys: list[str] = []
                     prior_attempt_video_ids_from_resume: list[str] = []
                     resume: dict[str, Any] = {}
                     budget_ledger: dict[str, Any] = {}
@@ -1963,21 +2523,204 @@ def _run_staged_bake_wave(
                         ),
                         source_review_turn_id=source_review_turn_id,
                     ) or {}
-                    prior_attempt_keys = [
+                    historical_attempt_keys = [
                         str(key) for key in resume.get("attemptedCandidateKeys", [])
                     ]
+                    acknowledged_review_identities = resume.get(
+                        "acknowledgedSourceReviewEvidenceByCandidateKey", {}
+                    )
+                    if not isinstance(acknowledged_review_identities, dict):
+                        acknowledged_review_identities = {}
+                    acknowledged_review_identities = {
+                        str(key): str(value)
+                        for key, value in acknowledged_review_identities.items()
+                        if str(key).strip() and isinstance(value, str)
+                    }
+                    legacy_replay_reservations = resume.get(
+                        "sourceReviewReplayReservationsByCandidateKey", {}
+                    )
+                    if not isinstance(legacy_replay_reservations, dict):
+                        legacy_replay_reservations = {}
+                    legacy_replay_reservations = {
+                        str(key): str(value)
+                        for key, value in legacy_replay_reservations.items()
+                        if str(key).strip() and isinstance(value, str)
+                    }
+                    source_review_input_reservations = resume.get(
+                        "sourceReviewInputReservationsByCandidateKey", {}
+                    )
+                    if not isinstance(source_review_input_reservations, dict):
+                        source_review_input_reservations = {}
+                    source_review_input_reservations = {
+                        str(key): str(value)
+                        for key, value in source_review_input_reservations.items()
+                        if str(key).strip() and isinstance(value, str)
+                    }
+                    source_review_input_reservation_details = resume.get(
+                        "sourceReviewInputReservationDetailsByCandidateKey", {}
+                    )
+                    if not isinstance(source_review_input_reservation_details, dict):
+                        source_review_input_reservation_details = {}
+                    source_review_input_reservation_details = {
+                        str(key): value
+                        for key, value in source_review_input_reservation_details.items()
+                        if str(key).strip() and isinstance(value, dict)
+                    }
+                    source_review_input_reservation_history = resume.get(
+                        "sourceReviewInputReservationHistoryByCandidateKey", {}
+                    )
+                    if not isinstance(source_review_input_reservation_history, dict):
+                        source_review_input_reservation_history = {}
+                    source_review_input_reservation_history = {
+                        str(key): [str(value) for value in values if isinstance(value, str)]
+                        for key, values in source_review_input_reservation_history.items()
+                        if str(key).strip() and isinstance(values, list)
+                    }
                     prior_attempt_video_ids_from_resume = [
                         str(video_id) for video_id in resume.get("attemptedVideoIds", [])
                         if str(video_id).strip()
                     ]
-                    prior_attempt_keys = retained_source_attempt_keys(prior_attempt_keys, {
+                    current_validated_review_identities: dict[str, str] = {}
+                    cached_review_identity = getattr(
+                        _bake_and_rank, "cached_source_review_resume_identity", None
+                    )
+                    if callable(cached_review_identity):
+                        for candidate in candidates:
+                            candidate_key = _candidate_key(candidate)
+                            if (candidate_key not in historical_attempt_keys
+                                    and candidate_key not in acknowledged_review_identities):
+                                continue
+                            try:
+                                identity = cached_review_identity(
+                                    candidate, source_review_request, caption_images=source_caption_images,
+                                )
+                            except Exception:
+                                # Cache admission is fail-closed. The ordinary
+                                # source-review path remains responsible for any
+                                # new request after a candidate is otherwise eligible.
+                                continue
+                            if isinstance(identity, str) and len(identity) == 64:
+                                current_validated_review_identities[candidate_key] = identity
+                    current_legacy_review_identities = {
+                        _candidate_key(candidate): identity
+                        for candidate in candidates
+                        if (identity := _source_review_authority.candidate_source_review_replay_identity(
+                            item.request.workspace / candidate.workspace_slug
+                        )) is not None
+                    }
+                    current_source_review_input_identities: dict[str, str] = {}
+                    current_source_review_input_details: dict[str, dict[str, Any]] = {}
+                    eligible_legacy_input_keys: set[str] = set()
+                    allow_visual_spec_upgrade_keys: set[str] = set()
+                    for candidate in candidates:
+                        candidate_key = _candidate_key(candidate)
+                        if (
+                            candidate_key not in historical_attempt_keys
+                            or candidate_key in acknowledged_review_identities
+                            or candidate_key in current_validated_review_identities
+                            or (
+                                candidate_key in source_review_input_reservation_details
+                                and candidate_key not in (source_review_input_supersessions or {})
+                            )
+                        ):
+                            continue
+                        input_result = _source_review_request_input_identity(
+                            candidate, source_review_request, caption_images=source_caption_images,
+                        )
+                        if input_result is None:
+                            continue
+                        (
+                            request_identity, mapping_context_sha256,
+                            visual_spec_policy_version, visual_spec_sha256, legacy_input_identity,
+                        ) = input_result
+                        candidate_workspace = item.request.workspace / candidate.workspace_slug
+                        prior_input_identity = source_review_input_reservations.get(candidate_key)
+                        visual_spec_upgrade = (
+                            isinstance(prior_input_identity, str)
+                            and prior_input_identity.casefold() == legacy_input_identity.casefold()
+                            and request_identity.casefold() != legacy_input_identity.casefold()
+                            and candidate_key not in source_review_input_reservation_details
+                            and visual_spec_policy_version > 0
+                            and len(visual_spec_sha256) == 64
+                        )
+                        explicit_supersession = _validated_source_review_input_supersession(
+                            candidate_key,
+                            source_review_input_supersessions,
+                            prior_identity=prior_input_identity,
+                            current_identity=request_identity,
+                            current_context_sha256=mapping_context_sha256,
+                            visual_spec_policy_version=visual_spec_policy_version,
+                            visual_spec_sha256=visual_spec_sha256,
+                            target_exercise_id=getattr(
+                                source_review_request,
+                                "source_reference_target_exercise_id",
+                                None,
+                            ),
+                            historical_attempt=candidate_key in historical_attempt_keys,
+                            acknowledged=candidate_key in acknowledged_review_identities,
+                            current_validated_pass=candidate_key in current_validated_review_identities,
+                            prior_details_present=candidate_key in source_review_input_reservation_details,
+                            prior_reservation_details=source_review_input_reservation_details.get(candidate_key),
+                            input_history=source_review_input_reservation_history.get(candidate_key, []),
+                        )
+                        if explicit_supersession is not None:
+                            visual_spec_upgrade = True
+                        if candidate_key in source_review_input_reservations and not visual_spec_upgrade:
+                            continue
+                        if not _legacy_source_review_mapping_context_is_new(
+                            candidate_workspace, mapping_context_sha256,
+                        ):
+                            continue
+                        current_source_review_input_identities[candidate_key] = request_identity
+                        current_source_review_input_details[candidate_key] = {
+                            "inputIdentitySha256": request_identity,
+                            "legacyInputIdentitySha256": legacy_input_identity,
+                            "sourceReferenceReviewContextSha256": mapping_context_sha256,
+                            "sourceReferenceVisualReviewSpecPolicyVersion": visual_spec_policy_version,
+                            "sourceReferenceVisualReviewSpecSha256": visual_spec_sha256,
+                            **({"supersession": explicit_supersession}
+                               if explicit_supersession is not None else {}),
+                        }
+                        eligible_legacy_input_keys.add(candidate_key)
+                        if visual_spec_upgrade:
+                            allow_visual_spec_upgrade_keys.add(candidate_key)
+                    candidate_workspaces = {
                         _candidate_key(candidate): item.request.workspace / candidate.workspace_slug
                         for candidate in candidates
-                    })
+                    }
+                    retained_attempt_keys = retained_source_attempt_keys(
+                        historical_attempt_keys, candidate_workspaces,
+                        current_validated_review_identities=current_validated_review_identities,
+                        acknowledged_review_identities=acknowledged_review_identities,
+                        legacy_replay_reservations=legacy_replay_reservations,
+                        current_source_review_input_identities=current_source_review_input_identities,
+                        source_review_input_reservations=source_review_input_reservations,
+                        source_review_input_reservation_history=source_review_input_reservation_history,
+                        eligible_legacy_input_keys=eligible_legacy_input_keys,
+                        allow_visual_spec_upgrade_keys=allow_visual_spec_upgrade_keys)
+                    blocked_acknowledged_keys = {
+                        key for key in acknowledged_review_identities
+                        if _source_review_authority.source_review_evidence_blocks_attempt(
+                            key, current_validated_review_identities, acknowledged_review_identities,
+                            candidate_workspace=candidate_workspaces.get(key),
+                            legacy_replay_reservations=legacy_replay_reservations,
+                        )
+                    }
+                    blocked_candidate_keys = set(retained_attempt_keys)
+                    blocked_candidate_keys.update(blocked_acknowledged_keys)
                     candidates = _prioritize_previously_prepared_sources(
-                        [candidate for candidate in candidates if _candidate_key(candidate) not in prior_attempt_keys],
+                        [candidate for candidate in candidates if _candidate_key(candidate) not in blocked_candidate_keys],
                         preferred_keys=[str(resume.get("nextCandidateKey") or "")],
                     )
+                    if not candidates:
+                        if source_progress_stop_reasons:
+                            source_filter_exhaustion_reason = source_progress_stop_reasons[0]
+                        elif historical_attempt_keys or acknowledged_review_identities:
+                            source_filter_exhaustion_reason = "source_attempt_history_exhausted"
+                        else:
+                            source_filter_exhaustion_reason = "no_source_candidates_available"
+                    else:
+                        source_filter_exhaustion_reason = None
                     retained_candidate_by_key = {
                         _candidate_key(candidate): candidate for candidate in candidates
                     }
@@ -1985,7 +2728,7 @@ def _run_staged_bake_wave(
                         *prior_attempt_video_ids_from_resume,
                         *(
                             candidate.video_id
-                            for key in prior_attempt_keys
+                            for key in historical_attempt_keys
                             if (candidate := retained_candidate_by_key.get(key)) is not None
                             and candidate.video_id
                         ),
@@ -2016,14 +2759,14 @@ def _run_staged_bake_wave(
                     )
                     source_turn_budget.attempts_used = max(
                         source_turn_budget.attempts_used,
-                        len(prior_attempt_keys),
+                        len(historical_attempt_keys),
                     )
                     source_turn_incomplete = False
                     source_turn_stop_reason: str | None = None
                     resume_candidate_key: str | None = None
                     with checkpoint_lock:
                         item_states[item.exercise_id]["source"]["sourceSelectionPolicyVersion"] = SOURCE_SELECTION_POLICY_VERSION
-                        item_states[item.exercise_id]["source"]["priorAttemptedCandidateKeys"] = list(prior_attempt_keys)
+                        item_states[item.exercise_id]["source"]["priorAttemptedCandidateKeys"] = list(historical_attempt_keys)
                         item_states[item.exercise_id]["source"]["priorAttemptedVideoIds"] = prior_attempt_video_ids
                     for candidate_number, candidate in enumerate(candidates, start=1):
                         resume_candidate_key = _candidate_key(candidate)
@@ -2049,26 +2792,34 @@ def _run_staged_bake_wave(
                                 and len(ready_source_ids) >= source_yield_threshold
                             )
                         if yield_source_turn:
+                            source_turn_incomplete = False
+                            source_turn_stop_reason = None
                             _write_json_atomic(resume_path, {
                                 "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
                                 "sourceTurnExerciseIdentity": exercise_identity,
                                 "sourceReviewTurnId": source_review_turn_id,
                                 "nextCandidateKey": _candidate_key(candidate),
                                 "attemptedCandidateKeys": list(dict.fromkeys([
-                                    *prior_attempt_keys, *[attempt["candidateKey"] for attempt in attempts],
+                                    *historical_attempt_keys, *[attempt["candidateKey"] for attempt in attempts],
                                 ])),
+                                "acknowledgedSourceReviewEvidenceByCandidateKey": dict(acknowledged_review_identities),
+                                "sourceReviewReplayReservationsByCandidateKey": dict(legacy_replay_reservations),
+                                "sourceReviewInputReservationsByCandidateKey": dict(source_review_input_reservations),
+                                "sourceReviewInputReservationDetailsByCandidateKey": dict(source_review_input_reservation_details),
+                                "sourceReviewInputReservationHistoryByCandidateKey": dict(source_review_input_reservation_history),
                                 "attemptedVideoIds": list(dict.fromkeys([
                                     *prior_attempt_video_ids, *[attempt["videoId"] for attempt in attempts if attempt.get("videoId")],
                                 ])),
                                 **source_turn_budget.resume_fields(),
                             })
                             with checkpoint_lock:
-                                item_states[item.exercise_id]["source"]["deferred"] = True
+                                item_states[item.exercise_id]["source"].update({
+                                    "deferred": True, "failureReason": "source_turn_deferred"})
                             source_event(f"Source review: {item.exercise_name} | deferred remaining attempts; ready movements take priority.")
                             break
                         readiness = first_attempt_readiness_assessment(
                             candidate,
-                            request=item.request,
+                            request=source_review_request,
                         )
                         attempt = {
                             "candidateKey": _candidate_key(candidate),
@@ -2079,11 +2830,60 @@ def _run_staged_bake_wave(
                         }
                         attempts.append(attempt)
                         source_turn_budget.begin_attempt()
+                        candidate_key = _candidate_key(candidate)
+                        request_input_identity = current_source_review_input_identities.get(candidate_key)
+                        if (
+                            request_input_identity is not None
+                            and candidate_key in eligible_legacy_input_keys
+                        ):
+                            # Reserve the sole legacy/current-input migration and
+                            # persist the charged attempt before any source review.
+                            reservation_history = list(
+                                source_review_input_reservation_history.get(candidate_key, [])
+                            )
+                            previous_reservation = source_review_input_reservations.get(candidate_key)
+                            for reserved_identity in (previous_reservation, request_input_identity):
+                                if (isinstance(reserved_identity, str)
+                                        and reserved_identity not in reservation_history):
+                                    reservation_history.append(reserved_identity)
+                            source_review_input_reservation_history[candidate_key] = reservation_history
+                            source_review_input_reservations[candidate_key] = request_input_identity
+                            source_review_input_reservation_details[candidate_key] = (
+                                current_source_review_input_details[candidate_key]
+                            )
+                            _write_json_atomic(resume_path, {
+                                "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                                "sourceTurnExerciseIdentity": exercise_identity,
+                                "sourceReviewTurnId": source_review_turn_id,
+                                "nextCandidateKey": candidate_key,
+                                "attemptedCandidateKeys": list(dict.fromkeys([
+                                    *historical_attempt_keys, candidate_key,
+                                ])),
+                                "acknowledgedSourceReviewEvidenceByCandidateKey": dict(acknowledged_review_identities),
+                                "sourceReviewReplayReservationsByCandidateKey": dict(legacy_replay_reservations),
+                                "sourceReviewInputReservationsByCandidateKey": dict(source_review_input_reservations),
+                                "sourceReviewInputReservationDetailsByCandidateKey": dict(source_review_input_reservation_details),
+                                "sourceReviewInputReservationHistoryByCandidateKey": dict(source_review_input_reservation_history),
+                                "attemptedVideoIds": list(dict.fromkeys([
+                                    *prior_attempt_video_ids, *([candidate.video_id] if candidate.video_id else []),
+                                ])),
+                                **source_turn_budget.resume_fields(),
+                            })
+                            _write_json_atomic(budget_path, source_turn_budget.resume_fields())
+                        candidate_review_identity = current_validated_review_identities.get(
+                            candidate_key
+                        )
+                        if candidate_review_identity is not None:
+                            acknowledged_review_identities[candidate_key] = candidate_review_identity
+                        else:
+                            legacy_identity = current_legacy_review_identities.get(candidate_key)
+                            if legacy_identity is not None:
+                                legacy_replay_reservations[candidate_key] = legacy_identity
                         if not bool(readiness.get("eligible")):
                             attempt["status"] = "rejected_first_attempt_readiness"
                             attempt["reasons"] = readiness.get("reasons", [])
                             continue
-                        source_gate = evaluate_source_candidate_gate(candidate, request=item.request)
+                        source_gate = evaluate_source_candidate_gate(candidate, request=source_review_request)
                         if not bool(source_gate.get("passed")):
                             attempt["status"] = "rejected_source_gate"
                             attempt["reasons"] = source_gate.get("reasons", [])
@@ -2097,6 +2897,7 @@ def _run_staged_bake_wave(
                                     ),
                                     timezone.utc,
                                 ).isoformat(),
+                                "operationStartedEpoch": time.time(),
                                 "operation": "preparing and validating source video",
                                 "videoId": candidate.video_id,
                                 "candidateKey": _candidate_key(candidate),
@@ -2120,191 +2921,145 @@ def _run_staged_bake_wave(
                                 require_current_source_contract(contract, candidate)
                             selected_video = prepare_candidate_input_video(
                                 candidate,
-                                request=item.request,
-                                source_cut_caption_images=source_session.caption_images,
+                                request=source_review_request,
+                                source_cut_caption_images=source_caption_images,
                                 exercise_motion_contract_resolver=resolver,
                             )
                             # Contact semantics must be available before the CPU-only
                             # semantic review and CPU-only prefetch. A candidate that
                             # cannot provide required independent support evidence
                             # should not spend an equivalent source-review decision.
-                            from .body_support_observation import (
-                                POLICY_VERSION as BODY_SUPPORT_POLICY_VERSION,
-                                CONTACT_TIMELINE_POLICY_VERSION,
-                                _contact_timeline_candidates,
-                                source_support_observation_needed,
-                                observe_body_support,
-                                observe_foot_contact_timeline,
-                                validated_body_support_contact_timeline,
-                                validated_body_support_answer,
+                            from .bake_and_rank import (
+                                body_support_contract_evidence_status,
+                                load_pre_reconstruction_exact_source_phase_metrics,
+                                load_verified_source_pose_reference,
                             )
-                            from .bake_and_rank import load_pre_reconstruction_exact_source_phase_metrics, load_verified_source_pose_reference
                             candidate_workspace = item.request.workspace / candidate.workspace_slug
                             phase_metrics = load_pre_reconstruction_exact_source_phase_metrics(candidate_workspace) or {}
+                            source_pose_reference_path = (
+                                candidate_workspace / 'segment_detection' / 'exact_source_pose_reference.json'
+                            )
                             source_pose = load_verified_source_pose_reference(
-                                candidate_workspace/'segment_detection/exact_source_pose_reference.json', selected_video)
-                            source_support_evidence = phase_metrics.get('sourceFootSupportEvidence')
-                            if isinstance(source_support_evidence, dict):
-                                source_support_evidence = dict(source_support_evidence)
-                                support_evidence_refreshed = False
-                                support_evidence_persisted = False
-                                source_digest = hashlib.sha256(selected_video.read_bytes()).hexdigest()
-                                pose_payload = (source_pose.get('pose')
-                                    if isinstance(source_pose, dict) and isinstance(source_pose.get('pose'), dict)
-                                    else source_pose)
-                                source_pose_reference = ({
-                                    'sourceVideoSha256': source_digest,
-                                    'pose': pose_payload,
-                                } if isinstance(pose_payload, dict) else None)
-                                existing_observation = source_support_evidence.get('bodySupportObservation')
-                                if (source_support_observation_needed(source_pose, source_support_evidence)
-                                        or isinstance(existing_observation, dict)):
-                                    if not (
-                                        isinstance(existing_observation, dict)
-                                        and existing_observation.get('sourceVideoSha256') == source_digest
-                                        and existing_observation.get('policyVersion') == BODY_SUPPORT_POLICY_VERSION
-                                        and validated_body_support_answer(existing_observation) is not None
-                                    ):
-                                        existing_observation = observe_body_support(
-                                            selected_video, source_session.caption_images,
-                                            candidate_workspace/'segment_detection/body_support')
-                                        support_evidence_refreshed = True
-                                    source_support_evidence['bodySupportObservation'] = existing_observation
-                                from .support_geometry import pre_reconstruction_source_support_readiness
-                                readiness = pre_reconstruction_source_support_readiness(source_support_evidence)
-                                if not readiness.get('passed') and source_pose is not None:
-                                    # The retained phase cache may have been classified
-                                    # with an older foot-patch policy. Reclassify the
-                                    # exact selected cut once with the active CPU model
-                                    # before spending a GPU reconstruction attempt.
-                                    from .foot_contact_observation import (
-                                        POLICY_VERSION as FOOT_PATCH_POLICY_VERSION,
-                                        add_observed_foot_contacts,
-                                        observe_foot_landmarks,
-                                    )
-                                    patch = source_support_evidence.get('footPatchEvidence') or {}
-                                    if patch.get('policyVersion') != FOOT_PATCH_POLICY_VERSION:
-                                        landmarks = observe_foot_landmarks(
-                                            selected_video,
-                                        )
-                                        source_support_evidence = add_observed_foot_contacts(
-                                            source_support_evidence, landmarks, source_pose,
-                                            source_video_path=selected_video)
-                                        support_evidence_refreshed = True
-                                        readiness = pre_reconstruction_source_support_readiness(
-                                            source_support_evidence)
-                                existing_timeline = (existing_observation.get('contactTimeline')
-                                    if isinstance(existing_observation, dict) else None)
-                                validated_timeline_rows = validated_body_support_contact_timeline(
-                                    existing_timeline, expected_video_sha256=source_digest)
-                                observed_timeline_samples = ({
-                                    (row.get('sampleId'), row.get('side'))
-                                    for row in (validated_timeline_rows or [])
-                                })
-                                unresolved_timeline_candidates = [
-                                    row for row in _contact_timeline_candidates(
-                                        source_pose, source_support_evidence)
-                                    if (row.get('sampleId'), row.get('side'))
-                                    not in observed_timeline_samples
-                                ]
-                                if unresolved_timeline_candidates and source_pose is not None:
-                                    # A single exact-cut timeline can resolve patch
-                                    # ambiguity even when coarse, clip-level support
-                                    # readiness passes. The observer owns labels only;
-                                    # source pose timestamps and stationary intervals
-                                    # remain code-owned. Persist its receipt before any
-                                    # later bake reloads the retained source metrics.
-                                    evidence_key = _contact_timeline_repair_key(
-                                        source_digest, source_pose_reference, source_support_evidence)
-                                    repair_marker_path = (candidate_workspace / 'segment_detection'
-                                        / 'source_foot_contact_timeline_repair.json')
-                                    try:
-                                        repair_marker = loads_reconstruction_metadata(
-                                            repair_marker_path.read_text(encoding='utf-8'))
-                                    except (OSError, ValueError):
-                                        repair_marker = None
-                                    previous_attempt = (repair_marker.get('evidenceKey') == evidence_key
-                                        if isinstance(repair_marker, dict) else False)
-                                    if not previous_attempt:
-                                        timeline_status = 'observer_error'
-                                        timeline_error = None
-                                        try:
-                                            timeline = observe_foot_contact_timeline(
-                                                selected_video, source_pose_reference, source_support_evidence,
-                                                source_session.caption_images,
-                                                candidate_workspace/'segment_detection/body_support')
-                                            if isinstance(timeline, dict):
-                                                if not isinstance(existing_observation, dict):
-                                                    existing_observation = {
-                                                        'status': 'unknown',
-                                                        'reason': 'coarse_support_observation_unavailable',
-                                                        'sourceVideoSha256': source_digest,
-                                                    }
-                                                existing_observation = dict(existing_observation)
-                                                existing_observation['contactTimeline'] = timeline
-                                                source_support_evidence['bodySupportObservation'] = existing_observation
-                                                support_evidence_refreshed = True
-                                                timeline_status = str(timeline.get('status') or 'unknown')
-                                                if _persist_exact_source_support_evidence(
-                                                        candidate_workspace, source_digest,
-                                                        source_support_evidence):
-                                                    support_evidence_persisted = True
-                                                    readiness = pre_reconstruction_source_support_readiness(
-                                                        source_support_evidence)
-                                                else:
-                                                    timeline_status = 'persistence_unavailable'
-                                        except Exception as exc:
-                                            if is_storage_failure(exc):
-                                                raise
-                                            timeline_error = exc
-                                        repair_marker = {
-                                            'schemaVersion': 1,
-                                            'policyVersion': CONTACT_TIMELINE_POLICY_VERSION,
-                                            'sourceVideoSha256': source_digest,
-                                            'evidenceKey': evidence_key,
-                                            'status': timeline_status,
-                                            'attemptedAt': _utc_now(),
-                                        }
-                                        if timeline_error is not None:
-                                            repair_marker['errorType'] = type(timeline_error).__name__
-                                            repair_marker['error'] = str(timeline_error)[:1000]
-                                        _write_json_atomic(repair_marker_path, repair_marker)
-                                        if timeline_error is not None:
-                                            # Let the source-stage owner classify VLM,
-                                            # decoder, or tool failures. They are not
-                                            # source-quality evidence.
-                                            raise timeline_error
-                                if (support_evidence_refreshed and readiness.get('passed')
-                                        and not support_evidence_persisted):
-                                    if not _persist_exact_source_support_evidence(
-                                            candidate_workspace, source_digest,
-                                            source_support_evidence):
-                                        readiness = dict(readiness)
-                                        readiness['status'] = 'incomplete'
-                                        readiness['passed'] = False
-                                        readiness['rejectionReasons'] = list(dict.fromkeys([
-                                            *(readiness.get('rejectionReasons') or []),
-                                            'source_support_evidence_persistence_unavailable',
-                                        ]))
-                                    else:
-                                        support_evidence_persisted = True
-                                if not readiness.get('passed'):
-                                    _, rejection_reasons = source_support_readiness_route(readiness)
-                                    attempt['status'] = 'needs_source_review'
-                                    attempt['error'] = 'Source support evidence remains unresolved after one bounded exact-cut observation.'
-                                    attempt['failureOwner'] = 'source_evidence'
-                                    attempt['reasonTags'] = rejection_reasons
-                                    attempt['sourceContactReadiness'] = readiness
+                                source_pose_reference_path, selected_video)
+                            pose_payload = (source_pose.get('pose')
+                                if isinstance(source_pose, dict) and isinstance(source_pose.get('pose'), dict)
+                                else source_pose)
+                            source_pose_reference = ({
+                                'sourceVideoSha256': pose_payload.get('sourceVideoSha256'),
+                                'pose': pose_payload,
+                            } if isinstance(pose_payload, dict) else None)
+                            support_stage = observe_source_support_stage(
+                                candidate_workspace,
+                                selected_video,
+                                contract=contract,
+                                caption_images=source_caption_images,
+                                source_pose=pose_payload,
+                                source_pose_reference=source_pose_reference,
+                                source_foot_support_evidence=phase_metrics.get(
+                                    'sourceFootSupportEvidence'),
+                                contract_status_fn=body_support_contract_evidence_status,
+                                stance_review_cache_dir=(
+                                    item.request.workspace / 'source-review-cache' / 'stance-intervals'),
+                                persist_fn=_persist_exact_source_support_evidence,
+                                write_json_fn=_write_json_atomic,
+                            )
+                            source_support_evidence = support_stage['evidence']
+                            support_contract_status = support_stage['contractStatus']
+                            support_evidence_refreshed = support_stage['refreshed']
+                            support_evidence_persisted = support_stage['persisted']
+                            readiness = support_stage['readiness']
+                            reconstruction_only_pending = (
+                                _reconstruction_only_pending_support_is_valid(
+                                    support_stage,
+                                    selected_video=selected_video,
+                                    source_pose_reference_path=source_pose_reference_path,
+                                    contract=contract,
+                                )
+                            )
+                            if support_stage['contradiction']:
+                                raise SourceCandidateRejected(
+                                    'Exact-source support evidence contradicts the exercise contract.',
+                                    reason_tags=[
+                                        'body_support_contract_contradicted',
+                                        *support_contract_status.get('failures', []),
+                                    ],
+                                    evidence={'bodySupportContract': support_contract_status},
+                                )
+                            if support_stage['timelineError'] is not None:
+                                # Let the source-stage owner classify VLM,
+                                # decoder, or tool failures. They are not
+                                # source-quality evidence.
+                                raise support_stage['timelineError']
+                            if support_stage['contractInsufficient'] and not reconstruction_only_pending:
+                                attempt['status'] = 'needs_source_review'
+                                attempt['failureOwner'] = 'source_evidence'
+                                attempt['reasonTags'] = list(
+                                    support_contract_status.get('failures', []))
+                                if (not support_evidence_persisted
+                                        and support_evidence_refreshed):
+                                    attempt['reasonTags'].append(
+                                        'source_support_evidence_persistence_unavailable')
+                                attempt['error'] = (
+                                    'Exact-source support evidence is missing or inconclusive; '
+                                    'reconstruction was not started.'
+                                )
+                                attempt['bodySupportContract'] = support_contract_status
+                                source_turn_incomplete = True
+                                source_turn_stop_reason = (
+                                    'source_support_contract_evidence_incomplete')
+                                source_event(
+                                    f"Source attempt: {item.exercise_name} | video {candidate.video_id} | "
+                                    "required support evidence remains unresolved; retaining source for review."
+                                )
+                                continue
+                            if not readiness.get('passed') and not reconstruction_only_pending:
+                                _, rejection_reasons = source_support_readiness_route(readiness)
+                                attempt['status'] = 'needs_source_review'
+                                attempt['error'] = (
+                                    'Source support evidence remains unresolved after one '
+                                    'bounded exact-cut observation.'
+                                )
+                                attempt['failureOwner'] = 'source_evidence'
+                                attempt['reasonTags'] = rejection_reasons
+                                attempt['sourceContactReadiness'] = readiness
+                                if {'source_support_observation_invalid',
+                                        'source_support_evidence_persistence_unavailable'}.intersection(
+                                            rejection_reasons):
                                     source_turn_incomplete = True
                                     source_turn_stop_reason = 'source_support_readiness_incomplete'
-                                    source_event(
-                                        f"Source attempt: {item.exercise_name} | video {candidate.video_id} | "
-                                        "support evidence remains unresolved after the bounded exact-cut observation; "
-                                        f"retaining source for review: {attempt['reasonTags']}"
+                                source_event(
+                                    f"Source attempt: {item.exercise_name} | video {candidate.video_id} | "
+                                    "support evidence remains unresolved after the bounded exact-cut observation; "
+                                    f"retaining source for review: {attempt['reasonTags']}"
+                                )
+                                continue
+                            if reconstruction_only_pending:
+                                attempt['sourceSupportQualification'] = {
+                                    'status': 'pending_inference',
+                                    'passed': False,
+                                    'ready': False,
+                                    'reconstructionOnly': True,
+                                    'acceptanceEligible': False,
+                                    'pendingInferenceRequirements': (
+                                        support_contract_status.get('pendingInferenceRequirements')
+                                    ),
+                                    'independentReadiness': readiness,
+                                }
+                                source_event(
+                                    f"Source attempt: {item.exercise_name} | video {candidate.video_id} | "
+                                    "source-bound support is pending geometry inference; allowing reconstruction only."
+                                )
+                            review_prepared_source(candidate, request=source_review_request, selected_video=selected_video,
+                                contract=contract, caption_images=source_caption_images)
+                            if callable(cached_review_identity):
+                                try:
+                                    identity = cached_review_identity(
+                                        candidate, source_review_request, caption_images=source_caption_images,
                                     )
-                                    break
-                            review_prepared_source(candidate, request=item.request, selected_video=selected_video,
-                                contract=contract, caption_images=source_session.caption_images)
+                                except Exception:
+                                    identity = None
+                                if isinstance(identity, str) and len(identity) == 64:
+                                    acknowledged_review_identities[_candidate_key(candidate)] = identity
                         except Exception as exc:
                             if is_storage_failure(exc):
                                 raise
@@ -2314,7 +3069,8 @@ def _run_staged_bake_wave(
                                 source_turn_incomplete = True
                                 source_turn_stop_reason = "source_review_incomplete"
                                 source_event(f"Source review: {item.exercise_name} | needs review: {exc}")
-                                break
+                                # Retain this unresolved window while considering independent sources.
+                                continue
                             if isinstance(exc, ExerciseDefinitionReviewRequired):
                                 attempt["status"] = "needs_definition_review"
                                 attempt["reason"] = str(exc)
@@ -2356,6 +3112,72 @@ def _run_staged_bake_wave(
                             if vlm_error is not None:
                                 attempt["status"] = "needs_source_review"
                                 attempt["error"] = f"{type(vlm_error).__name__}: {vlm_error}"
+                                attempt["vlmError"] = vlm_error_payload(vlm_error)
+                                if vlm_error.recoverable:
+                                    attempt["failureOwner"] = "infrastructure"
+                                    attempt["retryableInfrastructureFailure"] = True
+                                    retry_same_turn = source_turn_budget.record_recoverable_failure()
+                                    if not retry_same_turn:
+                                        source_turn_incomplete = True
+                                        source_turn_stop_reason = "recoverable_vlm_retry_budget_exhausted"
+                                        source_event(
+                                            f"Source review: {item.exercise_name} | repeated recoverable model failures; "
+                                            "retained source needs review before another attempt."
+                                        )
+                                        break
+                                    next_distinct_candidate = next(
+                                        (
+                                            later_candidate
+                                            for later_candidate in candidates[candidate_number:]
+                                            if _candidate_source_identity(later_candidate) != source_identity
+                                        ),
+                                        None,
+                                    )
+                                    attempted_keys = [
+                                        value["candidateKey"] for value in attempts
+                                        if value.get("status") != "needs_source_review"
+                                    ]
+                                    attempted_video_ids = [
+                                        value["videoId"] for value in attempts
+                                        if value.get("status") != "needs_source_review" and value.get("videoId")
+                                    ]
+                                    _write_json_atomic(resume_path, {
+                                        "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                                        "sourceTurnExerciseIdentity": exercise_identity,
+                                        "sourceReviewTurnId": source_review_turn_id,
+                                        # Keep the failed source retryable by leaving it
+                                        # out of attemptedCandidateKeys. Continue the
+                                        # next staged resume with another distinct
+                                        # source when available; if none remains, retry
+                                        # this source on the next resume.
+                                        "nextCandidateKey": _candidate_key(
+                                            next_distinct_candidate or candidate
+                                        ),
+                                        "attemptedCandidateKeys": list(dict.fromkeys([*historical_attempt_keys, *attempted_keys])),
+                                        "acknowledgedSourceReviewEvidenceByCandidateKey": dict(acknowledged_review_identities),
+                                        "sourceReviewReplayReservationsByCandidateKey": dict(legacy_replay_reservations),
+                                        "sourceReviewInputReservationsByCandidateKey": dict(source_review_input_reservations),
+                                        "sourceReviewInputReservationDetailsByCandidateKey": dict(source_review_input_reservation_details),
+                                        "sourceReviewInputReservationHistoryByCandidateKey": dict(source_review_input_reservation_history),
+                                        "attemptedVideoIds": list(dict.fromkeys([*prior_attempt_video_ids, *attempted_video_ids])),
+                                        **source_turn_budget.resume_fields(),
+                                    })
+                                    with checkpoint_lock:
+                                        source = item_states[item.exercise_id]["source"]
+                                        source.update({"deferred": True, "failureReason": "source_turn_deferred"})
+                                        source["turn"] = source_turn_budget.report(
+                                            stop_reason="recoverable_vlm_failure"
+                                        )
+                                    source_event(
+                                        f"Source review: {item.exercise_name} | recoverable model transport failure; "
+                                        + (
+                                            "retaining this candidate for later retry and advancing the saved cursor "
+                                            "to the next distinct source."
+                                            if next_distinct_candidate is not None
+                                            else "no distinct source remains; retaining this candidate for the next retry."
+                                        )
+                                    )
+                                    break
                                 source_turn_incomplete = True
                                 source_turn_stop_reason = "source_review_vlm_timeout"
                                 source_event(
@@ -2370,6 +3192,11 @@ def _run_staged_bake_wave(
                                 )
                                 attempt["reasonTags"] = list(exc.reason_tags)
                                 attempt["error"] = f"{type(exc).__name__}: {exc}"
+                                if exc.evidence:
+                                    attempt["evidence"] = exc.evidence
+                                if attempt["status"] == "needs_source_review":
+                                    source_turn_incomplete = True
+                                    source_turn_stop_reason = "source_review_incomplete"
                             event_prefix = (
                                 f"Source attempt: {item.exercise_name} | video {candidate.video_id} | "
                                 f"{source_attempt_log_context(candidate, candidate_number, len(candidates))}"
@@ -2415,6 +3242,8 @@ def _run_staged_bake_wave(
                                         f"skipped unchanged work: {stop_reason}."
                                     )
                                     continue
+                        source_turn_incomplete = False
+                        source_turn_stop_reason = None
                         attempt["status"] = "prepared"
                         prepared_contracts[_candidate_key(candidate)] = contract
                         attempt["selectedVideoPath"] = str(selected_video)
@@ -2461,7 +3290,12 @@ def _run_staged_bake_wave(
                             "sourceTurnExerciseIdentity": exercise_identity,
                             "sourceReviewTurnId": source_review_turn_id,
                             "nextCandidateKey": resume_candidate_key,
-                            "attemptedCandidateKeys": list(dict.fromkeys([*prior_attempt_keys, *attempted_keys])),
+                            "attemptedCandidateKeys": list(dict.fromkeys([*historical_attempt_keys, *attempted_keys])),
+                            "acknowledgedSourceReviewEvidenceByCandidateKey": dict(acknowledged_review_identities),
+                            "sourceReviewReplayReservationsByCandidateKey": dict(legacy_replay_reservations),
+                            "sourceReviewInputReservationsByCandidateKey": dict(source_review_input_reservations),
+                            "sourceReviewInputReservationDetailsByCandidateKey": dict(source_review_input_reservation_details),
+                            "sourceReviewInputReservationHistoryByCandidateKey": dict(source_review_input_reservation_history),
                             "attemptedVideoIds": list(dict.fromkeys([*prior_attempt_video_ids, *attempted_video_ids])),
                             **source_turn_budget.resume_fields(),
                         })
@@ -2480,18 +3314,53 @@ def _run_staged_bake_wave(
                             "sourceTurnExerciseIdentity": exercise_identity,
                             "sourceReviewTurnId": source_review_turn_id,
                             "nextCandidateKey": None,
-                            "attemptedCandidateKeys": list(dict.fromkeys([*prior_attempt_keys, *attempted_keys])),
+                            "attemptedCandidateKeys": list(dict.fromkeys([*historical_attempt_keys, *attempted_keys])),
+                            "acknowledgedSourceReviewEvidenceByCandidateKey": dict(acknowledged_review_identities),
+                            "sourceReviewReplayReservationsByCandidateKey": dict(legacy_replay_reservations),
+                            "sourceReviewInputReservationsByCandidateKey": dict(source_review_input_reservations),
+                            "sourceReviewInputReservationDetailsByCandidateKey": dict(source_review_input_reservation_details),
+                            "sourceReviewInputReservationHistoryByCandidateKey": dict(source_review_input_reservation_history),
                             "attemptedVideoIds": list(dict.fromkeys([*prior_attempt_video_ids, *attempted_video_ids])),
                             **source_turn_budget.resume_fields(),
                         })
                     elif selected_sources:
-                        resume_path.unlink(missing_ok=True)
+                        # Preparation is not terminal: retain failed-source exclusions
+                        # while reconstruction/validation may still need a resume.
+                        _write_json_atomic(resume_path, {
+                            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                            "sourceTurnExerciseIdentity": exercise_identity,
+                            "sourceReviewTurnId": source_review_turn_id,
+                            "nextCandidateKey": _candidate_key(selected_sources[0][0]),
+                            "attemptedCandidateKeys": list(dict.fromkeys([
+                                *historical_attempt_keys,
+                                *[attempt["candidateKey"] for attempt in attempts
+                                  if attempt.get("status") not in {"prepared", "needs_source_review"}],
+                            ])),
+                            "acknowledgedSourceReviewEvidenceByCandidateKey": dict(acknowledged_review_identities),
+                            "sourceReviewReplayReservationsByCandidateKey": dict(legacy_replay_reservations),
+                            "sourceReviewInputReservationsByCandidateKey": dict(source_review_input_reservations),
+                            "sourceReviewInputReservationDetailsByCandidateKey": dict(source_review_input_reservation_details),
+                            "sourceReviewInputReservationHistoryByCandidateKey": dict(source_review_input_reservation_history),
+                            "attemptedVideoIds": list(dict.fromkeys([
+                                *prior_attempt_video_ids,
+                                *[attempt["videoId"] for attempt in attempts
+                                  if attempt.get("videoId")
+                                  and attempt.get("status") not in {"prepared", "needs_source_review"}],
+                            ])),
+                            **source_turn_budget.resume_fields(),
+                        })
                     for attempt in attempts:
                         attempt.setdefault("requestedPortfolioSize", requested_portfolio_size)
-                    if not selected_sources and not attempts and progress_turn is not None:
+                    if (not selected_sources and not attempts and progress_turn is not None
+                            and not item_states[item.exercise_id]["source"].get("deferred")):
+                        no_work_reason = (
+                            source_turn_stop_reason
+                            or source_filter_exhaustion_reason
+                            or "source_candidates_already_processed"
+                        )
                         item_states[item.exercise_id]["source"].update({
                             "status": "deferred",
-                            "failureReason": "same_input_progress_budget_exhausted",
+                            "failureReason": no_work_reason,
                             "noNewWork": True,
                         })
                     with checkpoint_lock:
@@ -2561,11 +3430,11 @@ def _run_staged_bake_wave(
                             if is_storage_failure(exc):
                                 raise
                             state = item_states[submitted_item.exercise_id]
-                            state["source"] = {
+                            state["source"].update({
                                 "status": "failed",
-                                "attempts": [],
+                                "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
                                 "error": f"{type(exc).__name__}: {exc}",
-                            }
+                            })
                             state["status"] = "retry_required"
                             source_message = state["source"]["error"]
                             if isinstance(exc, ValueError) and str(exc) == (
@@ -2638,6 +3507,10 @@ def _run_staged_bake_wave(
                                 else "exercise_contract_invalid"
                                 if any(attempt.get("status") == "blocked_contract" for attempt in attempts)
                                 else "source_review_incomplete"
+                                if any(attempt.get("status") == "needs_source_review"
+                                       and attempt.get("failureOwner") != "source_evidence"
+                                       for attempt in attempts)
+                                else "no_reconstruction_ready_source"
                                 if any(attempt.get("status") == "needs_source_review" for attempt in attempts)
                                 else "source_processing_failed"
                                 if any(attempt.get("status") in {"source_processing_failed", "rejected_vlm_timeout"} for attempt in attempts)
@@ -2970,7 +3843,7 @@ def _run_staged_bake_wave(
                                 )
                             generation_runs = [
                                 generation_intervals[_candidate_key(candidate)]
-                                for candidate in prepared[exercise_id][1]
+                                for candidate, _video_path in prepared[exercise_id][1]
                                 if _candidate_key(candidate) in generation_intervals
                             ]
                             generation_seconds = _interval_union_seconds(generation_runs)

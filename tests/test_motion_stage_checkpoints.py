@@ -403,6 +403,22 @@ def test_bake_path_code_digest_scopes_to_bake_path_source():
     assert bake._bake_path_code_digest_source(constant_edit) != base
 
 
+def test_bake_code_digest_is_stable_across_process_hash_seeds():
+    import os
+    import subprocess
+    import sys
+
+    command = (
+        'from exercise_motion_pkg.bake_and_rank import _selected_section_bake_code_digest; '
+        'print(_selected_section_bake_code_digest()["sha256"])'
+    )
+    digests = [subprocess.check_output(
+        [sys.executable, '-c', command],
+        env={**os.environ, 'PYTHONHASHSEED': seed}, text=True,
+    ).strip() for seed in ('1', '2')]
+    assert digests[0] == digests[1]
+
+
 def test_selected_section_code_digest_tracks_external_fit_dependencies():
     base = bake._selected_section_bake_code_digest_source(
         "local-bake-digest",

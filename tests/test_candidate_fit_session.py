@@ -18,6 +18,48 @@ def admitted_cycle_geometry(monkeypatch):
                         lambda *_args, **_kwargs: {'passed': True})
 
 
+@pytest.mark.parametrize('caller_budget', [360., 250.])
+def test_source_supported_baseline_funds_correction_with_one_shared_budget(monkeypatch, caller_budget):
+    from exercise_motion_pkg.bake_and_rank import baseline_source_articulation_fit_timeout_seconds
+
+    now, calls = [0.], []
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(fit_runtime, 'monotonic', lambda: now[0])
+
+    def fit(current, **kwargs):
+        allowance = kwargs['timeout_seconds']
+        calls.append(allowance)
+        now[0] += allowance + (0.25 if len(calls) == 1 else 0.)
+        return current, {'applied': False, 'reason': 'fit_validation_failed'}
+
+    monkeypatch.setattr(motion, '_fit_observed_cycles', fit)
+    with fit_runtime.candidate_fit_session(budget_seconds=360.) as session:
+        baseline_budget = baseline_source_articulation_fit_timeout_seconds(
+            caller_budget, variant_id='adaptive-baseline', source_support_evidence={})
+        motion._fit_candidate_motion({'variant': 'baseline'}, timeout_seconds=baseline_budget)
+        correction_budget = fit_runtime.candidate_fit_timeout_seconds(caller_budget - now[0])
+        assert correction_budget >= motion.SOURCE_CONFIRMED_CYCLE_MINIMUM_BUDGET_SECONDS
+        motion._fit_candidate_motion({'variant': 'correction'}, timeout_seconds=correction_budget)
+        assert session.remaining() == pytest.approx(360. - caller_budget)
+
+    assert calls == pytest.approx([caller_budget - 120., 119.75])
+    assert now[0] == pytest.approx(caller_budget)
+
+
+@pytest.mark.parametrize('budget,support,variant,expected', [
+    (100., {}, 'adaptive-baseline', 100.),
+    (0., {}, 'adaptive-baseline', 0.),
+    (360., None, 'adaptive-baseline', 360.),
+    (360., {}, 'other', 360.),
+    (None, {}, 'adaptive-baseline', None),
+])
+def test_baseline_reserve_preserves_short_or_unbounded_caller_budget(budget, support, variant, expected):
+    from exercise_motion_pkg.bake_and_rank import baseline_source_articulation_fit_timeout_seconds
+
+    assert baseline_source_articulation_fit_timeout_seconds(
+        budget, variant_id=variant, source_support_evidence=support) == expected
+
+
 def test_source_confirmed_cycle_precedes_full_interval_with_shared_budget(monkeypatch):
     from exercise_motion_pkg import loop_cycles
 
@@ -140,12 +182,14 @@ def test_repeated_unreachable_support_conflict_reserves_retained_interval(monkey
 def test_candidate_budget_covers_distinct_variants_and_reuses_exact_fit(monkeypatch):
     now = [0.]
     monkeypatch.setattr(fit_runtime, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
     calls = []
 
     def fit(payload, **kwargs):
         calls.append(kwargs['timeout_seconds'])
         now[0] += 60.
-        return payload, {'applied': False, 'reason': 'fit_timeout'}
+        return payload, {'applied': False, 'reason': 'fit_validation_failed',
+                         'checks': {'anatomy': True, 'contacts': False}}
 
     monkeypatch.setattr(motion, '_fit_observed_cycles', fit)
     with fit_runtime.candidate_fit_session(budget_seconds=100.) as session:
@@ -157,6 +201,35 @@ def test_candidate_budget_covers_distinct_variants_and_reuses_exact_fit(monkeypa
         assert exhausted['budgetOwner'] == 'candidate'
         assert session.fit_calls == 2
     assert calls == [100., 40.]
+    assert fit_runtime.current_fit_session() is None
+
+
+def test_incomplete_candidate_fit_retries_with_remaining_session_budget(monkeypatch):
+    now = [0.]
+    monkeypatch.setattr(fit_runtime, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    calls = []
+
+    def fit(payload, **kwargs):
+        calls.append(kwargs['timeout_seconds'])
+        now[0] += 60. if len(calls) == 1 else 10.
+        report = ({'applied': False, 'reason': 'fit_timeout'} if len(calls) == 1 else
+                  {'applied': False, 'reason': 'fit_validation_failed',
+                   'checks': {'anatomy': True, 'contacts': False}})
+        return payload, report
+
+    monkeypatch.setattr(motion, '_fit_observed_cycles', fit)
+    payload = {'frames': [], 'variant': 'incomplete-retry'}
+    with fit_runtime.candidate_fit_session(budget_seconds=100.) as session:
+        _, first = motion.fit_controlled_motion(payload)
+        assert first['reason'] == 'fit_timeout'
+        _, second = motion.fit_controlled_motion(payload)
+        assert second['reason'] == 'fit_validation_failed'
+        assert not second.get('reusedCandidateFit')
+        _, reused = motion.fit_controlled_motion(payload)
+        assert reused['reusedCandidateFit']
+        assert calls == [100., 40.]
+        assert session.fit_calls == 2
     assert fit_runtime.current_fit_session() is None
 
 

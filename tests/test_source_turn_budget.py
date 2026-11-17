@@ -16,11 +16,53 @@ class FakeClock:
         self.now = float(now)
 
 
+def test_zero_source_review_timeout_disables_turn_deadline_but_keeps_http_guard():
+    request = SimpleNamespace(
+        source_review_timeout_seconds=0.0,
+        exercise_timeout_seconds=0.0,
+        max_source_window_attempts=0,
+        llama_cpp_request_timeout_seconds=180.0,
+    )
+    budget = _SourceTurnBudget(request, started_at=0.0)
+    assert budget.deadline is None
+    assert budget.stop_reason(10_000.0) is None
+
+
+@pytest.mark.parametrize(
+    ("source_timeout", "request_timeout", "expected"),
+    [
+        (0.0, 180.0, 180.0),
+        (60.0, 180.0, 60.0),
+        (0.0, 0.0, 0.0),
+        (60.0, 0.0, 60.0),
+    ],
+)
+def test_source_review_request_timeout_uses_tighter_positive_limit(
+    source_timeout, request_timeout, expected
+):
+    request = SimpleNamespace(
+        source_review_timeout_seconds=source_timeout,
+        llama_cpp_request_timeout_seconds=request_timeout,
+    )
+    assert bake.resolve_source_review_request_timeout_seconds(request) == expected
+
+
+def test_source_review_default_matches_transport_cap_and_allows_override():
+    request = SimpleNamespace(
+        source_review_timeout_seconds=bake.DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
+        llama_cpp_request_timeout_seconds=240.0,
+    )
+    assert bake.resolve_source_review_request_timeout_seconds(request) == 240.0
+
+    request.source_review_timeout_seconds = 120.0
+    assert bake.resolve_source_review_request_timeout_seconds(request) == 120.0
+
+
 def test_source_turn_deadline_is_shared_across_windows_and_resume():
     clock = FakeClock()
     request = SimpleNamespace(
         source_review_timeout_seconds=10.0,
-        exercise_timeout_seconds=0.0,
+        exercise_timeout_seconds=10.0,
         max_source_window_attempts=0,
     )
     budget = _SourceTurnBudget(request, started_at=clock.now)
@@ -99,11 +141,37 @@ def test_source_turn_budget_resumes_within_review_turn_but_resets_for_new_explic
     assert new_turn.attempts_used == 0
 
 
+def test_recoverable_vlm_failures_are_bounded_per_explicit_turn():
+    request = SimpleNamespace(
+        source_review_timeout_seconds=0.0,
+        exercise_timeout_seconds=0.0,
+        max_source_window_attempts=0,
+    )
+    first = _SourceTurnBudget(
+        request, exercise_identity="exercise", turn_identity="library-run-1"
+    )
+    assert first.record_recoverable_failure()
+
+    resumed = _SourceTurnBudget(
+        request, first.resume_fields(), exercise_identity="exercise",
+        turn_identity="library-run-1",
+    )
+    assert resumed.recoverable_failures == 1
+    assert not resumed.record_recoverable_failure()
+
+    new_turn = _SourceTurnBudget(
+        request, resumed.resume_fields(), exercise_identity="exercise",
+        turn_identity="library-run-2",
+    )
+    assert new_turn.recoverable_failures == 0
+    assert new_turn.record_recoverable_failure()
+
+
 def test_source_turn_separates_bounded_shared_wait_from_active_review_time():
     clock = FakeClock()
     request = SimpleNamespace(
         source_review_timeout_seconds=10.0,
-        exercise_timeout_seconds=0.0,
+        exercise_timeout_seconds=10.0,
         max_source_window_attempts=2,
     )
     budget = _SourceTurnBudget(request, started_at=clock.now)
@@ -275,6 +343,7 @@ def test_staged_source_turn_caps_inflight_caption_and_preserves_unresolved_candi
         body_model_root=None,
         fallback_candidates=0,
         source_review_timeout_seconds=0.05,
+        exercise_timeout_seconds=0.05,
         max_source_window_attempts=0,
     )
     item = wave.StagedWaveItem("carry", "Carry", request)
@@ -453,3 +522,15 @@ def test_list_cli_scopes_exhausted_source_ledger_to_explicit_turn(
     assert item["stopReason"] == (
         None if expected_ready else "source_turn_attempt_budget"
     )
+
+
+def test_successful_review_calls_do_not_share_the_transport_timeout():
+    request = SimpleNamespace(source_review_timeout_seconds=10., exercise_timeout_seconds=0.,
+                              max_source_window_attempts=0)
+    budget = _SourceTurnBudget(request, started_at=0.)
+    for now in (6., 12., 18.):
+        budget.begin_attempt()
+        assert budget.stop_reason(now) is None
+    assert budget.deadline is None
+    assert budget.elapsed(18.) == 18.
+    assert request.source_review_timeout_seconds == 10.

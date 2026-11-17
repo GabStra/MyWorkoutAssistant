@@ -109,6 +109,28 @@ def test_equally_elongated_limbs_are_rejected_without_a_source_reference():
     assert 'anatomy_segment_proportion' in validate_physical_motion(points, names)['reasons']
 
 
+def test_support_reference_uses_existing_span_leftover_without_changing_strict_diagnostics(monkeypatch):
+    from exercise_motion_pkg import anatomical_repair
+    from exercise_motion_pkg.controlled_motion import support_reference_anatomy_metrics
+    points = np.zeros((2, 1, 3))
+    reference = points.copy()
+    residual = np.array([[1.528397638939777e-5], [0.]])
+    labels = ['anatomy_span_variation:shoulders']
+    def measured(pts, names, *, reference):
+        assert reference is not None
+        return residual, labels
+    monkeypatch.setattr(anatomical_repair, 'repair_residuals', measured)
+    result = support_reference_anatomy_metrics(points, ['pelvis'], reference)
+    assert result['passed'] and result['violations'] == labels
+    assert result['residualByViolation'][labels[0]] == residual[0, 0]
+    assert np.any(residual > 1e-6)  # The strict final-output residual remains failing.
+    residual[0, 0] = .0021
+    assert not support_reference_anatomy_metrics(points, ['pelvis'], reference)['passed']
+    residual[0, 0] = 1.528397638939777e-5
+    labels[0] = 'anatomy_torso_bend:spine1'
+    assert not support_reference_anatomy_metrics(points, ['pelvis'], reference)['passed']
+
+
 def test_millimetre_anatomical_span_leftover_does_not_void_legal_output(monkeypatch):
     from exercise_motion_pkg import anatomical_repair
     from exercise_motion_pkg.physical_validation import anatomical_reference_is_usable

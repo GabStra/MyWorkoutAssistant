@@ -263,6 +263,23 @@ def test_unresolved_parent_phase_routes_to_bounded_review_without_source_penalty
     assert not index.exists()
 
 
+def test_incomplete_contact_evidence_survives_downstream_motion_filters():
+    controlled = {
+        'applied': False, 'reason': 'source_support_contact_evidence_incomplete',
+        'failureStage': 'source_support_contact_readiness',
+        'sourceContactReadiness': {'status': 'incomplete', 'unresolvedSides': ['left', 'right']},
+    }
+    artifact = bake.BakedLoopArtifact(
+        0, Path('retained.json'), Path('retained.webm'), {'controlledMotionFit': controlled},
+    )
+
+    diagnostics = bake.incomplete_controlled_fit_diagnostics([artifact])
+
+    assert diagnostics['controlledMotionFit']['reviewRequired'] is True
+    assert diagnostics['controlledMotionFit']['sourceContactReadiness'] == controlled['sourceContactReadiness']
+    assert controlled.get('reviewRequired') is None
+
+
 def test_sibling_variant_timeout_does_not_mask_applied_controlled_motion():
     applied = bake.BakedLoopArtifact(
         0, Path("a.json"), Path("a.webm"),

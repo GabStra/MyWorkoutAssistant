@@ -7,6 +7,7 @@ from contextvars import ContextVar
 import hashlib
 import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -40,7 +41,7 @@ def _swap_support_evidence_sides(evidence: dict[str, Any]) -> dict[str, Any]:
     def swap_observation_key(key: str) -> str:
         for side in ("left", "right"):
             if key.startswith(side) and key[len(side):] in {
-                "Foot", "FootSurface", "Hand", "HandSurface",
+                "Foot", "FootSurface", "Hand", "HandSurface", "Ankle", "AnkleContactSurface",
             }:
                 return ("right" if side == "left" else "left") + key[len(side):]
         return key
@@ -903,6 +904,16 @@ def _fit_local_timed_support_evidence(payload, evidence):
         if not isinstance(records, list):
             continue
         for contact in records:
+            if isinstance(contact, dict) and contact.get('supportKind') == 'observed_source_stance_interval':
+                bounds = contact.get('sourceFrameBounds')
+                valid = (contact.get('sourceVideoSha256') == patch.get('sourceVideoSha256')
+                         and contact.get('sourceFrameCount') == native_count
+                         and isinstance(bounds, list) and len(bounds) == 2
+                         and 0 <= bounds[0] <= bounds[1] < native_count)
+                contact['_fitFrameRuns'] = (_contiguous_runs(
+                    (state_indices >= bounds[0]) & (state_indices <= bounds[1])) if valid else [])
+                contact['_fitFrameCount'] = len(frames)
+                continue
             if (not isinstance(contact, dict)
                     or contact.get('supportKind') != 'observed_foot_patch'
                     or contact.get('startRatio') is None
@@ -1072,7 +1083,9 @@ def _fit_local_timed_support_evidence(payload, evidence):
     # their previous fit-local bounds, so omitting this call silently drops
     # valid one-frame contacts from the actual solver input.
     from .body_support_observation import materialize_timed_visual_contact_points
-    materialize_timed_visual_contact_points(result, frames, payload.get('jointNames'))
+    materialize_timed_visual_contact_points(
+        result, frames, payload.get('jointNames'),
+        ground_contact_mode=payload.get('groundContactMode'))
 
     # Keep a fit-clock view of patch states for consumers that condition
     # source articulation. A verified exact point may resolve an unknown row,
@@ -1178,14 +1191,79 @@ def _contiguous_runs(mask):
 def fit_frame_foot_patch_states_by_side(evidence, frame_count):
     """Return the validated ephemeral patch-state view aligned to fit frames."""
     aligned = (evidence or {}).get('_fitFrameFootPatchStatesBySide')
-    if not isinstance(aligned, dict):
-        return {}
+    aligned = aligned if isinstance(aligned, dict) else {}
     result = {}
     for side in ('left', 'right'):
         states = aligned.get(side)
         if isinstance(states, list) and len(states) == int(frame_count):
-            result[side] = tuple(str(state).casefold() for state in states)
-    return result
+            result[side] = [str(state).casefold() for state in states]
+    patch = (evidence or {}).get('footPatchEvidence') or {}
+    for contact in motion_support_contacts(evidence):
+        if (contact.get('supportKind') != 'observed_source_stance_interval'
+                or not contact.get('sourceVideoSha256')
+                or contact.get('sourceVideoSha256') != patch.get('sourceVideoSha256')):
+            continue
+        side = str(contact.get('jointName') or '').split('_', 1)[0]
+        if side not in {'left', 'right'}:
+            continue
+        first, last = contact_frame_bounds(contact, frame_count)
+        states = result.setdefault(side, ['unknown'] * frame_count)
+        states[first:last + 1] = [contact['contactState']] * max(0, last - first + 1)
+    return {side: tuple(states) for side, states in result.items()}
+
+
+def fit_frame_full_sole_masks(evidence, frame_times, frame_count):
+    """Return physical full-sole state per fit frame, independent of pins.
+
+    The observed foot patch owns the sole state. Exact XYZ point ownership stays
+    in the pin mask, where a full-sole foot contact pins only the foot and an
+    explicit ankle contact owns the ankle.
+    """
+    count = max(0, int(frame_count))
+    masks = {side: np.zeros(count, dtype=bool) for side in ('left', 'right')}
+    if count == 0:
+        return masks
+    aligned = fit_frame_foot_patch_states_by_side(evidence, count)
+    patch_feet = ((evidence or {}).get('footPatchEvidence') or {}).get('feet') or {}
+    state_indices = (evidence or {}).get('_fitFrameStateIndices')
+    if (not isinstance(state_indices, (list, tuple))
+            or len(state_indices) != count):
+        state_indices = None
+    for side in ('left', 'right'):
+        selected = aligned.get(side)
+        if selected is None or len(selected) != count:
+            record = patch_feet.get(side) if isinstance(patch_feet, dict) else None
+            patch_states = record.get('states') if isinstance(record, dict) else None
+            if not isinstance(patch_states, list) or not patch_states:
+                continue
+            if state_indices is None:
+                state_indices = mapped_foot_patch_state_indices(
+                    evidence, frame_times, count)
+            selected = [
+                (patch_states[int(index)]
+                 if 0 <= int(index) < len(patch_states) else 'unknown')
+                for index in state_indices
+            ]
+        masks[side] = np.asarray(
+            [str(state).casefold() == 'full_sole' for state in selected],
+            dtype=bool,
+        )
+    # Legacy callers may carry timed full-sole contacts without a patch track.
+    # The contact interval is still observed physical state, not a joint pin.
+    for contact in motion_support_contacts(evidence):
+        if (str(contact.get('contactState') or '').casefold() != 'full_sole'
+                or not is_stationary_contact(contact)):
+            continue
+        joint = str(contact.get('jointName') or '')
+        if not joint.endswith(('_ankle', '_foot')):
+            continue
+        side = joint.split('_', 1)[0]
+        if side not in masks:
+            continue
+        start, stop = contact_frame_bounds(contact, count)
+        if stop >= start:
+            masks[side][start:stop + 1] = True
+    return masks
 
 
 def _without_fit_local_timing_metadata(evidence):
@@ -1271,10 +1349,18 @@ def motion_support_contacts(evidence: dict[str, Any] | None) -> list[dict[str, A
 
 def is_stationary_contact(contact: dict[str, Any]) -> bool:
     """Surface proximity alone does not authorize a tangential lock."""
+    if contact.get('reviewOnly') is True:
+        return False
     if str(contact.get("surfaceKind") or "").startswith("contract_"):
         # A generated posture plus a slow image-space joint is not observed
         # physical contact. Treat it as advisory, including cached evidence.
         return False
+    if 'materialStationarityEvidence' in contact:
+        from .source_support_tracking import material_episode_scene_registered
+        material = contact.get('materialStationarityEvidence')
+        if (not material_episode_scene_registered(material)
+                or material.get('passed') is not True):
+            return False
     motion = str(contact.get("contactMotion") or "").casefold()
     if motion in {"sliding", "rolling", "moving", "unknown"}:
         return False
@@ -1286,6 +1372,11 @@ def is_stationary_contact(contact: dict[str, Any]) -> bool:
 
 
 def contact_frame_bounds(contact: dict[str, Any], count: int) -> tuple[int, int]:
+    if (contact.get("supportKind") == "observed_stationary_ankle_restraint"
+            and "_fitFrameBounds" not in contact):
+        # Its startRatio/endRatio are legacy placeholders, not source coverage.
+        # Without an exact fit-clock mapping the contact covers nothing.
+        return 0, -1
     if (contact.get("supportKind") == "exact_timed_visual_contact"
             and "_fitFrameBounds" not in contact):
         # Source-readiness records may carry an exact observed timestamp before
@@ -1371,6 +1462,552 @@ def is_observed_ground_contact(contact, evidence):
             and (evidence or {}).get('sharedSupportPlaneY') is not None)
 
 
+SUPPORT_SURFACE_KINDS = frozenset({
+    'ground', 'floor', 'ground_plane', 'raised_surface',
+})
+
+
+def _same_source_time(left, right):
+    try:
+        left, right = float(left), float(right)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return np.isfinite(left) and np.isfinite(right) and abs(left - right) <= 1e-6
+
+
+def _indistinguishable_forefoot_patch_at_time(evidence, side, source_time):
+    """Whether a bound patch row supports only forefoot at this exact time.
+
+    A neutral-calibration conflict is narrower than general classifier
+    uncertainty: it only applies to source-pose frames explicitly listed in a
+    same-video, same-side record saying stationary full-sole and forefoot
+    geometry are indistinguishable. It never promotes heel contact or applies
+    to adjacent frames.
+    """
+    if side not in {'left', 'right'}:
+        return False
+    evidence = evidence or {}
+    observed = evidence.get('bodySupportObservation') or {}
+    timeline = observed.get('contactTimeline') or {}
+    patch = evidence.get('footPatchEvidence') or {}
+    digest = str(evidence.get('sourceVideoSha256') or '').casefold()
+    observed_digest = str(observed.get('sourceVideoSha256') or '').casefold()
+    patch_digest = str(patch.get('sourceVideoSha256') or '').casefold()
+    if (not digest or digest != observed_digest or digest != patch_digest
+            or str(patch.get('sourcePoseVideoSha256') or '').casefold() != digest
+            or patch.get('sourceTimeBasis') != 'absolute_source_video'
+            or timeline.get('sourceClock') != 'video_frame_zero_seconds'
+            or str(timeline.get('sourceVideoSha256') or '').casefold() != digest):
+        return False
+    times = patch.get('sourceTimesSec')
+    patch_side = (patch.get('feet') or {}).get(side) or {}
+    states = patch_side.get('states')
+    if (not isinstance(times, list) or not isinstance(states, list)
+            or len(times) != len(states) or not times
+            or patch.get('sourceFrameCount') != len(times)
+            or patch.get('sourcePoseFrameCount') != len(times)):
+        return False
+    matching = [i for i, timestamp in enumerate(times)
+                if _same_source_time(timestamp, source_time)]
+    if len(matching) != 1:
+        return False
+    frame_index = matching[0]
+    if str(states[frame_index]).casefold() != 'toe_only':
+        return False
+    for conflict in patch.get('neutralCalibrationConflicts') or []:
+        if (not isinstance(conflict, dict)
+                or conflict.get('side') != side
+                or conflict.get('indistinguishable') is not True
+                or conflict.get('reason') !=
+                'stationary_full_sole_and_forefoot_geometry_indistinguishable'
+                or conflict.get('positiveMode') != 'forefoot'):
+            continue
+        start = conflict.get('stationarySpanStartFrame')
+        end = conflict.get('stationarySpanEndFrame')
+        if (type(start) is not int or type(end) is not int
+                or start > frame_index or frame_index > end):
+            continue
+        for frame_range in conflict.get('conflictingNeutralFrameRanges') or []:
+            if (isinstance(frame_range, dict)
+                    and type(frame_range.get('startFrame')) is int
+                    and type(frame_range.get('endFrame')) is int
+                    and frame_range['startFrame'] <= frame_index <= frame_range['endFrame']):
+                return True
+    return False
+
+
+def _neutral_pitch_forefoot_patch_at_time(evidence, side, source_time):
+    """Whether a bound patch row explicitly leaves heel state unknown.
+
+    This is narrower than accepting ``toe_only`` generally. The producer marks
+    only frames whose pitch was neutral and whose current same-source visual
+    review independently established forefoot contact. Recheck that review,
+    frame index, absolute time, side, and video binding before using the common
+    forefoot constraint.
+    """
+    if side not in {'left', 'right'}:
+        return False
+    evidence = evidence or {}
+    patch = evidence.get('footPatchEvidence') or {}
+    observed = evidence.get('bodySupportObservation') or {}
+    timeline = observed.get('contactTimeline') or {}
+    digest = str(evidence.get('sourceVideoSha256') or '').casefold()
+    if (not digest
+            or str(patch.get('sourceVideoSha256') or '').casefold() != digest
+            or str(patch.get('sourcePoseVideoSha256') or '').casefold() != digest
+            or patch.get('sourceTimeBasis') != 'absolute_source_video'
+            or str(observed.get('sourceVideoSha256') or '').casefold() != digest
+            or str(timeline.get('sourceVideoSha256') or '').casefold() != digest
+            or timeline.get('sourceClock') != 'video_frame_zero_seconds'):
+        return False
+    times = patch.get('sourceTimesSec')
+    patch_side = (patch.get('feet') or {}).get(side) or {}
+    states = patch_side.get('states')
+    heel_rows = patch_side.get('heelImageObservations')
+    frame_count = len(times) if isinstance(times, list) else 0
+    if (patch_side.get('pitchReferenceSource') != 'relative_stance'
+            or not isinstance(states, list) or len(states) != frame_count
+            or not isinstance(heel_rows, list)
+            or patch.get('sourceFrameCount') != frame_count
+            or patch.get('sourcePoseFrameCount') != frame_count
+            or frame_count <= 0):
+        return False
+    matching = [index for index, timestamp in enumerate(times)
+                if _same_source_time(timestamp, source_time)]
+    if len(matching) != 1:
+        return False
+    frame_index = matching[0]
+    if str(states[frame_index]).casefold() != 'toe_only':
+        return False
+    row = next((value for value in heel_rows
+                if isinstance(value, dict)
+                and type(value.get('sourceFrameIndex')) is int
+                and value.get('sourceFrameIndex') == frame_index
+                and _same_source_time(value.get('sourceTimeSec'), source_time)), None)
+    marker = row.get('heelStateEvidence') if isinstance(row, dict) else None
+    if (not isinstance(marker, dict)
+            or marker.get('state') != 'unknown'
+            or marker.get('reason') != 'neutral_pitch_with_reviewed_forefoot_contact'
+            or marker.get('sourceFrameIndex') != frame_index
+            or not _same_source_time(marker.get('sourceTimeSec'), source_time)):
+        return False
+
+    review = evidence.get('stationarySoleIntervalReview') or {}
+    finding = (review.get('feet') or {}).get(side) or {}
+    frames_per_chunk = review.get('framesPerChunk')
+    decisions = finding.get('decisions')
+    interval_forefoot = (
+        str(review.get('sourceVideoSha256') or '').casefold() == digest
+        and review.get('sourceFrameCount') == frame_count
+        and finding.get('reviewedFrameCount') == frame_count
+        and finding.get('confirmed') is True
+        and type(frames_per_chunk) is int and frames_per_chunk > 0
+        and isinstance(decisions, list)
+        and len(decisions) == (frame_count + frames_per_chunk - 1) // frames_per_chunk
+        and decisions[frame_index // frames_per_chunk] == 'stationary_forefoot_ground'
+    )
+    exact_timeline_forefoot = any(
+        isinstance(value, dict)
+        and value.get('side') == side
+        and value.get('contactState') == 'forefoot'
+        and value.get('surface') == 'ground'
+        and value.get('visible') is True
+        and value.get('sourceTrackStationary') is True
+        and value.get('reviewOnly') is not True
+        and value.get('sourceFrameIndex') == frame_index
+        and value.get('sourcePoseFrameIndex') == frame_index
+        and _same_source_time(value.get('sourceTimeSec'), source_time)
+        for value in timeline.get('samples', [])
+    )
+    # A matching exact timeline row overrides the coarse chunk at that frame.
+    exact_rows = [value for value in timeline.get('samples', [])
+                  if isinstance(value, dict)
+                  and value.get('side') == side
+                  and value.get('sourceFrameIndex') == frame_index
+                  and _same_source_time(value.get('sourceTimeSec'), source_time)]
+    if exact_rows and not exact_timeline_forefoot:
+        return False
+    return bool(interval_forefoot or exact_timeline_forefoot)
+
+
+def _support_timeline_rig_side(row, evidence):
+    mapping = (evidence or {}).get('motionSpaceMapping') or {}
+    if mapping.get('bilateralAssignment') == 'swapped':
+        return 'right' if row.get('side') == 'left' else 'left'
+    return row.get('side')
+
+
+NONFOOT_SUPPORT_CONTACT_KIND = 'observed_stationary_ankle_restraint'
+NONFOOT_SUPPORT_RECEIPT_SCHEMA_VERSION = 1
+
+
+def nonfoot_support_source_bound(evidence):
+    """True only when the top-level evidence binds the observation source.
+
+    A differing selected/parent digest is accepted only through the same
+    verified selected-frame lineage used by exact-time support contacts.
+    """
+    evidence = evidence or {}
+    observed = evidence.get('bodySupportObservation') or {}
+    observed_digest = str(observed.get('sourceVideoSha256') or '').casefold()
+    evidence_digest = str(evidence.get('sourceVideoSha256') or '').casefold()
+    if not observed_digest or not evidence_digest:
+        return False
+    if evidence_digest == observed_digest:
+        return True
+    mapping = evidence.get('_fitSourceTimelineMapping')
+    if not isinstance(mapping, dict):
+        return False
+    bound_digests = {str(mapping.get(key) or '').casefold()
+                     for key in ('selectedSegmentSha256', 'parentSourceSha256')}
+    return ({evidence_digest, observed_digest} == bound_digests
+            and _validated_selected_frame_lineage(mapping) is not None)
+
+
+def is_observed_nonfoot_support_contact(contact, evidence):
+    """Verify a non-foot anchor only through its exact row/source receipt.
+
+    A bare ``supportKind`` or trust flag never authorizes support. The contact
+    must re-join every retained sample to the validated observation timeline,
+    match the top-level evidence identity, and declare exactly the observed
+    coverage interval (never a whole-clip default).
+    """
+    if not isinstance(contact, dict):
+        return False
+    if contact.get('supportKind') != NONFOOT_SUPPORT_CONTACT_KIND:
+        return False
+    if contact.get('reviewOnly') is True or not is_stationary_contact(contact):
+        return False
+    joint = str(contact.get('jointName') or '')
+    if not joint.endswith('_ankle'):
+        return False
+    surface = str(contact.get('surfaceKind') or '')
+    receipt = contact.get('nonFootSupportReceipt')
+    if (not isinstance(receipt, dict)
+            or receipt.get('schemaVersion') != NONFOOT_SUPPORT_RECEIPT_SCHEMA_VERSION
+            or receipt.get('source') != 'verified_nonfoot_support_source_rows'):
+        return False
+    if (contact.get('anchorKind') != 'ankle'
+            or contact.get('sourceTimeBasis') != 'absolute_source_video'
+            or contact.get('sourceClock') != 'video_frame_zero_seconds'):
+        return False
+    observed = (evidence or {}).get('bodySupportObservation') or {}
+    observed_digest = str(observed.get('sourceVideoSha256') or '').casefold()
+    if (not observed_digest
+            or observed.get('sourceClock') != 'video_frame_zero_seconds'
+            or not nonfoot_support_source_bound(evidence)
+            or str(receipt.get('sourceVideoSha256') or '').casefold() != observed_digest
+            or receipt.get('sourceClock') != 'video_frame_zero_seconds'
+            or str(receipt.get('jointName') or '') != joint
+            or str(receipt.get('surfaceKind') or '') != surface):
+        return False
+    from .body_support_observation import (
+        validated_body_support_answer, validated_body_support_contact_timeline,
+    )
+    answer = validated_body_support_answer(observed)
+    if answer is None:
+        return False
+    side = joint.split('_', 1)[0]
+    if (answer.get(f'{side}Ankle') != 'stationary_support'
+            or answer.get(f'{side}AnkleContactSurface') != surface):
+        return False
+    timeline_rows = validated_body_support_contact_timeline(
+        observed, expected_video_sha256=observed_digest) or []
+    observed_rows = [row for row in timeline_rows if row.get('jointName') == joint]
+    fact = receipt.get('row')
+    row_id = receipt.get('rowId')
+    if (not isinstance(fact, dict) or not isinstance(row_id, str)
+            or str(fact.get('sampleId')) != row_id):
+        return False
+    rows_by_id = {str(row.get('sampleId')): row for row in observed_rows}
+    row = rows_by_id.get(row_id)
+    if (row is None or row.get('reviewOnly') is True
+            or row.get('contactState') != 'direct_contact'
+            or row.get('surface') != surface
+            or row.get('visible') is not True
+            or row.get('sourceTrackStationary') is not True
+            or fact.get('side') != row.get('side')
+            or fact.get('contactState') != row.get('contactState')
+            or fact.get('surface') != row.get('surface')
+            or fact.get('visible') is not True
+            or fact.get('sourceTrackStationary') is not True
+            or type(fact.get('sourceFrameIndex')) is not int
+            or fact.get('sourceFrameIndex') != row.get('sourceFrameIndex')
+            or type(fact.get('sourcePoseFrameIndex')) is not int
+            or fact.get('sourcePoseFrameIndex') != row.get('sourcePoseFrameIndex')
+            or not _same_source_time(fact.get('sourceTimeSec'), row.get('sourceTimeSec'))):
+        return False
+    pose_video_path = receipt.get('sourcePoseVideoPath')
+    if not isinstance(pose_video_path, str) or not pose_video_path.strip():
+        return False
+    from .body_support_observation import _verified_source_pose_track_proof
+    track_proof, verified_pose = _verified_source_pose_track_proof(
+        Path(pose_video_path), side, observed_digest)
+    if (track_proof is None or track_proof.get('stationary') is not True
+            or receipt.get('sourcePoseTrackProof') != track_proof):
+        return False
+    frames = (verified_pose.get('pose', verified_pose) or {}).get('frames') or []
+    pose_index = fact.get('sourcePoseFrameIndex')
+    if type(pose_index) is not int or not 0 <= pose_index < len(frames):
+        return False
+    if not _same_source_time(frames[pose_index].get('sourceTimeSec'), row.get('sourceTimeSec')):
+        return False
+    try:
+        start_time = float(contact.get('sourcePoseStartTimeSec'))
+        end_time = float(contact.get('sourcePoseEndTimeSec'))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return (np.isfinite(start_time) and np.isfinite(end_time)
+            and start_time <= end_time
+            and _same_source_time(start_time, row.get('sourceTimeSec'))
+            and _same_source_time(end_time, row.get('sourceTimeSec')))
+
+
+def validated_support_contact_timeline_row(contact, evidence):
+    """Join an exact timed support contact to its validated observed timeline row.
+
+    This is the single trust boundary shared by source support readiness and
+    generic (including raised-surface) trajectory anchors. A matching digest or
+    presence of a sample id alone is insufficient: the sample must resolve to a
+    validated row with the same side, state, surface, clock and parent exposure
+    time. Returns the row only when every identity check passes.
+    """
+    if (not isinstance(contact, dict)
+            or contact.get('supportKind') != 'exact_timed_visual_contact'):
+        return None
+    if (contact.get('reviewOnly') is True or contact.get('reconstructed3dSupport')
+            or contact.get('continuousSupportSource')):
+        return None
+    evidence = evidence or {}
+    observed = evidence.get('bodySupportObservation') or {}
+    observed_digest = str(observed.get('sourceVideoSha256') or '').casefold()
+    if not observed_digest:
+        return None
+    evidence_digest = str(evidence.get('sourceVideoSha256') or '').casefold()
+    if not evidence_digest:
+        return None
+    if evidence_digest != observed_digest:
+        mapping = evidence.get('_fitSourceTimelineMapping') or {}
+        if not isinstance(mapping, dict):
+            return None
+        bound_digests = {str(mapping.get(key) or '').casefold()
+                         for key in ('selectedSegmentSha256', 'parentSourceSha256')}
+        if ({evidence_digest, observed_digest} != bound_digests
+                or _validated_selected_frame_lineage(mapping) is None):
+            return None
+    contact_digest = str(
+        contact.get('contactTimelineSourceVideoSha256') or '').casefold()
+    if contact_digest != observed_digest:
+        return None
+    sample_id = contact.get('contactTimelineSampleId')
+    if sample_id is None:
+        return None
+    from .body_support_observation import validated_body_support_contact_timeline
+    rows = validated_body_support_contact_timeline(observed)
+    if not isinstance(rows, list):
+        return None
+    row = next((candidate for candidate in rows
+                if isinstance(candidate, dict)
+                and str(candidate.get('sampleId')) == str(sample_id)), None)
+    if row is None:
+        return None
+    name = str(contact.get('jointName') or '')
+    if not name.endswith(('_ankle', '_foot')):
+        return None
+    expected_state = {'full_sole': 'full_sole', 'forefoot': 'toe_only',
+                      'heel_only': 'heel_only'}.get(row.get('contactState'))
+    heel_unobserved = False
+    if row.get('contactState') == 'full_sole':
+        patch = evidence.get('footPatchEvidence') or {}
+        patch_digest = str(patch.get('sourceVideoSha256') or '').casefold()
+        source_side = row.get('side')
+        side_patch = ((patch.get('feet') or {}).get(source_side) or {})
+        heel_unobserved = (
+            patch_digest == observed_digest
+            and side_patch.get('pitchReferenceSource') == 'heel_unobserved')
+        indistinguishable_forefoot = (
+            patch_digest == observed_digest
+            and _indistinguishable_forefoot_patch_at_time(
+                evidence, row.get('side'), row.get('sourceTimeSec')))
+        neutral_pitch_forefoot = (
+            patch_digest == observed_digest
+            and _neutral_pitch_forefoot_patch_at_time(
+                evidence, row.get('side'), row.get('sourceTimeSec')))
+        # The raw visual row remains full-sole. If this exact patch frame
+        # cannot establish heel state, only their common forefoot subset is
+        # usable as a constraint.
+        if heel_unobserved or indistinguishable_forefoot or neutral_pitch_forefoot:
+            expected_state = 'toe_only'
+    parent_exposure_time = _body_timeline_parent_exposure_time(
+        row, evidence.get('_fitSourceTimelineMapping'), observed_digest)
+    if (expected_state is None
+            or _support_timeline_rig_side(row, evidence) != name.split('_', 1)[0]
+            or row.get('sourceTrackStationary') is not True
+            or row.get('reviewOnly') is True
+            or row.get('visible') is not True
+            or row.get('surface') not in {'ground', 'raised_surface'}
+            or (row.get('surface') == 'raised_surface'
+                and row.get('contactState') != 'forefoot')
+            or row.get('contactState') not in {'full_sole', 'forefoot'}
+            or contact.get('contactState') != expected_state
+            or contact.get('surfaceKind') not in {None, row.get('surface')}
+            or contact.get('sourceTimeBasis') != 'absolute_source_video'
+            or contact.get('contactTimelineSourceClock')
+            != 'video_frame_zero_seconds'
+            or not _same_source_time(
+                contact.get('contactTimelineSourceTimeSec'),
+                row.get('sourceTimeSec'))
+            or parent_exposure_time is None
+            or not _same_source_time(
+                contact.get('contactTimelineParentExposureTimeSec'),
+                parent_exposure_time)
+            or not _same_source_time(
+                contact.get('sourceTimeSec'), parent_exposure_time)):
+        return None
+    return row
+
+
+
+
+
+
+def is_observed_support_contact(contact, evidence):
+    """Observed stationary support on any explicit surface, not a floor-height claim.
+
+    Raised-surface anchors only enter placement-invariant trajectory evidence;
+    floor-height consumers must keep using ``is_observed_ground_contact``.
+    """
+    if not isinstance(contact, dict):
+        return False
+    if contact.get('reviewOnly') is True:
+        return False
+    if contact.get('reconstructed3dSupport') or contact.get('continuousSupportSource'):
+        return False
+    if str(contact.get('supportKind') or '').casefold().startswith('contract_'):
+        return False
+    if is_observed_ground_contact(contact, evidence):
+        return True
+    if is_observed_nonfoot_support_contact(contact, evidence):
+        return True
+    surface = str(contact.get('surfaceKind') or '').casefold()
+    if surface not in SUPPORT_SURFACE_KINDS:
+        return False
+    if contact.get('supportKind') != 'exact_timed_visual_contact':
+        return False
+    return validated_support_contact_timeline_row(contact, evidence) is not None
+
+
+def observed_support_contact_mask(evidence, names, count):
+    """Observed stationary toe/sole anchors on any verified support surface."""
+    result = np.zeros((count, len(names)), dtype=bool)
+    support = (evidence or {}).get('bodySupport') or {}
+    calibrated = set(support.get('stationaryJoints', [])) if (
+        support.get('required') and support.get('status') == 'confirmed') else set()
+    for contact in motion_support_contacts(evidence):
+        name = str(contact.get('jointName') or '')
+        if name not in names or not is_stationary_contact(contact):
+            continue
+        nonfoot = is_observed_nonfoot_support_contact(contact, evidence)
+        if not nonfoot and (name in calibrated or not name.endswith('_foot')
+                            or contact.get('contactState') == 'heel_only'):
+            continue
+        if not is_observed_support_contact(contact, evidence):
+            continue
+        start, end = contact_frame_bounds(contact, count)
+        result[start:end+1, names.index(name)] = True
+    return result
+
+
+def verified_body_support_anchor_samples(evidence, names, frames, source_pose):
+    """Count exact, source-bound body-support rows inside the retained fit clock."""
+    result = {'sampleCount': 0, 'jointSampleCounts': {}}
+    if not isinstance(evidence, dict) or not isinstance(source_pose, dict):
+        return result
+    support = evidence.get('bodySupport') or {}
+    observed = evidence.get('bodySupportObservation') or {}
+    pose = source_pose.get('pose') if isinstance(source_pose.get('pose'), dict) else source_pose
+    digest = str(source_pose.get('sourceVideoSha256') or pose.get('sourceVideoSha256') or '').casefold()
+    evidence_digest = str(evidence.get('sourceVideoSha256') or '').casefold()
+    if (support.get('required') is not True or support.get('status') != 'confirmed'
+            or support.get('source') != 'exact_source_contacts_and_stationary_pose_tracks'
+            or not digest or digest != evidence_digest
+            or str(support.get('sourceVideoSha256') or '').casefold() != digest):
+        return result
+
+    from .body_support_observation import (
+        observed_body_support_contact_claims,
+        stationary_source_track,
+    )
+    if not nonfoot_support_source_bound(evidence):
+        return result
+    claims = observed_body_support_contact_claims(observed, source_pose)
+    verified_roles = set(claims)
+    source_frames = pose.get('frames') or []
+    source_times = []
+    try:
+        source_times = [float(frame['sourceTimeSec']) for frame in source_frames]
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return result
+    if (not source_times or not np.isfinite(source_times).all()
+            or np.any(np.diff(source_times) < -1e-9)):
+        return result
+    fit_times = []
+    try:
+        source_origin = float(pose.get('sourceTimeOriginSec', 0.))
+        if not np.isfinite(source_origin):
+            return result
+        for frame in frames:
+            if not isinstance(frame, dict) or frame.get('syntheticLoopBridge'):
+                fit_times.append(np.nan)
+            elif frame.get('sourceTimeSec') is not None:
+                fit_times.append(float(frame['sourceTimeSec']))
+            elif frame.get('cycleSourceTimeSec') is not None:
+                fit_times.append(source_origin + float(frame['cycleSourceTimeSec']))
+            else:
+                return result
+    except (TypeError, ValueError, OverflowError):
+        return result
+    fit_times = np.asarray(fit_times, dtype=float)
+    valid_fit_times = fit_times[np.isfinite(fit_times)]
+    if (not len(valid_fit_times)
+            or np.any(np.diff(valid_fit_times) < -1e-9)
+            or np.any((valid_fit_times < source_times[0] - 1e-6)
+                      | (valid_fit_times > source_times[-1] + 1e-6))):
+        return result
+
+    from .body_support_observation import validated_body_support_contact_timeline
+    timeline = validated_body_support_contact_timeline(
+        observed, expected_video_sha256=digest)
+    if timeline is None:
+        return result
+    for joint in support.get('stationaryJoints') or []:
+        side, _, part = str(joint).partition('_')
+        locator = f'{side}_wrist' if part == 'hand' else str(joint)
+        if joint not in names or locator not in verified_roles:
+            continue
+        if part == 'wrist' and f'{side}_hand' in names:
+            # The producer anchors the physical hand when the rig exposes it.
+            continue
+        if not stationary_source_track(pose, locator):
+            continue
+        surface = claims.get(locator)
+        if surface is None:
+            continue
+        row_times = [float(row['sourceTimeSec']) for row in timeline
+                     if row.get('jointName') == locator
+                     and row.get('contactState') == 'direct_contact'
+                     and row.get('surface') == surface and row.get('visible') is True
+                     and row.get('sourceTrackStationary') is True]
+        if len(set(row_times)) < 2:
+            continue
+        samples = sorted({time for time in row_times
+                          if valid_fit_times[0] - 1e-6 <= time <= valid_fit_times[-1] + 1e-6})
+        if len(samples) >= 2:
+            result['jointSampleCounts'][joint] = len(samples)
+    result['sampleCount'] = sum(result['jointSampleCounts'].values())
+    return result
+
+
 def observed_ground_contact_mask(evidence, names, count):
     """Only observed stationary toe/sole contacts own a floor-height anchor."""
     result = np.zeros((count, len(names)), dtype=bool)
@@ -1432,6 +2069,32 @@ def stationary_contact_anchor_ids(evidence, names, count):
                     group, None if epochs is None else epochs[frame_index],
                 )
     return result
+
+
+def interpolated_contact_mask(pinned, first, last, anchor_ids=None, *, model_pinned=None):
+    """A stationary interval needs one stable identity at both ends.
+
+    Observed contacts are stable only when their source anchor identity agrees
+    across the interval. Model-declared stance pins carry their own stable,
+    separately typed identity: an unknown source patch at one endpoint must not
+    erase a declared stationary model pin. ``model_pinned`` is intentionally
+    separate from ``anchor_ids`` so source facts are never synthesized.
+    """
+    active = pinned[first] & pinned[last]
+    if anchor_ids is None and model_pinned is None:
+        return active
+    stable = np.ones(pinned.shape[1], dtype=bool)
+    if anchor_ids is not None:
+        identities = np.asarray(anchor_ids, dtype=object)
+        if identities.shape != pinned.shape:
+            raise ValueError('contact anchor identities must match pinned frames and joints')
+        stable = identities[first] == identities[last]
+    if model_pinned is not None:
+        model = np.asarray(model_pinned, dtype=bool)
+        if model.shape != pinned.shape:
+            raise ValueError('model contact pins must match pinned frames and joints')
+        stable = stable | (model[first] & model[last])
+    return active & stable
 
 
 def vertical_only_contact_targets(points, evidence, names, *, floor=None):
@@ -1521,7 +2184,7 @@ class InfeasibleContactCorrection(ValueError):
 def calibrate_shared_contact_pair(points, mask, anchor_ids, *, distance, ground_mask, floor):
     """Calibrate linked stationary anchors without splitting their identities.
 
-    Each node is one observed anchor, each edge one fixed-length foot. The small
+    Each node is one observed anchor, each edge one fixed-length segment. The small
     static solve changes anchor positions, never contact intervals or releases.
     Calibration is bounded to ten percent of the segment length; larger source
     disagreements need new evidence rather than a substantially rewritten stance.
@@ -1592,8 +2255,10 @@ def calibrate_shared_contact_pair(points, mask, anchor_ids, *, distance, ground_
                       options={'maxiter': 100, 'ftol': 1e-12})
     calibrated = solved.x.reshape(-1, 3)
     errors = np.abs(np.linalg.norm(calibrated[first] - calibrated[last], axis=1) - distance)
-    if (not solved.success or not np.isfinite(calibrated).all() or np.max(errors) > 1e-7
-            or np.max(np.linalg.norm(calibrated - reference, axis=1)) > allowance + 1e-7):
+    if (not solved.success or not np.isfinite(calibrated).all()
+            or np.max(errors, initial=0.) > 1e-7
+            or np.max(np.linalg.norm(calibrated - reference, axis=1), initial=0.)
+            > allowance + 1e-7):
         raise InfeasibleContactCorrection('Stationary anchors cannot share rigid lengths within the calibration allowance')
     result = points.copy()
     for group, (joint, frames) in enumerate(members):

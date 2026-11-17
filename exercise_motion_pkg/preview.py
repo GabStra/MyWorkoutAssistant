@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -440,7 +441,9 @@ def write_baked_preview_html(path: Path, payload: dict[str, object], *, three_mo
     frames = [MotionFrame(time_sec=float(frame["timeSec"]), joints=frame["joints"],
                           source_time_sec=(float(frame["sourceTimeSec"]) if frame.get("sourceTimeSec") is not None else None),
                           source_frame_index=(int(frame["sourceFrameIndex"]) if frame.get("sourceFrameIndex") is not None else None),
-                          inference_frame_index=(int(frame["inferenceFrameIndex"]) if frame.get("inferenceFrameIndex") is not None else None))
+                          inference_frame_index=(int(frame["inferenceFrameIndex"]) if frame.get("inferenceFrameIndex") is not None else None),
+                          bone_sides=frame.get("boneSides"),
+                          bone_side_provenance=frame.get("boneSideProvenance"))
               for frame in payload["frames"]]
     clip = MotionClip(fps=float(payload["fps"]), joint_names=list(payload["jointNames"]),
                       frames=frames, metadata={"bakedWearPayload": payload})
@@ -461,6 +464,7 @@ def write_preview_html(
     path.parent.mkdir(parents=True, exist_ok=True)
     raw_motion_review = _clip_requests_raw_motion_render(clip)
     baked_wear_payload = _baked_wear_payload_metadata(clip)
+    native_foot_geometry = _preview_native_foot_geometry(clip, baked_wear_payload)
     baked_preview_settings = (
         (baked_wear_payload.get("selectedPreviewSettings") or {})
         if isinstance(baked_wear_payload, dict)
@@ -505,6 +509,9 @@ def write_preview_html(
     ground_payload = (
         (preview_clip.metadata.get("ground") if isinstance(preview_clip.metadata, dict) else None) or {}
     )
+    if not _clip_has_explicit_render_floor(preview_clip):
+        ground_payload = {key: value for key, value in ground_payload.items()
+                          if key not in {"renderGroundPlane", "renderGroundOrigin"}}
     preview_elevated_support_surfaces = _authoritative_baked_elevated_support_surfaces(
         preview_clip,
         [
@@ -566,6 +573,9 @@ def write_preview_html(
                    if frame.inference_frame_index is not None else {}),
                 "sourceJoints": frame.joints,
                 "joints": frame.joints,
+                **({"boneSides": _serialize_bone_sides(frame.bone_sides)} if frame.bone_sides else {}),
+                **({"boneSideProvenance": dict(frame.bone_side_provenance)}
+                   if frame.bone_side_provenance else {}),
             }
             for index, frame in enumerate(preview_clip.frames)
         ],
@@ -577,6 +587,10 @@ def write_preview_html(
             if isinstance(clip.metadata, dict) and isinstance(clip.metadata.get("spineposeMotionFusion"), dict)
             else {}
         ),
+        "sourceFootMarkerPrior": ((baked_wear_payload or {}).get("sourceFootMarkerPrior") or
+                                  ((clip.metadata.get("reconstruction") or {}).get("footMarkerPrior")
+                                   if isinstance(clip.metadata, dict) else None)),
+        **({"nativeFootGeometry": native_foot_geometry} if native_foot_geometry is not None else {}),
         "comparisonFrames": _build_preview_comparison_frames(clip, preview_clip),
         "rawComparisonFrames": _build_preview_raw_comparison_frames(clip),
         "structuralRefinement": (
@@ -585,20 +599,21 @@ def write_preview_html(
             else {}
         ),
     }
-    three_module_url = THREE_MODULE_DOWNLOAD_URL
     if baked_wear_payload and baked_wear_payload.get("frames"):
         payload["frames"] = baked_wear_payload["frames"]
         payload["loopable"] = bool(baked_wear_payload.get("loop", {}).get("enabled"))
-    if three_module_path is not None:
-        resolved_three_module_path = three_module_path.expanduser().resolve()
-        if not resolved_three_module_path.is_file():
-            raise FileNotFoundError(
-                f"Local Three.js module not found: {resolved_three_module_path}"
-            )
-        local_three_module_path = path.parent / THREE_MODULE_FILE_NAME
-        if resolved_three_module_path != local_three_module_path.resolve():
-            shutil.copy2(resolved_three_module_path, local_three_module_path)
-        three_module_url = f"./{THREE_MODULE_FILE_NAME}"
+    resolved_three_module_path = (three_module_path or ensure_three_module_asset()).expanduser().resolve()
+    if not resolved_three_module_path.is_file():
+        raise FileNotFoundError(
+            f"Local Three.js module not found: {resolved_three_module_path}"
+        )
+    local_three_module_path = path.parent / THREE_MODULE_FILE_NAME
+    if resolved_three_module_path != local_three_module_path.resolve():
+        shutil.copy2(resolved_three_module_path, local_three_module_path)
+    # file:// module fetches are blocked by browsers, so keep the preview self-contained.
+    three_module_url = "data:text/javascript;base64," + base64.b64encode(
+        resolved_three_module_path.read_bytes()
+    ).decode("ascii")
     html = _build_html(payload, three_module_url=three_module_url)
     path.write_text(html, encoding="utf-8")
 
@@ -1021,6 +1036,7 @@ def build_wear_skeleton_payload(
         if len(active_frames) >= 2
         else 0.0
     )
+    native_foot_geometry = _preview_native_foot_geometry(clip, _baked_wear_payload_metadata(clip))
     return {
         "schemaVersion": 1,
         "kind": "wearPreviewSkeleton",
@@ -1036,6 +1052,10 @@ def build_wear_skeleton_payload(
         "rootJoint": root_joint,
         "groundContactMode": _clip_ground_contact_mode(clip),
         "renderFloorY": render_floor_y,
+        "renderFloorSource": (
+            (preview_clip.metadata.get("ground") or {}).get("renderSource")
+            if _clip_has_explicit_render_floor(preview_clip) else None
+        ),
         "elevatedSupportSurfaces": elevated_support_surfaces,
         "bakedPreviewConfiguration": {
             "autoWorldAlignment": True,
@@ -1056,7 +1076,28 @@ def build_wear_skeleton_payload(
         },
         "bounds": _serialize_bounds(centered_bounds),
         "frames": centered_frames,
+        **({"nativeFootGeometry": native_foot_geometry} if native_foot_geometry is not None else {}),
     }
+
+
+def _preview_native_foot_geometry(
+    clip: MotionClip,
+    baked_wear_payload: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Serialize only explicitly qualified native geometry; raw promotion is preview-owned."""
+    from .native_foot_geometry import native_foot_geometry_from_prior, validated_native_foot_geometry
+
+    if isinstance(baked_wear_payload, dict):
+        if "nativeFootGeometry" in baked_wear_payload:
+            geometry = validated_native_foot_geometry(baked_wear_payload.get("nativeFootGeometry"))
+            if geometry is None:
+                raise ValueError("Baked nativeFootGeometry is present but invalid.")
+            return geometry
+        return None
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    reconstruction = metadata.get("reconstruction")
+    prior = reconstruction.get("footMarkerPrior") if isinstance(reconstruction, dict) else None
+    return native_foot_geometry_from_prior(prior)
 
 
 def detect_preview_loops_for_clip(clip: MotionClip) -> list[dict[str, object]]:
@@ -1120,6 +1161,13 @@ def _build_wear_transformed_frames(
                 # validator are invariant to these rigid transforms.
                 "sourceJoints": dict(transformed_joints),
                 "joints": transformed_joints,
+                **({"boneSides": {
+                    key: _point_to_list(_apply_rotations_to_point(tuple(axis), auto_alignment))
+                    for key, axis in frame.bone_sides.items()
+                    if _is_serialized_point(axis)
+                }} if frame.bone_sides else {}),
+                **({"boneSideProvenance": dict(frame.bone_side_provenance)}
+                   if frame.bone_side_provenance else {}),
             }
         )
     return transformed_frames
@@ -1267,6 +1315,14 @@ def _map_frame_joint_fields(
                 for joint_name, point in joints.items()
                 if _is_serialized_point(point)
             }
+    bone_sides = frame.get("boneSides")
+    if isinstance(bone_sides, dict):
+        transformed_origin = transform((0.0, 0.0, 0.0))
+        mapped["boneSides"] = {
+            key: [float(value) - float(origin) for value, origin in zip(transform(axis), transformed_origin)]
+            for key, axis in bone_sides.items()
+            if _is_serialized_point(axis)
+        }
     return mapped
 
 
@@ -1515,6 +1571,9 @@ def _authoritative_baked_elevated_support_surfaces(
     *,
     active_start_frame: int,
 ) -> list[dict[str, object]]:
+    baked = clip.metadata.get('bakedWearPayload') if isinstance(clip.metadata, dict) else None
+    if isinstance(baked, dict) and isinstance(baked.get('elevatedSupportSurfaces'), list):
+        return json.loads(json.dumps(baked['elevatedSupportSurfaces']))
     cleanup = clip.metadata.get("cleanup") if isinstance(clip.metadata, dict) else None
     contacts = cleanup.get("footContacts") if isinstance(cleanup, dict) else None
     if not isinstance(contacts, list) or not frames:
@@ -2040,6 +2099,12 @@ def _point_to_list(point: tuple[float, float, float]) -> list[float]:
     return [float(point[0]), float(point[1]), float(point[2])]
 
 
+def _serialize_bone_sides(values: dict[str, tuple[float, float, float]] | None) -> dict[str, list[float]]:
+    if not isinstance(values, dict):
+        return {}
+    return {key: _point_to_list(axis) for key, axis in values.items() if _is_serialized_point(axis)}
+
+
 def _is_serialized_point(value: object) -> bool:
     return isinstance(value, (list, tuple)) and len(value) >= 3
 
@@ -2089,6 +2154,9 @@ def _clip_has_authoritative_video_floor_alignment(clip: MotionClip) -> bool:
 
 
 def _clip_has_explicit_render_floor(clip: MotionClip) -> bool:
+    from .ground import clip_has_render_floor_authority
+    if not clip_has_render_floor_authority(clip):
+        return False
     ground = clip.metadata.get("ground") if isinstance(clip.metadata, dict) else None
     plane = ground.get("renderGroundPlane") if isinstance(ground, dict) else None
     if not isinstance(plane, dict):
@@ -2146,6 +2214,8 @@ def _center_preview_clip_for_render(clip: MotionClip) -> MotionClip:
                 )
                 for joint_name, point in frame.joints.items()
             },
+            bone_sides=frame.bone_sides,
+            bone_side_provenance=frame.bone_side_provenance,
         )
         for frame in clip.frames
     ]
@@ -2320,7 +2390,11 @@ def _transform_frame_for_preview(frame: MotionFrame, *, flip_vertical: bool) -> 
         for joint_name, point in frame.joints.items()
     }
     return MotionFrame(time_sec=frame.time_sec, joints=joints,
-                       source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+                       source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index,
+                       inference_frame_index=frame.inference_frame_index,
+                       bone_sides=({key: (axis[0], -axis[1], axis[2]) for key, axis in frame.bone_sides.items()}
+                                   if frame.bone_sides else None),
+                       bone_side_provenance=frame.bone_side_provenance)
 
 
 
@@ -4011,8 +4085,8 @@ def _preview_loop_velocity_cost(
     key_joints: list[str],
     root_joint: str | None,
 ) -> float:
-    if start_index <= 0 or end_index >= clip.frame_count - 1:
-        return 0.0
+    if start_index < 0 or end_index >= clip.frame_count or end_index - start_index < 1:
+        return float("inf")
     start_frame = clip.frames[start_index]
     next_start = clip.frames[start_index + 1]
     prev_end = clip.frames[end_index - 1]
@@ -4050,7 +4124,7 @@ def _preview_loop_velocity_cost(
             end_local[2] - prev_end_local[2],
         )
         distances.append(_point_distance(start_velocity, end_velocity))
-    return sum(distances) / len(distances) if distances else 0.0
+    return sum(distances) / len(distances) if distances else float("inf")
 
 
 def _localize_point(point: tuple[float, float, float], *, origin: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -4355,6 +4429,38 @@ def _build_html(
     import * as THREE from "three";
 
     const payload = {payload_json};
+    function wearValidateNativeFootGeometry(value) {{
+      if (value == null) return null;
+      const fail = (message) => {{ throw new Error(`Invalid nativeFootGeometry: ${{message}}`); }};
+      if (!value || typeof value !== "object" || Array.isArray(value)) fail("expected object");
+      if (value.version !== 1 || value.source !== "named_smpl_rest_heel_and_toe_vertices") fail("unsupported version or source");
+      if (typeof value.modelSha256 !== "string" || !/^[0-9a-f]{{64}}$/.test(value.modelSha256)) fail("invalid modelSha256");
+      const sides = value.sides;
+      if (!sides || typeof sides !== "object" || Array.isArray(sides)
+        || Object.keys(sides).sort().join(",") !== "left,right") fail("expected left and right sides");
+      const normalized = {{}};
+      for (const sideName of ["left", "right"]) {{
+        const side = sides[sideName];
+        const length = Number(side?.ankleToFootJointLengthMeters);
+        if (!side || typeof side !== "object" || !Number.isFinite(length) || length <= 0) fail(`invalid ${{sideName}} reference length`);
+        const vector = (name) => {{
+          const result = side[name];
+          if (!Array.isArray(result) || result.length !== 3 || !result.every(Number.isFinite)) fail(`invalid ${{sideName}} ${{name}}`);
+          return [...result];
+        }};
+        const heel = vector("heelFromAnkleLocalMeters");
+        const toe = vector("toeFromAnkleLocalMeters");
+        if (toe[0] <= 0 || Math.hypot(...toe) <= 1e-9
+          || Math.hypot(...toe.map((component, axis) => component - heel[axis])) <= 1e-9) fail(`invalid ${{sideName}} marker span`);
+        normalized[sideName] = {{
+          ankleToFootJointLengthMeters: length,
+          heelFromAnkleLocalMeters: heel,
+          toeFromAnkleLocalMeters: toe,
+        }};
+      }}
+      return {{ version: 1, source: value.source, modelSha256: value.modelSha256, sides: normalized }};
+    }}
+    let activeNativeFootGeometry = wearValidateNativeFootGeometry(payload.nativeFootGeometry);
     const smplPoseSource = payload.smplPoseSource;
     const smplGlobalOrientations = (() => {{
       if (
@@ -4744,6 +4850,7 @@ def _build_html(
       for (const surface of surfaces) {{
         const center = surface?.center;
         const size = Number(surface?.size);
+        const depth = Number(surface?.depth ?? surface?.size);
         const thickness = Number(surface?.thickness);
         const topY = Number(surface?.topY);
         if (!Array.isArray(center) || center.length < 3 || !Number.isFinite(size)
@@ -4751,7 +4858,7 @@ def _build_html(
           continue;
         }}
         const mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(size, thickness, size),
+          new THREE.BoxGeometry(size, thickness, depth),
           new THREE.MeshLambertMaterial({{
             color: 0x173f46,
             flatShading: true,
@@ -4762,6 +4869,10 @@ def _build_html(
         );
         mesh.renderOrder = -1;
         mesh.position.set(Number(center[0]), topY - thickness * 0.5, Number(center[2]));
+        if (Array.isArray(surface.orientationPoint)) {{
+          mesh.rotation.y = -Math.atan2(Number(surface.orientationPoint[2]) - Number(center[2]),
+                                      Number(surface.orientationPoint[0]) - Number(center[0]));
+        }}
         scene.add(mesh);
         bakedWearElevatedSurfaceMeshes.push(mesh);
       }}
@@ -9121,19 +9232,6 @@ def _build_html(
             sourceJoints[jointName] = [sourceReference.x, sourceReference.y, sourceReference.z];
           }}
         }}
-        const boneSides = {{}};
-        for (const spec of smplPoseSource?.twistSpecs ?? []) {{
-          const side = smplBoneCrossSectionReference(
-            frame,
-            spec.start,
-            spec.end,
-            translation
-          );
-          if (side) {{
-            boneSides[`${{spec.start}}->${{spec.end}}`] = [side.x, side.y, side.z];
-          }}
-        }}
-        const shoeOrientation = {{}};
         const placementOrigin = toBaseWorldPoint(
           [0.0, 0.0, 0.0], translation, false, null, selectedPreviewSettings.fixedRoot
         );
@@ -9148,6 +9246,75 @@ def _build_html(
           const direction = endpoint.sub(placementOrigin).normalize();
           return direction.lengthSq() > 1e-12 ? direction : null;
         }};
+        const boneSides = {{}};
+        const boneSideProvenance = {{}};
+        const nativeSideProvenance = "gvhmr_ankle_global_smpl_rotation";
+        const carriedKeys = new Set([
+          ...Object.keys(frame.boneSides ?? {{}}),
+          ...Object.keys(sourcePayloadFrame?.boneSides ?? {{}}),
+        ]);
+        for (const boneKey of carriedKeys) {{
+          // Keep each axis paired with the provenance from the same frame.
+          // The raw payload fallback is valid only for the exact indexed time.
+          let axisSource = null;
+          let side = null;
+          let provenance = null;
+          if (frame.boneSideProvenance?.[boneKey] === nativeSideProvenance
+              && Array.isArray(frame.boneSides?.[boneKey])) {{
+            axisSource = frame;
+            side = frame.boneSides[boneKey];
+            provenance = frame.boneSideProvenance[boneKey];
+          }} else if (sourcePayloadFrame?.boneSideProvenance?.[boneKey] === nativeSideProvenance
+              && Array.isArray(sourcePayloadFrame.boneSides?.[boneKey])
+              && Number.isFinite(Number(frame.timeSec))
+              && Number.isFinite(Number(sourcePayloadFrame.timeSec))
+              && Math.abs(Number(frame.timeSec) - Number(sourcePayloadFrame.timeSec)) <= 1e-6) {{
+            axisSource = sourcePayloadFrame;
+            side = sourcePayloadFrame.boneSides[boneKey];
+            provenance = sourcePayloadFrame.boneSideProvenance[boneKey];
+          }}
+          if (provenance !== nativeSideProvenance) continue;
+          const [startJoint, endJoint] = boneKey.split("->", 2);
+          const oldStart = axisSource?.joints?.[startJoint];
+          const oldEnd = axisSource?.joints?.[endJoint];
+          if (!Array.isArray(side) || side.length < 3
+              || !side.slice(0, 3).map(Number).every(Number.isFinite)
+              || !startJoint || !endJoint || !Array.isArray(oldStart) || !Array.isArray(oldEnd)
+              || !Array.isArray(joints[startJoint]) || !Array.isArray(joints[endJoint])) {{
+            throw new Error(`Qualified native bone side is incomplete: ${{boneKey}}`);
+          }}
+          const oldForward = transformShoeDirection(
+            new THREE.Vector3(...oldEnd).sub(new THREE.Vector3(...oldStart)).toArray()
+          );
+          const newForward = new THREE.Vector3(...joints[endJoint])
+            .sub(new THREE.Vector3(...joints[startJoint]));
+          const worldSide = transformShoeDirection(side);
+          if (!oldForward || newForward.lengthSq() <= 1e-12 || !worldSide) {{
+            throw new Error(`Qualified native bone side cannot be transported: ${{boneKey}}`);
+          }}
+          newForward.normalize();
+          worldSide.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(oldForward, newForward));
+          worldSide.addScaledVector(newForward, -worldSide.dot(newForward));
+          if (worldSide.lengthSq() <= 1e-12) {{
+            throw new Error(`Qualified native bone side became collinear: ${{boneKey}}`);
+          }}
+          boneSides[boneKey] = worldSide.normalize().toArray();
+          boneSideProvenance[boneKey] = provenance;
+        }}
+        for (const spec of smplPoseSource?.twistSpecs ?? []) {{
+          const boneKey = `${{spec.start}}->${{spec.end}}`;
+          if (boneSideProvenance[boneKey]) continue;
+          const side = smplBoneCrossSectionReference(
+            frame,
+            spec.start,
+            spec.end,
+            translation
+          );
+          if (side) {{
+            boneSides[boneKey] = [side.x, side.y, side.z];
+          }}
+        }}
+        const shoeOrientation = {{}};
         for (const [footSide, orientation] of Object.entries(frame.shoeOrientation ?? {{}})) {{
           const forward = transformShoeDirection(orientation?.forward);
           const side = transformShoeDirection(orientation?.side);
@@ -9156,6 +9323,19 @@ def _build_html(
           if (side.lengthSq() <= 1e-12) continue;
           side.normalize();
           shoeOrientation[footSide] = {{ forward: forward.toArray(), side: side.toArray() }};
+        }}
+        for (const [boneKey, provenance] of Object.entries(boneSideProvenance)) {{
+          if (provenance !== nativeSideProvenance) continue;
+          const [ankleName, footName] = boneKey.split("->", 2);
+          const footSide = ankleName?.replace(/_ankle$/, "");
+          if (!['left', 'right'].includes(footSide) || footName !== `${{footSide}}_foot`) continue;
+          const forward = new THREE.Vector3(...joints[`${{footSide}}_foot`])
+            .sub(new THREE.Vector3(...joints[`${{footSide}}_ankle`])).normalize();
+          shoeOrientation[footSide] = {{
+            ...(shoeOrientation[footSide] ?? {{}}),
+            forward: forward.toArray(),
+            side: boneSides[boneKey],
+          }};
         }}
         return {{
           ...(sourceFrameIndex != null ? {{ sourceFrameIndex }} : {{}}),
@@ -9170,6 +9350,7 @@ def _build_html(
           joints,
           cameraPlacementReferenceJoints,
           boneSides,
+          boneSideProvenance,
           shoeOrientation,
         }};
       }});
@@ -9188,10 +9369,14 @@ def _build_html(
           null,
           false
         );
+        const orientationPoint = Array.isArray(surface.orientationPoint)
+          ? toBaseWorldPoint(surface.orientationPoint, [0.0, 0.0, 0.0], true, null, false)
+          : null;
         return {{
           ...surface,
           center: [transformedCenter.x, transformedCenter.y, transformedCenter.z],
           topY: transformedCenter.y,
+          orientationPoint: orientationPoint ? [orientationPoint.x, orientationPoint.y, orientationPoint.z] : null,
         }};
       }});
       const wearCoordinateNormalization = normalizeBakedWearSkeletonCoordinates(
@@ -9204,13 +9389,16 @@ def _build_html(
           ...surface,
           center: [surface.center[0], -surface.center[1], -surface.center[2]],
           topY: -surface.center[1],
+          orientationPoint: Array.isArray(surface.orientationPoint)
+            ? [surface.orientationPoint[0], -surface.orientationPoint[1], -surface.orientationPoint[2]] : null,
         }}));
       }}
       const bakedSagittalPlaneAlignment = alignBakedSagittalPlaneToGridAxis(frames);
       frames = bakedSagittalPlaneAlignment.frames;
       if (bakedSagittalPlaneAlignment.alignment?.applied && elevatedSupportSurfaces.length > 0) {{
         const surfaceFrames = elevatedSupportSurfaces.map((surface) => ({{
-          joints: {{ support_surface_center: surface.center }},
+          joints: {{ support_surface_center: surface.center,
+                     support_surface_orientation: surface.orientationPoint ?? surface.center }},
         }}));
         const alignedSurfaceFrames = rotateBakedWearFramesToSagittalPlane(
           surfaceFrames,
@@ -9218,7 +9406,8 @@ def _build_html(
         );
         elevatedSupportSurfaces = elevatedSupportSurfaces.map((surface, index) => {{
           const center = alignedSurfaceFrames[index].joints.support_surface_center;
-          return {{ ...surface, center, topY: center[1] }};
+          return {{ ...surface, center, topY: center[1],
+                    orientationPoint: alignedSurfaceFrames[index].joints.support_surface_orientation }};
         }});
       }}
       const bakedSagittalYawDegrees = bakedSagittalPlaneAlignment.alignment?.applied
@@ -9271,6 +9460,7 @@ def _build_html(
         jointNames: payload.jointNames,
         rootJoint: payload.rootJoint,
         selectedPreviewSettings,
+        sourceFootMarkerPrior: payload.sourceFootMarkerPrior ?? null,
         bakedPreviewConfiguration: {{
           autoWorldAlignment: selectedPreviewSettings.autoWorldAlignment,
           lockGlobalRootDrift: selectedPreviewSettings.fixedRoot,
@@ -9433,7 +9623,7 @@ def _build_html(
         cameraTouched = true;
       }}
       if (Number.isFinite(Number(options.cameraPitchDegrees))) {{
-        pitch = Math.max(-1.2, Math.min(1.2, Number(options.cameraPitchDegrees) * Math.PI / 180));
+        pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, Number(options.cameraPitchDegrees) * Math.PI / 180));
         cameraTouched = true;
       }}
       refreshMergedBoundsHelper();
@@ -9468,7 +9658,11 @@ def _build_html(
       bakedWearGroundContactMode = String(
         exportPayload?.groundContactMode ?? "unknown"
       ).trim().toLowerCase();
-      playbackState = {{ frames, boundsFrames: frames, loopable: exportPayload.loop?.enabled === true, fixedRig: exportPayload.fixedRig ?? null,
+      setWearNativeFootGeometry(exportPayload.nativeFootGeometry);
+      playbackState = {{ frames, boundsFrames: frames, loopable: exportPayload.loop?.enabled === true,
+        fixedRig: exportPayload.fixedRig ? {{ ...exportPayload.fixedRig,
+          _canonicalExecutionForSampling: exportPayload.canonicalExecution
+            ?? exportPayload.bakedWearPayload?.canonicalExecution ?? {{}} }} : null,
         footRestPitchRadians: exportPayload.footRestPitchRadians ?? {{}} }};
       const exportedRenderFloorY = exportPayload?.renderFloorY == null
         ? Number.NaN : Number(exportPayload.renderFloorY);
@@ -9509,8 +9703,8 @@ def _build_html(
       yaw = (options.cameraYawDegrees != null && Number.isFinite(reviewYaw)
         ? reviewYaw : (Number(wearDisplay.viewYawDegrees) || 0.0)) * Math.PI / 180.0;
       pitch = Math.max(
-        -1.2,
-        Math.min(1.2, (options.cameraPitchDegrees != null && Number.isFinite(reviewPitch)
+        -Math.PI / 2,
+        Math.min(Math.PI / 2, (options.cameraPitchDegrees != null && Number.isFinite(reviewPitch)
           ? reviewPitch : (Number(wearDisplay.viewPitchDegrees) || 0.0)) * Math.PI / 180.0)
       );
       cameraTouched = true;
@@ -9650,6 +9844,14 @@ def _build_html(
     ];
 
     window.exerciseMotionAutomation = {{
+      getRenderedSupportSurfaces() {{
+        return bakedWearElevatedSurfaceMeshes.map((mesh) => ({{
+          center: [mesh.position.x, mesh.position.y + mesh.geometry.parameters.height * .5, mesh.position.z],
+          size: mesh.geometry.parameters.width, depth: mesh.geometry.parameters.depth,
+          thickness: mesh.geometry.parameters.height,
+          axisX: new THREE.Vector3(1, 0, 0).applyQuaternion(mesh.quaternion).toArray(),
+        }}));
+      }},
       getAvailableBakeOptions() {{
         return automationBakeOptions.map((option) => ({{ ...option }}));
       }},
@@ -10543,9 +10745,15 @@ def _build_html(
       return Math.max(0.7, fitHeightDistance, fitWidthDistance);
     }}
 
-    const bakedMeshFitCache = new WeakMap();
-    const bakedMeshProjectionCache = new WeakMap();
+    let bakedMeshFitCache = new WeakMap();
+    let bakedMeshProjectionCache = new WeakMap();
+    function setWearNativeFootGeometry(value) {{
+      activeNativeFootGeometry = wearValidateNativeFootGeometry(value);
+      bakedMeshFitCache = new WeakMap();
+      bakedMeshProjectionCache = new WeakMap();
+    }}
     function bakedMeshFitPoints(frames) {{
+      wearBindClipDimensions(frames);
       if (bakedMeshFitCache.has(frames)) return bakedMeshFitCache.get(frames);
       if (wearStableFrames !== frames) {{
         wearStableFrames = frames;
@@ -10705,19 +10913,166 @@ def _build_html(
       const wrap = playbackState.loopable;
       const contactFootTracks = rig.contactFootTracks ?? null;
       let cache = rigSplineCache.get(rig);
-      if (cache?.wrap === wrap && cache.contactFootTracks === contactFootTracks) return cache;
+      if (cache?.wrap === wrap && cache.contactFootTracks === contactFootTracks
+          && cache.supportContract === rig.supportJointTracks
+          && cache.materialContract === rig.materialFrames) return cache;
       const roots = rig.coordinates.map(row => row.slice(0, 3));
       const rotations = rig.rotationJointNames.map((name, j) => rig.coordinates.map(row => quaternion(row, 3 + j * 3).toArray()));
       const tangents = (track, isQuaternion, trackWrap = wrap) => track.map((row, i) => limitedRigTangent(
         track[trackWrap ? (i - 1 + track.length) % track.length : Math.max(0, i - 1)], row,
         track[trackWrap ? (i + 1) % track.length : Math.min(track.length - 1, i + 1)], isQuaternion,
         rig.interpolation === 'limited_quaternion_hermite_v2'));
+      let materialFrames = null;
+      if (Object.prototype.hasOwnProperty.call(rig, 'materialFrames')) {{
+        const binding = rig.materialFrames, count = rig.coordinates.length;
+        const keys = ['left_ankle->left_foot', 'right_ankle->right_foot'];
+        const vector = row => Array.isArray(row) && row.length === 3 && row.every(Number.isFinite);
+        if (!binding || binding.version !== 1 || !Array.isArray(binding.referenceCoordinates)
+            || binding.referenceCoordinates.length !== count
+            || binding.referenceCoordinates.some(row => !Array.isArray(row) || row.length !== rig.coordinates[0].length || !row.every(Number.isFinite))
+            || !binding.referenceBoneSides || Object.keys(binding.referenceBoneSides).length !== 2
+            || keys.some(key => !Array.isArray(binding.referenceBoneSides[key])
+              || binding.referenceBoneSides[key].length !== count || binding.referenceBoneSides[key].some(row => !vector(row))))
+          throw new Error('Malformed materialFrames v1');
+        const bindings = binding.stationaryLocalBindings ?? {{}};
+        if (typeof bindings !== 'object' || Array.isArray(bindings) || Object.keys(bindings).some(key => !keys.includes(key)))
+          throw new Error('Malformed stationaryLocalBindings');
+        for (const key of keys) {{
+          const occupied = new Set();
+          if (bindings[key] != null && !Array.isArray(bindings[key])) throw new Error('Malformed stationaryLocalBindings');
+          for (const episode of bindings[key] ?? []) {{
+            const frames = episode.activeFrames;
+            if (!Number.isInteger(episode.startFrame) || !Number.isInteger(episode.endFrame)
+                || episode.startFrame < 0 || episode.endFrame >= count || episode.endFrame < episode.startFrame
+                || !Array.isArray(frames) || frames.length < 2
+                || frames.some((frame, i) => !Number.isInteger(frame) || frame < episode.startFrame || frame > episode.endFrame
+                  || (i > 0 && frame <= frames[i-1]) || occupied.has(frame))
+                || !vector(episode.localSideAxis) || Math.hypot(...episode.localSideAxis) < 1e-8)
+              throw new Error('Malformed stationary local material binding');
+            frames.forEach(frame => occupied.add(frame));
+          }}
+        }}
+        const referenceRotations = rig.rotationJointNames.map((name, j) => binding.referenceCoordinates.map(row => quaternion(row, 3+j*3).toArray()));
+        for (let frame = 0; frame < count; frame++) {{
+          const world = [];
+          for (const index of rig.order) {{
+            const j = rig.rotationJointNames.indexOf(rig.jointNames[index]);
+            const local = j < 0 ? new THREE.Quaternion() : new THREE.Quaternion(...referenceRotations[j][frame]);
+            world[index] = rig.parents[index] < 0 ? local : world[rig.parents[index]].clone().multiply(local);
+          }}
+          for (const key of keys) {{
+            const foot = rig.jointNames.indexOf(key.split('->')[1]);
+            if (foot < 0 || !world[foot]) throw new Error('materialFrames missing foot chain');
+            const direction = new THREE.Vector3(...rig.offsets[foot]).applyQuaternion(world[foot]).normalize();
+            const side = new THREE.Vector3(...binding.referenceBoneSides[key][frame]);
+            if (side.addScaledVector(direction, -side.dot(direction)).length() < 1e-8)
+              throw new Error('Degenerate material reference side');
+          }}
+        }}
+        for (const key of keys) {{
+          const direction = new THREE.Vector3(...rig.offsets[rig.jointNames.indexOf(key.split('->')[1])]).normalize();
+          for (const episode of bindings[key] ?? []) {{
+            const side = new THREE.Vector3(...episode.localSideAxis);
+            if (side.addScaledVector(direction, -side.dot(direction)).length() < 1e-8)
+              throw new Error('Degenerate stationary local material side');
+          }}
+        }}
+        materialFrames = {{binding, referenceRotations,
+          rotationTangents: referenceRotations.map(track => tangents(track, true)),
+          sideTangents: Object.fromEntries(keys.map(key => [key, tangents(binding.referenceBoneSides[key], false)]))}};
+      }}
       let contactFeet = null;
+      let supportJointTracks = null;
+      if (rig.supportJointTracks != null) {{
+        const source = rig.supportJointTracks;
+        const count = rig.coordinates.length;
+        if (source.version !== 1 || source.source !== 'validated_stationary_body_support'
+            || Object.keys(source).some(key => !['version', 'source', 'joints'].includes(key))
+            || !source.joints || typeof source.joints !== 'object' || Array.isArray(source.joints)) {{
+          throw new Error('supportJointTracks has an unsupported or malformed contract');
+        }}
+        supportJointTracks = {{}};
+        for (const [name, track] of Object.entries(source.joints)) {{
+          if (!rig.jointNames.includes(name) || !track || !Array.isArray(track.episodeIds)
+              || Object.keys(track).some(key => key !== 'episodeIds')
+              || track.episodeIds.length !== count
+              || track.episodeIds.some(id => id !== null && (typeof id !== 'string' || !id))) {{
+            throw new Error(`supportJointTracks has malformed episode identity for ${{name}}`);
+          }}
+          supportJointTracks[name] = track.episodeIds;
+        }}
+      }}
       if (contactFootTracks != null) {{
-        if (contactFootTracks.version !== 1 || !contactFootTracks.left && !contactFootTracks.right) {{
+        const contactVersion = contactFootTracks.version;
+        if (![1, 2].includes(contactVersion) || !contactFootTracks.left && !contactFootTracks.right
+            || (contactVersion === 2 && !activeNativeFootGeometry)) {{
           throw new Error('contactFootTracks has an unsupported or malformed version');
         }}
         const count = rig.coordinates.length;
+        // Legacy v1 contact tracks are geometry-free and must not depend on the
+        // wear binding. Only the v2 native material sampler consumes the
+        // canonical foot scale, so keep that dependency scoped to v2.
+        let canonicalFootScale = null;
+        if (contactVersion === 2) {{
+          wearBindClipDimensions(playbackState.frames);
+          canonicalFootScale = Math.max(
+            wearStableBodyProportions.hipWidth * .98,
+            wearStableBodyProportions.shoulderWidth * .58,
+          );
+          if (!Number.isFinite(canonicalFootScale) || canonicalFootScale < 0) {{
+            throw new Error('Native material contact has no valid canonical rig foot scale');
+          }}
+        }}
+        const trianglesForMesh = mesh => mesh.faces.flatMap(face => {{
+          const indices = face.indices;
+          if (indices.length === 3) return [indices];
+          if (indices.length === 4) return [[indices[0], indices[1], indices[2]], [indices[0], indices[2], indices[3]]];
+          throw new Error('Native shoe mesh has unsupported face topology');
+        }});
+        const canonicalNativeShoeTriangles = (() => {{
+          const result = [];
+          for (const lower of [0, 8]) for (let corner = 0; corner < 8; corner++) {{
+            const next = (corner + 1) % 8;
+            const a = lower + corner, b = lower + 8 + corner;
+            const c = lower + 8 + next, d = lower + next;
+            result.push([a, b, c], [a, c, d]);
+          }}
+          for (let corner = 0; corner < 8; corner++) {{
+            const next = (corner + 1) % 8;
+            result.push([24, corner, next], [25, 16 + next, 16 + corner]);
+          }}
+          return result;
+        }})();
+        const validateNativeBinding = (side, episode, sideAxes, directions, footLength) => {{
+          const sideGeometry = activeNativeFootGeometry?.sides?.[side];
+          if (!sideGeometry || episode.triangleIndex >= 48) throw new Error(`${{side}} episode has no valid native shoe triangle`);
+          const vector = values => new THREE.Vector3(...values);
+          for (let frame = episode.startFrame; frame <= episode.endFrame; frame++) {{
+            const forward = vector(directions[frame]).normalize();
+            const lateral = vector(sideAxes[frame]).addScaledVector(forward, -vector(sideAxes[frame]).dot(forward)).normalize();
+            const up = lateral.clone().cross(forward).normalize();
+            const ankle = new THREE.Vector3(0, 0, 0);
+            const foot = forward.clone().multiplyScalar(footLength);
+            const mesh = wearMeshData();
+            wearShoe(mesh, ankle, foot, {{ forward, side: lateral, up }}, canonicalFootScale,
+              'primary', null, lateral, null,
+              {{ forward: forward.toArray(), side: lateral.toArray() }}, sideGeometry);
+            const triangles = trianglesForMesh(mesh);
+            const renderedTriangles = new Set(triangles.map(indices => [...indices].sort((a, b) => a - b).join(',')));
+            if (triangles.length !== 48 || canonicalNativeShoeTriangles.some(indices =>
+              !renderedTriangles.has([...indices].sort((a, b) => a - b).join(',')))) {{
+              throw new Error('Native shoe mesh triangle topology changed');
+            }}
+            const triangle = canonicalNativeShoeTriangles[episode.triangleIndex];
+            const point = new THREE.Vector3();
+            for (let i = 0; i < 3; i++) point.addScaledVector(mesh.vertices[triangle[i]], episode.barycentric[i]);
+            const scale = episode.referenceLengthMeters / footLength;
+            const expected = [point.dot(forward) * scale, point.dot(lateral) * scale, point.dot(up) * scale];
+            if (expected.some((value, axis) => Math.abs(value - episode.materialOffsetLocalMeters[axis]) > 2e-5)) {{
+              throw new Error(`${{side}} episode material offset does not match its native shoe triangle+barycentric binding`);
+            }}
+          }}
+        }};
         const scalarTangents = values => tangents(values.map(value => [value]), false);
         contactFeet = {{}};
         for (const side of ['left', 'right']) {{
@@ -10725,11 +11080,13 @@ def _build_html(
           if (source == null) continue;
           if (!Array.isArray(source.active) || source.active.length !== count
               || source.active.some(value => typeof value !== 'boolean')
-              || !Array.isArray(source.toes) || source.toes.length !== count
               || !Array.isArray(source.directions) || source.directions.length !== count
-              || source.toes.some(row => !Array.isArray(row) || row.length !== 3 || row.some(value => !Number.isFinite(value)))
               || source.directions.some(row => !Array.isArray(row) || row.length !== 3
                 || row.some(value => !Number.isFinite(value)))) {{
+            throw new Error(`${{side}} contact foot track has incompatible or non-finite frame data`);
+          }}
+          if (contactVersion === 1 && (!Array.isArray(source.toes) || source.toes.length !== count
+              || source.toes.some(row => !Array.isArray(row) || row.length !== 3 || row.some(value => !Number.isFinite(value))))) {{
             throw new Error(`${{side}} contact foot track has incompatible or non-finite frame data`);
           }}
           const directions = source.directions.map(row => {{
@@ -10765,10 +11122,9 @@ def _build_html(
             throw new Error(`${{side}} fixed-rig leg lengths are invalid`);
           }}
           const yawTrack = yaw.map(value => [value]), pitchTrack = pitch.map(value => [value]);
-          contactFeet[side] = {{
+          const track = {{
+            version: contactVersion,
             active: source.active,
-            toes: source.toes,
-            toeTangents: tangents(source.toes, false),
             yaw,
             yawTrack,
             yawTangents: tangents(yawTrack, false, false),
@@ -10780,9 +11136,71 @@ def _build_html(
             shinLength: legLengths[1],
             footLength: legLengths[2],
           }};
+          if (contactVersion === 1) {{
+            track.toes = source.toes;
+            track.toeTangents = tangents(source.toes, false);
+          }} else {{
+            if (!Array.isArray(source.anchorIds) || source.anchorIds.length !== count
+                || !Array.isArray(source.episodes) || !Array.isArray(source.sideAxes) || source.sideAxes.length !== count
+                || source.sideAxes.some(row => !Array.isArray(row) || row.length !== 3 || row.some(value => !Number.isFinite(value)))) {{
+              throw new Error(`${{side}} v2 contact track is missing identity, episode, or side-axis data`);
+            }}
+            const sideAxes = source.sideAxes.map((row, frame) => {{
+              const axis = new THREE.Vector3(...row), magnitude = axis.length();
+              if (!Number.isFinite(magnitude) || magnitude <= 1e-9 || Math.abs(magnitude - 1) > 1e-4
+                  || Math.abs(axis.dot(new THREE.Vector3(...directions[frame]))) > 1e-4) {{
+                throw new Error(`${{side}} contact side axes must be normalized and perpendicular to direction`);
+              }}
+              return axis.normalize().toArray();
+            }});
+            const episodes = source.episodes.map((episode, index) => {{
+              const integer = value => Number.isInteger(value);
+              const vector = value => Array.isArray(value) && value.length === 3 && value.every(Number.isFinite);
+              if (!episode || !integer(episode.startFrame) || !integer(episode.endFrame)
+                  || episode.startFrame < 0 || episode.endFrame >= count || episode.startFrame > episode.endFrame
+                  || (index > 0 && episode.startFrame <= source.episodes[index - 1].endFrame)
+                  || typeof episode.anchorId !== 'string' || !episode.anchorId
+                  || !['forefoot', 'heel', 'full_sole'].includes(episode.regionRole)
+                  || !['stationary', 'verticalOnly'].includes(episode.mode)
+                  || episode.primitiveId !== `wearShoe:${{side}}_ankle->${{side}}_foot`
+                  || !integer(episode.triangleIndex) || episode.triangleIndex < 0 || episode.triangleIndex >= 48
+                  || !Array.isArray(episode.barycentric) || episode.barycentric.length !== 3
+                  || episode.barycentric.some(value => !Number.isFinite(value) || value < 0)
+                  || Math.abs(episode.barycentric.reduce((sum, value) => sum + value, 0) - 1) > 1e-6
+                  || !vector(episode.materialOffsetLocalMeters)
+                  || !Number.isFinite(episode.referenceLengthMeters) || episode.referenceLengthMeters <= 0) {{
+                throw new Error(`${{side}} contact episode ${{index}} is malformed`);
+              }}
+              if (episode.mode === 'stationary') {{
+                if (!vector(episode.targetWorld)) throw new Error(`${{side}} stationary episode needs targetWorld`);
+              }} else {{
+                if (episode.targetWorld !== undefined || !vector(episode.surfaceNormal)
+                    || !Number.isFinite(episode.planeOffsetMeters)) throw new Error(`${{side}} verticalOnly episode needs a plane and no targetWorld`);
+                const normalLength = Math.hypot(...episode.surfaceNormal);
+                if (Math.abs(normalLength - 1) > 1e-4) throw new Error(`${{side}} verticalOnly surface normal must be normalized`);
+              }}
+              validateNativeBinding(side, episode, sideAxes, directions, legLengths[2]);
+              return episode;
+            }});
+            const episodeByFrame = Array(count).fill(null);
+            for (const episode of episodes) for (let frame = episode.startFrame; frame <= episode.endFrame; frame++) {{
+              if (episodeByFrame[frame] != null || source.anchorIds[frame] !== episode.anchorId) throw new Error(`${{side}} contact episode mapping is overlapping or inconsistent`);
+              episodeByFrame[frame] = episode;
+            }}
+            for (let frame = 0; frame < count; frame++) {{
+              if (source.active[frame] !== (episodeByFrame[frame] != null)
+                  || (!source.active[frame] && source.anchorIds[frame] != null)) throw new Error(`${{side}} active frame lacks exactly one episode`);
+            }}
+            track.episodes = episodes;
+            track.episodeByFrame = episodeByFrame;
+            track.anchorIds = source.anchorIds;
+            track.sideAxes = sideAxes;
+            track.sideAxisTangents = tangents(sideAxes, false);
+          }}
+          contactFeet[side] = track;
         }}
       }}
-      cache = {{wrap, contactFootTracks, contactFeet, roots, rotations,
+      cache = {{wrap, materialFrames, materialContract: rig.materialFrames, contactFootTracks, contactFeet, supportContract: rig.supportJointTracks, supportJointTracks, roots, rotations,
         rootTangents: tangents(roots, false), rotationTangents: rotations.map(track => tangents(track, true))}};
       rigSplineCache.set(rig, cache);
       return cache;
@@ -10808,7 +11226,8 @@ def _build_html(
         return angle < 1e-12 ? new THREE.Quaternion() : new THREE.Quaternion().setFromAxisAngle(axis.multiplyScalar(1 / angle), angle);
       }};
       const useHermite = ['limited_quaternion_hermite_v1', 'limited_quaternion_hermite_v2'].includes(rig.interpolation);
-      const spline = useHermite || rig.contactFootTracks != null ? rigSpline(rig, quaternion) : null;
+      const spline = useHermite || rig.contactFootTracks != null || Object.prototype.hasOwnProperty.call(rig, 'materialFrames') ? rigSpline(rig, quaternion) : null;
+      const sampleIsExactKey = Math.abs(alpha) <= 1e-12;
       // Serialized order is parent-first, independent of external joint order.
       for (const index of rig.order) {{
         const name = rig.jointNames[index], parent = rig.parents[index];
@@ -10824,16 +11243,66 @@ def _build_html(
           : new THREE.Vector3(...rig.offsets[index]).applyQuaternion(rotations[index]).add(positions[parent]);
         joints[name] = positions[index].toArray();
       }}
-      if (spline?.contactFeet && alpha > 1e-12) {{
+      const originalJoints = {{ ...joints }};
+      const contactSideAxes = {{}};
+      const materialBaseline = {{}};
+      if (spline?.materialFrames) {{
+        const material = spline.materialFrames, referenceWorld = [];
+        for (const index of rig.order) {{
+          const slot = slots.get(rig.jointNames[index]), j = slot == null ? -1 : (slot-3)/3;
+          const local = slot == null ? new THREE.Quaternion() : useHermite
+            ? new THREE.Quaternion(...rigHermite(material.referenceRotations[j], material.rotationTangents[j], first, last, alpha, true))
+            : quaternion(material.binding.referenceCoordinates[first], slot).slerp(quaternion(material.binding.referenceCoordinates[last], slot), alpha);
+          referenceWorld[index] = rig.parents[index] < 0 ? local : referenceWorld[rig.parents[index]].clone().multiply(local);
+        }}
+        for (const side of ['left', 'right']) {{
+          const key = `${{side}}_ankle->${{side}}_foot`, foot = rig.jointNames.indexOf(`${{side}}_foot`);
+          if (foot < 0 || !referenceWorld[foot]) throw new Error('materialFrames missing foot chain');
+          const track = material.binding.referenceBoneSides[key];
+          let local = useHermite ? new THREE.Vector3(...rigHermite(track, material.sideTangents[key], first, last, alpha, false))
+            : new THREE.Vector3(...track[first]).lerp(new THREE.Vector3(...track[last]), alpha);
+          local.applyQuaternion(referenceWorld[foot].clone().invert());
+          for (const episode of material.binding.stationaryLocalBindings?.[key] ?? []) {{
+            const position = first + alpha;
+            if (position >= episode.startFrame && position <= episode.endFrame && episode.activeFrames.includes(first)
+                && (alpha === 0 || episode.activeFrames.includes(last))) local = new THREE.Vector3(...episode.localSideAxis);
+          }}
+          const axis = local.applyQuaternion(rotations[foot]);
+          const forward = new THREE.Vector3(...rig.offsets[foot]).applyQuaternion(rotations[foot]).normalize();
+          axis.addScaledVector(forward, -axis.dot(forward));
+          if (!Number.isFinite(axis.length()) || axis.length() < 1e-8) throw new Error('Degenerate material frame');
+          materialBaseline[side] = axis.normalize();
+          contactSideAxes[key] = axis.toArray();
+        }}
+      }}
+      const originalMaterialSide = (side, fallback) => {{
+        if (materialBaseline[side]) return materialBaseline[side].clone();
+        const current = playbackState.frames?.[first], next = playbackState.frames?.[last];
+        const orientation = current?.shoeOrientation && next?.shoeOrientation
+          ? interpolateShoeOrientation(current, next, alpha)[side]?.side : null;
+        const boneSide = current?.boneSides && next?.boneSides
+          ? interpolateBoneSides(current, next, originalJoints, alpha)[`${{side}}_ankle->${{side}}_foot`] : null;
+        return orientation || boneSide ? new THREE.Vector3(...(orientation ?? boneSide)) : fallback.clone();
+      }};
+      // Python's native v2 sampler fades between-key contact projection with
+      // 16*a^2*(1-a)^2 so the correction meets preserved keys with zero slope.
+      // Exact keys keep their stored weight; only the between-key samples fade.
+      const nativeContactProjectionWeight = (track, exactKey) => {{
+        const smooth = alpha * alpha * (3 - 2 * alpha);
+        const raw = track.active[first] && track.active[last] ? 1
+          : track.active[first] ? 1 - smooth : track.active[last] ? smooth : 0;
+        if (track.version !== 2 || exactKey || raw <= 0) return raw;
+        return raw * 16 * alpha * alpha * (1 - alpha) * (1 - alpha);
+      }};
+      if (spline?.contactFeet) {{
         for (const side of ['left', 'right']) {{
           const track = spline.contactFeet[side];
           if (!track) continue;
+          if (alpha <= 1e-12 && track.version === 1) continue;
           const startActive = track.active[first], endActive = track.active[last];
-          const smooth = alpha * alpha * (3 - 2 * alpha);
-          const weight = startActive && endActive ? 1 : startActive ? 1 - smooth : endActive ? smooth : 0;
+          const weight = nativeContactProjectionWeight(track, sampleIsExactKey);
           if (weight <= 0) continue;
-          const goalToe = new THREE.Vector3(...rigHermite(
-            track.toes, track.toeTangents, first, last, alpha, false));
+          let goalToe = null;
           let yawFirst = first + track.yawOffset, yawLast = last + track.yawOffset;
           if (spline.wrap && last <= first) yawLast += track.yawTrack.length / 3;
           const yaw = rigHermite(track.yawTrack, track.yawTangents, yawFirst, yawLast, alpha, false)[0];
@@ -10844,7 +11313,7 @@ def _build_html(
           const knee = new THREE.Vector3(...joints[`${{side}}_knee`]);
           const sourceAnkle = new THREE.Vector3(...joints[`${{side}}_ankle`]);
           const sourceToe = new THREE.Vector3(...joints[`${{side}}_foot`]);
-          const toe = sourceToe.clone().lerp(goalToe, weight);
+          let toe = sourceToe.clone();
           const sourceDirection = sourceToe.clone().sub(sourceAnkle);
           if (sourceDirection.length() <= 1e-9) throw new Error(`${{side}} sampled contact foot direction is zero`);
           sourceDirection.normalize();
@@ -10852,7 +11321,136 @@ def _build_html(
             .addScaledVector(targetDirection, weight);
           if (direction.length() <= 1e-9) throw new Error(`${{side}} contact foot direction is undefined`);
           direction.normalize();
-          const ankle = toe.clone().addScaledVector(direction, -track.footLength);
+          let ankle;
+          let protectedEpisodeId = null;
+          if (track.version === 2) {{
+            const firstEpisode = track.episodeByFrame[first], lastEpisode = track.episodeByFrame[last];
+            if (startActive && endActive && track.anchorIds[first] !== track.anchorIds[last]) continue;
+            const episode = startActive ? firstEpisode : lastEpisode;
+            if (!episode) throw new Error(`${{side}} active contact has no bound episode`);
+            const kneeName = `${{side}}_knee`;
+            const supportIds = spline.supportJointTracks?.[kneeName];
+            protectedEpisodeId = supportIds && (sampleIsExactKey
+              ? (supportIds[first] || null)
+              : (supportIds[first] && supportIds[first] === supportIds[last] ? supportIds[first] : null));
+            if (sampleIsExactKey && !protectedEpisodeId) {{
+              if (!spline.materialFrames) contactSideAxes[`${{side}}_ankle->${{side}}_foot`] = new THREE.Vector3(...track.sideAxes[first]).toArray();
+              continue;
+            }}
+            const sampledSideRaw = new THREE.Vector3(...rigHermite(track.sideAxes, track.sideAxisTangents, first, last, alpha, false));
+            const sampledSide = sampledSideRaw.clone();
+            const sourceFootDirection = sourceToe.clone().sub(sourceAnkle).normalize();
+            const baselineTrackSide = sampledSideRaw.clone().addScaledVector(
+              targetDirection, -sampledSideRaw.dot(targetDirection)).normalize();
+            const baselineSide = originalMaterialSide(side, baselineTrackSide);
+            baselineSide.addScaledVector(sourceFootDirection, -baselineSide.dot(sourceFootDirection));
+            if (baselineSide.length() <= 1e-9) throw new Error(`${{side}} original material frame is degenerate`);
+            baselineSide.normalize();
+            const materialDirection = protectedEpisodeId || alpha <= 1e-12 ? sourceFootDirection : direction;
+            sampledSide.addScaledVector(materialDirection, -sampledSide.dot(materialDirection));
+            if (sampledSide.length() <= 1e-9) throw new Error(`${{side}} contact side axis is undefined at sample`);
+            sampledSide.normalize();
+            if (protectedEpisodeId) {{
+              sampledSide.multiplyScalar(weight).addScaledVector(baselineSide, 1 - weight);
+              if (sampledSide.length() <= 1e-9) throw new Error(`${{side}} blended material frame is degenerate`);
+              sampledSide.normalize();
+            }}
+            const up = new THREE.Vector3().crossVectors(sampledSide, materialDirection).normalize();
+            const ratio = track.footLength / episode.referenceLengthMeters;
+            const local = episode.materialOffsetLocalMeters.map(value => value * ratio);
+            const offset = materialDirection.clone().multiplyScalar(local[0])
+              .addScaledVector(sampledSide, local[1]).addScaledVector(up, local[2]);
+            const rawAnkle = new THREE.Vector3(...joints[`${{side}}_ankle`]);
+            const materialPoint = rawAnkle.clone().add(offset);
+            let target;
+            if (episode.mode === 'stationary') target = new THREE.Vector3(...episode.targetWorld);
+            else target = materialPoint.clone().addScaledVector(new THREE.Vector3(...episode.surfaceNormal),
+              episode.planeOffsetMeters - new THREE.Vector3(...episode.surfaceNormal).dot(materialPoint));
+            const targetPoint = materialPoint.clone().lerp(target, weight);
+            if (protectedEpisodeId) {{
+              const fixedKnee = new THREE.Vector3(...joints[kneeName]);
+              const firstLength = fixedKnee.distanceTo(rawAnkle);
+              const secondLength = rawAnkle.distanceTo(materialPoint);
+              const reach = targetPoint.clone().sub(fixedKnee), distance = reach.length();
+              if (!(distance > 1e-9 && distance >= Math.abs(firstLength - secondLength) - 1e-8
+                  && distance <= firstLength + secondLength + 1e-8)) {{
+                throw new Error(`${{side}} supported native contact is unreachable with fixed knee`);
+              }}
+              const axis = reach.multiplyScalar(1 / distance);
+              const along = (firstLength * firstLength - secondLength * secondLength + distance * distance) / (2 * distance);
+              const heightSquared = firstLength * firstLength - along * along;
+              if (heightSquared < -1e-8) throw new Error(`${{side}} supported native contact has invalid knee geometry`);
+              const sourceAxis = materialPoint.clone().sub(fixedKnee).normalize();
+              const pole = rawAnkle.clone().sub(fixedKnee).addScaledVector(sourceAxis,
+                -rawAnkle.clone().sub(fixedKnee).dot(sourceAxis));
+              if (pole.length() <= 1e-9) throw new Error(`${{side}} supported native contact has undefined knee pole`);
+              pole.normalize();
+              const cross = sourceAxis.clone().cross(axis);
+              const sine = cross.length(), cosine = Math.max(-1, Math.min(1, sourceAxis.dot(axis)));
+              let transported = pole;
+              if (sine > 1e-8) {{
+                const turnAxis = cross.multiplyScalar(1 / sine);
+                transported = pole.clone().multiplyScalar(cosine)
+                  .add(turnAxis.clone().cross(pole).multiplyScalar(sine))
+                  .addScaledVector(turnAxis, turnAxis.dot(pole) * (1 - cosine));
+              }}
+              const bend = transported.addScaledVector(axis, -transported.dot(axis));
+              if (bend.length() <= 1e-9) throw new Error(`${{side}} supported native contact has undefined knee plane`);
+              bend.normalize();
+              const newAnkle = fixedKnee.clone().addScaledVector(axis, along)
+                .addScaledVector(bend, Math.sqrt(Math.max(heightSquared, 0)));
+              const from = materialPoint.clone().sub(rawAnkle).normalize();
+              const to = targetPoint.clone().sub(newAnkle).normalize();
+              const turn = new THREE.Quaternion().setFromUnitVectors(from, to);
+              const distal = new THREE.Vector3(...joints[`${{side}}_foot`]).sub(rawAnkle).applyQuaternion(turn);
+              ankle = newAnkle;
+              toe.copy(newAnkle).add(distal);
+              sampledSide.applyQuaternion(turn);
+              // The protected knee stays fixed, but the projected distal pose
+              // still owns the ankle and foot, matching the Python support
+              // projection instead of leaving the stored key untouched.
+              joints[`${{side}}_foot`] = toe.toArray();
+              joints[`${{side}}_ankle`] = ankle.toArray();
+            }} else {{
+              // Legacy v2 projection mirrors the Python frame blend: the raw
+              // foot heading and the sampled material heading, plus the raw and
+              // sampled side axes, are mixed with the same projection weight.
+              // At zero weight this reconstructs the raw key pose exactly, so
+              // the contact correction fades out instead of jumping frames.
+              const targetLateral = sampledSideRaw.clone().addScaledVector(
+                targetDirection, -sampledSideRaw.dot(targetDirection));
+              if (targetLateral.length() <= 1e-9) throw new Error(`${{side}} contact side axis is undefined at sample`);
+              targetLateral.normalize();
+              const rawLateral = baselineSide.clone();
+              if (rawLateral.length() <= 1e-9) throw new Error(`${{side}} contact side axis is degenerate against the sampled foot direction`);
+              rawLateral.normalize();
+              const blendedForward = direction;
+              const blendedLateral = rawLateral.multiplyScalar(1 - weight)
+                .addScaledVector(targetLateral, weight);
+              blendedLateral.addScaledVector(blendedForward, -blendedLateral.dot(blendedForward));
+              if (blendedLateral.length() <= 1e-9) throw new Error(`${{side}} contact side axis is undefined at sample`);
+              blendedLateral.normalize();
+              const blendedUp = new THREE.Vector3().crossVectors(blendedLateral, blendedForward);
+              const blendedOffset = blendedForward.clone().multiplyScalar(local[0])
+                .addScaledVector(blendedLateral, local[1]).addScaledVector(blendedUp, local[2]);
+              const blendedMaterialPoint = rawAnkle.clone().add(blendedOffset);
+              let blendedTarget;
+              if (episode.mode === 'stationary') blendedTarget = new THREE.Vector3(...episode.targetWorld);
+              else blendedTarget = blendedMaterialPoint.clone().addScaledVector(
+                new THREE.Vector3(...episode.surfaceNormal),
+                episode.planeOffsetMeters - new THREE.Vector3(...episode.surfaceNormal).dot(blendedMaterialPoint));
+              const blendedTargetPoint = blendedMaterialPoint.clone().lerp(blendedTarget, weight);
+              ankle = blendedTargetPoint.sub(blendedOffset);
+              toe.set(...ankle.clone().addScaledVector(blendedForward, track.footLength).toArray());
+              sampledSide.copy(blendedLateral);
+            }}
+            contactSideAxes[`${{side}}_ankle->${{side}}_foot`] = sampledSide.toArray();
+          }} else {{
+            goalToe = new THREE.Vector3(...rigHermite(track.toes, track.toeTangents, first, last, alpha, false));
+            toe = sourceToe.clone().lerp(goalToe, weight);
+            ankle = toe.clone().addScaledVector(direction, -track.footLength);
+          }}
+          if (!protectedEpisodeId) {{
           const thigh = track.thighLength, shin = track.shinLength;
           const reach = ankle.clone().sub(hip), distance = reach.length();
           if (!(distance > 1e-9 && distance >= Math.abs(thigh - shin) - 1e-8
@@ -10893,8 +11491,71 @@ def _build_html(
           joints[`${{side}}_foot`] = toe.toArray();
           joints[`${{side}}_ankle`] = ankle.toArray();
           joints[`${{side}}_knee`] = solvedKnee.toArray();
+          }}
         }}
       }}
+      const nativeContactWeight = side => {{
+        const track = spline?.contactFeet?.[side];
+        if (track?.version !== 2) return 0;
+        if (track.active[first] && track.active[last] && track.anchorIds[first] !== track.anchorIds[last]) return 0;
+        return nativeContactProjectionWeight(track, sampleIsExactKey);
+      }};
+      const leftContactWeight = nativeContactWeight('left');
+      const rightContactWeight = nativeContactWeight('right');
+      const protectedSupportJoint = (side, joint) => {{
+        const ids = spline?.supportJointTracks?.[`${{side}}_${{joint}}`];
+        return Boolean(ids && (sampleIsExactKey ? ids[first] : ids[first] && ids[first] === ids[last]));
+      }};
+      if (!sampleIsExactKey && rig._canonicalExecutionForSampling?.legs === 'mirrored'
+          && (leftContactWeight > 0) !== (rightContactWeight > 0)) {{
+        const activeSide = leftContactWeight > 0 ? 'left' : 'right';
+        const driverTrack = spline.contactFeet[activeSide];
+        if (nativeContactWeight(activeSide) > 0) {{
+          const oppositeSide = activeSide === 'left' ? 'right' : 'left';
+          if (protectedSupportJoint(oppositeSide, 'ankle') || protectedSupportJoint(oppositeSide, 'foot')) {{
+            Object.defineProperty(joints, 'contactSideAxes', {{value: contactSideAxes}});
+            return joints;
+          }}
+          const protectedKnee = protectedSupportJoint(oppositeSide, 'knee');
+          const normal = new THREE.Vector3(...joints.right_hip).sub(new THREE.Vector3(...joints.left_hip));
+          if (normal.length() <= 1e-9) throw new Error('mirrored native contact sampling requires distinct hip anchors');
+          normal.normalize();
+          const reflect = vector => vector.addScaledVector(normal, -2 * vector.dot(normal));
+          const parts = ['hip', 'knee', 'ankle', 'foot'];
+          const mirrorWeight = nativeContactWeight(activeSide);
+          const driver = parts.map(part => new THREE.Vector3(...joints[`${{activeSide}}_${{part}}`]));
+          const opposite = parts.map(part => new THREE.Vector3(...joints[`${{oppositeSide}}_${{part}}`]));
+          const originalOpposite = parts.map(part => new THREE.Vector3(...originalJoints[`${{oppositeSide}}_${{part}}`]));
+          for (let index = protectedKnee ? 2 : 1; index < parts.length; index++) {{
+            const original = originalOpposite[index].clone().sub(originalOpposite[index - 1]);
+            const mirrored = reflect(driver[index].clone().sub(driver[index - 1]));
+            const rotation = new THREE.Quaternion().setFromUnitVectors(original.clone().normalize(), mirrored.normalize());
+            original.applyQuaternion(new THREE.Quaternion().slerp(rotation, mirrorWeight));
+            opposite[index].copy(opposite[index - 1]).add(original);
+            joints[`${{oppositeSide}}_${{parts[index]}}`] = opposite[index].toArray();
+          }}
+          const axisValues = contactSideAxes[`${{activeSide}}_ankle->${{activeSide}}_foot`]
+            ?? driverTrack.sideAxes[first];
+          const inferred = reflect(new THREE.Vector3(...axisValues)).negate();
+          const forward = opposite[3].clone().sub(opposite[2]);
+          if (forward.length() <= 1e-9) throw new Error('mirrored native contact sampling produced a zero-length foot bone');
+          forward.normalize();
+          inferred.addScaledVector(forward, -inferred.dot(forward));
+          if (inferred.length() <= 1e-9) throw new Error('mirrored native contact side axis became collinear');
+          inferred.normalize();
+          const oppositeKey = `${{oppositeSide}}_ankle->${{oppositeSide}}_foot`;
+          const fallbackAxis = spline.contactFeet[oppositeSide]?.sideAxes[first];
+          const originalAxis = originalMaterialSide(oppositeSide, fallbackAxis
+            ? new THREE.Vector3(...fallbackAxis)
+            : reflect(new THREE.Vector3(...driverTrack.sideAxes[first])).negate());
+          const originalForward = originalOpposite[3].clone().sub(originalOpposite[2]).normalize();
+          originalAxis.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(originalForward, forward));
+          originalAxis.addScaledVector(forward, -originalAxis.dot(forward)).normalize();
+          const twist = Math.atan2(forward.dot(new THREE.Vector3().crossVectors(originalAxis, inferred)), originalAxis.dot(inferred));
+          contactSideAxes[oppositeKey] = originalAxis.applyAxisAngle(forward, twist * mirrorWeight).toArray();
+        }}
+      }}
+      Object.defineProperty(joints, 'contactSideAxes', {{value: contactSideAxes}});
       return joints;
     }}
 
@@ -10914,9 +11575,18 @@ def _build_html(
       const current = frames[baseIndex];
       const next = frames[nextIndex];
       if (!next || alpha <= 1e-6) {{
-        return {{ ...applyPreviewMotionTuning(current), playbackIndex: baseIndex }};
+        const exactPose = playbackState.fixedRig
+          ? interpolateFixedRig(playbackState.fixedRig, baseIndex, baseIndex, 0) : null;
+        const boneSides = {{ ...(current.boneSides ?? {{}}), ...(exactPose?.contactSideAxes ?? {{}}) }};
+        const shoeOrientation = {{ ...(current.shoeOrientation ?? {{}}) }};
+        for (const [key, sideAxis] of Object.entries(exactPose?.contactSideAxes ?? {{}})) {{
+          const side = key.slice(0, key.indexOf('_ankle->'));
+          if (shoeOrientation[side]) shoeOrientation[side] = {{ ...shoeOrientation[side], side: sideAxis }};
+        }}
+        return {{ ...applyPreviewMotionTuning({{ ...current, ...(playbackState.fixedRig?.materialFrames && exactPose ? {{joints: exactPose}} : {{}}), boneSides, shoeOrientation }}), playbackIndex: baseIndex }};
       }}
-      const fixedJoints = playbackState.fixedRig ? interpolateFixedRig(playbackState.fixedRig, baseIndex, nextIndex, alpha) : null;
+      const fixedPose = playbackState.fixedRig ? interpolateFixedRig(playbackState.fixedRig, baseIndex, nextIndex, alpha) : null;
+      const fixedJoints = fixedPose;
       const joints = fixedJoints ?? {{}};
       for (const jointName of fixedJoints ? [] : payload.jointNames) {{
         const start = current.joints[jointName];
@@ -10938,6 +11608,19 @@ def _build_html(
           start[2] * (1 - alpha) + end[2] * alpha,
         ];
       }}
+      const boneSides = interpolateBoneSides(current, next, joints, alpha);
+      Object.assign(boneSides, fixedPose?.contactSideAxes ?? {{}});
+      const boneSideProvenance = {{}};
+      for (const [key, provenance] of Object.entries(current.boneSideProvenance ?? {{}})) {{
+        if (next.boneSideProvenance?.[key] === provenance && boneSides[key]) {{
+          boneSideProvenance[key] = provenance;
+        }}
+      }}
+      const shoeOrientation = interpolateShoeOrientation(current, next, alpha);
+      for (const [key, sideAxis] of Object.entries(fixedPose?.contactSideAxes ?? {{}})) {{
+        const side = key.slice(0, key.indexOf('_ankle->'));
+        if (shoeOrientation[side]) shoeOrientation[side] = {{ ...shoeOrientation[side], side: sideAxis }};
+      }}
       return applyPreviewMotionTuning({{
         playbackIndex: baseIndex,
         playbackNextIndex: nextIndex,
@@ -10946,8 +11629,9 @@ def _build_html(
         ...interpolateFrameSourceMapping(current, next, baseIndex, nextIndex, alpha),
         timeSec: current.timeSec * (1 - alpha) + next.timeSec * alpha,
         joints,
-        boneSides: interpolateBoneSides(current, next, joints, alpha),
-        shoeOrientation: interpolateShoeOrientation(current, next, alpha),
+        boneSides,
+        boneSideProvenance,
+        shoeOrientation,
       }});
     }}
 

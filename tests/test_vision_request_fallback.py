@@ -94,12 +94,37 @@ def test_explicit_schema_uses_compatible_reasoning_parser_on_first_request(monke
         assert raw == '{"completionVerdict":"supported"}'
         assert len(requests) == 1
         assert requests[0]["response_format"]["json_schema"]["schema"] == schema
+        text = requests[0]["messages"][0]["content"][0]["text"]
+        assert 'completionVerdict' in text
+        assert text.count('"supported"') == 1
+        assert '"unresolved"' in text
         assert requests[0]["chat_template_kwargs"] == {"enable_thinking": False}
         assert requests[0]["reasoning_format"] == "deepseek"
         events = client.compatibility_events_snapshot()
         assert events == []
     finally:
         client.close()
+
+
+@pytest.mark.parametrize('prompt,needs_choices', [
+    ('state: unsupported or unresolved', True),
+    ('state: supported, unsupported, unresolved', False),
+])
+def test_schema_choices_reach_caption_backends_without_schema_support(prompt, needs_choices):
+    from exercise_motion_pkg.bake_and_rank import call_caption_images_json
+
+    prompts = []
+    def caption_images(*, frame_paths, prompt):
+        prompts.append(prompt)
+        return '{}'
+    schema = {'type': 'object', 'properties': {
+        'state': {'type': 'string', 'enum': ['supported', 'unsupported', 'unresolved']}}}
+    assert call_caption_images_json(
+        caption_images, frame_paths=[], prompt=prompt, response_schema=schema) == '{}'
+    if needs_choices:
+        assert '"supported"' in prompts[0]
+    else:
+        assert prompts == [prompt]
 
 
 @pytest.mark.parametrize("status,body", [
@@ -159,6 +184,25 @@ def test_vision_recovery_uses_remaining_request_budget(monkeypatch, spent, expec
             assert timeouts == [10, 7]
             assert recoveries == [True]
         assert len(timeouts) == expected_calls
+    finally:
+        client.close()
+
+
+def test_zero_vision_timeout_disables_request_deadline(monkeypatch):
+    client = LlamaCppVisionClient(
+        "http://127.0.0.1:8090", "test", request_timeout_seconds=0, max_recovery_retries=0,
+    )
+    timeouts = []
+
+    def post(**kwargs):
+        timeouts.append(kwargs["timeout"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    monkeypatch.setattr(client, "_post_chat_completion", post)
+    try:
+        assert client._resolved_request_timeout(None) is None
+        assert client.caption_images(frame_paths=[], prompt="Return JSON.") == "{}"
+        assert timeouts == [None]
     finally:
         client.close()
 

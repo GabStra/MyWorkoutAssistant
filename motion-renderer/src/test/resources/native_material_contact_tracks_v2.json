@@ -1,0 +1,215 @@
+{
+  "schema": "native_material_contact_tracks_v2",
+  "purpose": "portable Python/JS contract fixture; synthetic values, not source evidence",
+  "track": {
+    "version": 2,
+    "left": {
+      "active": [
+        true,
+        true
+      ],
+      "anchorIds": [
+        "left:stationary:0",
+        "left:stationary:0"
+      ],
+      "episodes": [
+        {
+          "startFrame": 0,
+          "endFrame": 1,
+          "anchorId": "left:stationary:0",
+          "regionRole": "full_sole",
+          "mode": "stationary",
+          "primitiveId": "wearShoe:left_ankle->left_foot",
+          "triangleIndex": 11,
+          "barycentric": [
+            0.2,
+            0.3,
+            0.5
+          ],
+          "targetWorld": [
+            -0.014338792520803691,
+            -0.009687701758998588,
+            0.023333705723025077
+          ],
+          "surfaceNormal": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "planeOffsetMeters": -0.009687701758998588,
+          "materialOffsetLocalMeters": [
+            -0.014338792520803691,
+            0.023333705723025077,
+            -0.009687701758998588
+          ],
+          "referenceLengthMeters": 0.13402119093912526
+        }
+      ],
+      "directions": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "sideAxes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "right": {
+      "active": [
+        false,
+        false
+      ],
+      "anchorIds": [
+        null,
+        null
+      ],
+      "episodes": [],
+      "directions": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "sideAxes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  },
+  "sample": {
+    "ankle": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "foot": [
+      0.13402119093912526,
+      0.0,
+      0.0
+    ],
+    "sideAxis": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "direction": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "boneLengthMeters": 0.13402119093912526,
+    "footScaleMeters": 0.17678885297530408,
+    "triangleIndex": 11,
+    "triangleVertices": [
+      [
+        -0.0379933940121913,
+        -0.014968636834052206,
+        0.010084292558691242
+      ],
+      [
+        0.040855277625767406,
+        0.002634480082793187,
+        0.018009673076531226
+      ],
+      [
+        -0.0379933940121913,
+        -0.014968636834052206,
+        0.03182789057665492
+      ]
+    ],
+    "barycentric": [
+      0.2,
+      0.3,
+      0.5
+    ],
+    "materialPointWorld": [
+      -0.014338792520803691,
+      -0.009687701758998588,
+      0.023333705723025077
+    ],
+    "materialOffsetLocalMeters": [
+      -0.014338792520803691,
+      0.023333705723025077,
+      -0.009687701758998588
+    ],
+    "nativeShoeMinY": -0.014968636834052206,
+    "nativeShoeMaxY": 0.06019706358125354,
+    "expected": {
+      "stationaryTargetWorld": [
+        -0.014338792520803691,
+        -0.009687701758998588,
+        0.023333705723025077
+      ],
+      "stationaryAnkle": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "verticalOnlyPlaneOffsetMeters": -0.009687701758998588
+    }
+  },
+  "nativeFootGeometry": {
+    "version": 1,
+    "source": "named_smpl_rest_heel_and_toe_vertices",
+    "modelSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "sides": {
+      "left": {
+        "ankleToFootJointLengthMeters": 0.134302,
+        "heelFromAnkleLocalMeters": [
+          -0.038073,
+          0.021,
+          -0.015
+        ],
+        "toeFromAnkleLocalMeters": [
+          0.18141,
+          -0.026,
+          0.034
+        ]
+      },
+      "right": {
+        "ankleToFootJointLengthMeters": 0.134302,
+        "heelFromAnkleLocalMeters": [
+          -0.038073,
+          0.021,
+          -0.015
+        ],
+        "toeFromAnkleLocalMeters": [
+          0.18141,
+          -0.026,
+          0.034
+        ]
+      }
+    }
+  },
+  "canonicalFootScaleMeters": 0.17678885297530408
+}

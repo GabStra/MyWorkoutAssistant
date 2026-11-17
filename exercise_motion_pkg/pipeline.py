@@ -24,7 +24,11 @@ from exercise_motion_pkg.cleanup import (
 )
 from exercise_motion_pkg.gpu_lock import exclusive_gpu_device, gpu_stage_lock, resolve_stage_cuda_device
 from exercise_motion_pkg.stage_cache import cache_key, load_stage, save_stage, stage_lock
-from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
+from exercise_motion_pkg.ground import (
+    GroundMetadata,
+    estimate_native_ground_plane_from_source_support,
+    generate_ground_metadata,
+)
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.paths import PipelinePaths
@@ -198,6 +202,8 @@ class GenerateRequest:
     motion_tuning_enabled: bool = True
     ground_contact_mode: str = "unknown"
     support_mode_hint: str | None = None
+    source_foot_support_evidence: dict[str, Any] | None = None
+    source_foot_support_video_path: Path | None = None
     rigid_paired_hands_required: bool = False
     horizontal_torso_required: bool = False
     export_reconstruction_smpl_preview: bool = False
@@ -297,6 +303,119 @@ def _source_pose_on_motion_clock(
         return mapped_pose, mapping, None
     except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError) as error:
         return None, None, f"source_timeline_mapping_unavailable:{type(error).__name__}"
+
+
+def retain_source_camera_for_passthrough(
+    clip: MotionClip,
+    *,
+    source_pose_reference_path: Path | None,
+    source_frame_clock_path: Path | None,
+    input_video_path: Path,
+) -> tuple[MotionClip, dict[str, Any]]:
+    """Attach verified camera calibration metadata without changing motion.
+
+    The raw-preview profile skips cleanup and structural IK, but downstream
+    source-camera checks still need a calibrated projection tied to the exact
+    source-pose timeline. Reuse the same pose/clock verifier and camera
+    calibration owner as the normal tuned path; the returned clip shares the
+    input frames unchanged.
+    """
+    if source_pose_reference_path is None or not source_pose_reference_path.is_file():
+        return clip, {"available": False, "reason": "source_pose_reference_unavailable"}
+    source_pose = load_source_pose_payload(source_pose_reference_path.expanduser().resolve())
+    if not isinstance(source_pose, dict):
+        return clip, {"available": False, "reason": "source_pose_payload_unavailable"}
+    from .source_pose_evidence import verify_source_pose
+
+    source_pose = verify_source_pose(source_pose, input_video_path)
+    mapped_pose, mapping, mapping_error = _source_pose_on_motion_clock(
+        source_pose,
+        source_pose_reference_path=source_pose_reference_path,
+        source_frame_clock_path=source_frame_clock_path,
+        input_video_path=input_video_path,
+    )
+    if not isinstance(mapped_pose, dict) or not isinstance(mapping, dict):
+        return clip, {
+            "available": False,
+            "reason": mapping_error or "source_timeline_mapping_unavailable",
+        }
+
+    calibrated_input = replace(
+        clip,
+        metadata={**clip.metadata, "sourceTimelineMapping": mapping},
+    )
+    from .structural_refinement import retain_camera_through_cleanup
+
+    calibrated = retain_camera_through_cleanup(calibrated_input, calibrated_input, mapped_pose)
+    registration = calibrated.metadata.get("sourcePoseRegistration")
+    camera = registration.get("camera") if isinstance(registration, dict) else None
+    if calibrated.frames is not calibrated_input.frames:
+        raise RuntimeError("passthrough camera calibration unexpectedly changed motion frames")
+    if not isinstance(camera, dict) or camera.get("available") is not True \
+            or not camera.get("cameraImageTransform"):
+        from .pose_fidelity import source_timeline_mapping_identity
+
+        return calibrated, {
+            "available": False,
+            "reason": (camera or {}).get("reason", "source_camera_calibration_unavailable"),
+            "sourceTimelineMappingIdentity": source_timeline_mapping_identity(mapping),
+        }
+    return calibrated, {
+        "available": True,
+        "sourceTimelineMappingIdentity": camera.get("sourceTimelineMappingIdentity"),
+    }
+
+
+def _rebind_normalized_motion_source_frame_clock_paths(
+    motion_json_path: Path,
+    *,
+    source_frame_clock_path: Path | None,
+    input_video_path: Path,
+) -> bool:
+    """Rebind relocated clock paths only when every non-path receipt field matches."""
+    if source_frame_clock_path is None:
+        return False
+    from .source_frame_clock import load_verified_source_frame_clock
+
+    receipt = load_verified_source_frame_clock(
+        source_frame_clock_path,
+        expected_video_path=input_video_path,
+    )
+    payload = json.loads(motion_json_path.read_text(encoding="utf-8"))
+    reconstruction = (payload.get("metadata") or {}).get("reconstruction")
+    embedded = reconstruction.get("sourceFrameClock") if isinstance(reconstruction, dict) else None
+    if not isinstance(embedded, dict):
+        return False
+    if any(
+        embedded.get(key) != receipt.get(key)
+        for key in ("sourceVideoSha256", "outputVideoSha256")
+    ):
+        return False
+    frames = payload.get("frames")
+    clock_frames = receipt.get("frames")
+    if not isinstance(frames, list) or not frames or not isinstance(clock_frames, list):
+        return False
+    for frame in frames:
+        if not isinstance(frame, dict):
+            return False
+        inference_index = frame.get("inferenceFrameIndex")
+        if type(inference_index) is not int or not 0 <= inference_index < len(clock_frames):
+            return False
+        source_reference = clock_frames[inference_index]
+        if (
+            frame.get("sourceFrameIndex") != source_reference.get("sourceFrameIndex")
+            or not isinstance(frame.get("sourceTimeSec"), (int, float))
+            or abs(float(frame["sourceTimeSec"]) - float(source_reference["sourceTimeSec"])) > 1e-6
+        ):
+            return False
+    path_fields = {"sourceVideoPath", "outputVideoPath"}
+    if all(embedded.get(key) == receipt.get(key) for key in path_fields):
+        return False
+    embedded.update({key: receipt[key] for key in path_fields})
+    temporary_path = motion_json_path.with_name(f"{motion_json_path.name}.tmp")
+    temporary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary_path.replace(motion_json_path)
+    return True
 
 
 @dataclass(frozen=True)
@@ -814,6 +933,11 @@ def _run_generation_pipeline_uncached(
     prepared_source_frame_clock_path = source_frame_clock_path_for_video(input_video_path)
     if not prepared_source_frame_clock_path.is_file():
         prepared_source_frame_clock_path = None
+    _validate_prepared_source_frame_clock(
+        input_video_path,
+        prepared_source_frame_clock_path,
+        required=request.source_frame_clock_path is not None,
+    )
     record_timing("prepareInputVideoSeconds", stage_started)
     spinepose_source = resolve_spinepose_json_source(
         request=request,
@@ -833,6 +957,11 @@ def _run_generation_pipeline_uncached(
     if request.normalized_motion_json is not None:
         stage_started = time.perf_counter()
         shutil.copy2(request.normalized_motion_json, raw_motion_json_path)
+        _rebind_normalized_motion_source_frame_clock_paths(
+            raw_motion_json_path,
+            source_frame_clock_path=prepared_source_frame_clock_path,
+            input_video_path=input_video_path,
+        )
         record_timing("copyNormalizedMotionSeconds", stage_started)
     else:
         if request.body_model_root is None:
@@ -1161,6 +1290,18 @@ def _run_generation_pipeline_uncached(
                     "sourceTimelineMapping": source_timeline_mapping,
                 },
             )
+        source_native_ground = estimate_native_ground_plane_from_source_support(
+            tuning_input_clip,
+            request.source_foot_support_evidence,
+            selected_video_path=request.source_foot_support_video_path,
+        )
+        reconstruction_metadata = (tuning_input_clip.metadata.get("reconstruction")
+                                   if isinstance(tuning_input_clip.metadata, dict) else None)
+        native_foot_geometry_available = (
+            isinstance(reconstruction_metadata, dict)
+            and ("footMarkerPrior" in reconstruction_metadata
+                 or "nativeFootGeometry" in reconstruction_metadata)
+        )
         record_timing("canonicalizeMotionCoordinatesSeconds", stage_started)
         stage_started = time.perf_counter()
         cleaned_clip, cleanup_stats = cleanup_motion_clip(
@@ -1172,6 +1313,8 @@ def _run_generation_pipeline_uncached(
             padding_frames=request.padding_frames,
             ground_contact_mode=request.ground_contact_mode,
             support_mode_hint=request.support_mode_hint,
+            native_ground_plane=source_native_ground,
+            native_foot_geometry_available=native_foot_geometry_available,
             # Source-reviewed timing belongs to the source selection stage.
             # Static trimming here would invalidate every downstream time map.
             preserve_temporal_extent=source_pose_temporal_extent_authorized,
@@ -1255,13 +1398,8 @@ def _run_generation_pipeline_uncached(
             cleaned_clip = replace(
                 cleaned_clip,
                 frames=[
-                    MotionFrame(
-                        time_sec=frame.time_sec,
-                        joints={name: tuple(map(float, row[i])) for i, name in enumerate(joint_names)},
-                        source_time_sec=frame.source_time_sec,
-                        source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                    )
+                    frame.with_joints(
+                        {name: tuple(map(float, row[i])) for i, name in enumerate(joint_names)})
                     for frame, row in zip(cleaned_clip.frames, corrected)
                 ],
                 metadata={
@@ -1310,13 +1448,25 @@ def _run_generation_pipeline_uncached(
             "structural_ik_refinement",
         ]
     else:
-        cleaned_clip = replace(
+        source_pose_reference_path = request.source_pose_reference_path
+        if source_pose_reference_path is None:
+            source_pose_reference_path = discover_source_pose_reference_path(paths.root)
+        stage_started = time.perf_counter()
+        calibrated_clip, camera_registration_status = retain_source_camera_for_passthrough(
             raw_clip,
+            source_pose_reference_path=source_pose_reference_path,
+            source_frame_clock_path=prepared_source_frame_clock_path,
+            input_video_path=input_video_path,
+        )
+        cleaned_clip = replace(
+            calibrated_clip,
             metadata={
-                **raw_clip.metadata,
+                **calibrated_clip.metadata,
                 "motionTuning": _motion_tuning_metadata(enabled=False),
             },
         )
+        record_timing("cleanupCameraRegistrationSeconds", stage_started)
+        timings["passthroughCameraRegistration"] = camera_registration_status
         cleanup_stats = _identity_cleanup_stats(raw_clip)
         ground_metadata_path = None
         ground_metadata = None
@@ -1496,8 +1646,7 @@ def crop_motion_clip_to_input_window(
         fps=clip.fps,
         joint_names=clip.joint_names,
         frames=[
-            MotionFrame(time_sec=max(0.0, frame.time_sec - first_time), joints=frame.joints,
-                        source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+            frame.with_joints(frame.joints, time_sec=max(0.0, frame.time_sec - first_time))
             for frame in retained
         ],
         source=clip.source,
@@ -1550,19 +1699,11 @@ def canonicalize_camera_motion_clip(
             "target": "canonical_y_up_world",
             "transform": "rotate_x_180_degrees",
         }
-        frames = [
-            MotionFrame(
-                time_sec=frame.time_sec,
-                source_time_sec=frame.source_time_sec,
-                source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                joints={
-                    joint_name: (point[0], -point[1], -point[2])
-                    for joint_name, point in frame.joints.items()
-                },
-            )
-            for frame in clip.frames
-        ]
+        frames = [frame.with_joints(
+            {joint_name: (point[0], -point[1], -point[2])
+             for joint_name, point in frame.joints.items()},
+            rigid_rotation=((1., 0., 0.), (0., -1., 0.), (0., 0., -1.)))
+            for frame in clip.frames]
     return replace(
         clip,
         frames=frames,
@@ -1966,20 +2107,6 @@ def prepare_input_video(request: GenerateRequest, paths: PipelinePaths) -> Path:
         rebind_existing_source_frame_clock_for_video_copy,
     )
 
-    def preserve_clock_across_exact_copy(
-        source_path: Path,
-        output_path: Path,
-        *,
-        source_clock_path: Path | None = None,
-        transform: str,
-    ) -> None:
-        rebind_existing_source_frame_clock_for_video_copy(
-            source_video_path=source_path,
-            output_video_path=output_path,
-            source_clock_path=source_clock_path,
-            transform=transform,
-        )
-
     def maybe_trim_segment(path: Path) -> Path:
         if request.source_start_seconds is None and request.source_end_seconds is None:
             return path
@@ -2011,17 +2138,45 @@ def prepare_input_video(request: GenerateRequest, paths: PipelinePaths) -> Path:
         destination = paths.input_dir / source.name
         if source != destination.resolve():
             shutil.copy2(source, destination)
-        preserve_clock_across_exact_copy(
-            source,
-            destination,
+        rebind_existing_source_frame_clock_for_video_copy(
+            source_video_path=source,
+            output_video_path=destination,
             source_clock_path=request.source_frame_clock_path,
             transform="prepare_input_video_copy",
         )
         sanitized = sanitize_video_for_processing(destination)
-        preserve_clock_across_exact_copy(
-            destination,
-            sanitized,
-            transform="prepare_input_video_sanitization_copy",
-        )
         return maybe_trim_segment(sanitized)
     raise ValueError("Either youtube_url or video_path must be provided.")
+
+
+def _validate_prepared_source_frame_clock(
+    prepared_video: Path,
+    clock_path: Path | None,
+    *,
+    required: bool,
+) -> None:
+    """Fail before reconstruction when prepared video bytes lack their clock."""
+    if clock_path is None or not Path(clock_path).is_file():
+        if required:
+            raise ValueError("prepared source video has no verified source frame clock")
+        return
+    from .source_frame_clock import load_verified_source_frame_clock
+
+    prepared_video = Path(prepared_video).expanduser().resolve()
+    clock_path = Path(clock_path).expanduser().resolve()
+    clock = load_verified_source_frame_clock(clock_path, expected_video_path=prepared_video)
+    metadata = read_basic_video_metadata(prepared_video)
+    expected_count = clock.get("outputFrameCount")
+    expected_fps = float(clock.get("outputFps", 0.0))
+    frames = clock.get("frames")
+    if (type(expected_count) is not int
+            or expected_count != metadata.frame_count
+            or not isinstance(frames, list)
+            or len(frames) != metadata.frame_count):
+        raise ValueError(
+            "prepared source frame clock frame count does not match the final prepared video"
+        )
+    if expected_fps <= 0.0 or abs(expected_fps - float(metadata.fps)) > 0.02:
+        raise ValueError(
+            "prepared source frame clock fps does not match the final prepared video"
+        )

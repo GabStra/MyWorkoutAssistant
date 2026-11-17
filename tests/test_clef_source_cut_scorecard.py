@@ -43,6 +43,60 @@ def _candidate(tmp_path):
     )
 
 
+def test_child_sample_inventory_binds_final_exposure_using_preceding_pts_interval(
+    monkeypatch, tmp_path,
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    output_dir = tmp_path / "child-review"
+    output_dir.mkdir()
+    sample_paths = [output_dir / f"frame_{index:02d}.jpg" for index in (1, 2)]
+    for index, path in enumerate(sample_paths):
+        path.write_bytes(f"sample-{index}".encode())
+    sheet = output_dir / "contact_sheet_01.jpg"
+    sheet.write_bytes(b"sheet")
+    (output_dir / "contact_sheet_evidence.json").write_text(json.dumps({
+        "schemaVersion": 1,
+        "sheets": {
+            sheet.name: {
+                "sha256": hashlib.sha256(sheet.read_bytes()).hexdigest(),
+                "frames": [
+                    {"number": 1, "timestampSeconds": 0.0},
+                    # This request decodes to the final PTS at 4.0 seconds.
+                    {"number": 2, "timestampSeconds": 3.9},
+                ],
+            },
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        "exercise_motion_pkg.source_frame_clock._read_decoded_frame_timestamps",
+        # The embedded PTS clock starts at 7s while the review window and
+        # contact-sheet timestamps use video-local time starting at 0s.
+        lambda *args, **kwargs: ([7.0, 8.0, 11.0], 0.001),
+    )
+
+    inventory = bake.source_cut_child_sample_inventory(
+        output_dir=output_dir,
+        source_video_path=source,
+        candidate_window=DetectionWindow(0, 0.0, 4.1),
+    )
+    assert [item["sourceFrameIndex"] for item in inventory] == [0, 2]
+    assert inventory[-1]["sourceTimeSec"] == 4.0
+
+    # A seek that maps to the penultimate frame still fails the required final
+    # included-exposure check; the corrected interval bound does not relax it.
+    manifest_path = output_dir / "contact_sheet_evidence.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["sheets"][sheet.name]["frames"][-1]["timestampSeconds"] = 0.9
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="omit an included source-window endpoint"):
+        bake.source_cut_child_sample_inventory(
+            output_dir=output_dir,
+            source_video_path=source,
+            candidate_window=DetectionWindow(0, 0.0, 4.1),
+        )
+
+
 def test_typed_source_cut_answers_preserve_existing_acceptance_gates(tmp_path):
     candidate = _candidate(tmp_path)
     scorecard = bake.source_cut_scorecard_from_systemone_answers(
@@ -131,7 +185,7 @@ def test_low_confidence_clef_scorecard_remains_review_required(tmp_path):
     assert bake.source_cut_scorecard_rows_need_review([row]) is True
 
 
-def test_source_cut_equipment_roles_separate_active_load_support_and_rack_setup(tmp_path):
+def test_source_cut_equipment_roles_keep_active_load_and_support_outside_rack_setup(tmp_path):
     contract = {
         "motionContext": {
             "primaryEquipment": {"id": "bar", "type": "BARBELL", "name": "Barbell"},
@@ -165,12 +219,12 @@ def test_source_cut_equipment_roles_separate_active_load_support_and_rack_setup(
     assert roles == {
         "barbell": "active_implement",
         "bench": "support_surface",
-        "squat rack": "setup_fixture",
     }
+    assert bake.two_scale_required_equipment_names("Barbell Floor Press", contract) == ["barbell", "bench"]
     assert "visibly held, worn, attached, or connected" in policy
     assert "body-support surface" in policy
-    assert "do not demand contact during the repetition" in policy
-    assert "presence alone" in policy
+    assert "setup fixture" not in policy
+    assert len(contract["motionContext"]["requiredAccessories"]) == 2
     assert "Required equipment role policy" in prompt
 
 
@@ -682,6 +736,9 @@ def test_retained_clearance_accepts_equivalent_utc_offset_without_rewriting_rece
     }
     source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
     source_manifest["exerciseMotionContract"] = retained_contract
+    source_ranking = bake.ranking_from_manifest(source_manifest["sourceCutRanking"])
+    source_ranking.payload["exerciseMotionContract"] = retained_contract
+    source_manifest["sourceCutRanking"] = bake.ranking_to_manifest(source_ranking)
     source_manifest_path.write_text(json.dumps(source_manifest), encoding="utf-8")
     current_contract = json.loads(json.dumps(retained_contract))
     current_contract["motionContext"]["exerciseDefinition"]["review"][
@@ -716,15 +773,11 @@ def test_retained_clearance_accepts_equivalent_utc_offset_without_rewriting_rece
         expected_contract=current_contract,
     )
 
-    changed_review = json.loads(json.dumps(current_contract))
-    changed_review["motionContext"]["exerciseDefinition"]["review"][
-        "reviewArtifactSha256"
-    ] = "different-review-artifact"
-    changed_time = json.loads(json.dumps(current_contract))
-    changed_time["motionContext"]["exerciseDefinition"]["review"][
-        "approvedAtUtc"
-    ] = "2026-10-22T11:27:56.244743+00:00"
-    for changed_contract in (changed_review, changed_time):
+    changed_requirement = json.loads(json.dumps(current_contract))
+    changed_requirement["advisoryText"] = "A materially different exercise requirement."
+    changed_identity = json.loads(json.dumps(current_contract))
+    changed_identity["exerciseName"] = "Different Example"
+    for changed_contract in (changed_requirement, changed_identity):
         assert bake.source_selection_clearance_for_workspace(
             workspace,
             required=True,
@@ -738,6 +791,44 @@ def test_retained_clearance_accepts_equivalent_utc_offset_without_rewriting_rece
             expected_exercise_name="Example",
             expected_contract=changed_contract,
         )
+
+
+@pytest.mark.parametrize("ranking_contract_state", ["current", "stale", "missing"])
+def test_retained_clearance_requires_ranking_contract_to_match_expected_contract(
+    tmp_path, ranking_contract_state,
+):
+    workspace, _selected_segment, source_manifest_path = _write_source_clearance_fixture(tmp_path)
+    current_contract = {
+        "exerciseName": "Example",
+        "advisoryText": "Approved exercise definition.",
+        "contractPolicyVersion": 39,
+        "contractScope": "definition_only",
+    }
+    ranking_contract = json.loads(json.dumps(current_contract))
+    if ranking_contract_state == "stale":
+        ranking_contract["contractPolicyVersion"] = 38
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    source_manifest["exerciseMotionContract"] = current_contract
+    ranking = bake.ranking_from_manifest(source_manifest["sourceCutRanking"])
+    if ranking_contract_state == "missing":
+        ranking.payload.pop("exerciseMotionContract", None)
+    else:
+        ranking.payload["exerciseMotionContract"] = ranking_contract
+    source_manifest["sourceCutRanking"] = bake.ranking_to_manifest(ranking)
+    source_manifest_path.write_text(json.dumps(source_manifest), encoding="utf-8")
+
+    clearance = bake.source_selection_clearance_for_workspace(
+        workspace,
+        required=True,
+        expected_exercise_name="Example",
+        expected_contract=current_contract,
+    )
+
+    if ranking_contract_state == "current":
+        assert clearance["status"] == "cleared", clearance
+    else:
+        assert clearance["status"] == "needs_source_review", clearance
+        assert clearance["reason"] == "source_cut_ranking_contract_mismatch_or_missing"
 
 
 @pytest.mark.parametrize("authorized_parent", ["A", "missing-parent"])
@@ -1185,3 +1276,353 @@ def test_production_request_rejects_clef_final_review(tmp_path):
             body_model_root=None,
             final_output_review_backend="clef-systemone",
         )
+
+
+def _return_expansion_timing_fixture(tmp_path, *, child_start, child_end):
+    frame_dir = tmp_path / "timing-frames"
+    frame_dir.mkdir()
+    sheet = frame_dir / "sheet_1.jpg"
+    sheet.write_bytes(b"child parent timing sheet")
+    sheet_sha256 = hashlib.sha256(sheet.read_bytes()).hexdigest()
+    timestamps = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
+    (frame_dir / "contact_sheet_evidence.json").write_text(json.dumps({
+        "sheets": {
+            sheet.name: {
+                "sha256": sheet_sha256,
+                "frames": [
+                    {"number": index, "timestampSeconds": timestamp}
+                    for index, timestamp in enumerate(timestamps)
+                ],
+            },
+        },
+    }), encoding="utf-8")
+    parent = {
+        "candidateId": "Y",
+        "startSeconds": 0.25,
+        "endSeconds": 1.0,
+        "framePaths": [str(sheet)],
+    }
+    child = {
+        "candidateId": "Y-RETN-3",
+        "startSeconds": child_start,
+        "endSeconds": child_end,
+        "exactBoundaryExpansionParentId": "Y",
+        "chunking": {"strategy": "exact_pose_return_expansion"},
+    }
+    phase = {
+        "candidateId": "Y",
+        "status": "sampled",
+        "expectedIds": ["phase-1"],
+        "candidateWindowSourceSeconds": {"start": 0.25, "end": 1.0},
+        "sampleBinsById": {
+            "phase-1": {
+                "sampleBins": [
+                    {
+                        "frameId": f"Y:{index}",
+                        "sheetSha256": sheet_sha256,
+                        "sourceTimestampSeconds": timestamp,
+                        "sourceBinStartSeconds": timestamp,
+                        "sourceBinEndSeconds": min(timestamp + 0.05, 1.0),
+                    }
+                    for index, timestamp in enumerate(timestamps[:4])
+                ],
+            },
+        },
+    }
+    ranking = bake.LoopRanking(
+        score=0.9,
+        reasons=[],
+        payload={
+            "sourceCutCandidates": [parent],
+            "sourceCutScorecardCandidates": [{
+                "id": "Y",
+                "passed": True,
+                "requiredEquipment": "none",
+                "movementTopologyEvidence": {"phaseTimingEvidence": phase},
+            }],
+        },
+    )
+    return ranking, child, sheet_sha256
+
+
+def test_return_expansion_is_pose_eligible_without_inheriting_parent_approval(tmp_path):
+    ranking, child, _ = _return_expansion_timing_fixture(
+        tmp_path, child_start=0.25, child_end=2.23,
+    )
+
+    coverage = bake.source_cut_child_timing_coverage(ranking, child)
+
+    assert coverage["eligible"] is True
+    assert coverage["poseEligible"] is True
+    assert coverage["semanticApprovalRequired"] is True
+    assert coverage["semanticApprovalOwner"] == "Y-RETN-3"
+    assert coverage["parentApprovalInherited"] is False
+
+
+def test_contained_trim_still_requires_the_parent_to_contain_the_child(tmp_path):
+    ranking, child, _ = _return_expansion_timing_fixture(
+        tmp_path, child_start=0.25, child_end=2.23,
+    )
+    child.pop("exactBoundaryExpansionParentId")
+    child["exactContractTrimParentId"] = "Y"
+    child["chunking"] = {"strategy": "exact_pose_contract_boundary_trim"}
+
+    coverage = bake.source_cut_child_timing_coverage(ranking, child)
+
+    assert coverage["eligible"] is False
+    assert "semanticApprovalRequired" not in coverage
+
+
+def _child_review(child_id, window, samples):
+    return {
+        "id": child_id,
+        "passed": True,
+        "requiredEquipment": "none",
+        "movementTopologyEvidence": {
+            "phaseTimingEvidence": {
+                "candidateId": child_id,
+                "candidateWindowSourceSeconds": {"start": window[0], "end": window[1]},
+                "sampleBinsById": {"phase-1": {"sampleBins": samples}},
+            },
+        },
+    }
+
+
+def test_child_semantic_approval_requires_child_window_and_extension_frame(tmp_path):
+    ranking, child, sheet_sha256 = _return_expansion_timing_fixture(
+        tmp_path, child_start=0.25, child_end=2.23,
+    )
+    coverage = bake.source_cut_child_timing_coverage(ranking, child)
+    parent_only = [
+        {"frameId": f"Y:{index}", "sheetSha256": sheet_sha256,
+         "sourceTimestampSeconds": timestamp}
+        for index, timestamp in enumerate([0.25, 0.5, 0.75, 1.0])
+    ]
+    with_extension = [
+        *parent_only,
+        {"frameId": "Y:5", "sheetSha256": sheet_sha256, "sourceTimestampSeconds": 2.0},
+    ]
+
+    relabelled_parent = bake.source_cut_child_semantic_review_approval(
+        _child_review("Y-RETN-3", (0.25, 1.0), parent_only), child, coverage,
+    )
+    missing_tail = bake.source_cut_child_semantic_review_approval(
+        _child_review("Y-RETN-3", (0.25, 2.23), parent_only), child, coverage,
+    )
+    approved = bake.source_cut_child_semantic_review_approval(
+        _child_review("Y-RETN-3", (0.25, 2.23), with_extension), child, coverage,
+    )
+    no_review = bake.source_cut_child_semantic_review_approval(None, child, coverage)
+
+    assert relabelled_parent["approved"] is False
+    assert relabelled_parent["reason"] == "child_semantic_review_window_mismatch"
+    assert missing_tail["approved"] is False
+    assert missing_tail["reason"] == "child_semantic_review_missing_extension_evidence"
+    assert approved["approved"] is True
+    assert no_review["approved"] is False
+
+
+def test_child_semantic_review_marks_truncated_json_invalid(monkeypatch, tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source video")
+    frame = tmp_path / "child-frame.jpg"
+    frame.write_bytes(b"review frame")
+    overview_frame = tmp_path / "child-overview.jpg"
+    overview_frame.write_bytes(b"verified PTS overview")
+    child = {
+        "candidateId": "Y-RETN-1",
+        "startSeconds": 0.25,
+        "endSeconds": 2.23,
+        "exactBoundaryExpansionParentId": "Y",
+    }
+
+    def fake_render(**kwargs):
+        kwargs["output_dir"].mkdir(parents=True, exist_ok=True)
+        return [frame]
+
+    monkeypatch.setattr(bake, "render_video_window_contact_sheet", fake_render)
+    monkeypatch.setattr(
+        bake,
+        "build_source_cut_candidate",
+        lambda **kwargs: bake.SourceCutCandidate(
+            kwargs["candidate_id"], kwargs["candidate_window"], [frame],
+        ),
+    )
+    monkeypatch.setattr(
+        bake, "source_cut_review_overview",
+        lambda candidate, output_dir, **kwargs: bake.replace(
+            candidate, frame_paths=[overview_frame],
+        ),
+    )
+    monkeypatch.setattr(
+        bake,
+        "source_cut_child_sample_inventory",
+        lambda **kwargs: [
+            {"sourceTimeSec": 0.25, "samplePath": str(frame), "sampleSha256": hashlib.sha256(frame.read_bytes()).hexdigest()},
+            {"sourceTimeSec": 2.20, "samplePath": str(frame), "sampleSha256": hashlib.sha256(frame.read_bytes()).hexdigest()},
+        ],
+    )
+    monkeypatch.setattr(
+        bake, "invoke_cut_caption_images", lambda *args, **kwargs: '{"candidates":[{"id":"Y-RETN-1","approved":true',
+    )
+    monkeypatch.setattr(
+        bake, "parse_source_cut_candidate_choice",
+        lambda *args, **kwargs: pytest.fail("truncated JSON must not reach the permissive parser"),
+    )
+
+    review = bake.request_source_cut_child_semantic_review(
+        child,
+        source_video_path=source,
+        exercise_name="Barbell Overhead Press",
+        candidate_title="Overhead press return",
+        exercise_motion_contract={},
+        caption_images=lambda **kwargs: "unused",
+        output_dir=tmp_path,
+        frame_count=8,
+    )
+
+    receipt_path = (
+        tmp_path / "source_candidate_Y-RETN-1" / "child_semantic_review"
+        / f"policy-v{bake.SOURCE_CUT_CHILD_REVIEW_POLICY_VERSION}" / "semantic_review.json"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert review is None
+    assert receipt["candidateId"] == "Y-RETN-1"
+    assert receipt["candidateWindowSourceSeconds"] == {"start": 0.25, "end": 2.23}
+    assert receipt["sourceVideoSha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert receipt["reviewFrames"] == [{
+        "path": str(overview_frame), "sha256": hashlib.sha256(overview_frame.read_bytes()).hexdigest(),
+    }]
+    assert receipt["rawResponse"] == '{"candidates":[{"id":"Y-RETN-1","approved":true'
+    assert receipt["parsedRankingPayload"] is None
+    assert receipt["status"] == "invalid_response"
+    assert receipt["parseFailure"] == "invalid_json"
+
+
+def test_production_caller_wires_expanded_child_review_and_rejected_child_fails(
+    monkeypatch, tmp_path,
+):
+    (tmp_path / "detection.mp4").write_bytes(b"retained detection source")
+    ranking, child, sheet_sha256 = _return_expansion_timing_fixture(
+        tmp_path, child_start=0.25, child_end=2.23,
+    )
+    capture: dict[str, object] = {}
+
+    def fake_refresh(payload, **kwargs):
+        return payload
+
+    def fake_rank(**kwargs):
+        return ranking, 0.0, 0.0
+
+    def fake_render(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        sheet = output_dir / "child_sheet.jpg"
+        sheet.write_bytes(b"child review sheet")
+        (output_dir / "contact_sheet_evidence.json").write_text(
+            json.dumps({
+                "sheets": {
+                    sheet.name: {
+                        "sha256": hashlib.sha256(sheet.read_bytes()).hexdigest(),
+                        "frames": [
+                            {"number": 1, "timestampSeconds": 0.25},
+                            {"number": 2, "timestampSeconds": 2.0},
+                        ],
+                    },
+                },
+            }),
+            encoding="utf-8",
+        )
+        return [sheet]
+
+    def fake_request(**kwargs):
+        return json.dumps({
+            "candidates": [{
+                "id": kwargs["candidate"].candidate_id,
+                "approved": False,
+                "confidence": 0.2,
+                "completeMovement": False,
+                "startBoundaryClean": True,
+                "finishBoundaryClean": False,
+                "setupOrFiller": False,
+                "namedEquipmentEngagedStatus": "not_applicable",
+                "reject": ["partial_movement"],
+                "note": "rejected child",
+            }],
+        })
+
+    def fake_select(ranking, **kwargs):
+        callback = kwargs.get("child_semantic_review")
+        assert callback is not None
+        capture["callback"] = callback
+        review = callback(child)
+        coverage = bake.source_cut_child_timing_coverage(ranking, child)
+        capture["review"] = review
+        capture["approval"] = bake.source_cut_child_semantic_review_approval(
+            review, child, coverage,
+        )
+        payload = {**ranking.payload, "sourceCutChildSemanticReviewRequired": True}
+        payload.pop("selectedCandidateId", None)
+        return bake.LoopRanking(
+            score=0.0,
+            reasons=[
+                "source_cut_deterministic_confirmation_failed",
+                "source_cut_review_required",
+            ],
+            payload=payload,
+        ), 0.0
+
+    from exercise_motion_pkg import pose_prefilter
+
+    monkeypatch.setattr(pose_prefilter, "refresh_legacy_spread_pose_evidence", fake_refresh)
+    monkeypatch.setattr(bake, "expand_detection_source_for_kinematic_cut", lambda **kwargs: None)
+    monkeypatch.setattr(bake, "validating_padded_ranked_source_chunk", lambda *args, **kwargs: False)
+    monkeypatch.setattr(bake, "rank_source_video_cut_candidates_with_caption_images", fake_rank)
+    monkeypatch.setattr(
+        bake, "source_cut_deterministic_confirmation_candidates",
+        lambda ranking: [child],
+    )
+    monkeypatch.setattr(
+        bake, "exercise_motion_contract_has_specific_topology",
+        lambda contract: True,
+    )
+    monkeypatch.setattr(bake, "render_video_window_contact_sheet", fake_render)
+    monkeypatch.setattr(
+        bake, "source_cut_visual_integrity_metrics",
+        lambda paths: {"passed": True},
+    )
+    monkeypatch.setattr(bake, "request_clef_source_cut_scorecard", fake_request)
+    monkeypatch.setattr(bake, "select_exact_pose_confirmed_source_cut", fake_select)
+    monkeypatch.setattr(
+        bake, "preserve_parent_source_window_after_pose_only_recovery",
+        lambda ranking, **kwargs: ranking,
+    )
+    monkeypatch.setattr(
+        bake, "write_pre_reconstruction_source_selection_manifest",
+        lambda **kwargs: None,
+    )
+
+    with pytest.raises(bake.SourceCandidateRejected):
+        bake.choose_pre_reconstruction_source_cut_or_reject(
+            ranked_candidate=SimpleNamespace(
+                exercise_name="squat",
+                title="Squat",
+                candidate={},
+            ),
+            candidate_workspace=tmp_path,
+            source_video_path=tmp_path / "source.mp4",
+            detection_source_video_path=tmp_path / "detection.mp4",
+            source_window=DetectionWindow(0, 0.0, 3.0),
+            detection_source_offset_seconds=0.0,
+            source_chunk_hint=None,
+            caption_images=lambda **kwargs: "unused",
+            exercise_motion_contract={},
+            source_chunk_estimate=SimpleNamespace(),
+            visual_decision_backend="clef-systemone",
+        )
+
+    assert capture["callback"] is not None
+    assert isinstance(capture["review"], dict)
+    assert capture["review"]["passed"] is False
+    assert capture["approval"]["approved"] is False
+    assert capture["approval"]["reason"] == "child_semantic_review_missing_or_rejected"

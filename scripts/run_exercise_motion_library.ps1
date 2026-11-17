@@ -50,7 +50,7 @@ param(
     [double]$SourceReviewTimeoutSeconds = 180.0,
 
     [ValidateRange(0, 10000)]
-    [int]$MaxSourceWindowAttempts = 0,
+    [int]$MaxSourceWindowAttempts = 4,
 
     [switch]$DisableStagedWaves,
 

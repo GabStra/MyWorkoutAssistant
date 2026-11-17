@@ -356,6 +356,17 @@ def baked_payload_identity(payload: dict[str, Any]) -> dict[str, Any]:
         "bounds": payload.get("bounds"),
         "frames": payload["frames"],
     }
+    if "nativeFootGeometry" in payload:
+        identity_payload["nativeFootGeometry"] = payload["nativeFootGeometry"]
+    fixed_rig = payload.get("fixedRig")
+    contact_tracks = (
+        fixed_rig.get("contactFootTracks") if isinstance(fixed_rig, dict) else None
+    )
+    if isinstance(contact_tracks, dict) and contact_tracks.get("version") == 2:
+        # Native v2 tracks change sampled playback geometry (side axes and
+        # material offsets) beyond the exported frames. Legacy v1 tracks stay
+        # outside the identity so unchanged legacy payloads keep their hash.
+        identity_payload["nativeContactFootTracksV2"] = contact_tracks
     encoded = json.dumps(
         identity_payload,
         sort_keys=True,

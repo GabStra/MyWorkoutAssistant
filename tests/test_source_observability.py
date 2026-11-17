@@ -1,5 +1,59 @@
 from exercise_motion_pkg.source_observability import reconstruction_observability
 from exercise_motion_pkg.youtube import YouTubeCandidate, YouTubeRankingSettings, reviewed_candidate_sort_key
+import pytest
+
+
+@pytest.mark.parametrize(('feet_visible', 'head_visible', 'passed'), [
+    (True, False, True), (False, True, False),
+])
+def test_definition_visibility_preserves_named_feet_without_inventing_a_head_requirement(
+        feet_visible, head_visible, passed):
+    from exercise_motion_pkg.source_observability import required_region_observation_metrics
+
+    contract = {
+        'contractScope': 'definition_only', 'actionDefinitionAuthority': 'structured_definition',
+        'motionContext': {'exerciseDefinition': {
+            'definingAction': 'Extend the arms while the feet remain supported.',
+            'requiredPhases': ['Flex the elbows', 'Extend the arms'],
+        }},
+        'observableMotionSpec': {'primaryMovingRegions': ['upper_limb'],
+                                 'mustBeVisibleRegions': ['upper_limb', 'head']},
+    }
+    joints = {'left_wrist': [.4, .3], 'left_elbow': [.4, .4]}
+    if feet_visible:
+        joints['left_ankle'] = [.4, .9]
+    if head_visible:
+        joints['nose'] = [.4, .2]
+    result = required_region_observation_metrics(
+        {'coordinateSpace': 'normalized_image_xy', 'frames': [{'joints': joints}]}, contract)
+    assert result['passed'] is passed
+    assert 'head' not in result['observedFrameCounts']
+    assert result['observedFrameCounts']['feet'] == int(feet_visible)
+    if feet_visible:
+        contract['bodySupportRequirements'] = {
+            'required': [{'region': 'head', 'side': 'center', 'surface': 'bench'}]}
+        assert not required_region_observation_metrics(
+            {'frames': [{'joints': joints}]}, contract)['passed']
+        contract['bodySupportRequirements'] = {}
+        contract['motionContext']['exerciseDefinition']['definingAction'] = 'Nod the head.'
+        assert not required_region_observation_metrics(
+            {'frames': [{'joints': joints}]}, contract)['passed']
+
+
+def test_definition_visibility_does_not_promote_equipment_or_surfaces_to_body_requirements():
+    from exercise_motion_pkg.source_observability import required_region_observation_metrics
+
+    contract = {
+        'contractScope': 'definition_only', 'actionDefinitionAuthority': 'structured_definition',
+        'motionContext': {'exerciseDefinition': {
+            'definingAction': 'Flex the elbow beside a barbell resting on the floor.'}},
+        'observableMotionSpec': {'primaryMovingRegions': ['elbows'],
+                                 'mustBeVisibleRegions': ['elbows']},
+    }
+    result = required_region_observation_metrics(
+        {'frames': [{'joints': {'left_elbow': [.4, .4]}}]}, contract)
+    assert result['passed']
+    assert set(result['observedFrameCounts']) == {'elbows'}
 
 
 def test_required_region_evidence_allows_side_view_but_rejects_cropped_predictions():

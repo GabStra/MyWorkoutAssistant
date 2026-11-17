@@ -68,6 +68,7 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_MLOCK,
     DEFAULT_LLAMA_CPP_MMAP,
     DEFAULT_LLAMA_CPP_MMPROJ,
+    DEFAULT_LLAMA_CPP_MMPROJ_DEVICE,
     DEFAULT_LLAMA_CPP_MODEL,
     DEFAULT_LLAMA_CPP_MTP_MODEL,
     DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS,
@@ -76,6 +77,7 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     DEFAULT_LLAMA_CPP_SERVER_COMMAND,
     DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX,
+    DEFAULT_LLAMA_CPP_SPEC_TYPE,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
@@ -84,6 +86,7 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_TEXT_LLAMA_CPP_MODEL,
 )
 from exercise_motion_pkg.pose_prefilter import (
+    POSE_PERSON_COUNT_POLICY_VERSION,
     PosePrefilterSettings,
     POSE_CAMERA_POLICY_VERSION,
     YoloDeviceUnavailableError,
@@ -125,6 +128,8 @@ LLAMA_CPP_CHAT_READY_PROBE_TIMEOUT_SECONDS = 5.0
 # Consecutive failed chat probes (while /v1/models still answers) before the
 # recovery path force-restarts a wedged server instead of waiting it out.
 DEFAULT_YOUTUBE_SEARCH_TIMEOUT_SECONDS = 60.0
+DEFAULT_DISCOVERY_CANDIDATE_BUDGET = 48
+DEFAULT_DISCOVERY_TIME_BUDGET_SECONDS = 180.0
 YOUTUBE_SEARCH_MAX_ATTEMPTS = 4
 YOUTUBE_SEARCH_RETRY_BASE_DELAY_SECONDS = 2.0
 YOUTUBE_SEARCH_RETRY_MAX_DELAY_SECONDS = 16.0
@@ -699,7 +704,7 @@ def sanitize_downloaded_video(video_path: Path) -> Path:
     cache_inputs = [video_path]
     if source_clock_path.is_file():
         cache_inputs.append(source_clock_path)
-    key = cache_key({"policyVersion": 2}, cache_inputs)
+    key = cache_key({"policyVersion": 3}, cache_inputs)
     with stage_lock(checkpoint):
         cached = load_stage(checkpoint, key)
         if cached is not None:
@@ -760,9 +765,47 @@ def _sanitize_downloaded_video_uncached(video_path: Path) -> Path:
     if ffmpeg is None:
         return video_path
 
-    sanitized_path = video_path.with_name(f"{video_path.stem}_sanitized.mp4")
+    from exercise_motion_pkg.video_materialization_cache import (
+        MaterializationNotProduced,
+        default_video_materialization_cache_dir,
+        materialize_cached,
+    )
 
-    temp_path = sanitized_path.with_suffix(".tmp.mp4")
+    sanitized_path = video_path.with_name(f"{video_path.stem}_sanitized.mp4")
+    settings = {
+        "policyVersion": 3,
+        "operation": "sanitize_video_for_processing",
+        "copyFlags": "+discardcorrupt+genpts",
+        "codecArgs": list(h264_codec_args()),
+        "pixFmt": "yuv420p",
+        "movflags": "+faststart",
+        "audio": "disabled",
+        "errorDetect": "ignore_err",
+    }
+    try:
+        return materialize_cached(
+            source_path=video_path,
+            output_path=sanitized_path,
+            settings=settings,
+            cache_dir=default_video_materialization_cache_dir(sanitized_path),
+            producer=lambda destination: _encode_sanitized_video(
+                video_path=video_path,
+                destination=destination,
+                ffmpeg=ffmpeg,
+            ),
+        )
+    except MaterializationNotProduced:
+        return video_path
+
+
+def _encode_sanitized_video(
+    *,
+    video_path: Path,
+    destination: Path,
+    ffmpeg: str,
+) -> None:
+    from .video_materialization_cache import MaterializationNotProduced
+
     command_base = [
         ffmpeg,
         "-hide_banner",
@@ -780,13 +823,12 @@ def _sanitize_downloaded_video_uncached(video_path: Path) -> Path:
         "copy",
         "-movflags",
         "+faststart",
-        str(temp_path),
+        str(destination),
     ]
 
     copy_exit_code, copy_stderr = _run_ffmpeg(copy_args)
-    warning_text = copy_stderr.lower()
     copy_has_decode_warning = any(
-        token in warning_text for token in (
+        token in copy_stderr.lower() for token in (
             "co located pocs unavailable",
             "missing reference picture",
             "decode_slice_header error",
@@ -794,30 +836,19 @@ def _sanitize_downloaded_video_uncached(video_path: Path) -> Path:
             "malformed aac timestamps",
         )
     )
-
     if copy_exit_code == 0 and not copy_has_decode_warning:
-        return _finalize_sanitized_video(temp_path, sanitized_path, video_path)
-
+        return
     codec_args = h264_codec_args()
     reencode_args = command_base + [
-        "-fflags",
-        "+discardcorrupt+genpts",
-        "-err_detect",
-        "ignore_err",
+        "-fflags", "+discardcorrupt+genpts", "-err_detect", "ignore_err",
     ] + codec_args + [
-        "-pix_fmt",
-        "yuv420p",
-        "-an",
-        "-movflags",
-        "+faststart",
-        str(temp_path),
+        "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart", str(destination),
     ]
     exit_code, _stderr = _run_ffmpeg(reencode_args)
     if exit_code != 0 and retry_h264_codec_args(reencode_args, codec_args) is not None:
-        _run_ffmpeg(reencode_args)
-    # A failed re-encode degrades to the original video via _finalize_sanitized_video.
-    return _finalize_sanitized_video(temp_path, sanitized_path, video_path)
-
+        exit_code, _stderr = _run_ffmpeg(reencode_args)
+    if exit_code != 0:
+        raise MaterializationNotProduced(f"Sanitizer encoding failed for {video_path}")
 
 def _run_ffmpeg(args: list[str]) -> tuple[int, str]:
     try:
@@ -832,15 +863,6 @@ def _run_ffmpeg(args: list[str]) -> tuple[int, str]:
     except subprocess.TimeoutExpired:
         return 124, "ffmpeg timed out after 120 seconds."
     return process.returncode, process.stderr
-
-
-def _finalize_sanitized_video(temp_path: Path, final_path: Path, fallback_path: Path) -> Path:
-    if not temp_path.exists() or temp_path.stat().st_size == 0:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
-        return fallback_path
-    temp_path.replace(final_path)
-    return final_path
 
 
 def build_youtube_download_options(
@@ -1130,8 +1152,8 @@ class YouTubeRankingSettings:
     source_outcome_index: Path | None = None
     excluded_candidate_keys: tuple[str, ...] = ()
     max_candidates: int = 8
-    discovery_candidate_budget: int = 0
-    discovery_time_budget_seconds: float = 0.0
+    discovery_candidate_budget: int = DEFAULT_DISCOVERY_CANDIDATE_BUDGET
+    discovery_time_budget_seconds: float = DEFAULT_DISCOVERY_TIME_BUDGET_SECONDS
     candidate_review_batch_size: int | None = 12
     candidate_review_target_suitable_count: int = 2
     min_duration_seconds: int = 0
@@ -1406,6 +1428,7 @@ class CandidateReviewPassResult:
     pose_elapsed_seconds: float = 0.0
     vision_elapsed_seconds: float = 0.0
     review_batches: list[dict[str, Any]] = field(default_factory=list)
+    recoverable_vlm_failures: list[CriticalVlmInteractionError] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -2792,6 +2815,7 @@ def youtube_query_planning_context(
 ) -> dict[str, Any]:
     context = motion_context if isinstance(motion_context, dict) else {}
     contract = motion_contract if isinstance(motion_contract, dict) else {}
+    contract = exercise_motion_contract_for_prompt(contract) or contract
     planning = {
         "primaryEquipment": context.get("primaryEquipment"),
         "requiredAccessories": context.get("requiredAccessories"),
@@ -2802,6 +2826,7 @@ def youtube_query_planning_context(
         "validEndState": contract.get("validEndState"),
         "requiredPhases": contract.get("requiredPhases"),
         "mustBeVisibleRegions": contract.get("mustBeVisibleRegions"),
+        "bodySupportRequirements": contract.get("bodySupportRequirements"),
         "existingAliases": contract.get("youtubeQueryAliases"),
     }
     return {key: value for key, value in planning.items() if value is not None}
@@ -4027,6 +4052,7 @@ def rank_candidates_with_semantic_gate(
     stop_after_target_pass_count = not settings.pose_prefilter_enabled and not settings.rank_with_vision
     active_gate = semantic_gate or rank_candidate_with_llama_cpp_semantic_gate
     scored_by_key: dict[str, YouTubeCandidate] = {}
+    critical_failures: list[CriticalVlmInteractionError] = []
 
     def score_candidates(candidates_to_review: list[YouTubeCandidate]) -> None:
         pending = [
@@ -4056,14 +4082,37 @@ def rank_candidates_with_semantic_gate(
                     )
                 except Exception as exc:
                     if is_critical_vlm_interaction_error(exc):
-                        add_vlm_context(
+                        critical = add_vlm_context(
                             exc,
                             stage="semantic_gate_parallel",
                             exerciseName=exercise.name,
                             videoId=candidate.video_id,
                             title=candidate.title,
                         )
-                        raise
+                        if critical is None or not critical.recoverable:
+                            raise
+                        critical_failures.append(critical)
+                        payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
+                        payload["semanticGate"] = {
+                            "enabled": True,
+                            "unresolved": True,
+                            "reviewStatus": "infrastructure_interrupted",
+                            "failureOwner": "infrastructure",
+                            "error": str(critical),
+                        }
+                        scored = replace_candidate(
+                            candidate,
+                            vision_payload=payload,
+                            score_reasons=dedupe_reasons([
+                                reason for reason in candidate.score_reasons
+                                if reason not in {"semantic_gate_passed", "semantic_gate_rejected",
+                                                  "semantic_gate_unresolved"}
+                            ] + ["semantic_gate_unresolved"]),
+                        )
+                        scored_by_key[candidate.key()] = scored
+                        if debug_scored_by_key is not None:
+                            debug_scored_by_key[candidate.key()] = scored
+                        continue
                     scored = apply_semantic_gate_score(
                         candidate,
                         exercise=exercise,
@@ -4107,6 +4156,8 @@ def rank_candidates_with_semantic_gate(
             if stop_after_target_pass_count and len(narrowed) >= target_pass_count:
                 break
         narrowed.sort(key=lambda item: semantic_gate_sort_key(item, settings), reverse=True)
+        if stop_after_target_pass_count and len(narrowed) < target_pass_count and critical_failures:
+            raise critical_failures[0]
         return narrowed
     finally:
         if isinstance(active_gate, LlamaCppSemanticGate):
@@ -4486,8 +4537,8 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "Classify the requested exercise from its definition, before any video is selected. "
         "Describe only its movement type, natural completion boundary, broad body action, "
         "and implement relationship. Preserve named variants and required accessories. "
-        "Do not describe or guess exact start/end posture, support contacts, stance, "
-        "joint angles, pauses, phase timing, or duration; those require source footage. "
+        "Do not infer observed support contacts, stance, joint angles, pauses, phase timing, or duration from the target definition; "
+        "record only explicitly required or prohibited target support contacts in bodySupportRequirements. "
         "Define the exercise action separately from its return or stopping boundary. "
         "Return one concise definingAction sentence and actionDefinitionStatus as defined only when the action is "
         "clear from the target name and supplied context; otherwise return uncertain and an empty definingAction. "
@@ -4496,7 +4547,7 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "other target action even when it does not return to its start. Do not describe support contacts as action phases. "
         "Do not emit validStartState, validEndState, startPoseConstraints, endPoseConstraints, or "
         "singleExecutionDurationSeconds.\n"
-        "Return one minified JSON object with exactly these keys: definingAction, variantQualifiers, movementType, "
+        "Return one minified JSON object with exactly these keys: definingAction, variantQualifiers, bodySupportRequirements, movementType, "
         "groundContactMode, implementSupportMode, handRelationship, completionMode, "
         "requiredPhases, actionDefinitionStatus, primaryMovingRegions, referenceRegions, "
         "primaryAxis, motionPattern, mustBeVisibleRegions.\n"
@@ -4510,6 +4561,10 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "hand; none or unknown otherwise. implementSupportMode describes support "
         "of one rigid implement: hands_only|body_supported|mixed|external|none. "
         "Separate dumbbells or kettlebells have implementSupportMode none.\n"
+        "bodySupportRequirements is a typed projection of support intent stated by the authoritative definition only, never a guess from a candidate video. "
+        "Use {required:[{region:<specific_body_region>,side:left|right|both|either|center,surface?:any|external_anchor|fixed_bar|floor|bench|seat|wall|other|ground|raised_surface|moving_implement,contactMode?:stationary|sliding|rolling}],prohibited:[same entries]}. "
+        "Required means the named body region must be stationary on that support; prohibited means that support contact must not occur. "
+        "Use a concise specific body-region name (for example shin, shoulder, elbow, or upper_back); do not rename one region to another. Use center for centered regions; optional contactMode describes the contact motion and may be omitted when unspecified. Use an empty object when the definition states no support requirements.\n"
         "Regions: hands|elbows|shoulders|torso|head|hips|knees|feet|upper_limb|"
         "lower_limb. primaryAxis: vertical|horizontal|depth|any. motionPattern: "
         "joint_travel|body_toward_anchor|body_away_from_anchor|limb_toward_body|"
@@ -4886,10 +4941,15 @@ def normalize_definition_exercise_motion_contract_response(
     completion_mode = normalize_exercise_completion_mode(raw.get("completionMode"))
     if completion_mode is None:
         raise ValueError("exercise definition contract needs a completion mode")
+    if "bodySupportRequirements" not in raw:
+        raise ValueError("exercise definition contract needs bodySupportRequirements")
+    support_requirements = normalize_body_support_requirements(raw["bodySupportRequirements"])
+    if support_requirements is None:
+        raise ValueError("exercise definition contract has invalid bodySupportRequirements")
     definition = {
         key: raw[key]
         for key in (
-            "definingAction", "variantQualifiers", "movementType", "groundContactMode", "implementSupportMode", "handRelationship",
+            "definingAction", "variantQualifiers", "bodySupportRequirements", "movementType", "groundContactMode", "implementSupportMode", "handRelationship",
             "completionMode", "requiredPhases", "actionDefinitionStatus", "primaryMovingRegions",
             "referenceRegions", "primaryAxis", "motionPattern", "mustBeVisibleRegions",
         )
@@ -4906,7 +4966,94 @@ def normalize_definition_exercise_motion_contract_response(
     if trusted_definition is not None:
         definition.update(trusted_definition)
         definition["requiresReturnToStart"] = trusted_definition["completionMode"] == "return_to_start"
+        if "bodySupportRequirements" not in trusted_definition:
+            # The structured definition is the current approved action but it
+            # does not carry typed support intent. The model's pre-video
+            # projection of that action may stand in for it, bound to this
+            # exact definition so a stale projection cannot survive an edit.
+            definition[_BODY_SUPPORT_PROJECTION_AUTHORITY_FIELD] = (
+                _BODY_SUPPORT_PROJECTION_AUTHORITY
+            )
+            definition[_BODY_SUPPORT_PROJECTION_DIGEST_FIELD] = (
+                exercise_motion_definition_support_projection_digest(exercise)
+            )
     return normalize_exercise_motion_contract(definition, exercise=exercise, source=source)
+
+
+def normalize_bilateral_execution(value: Any) -> dict[str, str]:
+    """Validate canonical technique intent, independent of observed source symmetry."""
+    allowed = {"arms": {"mirrored", "unconstrained"}, "legs": {"mirrored", "unconstrained"},
+               "torso": {"sagittal", "unconstrained"},
+               "stance": {"stationary_bilateral", "unconstrained"}}
+    if (not isinstance(value, dict) or any(
+            group not in allowed or not isinstance(mode, str) or mode not in allowed[group]
+            for group, mode in value.items())):
+        raise ValueError(
+            "bilateralExecution requires mirrored/unconstrained arms or legs, "
+            "sagittal/unconstrained torso, or stationary_bilateral/unconstrained stance")
+    return dict(value)
+
+
+_BODY_SUPPORT_CENTER_REGIONS = {"pelvis", "upper_back", "head"}
+_BODY_SUPPORT_SIDES = {"left", "right", "both", "either", "center"}
+_BODY_SUPPORT_CONTACT_MODES = {"stationary", "sliding", "rolling"}
+_BODY_SUPPORT_REGION_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_BODY_SUPPORT_SURFACES = {
+    "any", "external_anchor", "fixed_bar", "floor", "bench", "seat", "wall",
+    "other", "ground", "raised_surface", "moving_implement",
+}
+_BODY_SUPPORT_PROJECTION_AUTHORITY = "definition_projection"
+_BODY_SUPPORT_DISCOVERY_HINTS_FIELD = "bodySupportDiscoveryHints"
+_BODY_SUPPORT_PROJECTION_AUTHORITY_FIELD = "bodySupportDiscoveryHintsAuthority"
+_BODY_SUPPORT_PROJECTION_DIGEST_FIELD = "bodySupportDiscoveryHintsDefinitionDigest"
+
+
+def normalize_body_support_requirements(value: Any) -> dict[str, list[dict[str, str]]] | None:
+    """Validate definition-owned support contacts without interpreting prose."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {"required", "prohibited"}:
+        return None
+    normalized: dict[str, list[dict[str, str]]] = {"required": [], "prohibited": []}
+    for disposition in normalized:
+        entries = value.get(disposition, [])
+        if not isinstance(entries, list):
+            return None
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) - {"region", "side", "surface", "contactMode"}:
+                return None
+            raw_region_value = entry.get("region")
+            if not isinstance(raw_region_value, str):
+                return None
+            raw_region = raw_region_value.strip().casefold().replace(" ", "_")
+            region = {"feet": "foot", "hands": "hand", "ankles": "ankle", "knees": "knee"}.get(raw_region, raw_region)
+            if not _BODY_SUPPORT_REGION_PATTERN.fullmatch(region):
+                return None
+            side = str(entry.get("side") or "").strip().casefold()
+            if not side:
+                side = "center" if region in {"pelvis", "upper_back", "head"} else (
+                    "both" if raw_region in {"feet", "hands", "ankles", "knees"} else "either"
+                )
+            surface_value = entry.get("surface")
+            surface = str(surface_value or "any").strip().casefold().replace(" ", "_")
+            if (side not in _BODY_SUPPORT_SIDES or surface not in _BODY_SUPPORT_SURFACES):
+                return None
+            if (region in {"ankle", "foot", "knee", "hand", *_BODY_SUPPORT_CENTER_REGIONS}
+                    and ((region in _BODY_SUPPORT_CENTER_REGIONS) != (side == "center"))):
+                return None
+            item = {"region": region, "side": side}
+            if surface != "any":
+                item["surface"] = surface
+            if "contactMode" in entry:
+                contact_mode = entry["contactMode"]
+                if not isinstance(contact_mode, str):
+                    return None
+                contact_mode = contact_mode.strip().casefold()
+                if contact_mode not in _BODY_SUPPORT_CONTACT_MODES:
+                    return None
+                item["contactMode"] = contact_mode
+            normalized[disposition].append(item)
+    return normalized
 
 
 def exercise_motion_context_action_definition(context: Any) -> dict[str, Any] | None:
@@ -4928,11 +5075,58 @@ def exercise_motion_context_action_definition(context: Any) -> dict[str, Any] | 
     result["variantQualifiers"] = cleaned_contract_string_list(
         definition.get("variantQualifiers"), limit=6, item_limit=120,
     )
+    if "bodySupportRequirements" in definition:
+        requirements = normalize_body_support_requirements(definition["bodySupportRequirements"])
+        if requirements is None:
+            raise ValueError("exercise definition bodySupportRequirements is invalid")
+        result["bodySupportRequirements"] = requirements
+    if "bilateralExecution" in definition:
+        try:
+            result["bilateralExecution"] = normalize_bilateral_execution(definition["bilateralExecution"])
+        except ValueError:
+            return None
+        result["bilateralExecutionAuthority"] = "structured_definition"
     required_phases = normalize_required_phase_labels(definition.get("requiredPhases"))
     if required_phases:
         result["requiredPhases"] = required_phases
         result["requiredPhasesAuthority"] = "structured_definition"
     return result
+
+
+def exercise_motion_definition_support_projection_digest(exercise: ExerciseEntry) -> str:
+    """Hash the current approved structured definition a projection derives from."""
+    context = canonicalize_exercise_motion_context(
+        exercise.motion_context if isinstance(exercise.motion_context, dict) else None
+    )
+    definition = context.get("exerciseDefinition") if isinstance(context, dict) else None
+    payload = definition if isinstance(definition, dict) else {}
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def exercise_motion_definition_support_projection_is_current(
+    contract: dict[str, Any],
+    exercise: ExerciseEntry,
+) -> bool:
+    """Accept a support projection only from a definition-only extraction of this definition."""
+    if contract.get("contractScope") != "definition_only":
+        return False
+    if exercise_motion_context_action_definition(exercise.motion_context) is None:
+        return False
+    if contract.get(_BODY_SUPPORT_PROJECTION_AUTHORITY_FIELD) != _BODY_SUPPORT_PROJECTION_AUTHORITY:
+        return False
+    digest = contract.get(_BODY_SUPPORT_PROJECTION_DIGEST_FIELD)
+    return (
+        isinstance(digest, str)
+        and bool(digest)
+        and digest == exercise_motion_definition_support_projection_digest(exercise)
+    )
 
 
 def exercise_motion_context_has_action_definition(context: Any) -> bool:
@@ -4942,14 +5136,66 @@ def exercise_motion_context_has_action_definition(context: Any) -> bool:
 def reconcile_exercise_motion_contract_definition(
     contract: dict[str, Any], exercise: ExerciseEntry,
 ) -> dict[str, Any]:
-    """Bind action authority to this exact exercise context on every admission path."""
+    """Bind trusted action and support intent to this exercise on every admission path."""
     contract_context = contract.get("motionContext")
     if isinstance(contract_context, dict) and not exercise_motion_context_identity_matches(
         contract_context, exercise.motion_context, exercise.name,
     ):
         raise ValueError("exercise motion contract belongs to a different exercise definition")
     result = dict(contract)
+    # Runtime intent always comes from the current structured definition.
+    result.pop("bilateralExecution", None)
+    result.pop("bilateralExecutionAuthority", None)
+    context = exercise.motion_context if isinstance(exercise.motion_context, dict) else {}
+    source_definition = context.get("exerciseDefinition")
     definition = exercise_motion_context_action_definition(exercise.motion_context)
+    explicit_definition_support = (
+        isinstance(source_definition, dict) and "bodySupportRequirements" in source_definition
+    )
+    projected_support = exercise_motion_definition_support_projection_is_current(contract, exercise)
+    hard_support: dict[str, list[dict[str, str]]] | None = None
+    discovery_hints: dict[str, list[dict[str, str]]] | None = None
+    if explicit_definition_support:
+        hard_support = normalize_body_support_requirements(
+            source_definition["bodySupportRequirements"]
+        )
+        if hard_support is None:
+            raise ValueError("exercise definition bodySupportRequirements is invalid")
+    elif contract.get("contractScope") == "definition_only" and definition is not None:
+        # A definition lacking explicit typed support does not oblige any
+        # contact. Keep the normalized empty obligation and, when a current
+        # pre-video projection exists, retain it only as a discovery hint that
+        # asks source inspection to confirm or reject it.
+        hard_support = {"required": [], "prohibited": []}
+        if projected_support:
+            candidate_hints = contract.get(_BODY_SUPPORT_DISCOVERY_HINTS_FIELD)
+            if candidate_hints is None:
+                candidate_hints = contract.get("bodySupportRequirements")
+            normalized_hints = (
+                normalize_body_support_requirements(candidate_hints)
+                if candidate_hints is not None else None
+            )
+            if normalized_hints is not None and (
+                normalized_hints["required"] or normalized_hints["prohibited"]
+            ):
+                discovery_hints = normalized_hints
+    # Model-proposed contacts never become hard obligations. Only explicit
+    # reviewed definition intent does; inferred contacts survive as hints.
+    for field_name in (
+        "bodySupportRequirements",
+        _BODY_SUPPORT_DISCOVERY_HINTS_FIELD,
+        _BODY_SUPPORT_PROJECTION_AUTHORITY_FIELD,
+        _BODY_SUPPORT_PROJECTION_DIGEST_FIELD,
+    ):
+        result.pop(field_name, None)
+    if hard_support is not None:
+        result["bodySupportRequirements"] = hard_support
+    if discovery_hints is not None:
+        result[_BODY_SUPPORT_DISCOVERY_HINTS_FIELD] = discovery_hints
+        result[_BODY_SUPPORT_PROJECTION_AUTHORITY_FIELD] = _BODY_SUPPORT_PROJECTION_AUTHORITY
+        result[_BODY_SUPPORT_PROJECTION_DIGEST_FIELD] = (
+            exercise_motion_definition_support_projection_digest(exercise)
+        )
     if definition is None:
         if result.get("actionDefinitionAuthority") == "structured_definition":
             result["actionDefinitionAuthority"] = "unresolved"
@@ -5065,6 +5311,10 @@ def normalize_exercise_motion_contract(
             "contractScope", "advisoryText", "movementType", "groundContactMode",
             "implementSupportMode", "handRelationship", "completionMode",
             "requiresReturnToStart", "definingAction", "variantQualifiers", "requiredPhases", "actionDefinitionStatus",
+            "bodySupportRequirements",
+            _BODY_SUPPORT_DISCOVERY_HINTS_FIELD,
+            _BODY_SUPPORT_PROJECTION_AUTHORITY_FIELD,
+            _BODY_SUPPORT_PROJECTION_DIGEST_FIELD,
             "actionDefinitionAuthority",
             "primaryMovingRegions", "referenceRegions",
             "primaryAxis", "motionPattern", "mustBeVisibleRegions", "observableMotionSpec",
@@ -5432,6 +5682,37 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     )
     if implement_support_mode is not None:
         fields["implementSupportMode"] = implement_support_mode
+    if "bodySupportRequirements" in payload:
+        requirements = normalize_body_support_requirements(payload["bodySupportRequirements"])
+        if requirements is None:
+            raise ValueError("bodySupportRequirements must contain valid required/prohibited contact lists")
+        fields["bodySupportRequirements"] = requirements
+    if payload.get("contractScope") == "definition_only":
+        projection_authority = payload.get(_BODY_SUPPORT_PROJECTION_AUTHORITY_FIELD)
+        projection_digest = payload.get(_BODY_SUPPORT_PROJECTION_DIGEST_FIELD)
+        if (
+            projection_authority == _BODY_SUPPORT_PROJECTION_AUTHORITY
+            and isinstance(projection_digest, str)
+            and projection_digest
+        ):
+            fields[_BODY_SUPPORT_PROJECTION_AUTHORITY_FIELD] = projection_authority
+            fields[_BODY_SUPPORT_PROJECTION_DIGEST_FIELD] = projection_digest
+        if _BODY_SUPPORT_DISCOVERY_HINTS_FIELD in payload:
+            hints = normalize_body_support_requirements(
+                payload[_BODY_SUPPORT_DISCOVERY_HINTS_FIELD]
+            )
+            if hints is None:
+                raise ValueError(
+                    "bodySupportDiscoveryHints must contain valid required/prohibited contact lists"
+                )
+            # Hints only persist with their provenance so a stale projection
+            # cannot be reintroduced without its exact definition binding.
+            if (
+                projection_authority == _BODY_SUPPORT_PROJECTION_AUTHORITY
+                and isinstance(projection_digest, str)
+                and projection_digest
+            ):
+                fields[_BODY_SUPPORT_DISCOVERY_HINTS_FIELD] = hints
     from .equipment_constraints import HAND_RELATIONSHIPS, normalized_equipment_relationships
     if isinstance(payload.get("handRelationship"), str) and payload["handRelationship"] in HAND_RELATIONSHIPS:
         fields["handRelationship"] = payload["handRelationship"]
@@ -5626,7 +5907,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 37
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 39
 EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 16
 
 
@@ -5751,6 +6032,14 @@ def load_cached_exercise_motion_contract(
         )
         previous_payload = _read_exercise_motion_contract_cache_payload(previous_path)
         previous_contract = previous_payload.get("contract") if isinstance(previous_payload, dict) else None
+        current_definition = (
+            exercise.motion_context.get("exerciseDefinition")
+            if isinstance(exercise.motion_context, dict) else None
+        )
+        current_has_explicit_support = (
+            isinstance(current_definition, dict)
+            and "bodySupportRequirements" in current_definition
+        )
         if (isinstance(previous_contract, dict)
                 and previous_payload.get("schemaVersion") == EXERCISE_MOTION_CONTRACT_CACHE_VERSION
                 and previous_contract.get("contractScope") == "definition_only"
@@ -5758,7 +6047,11 @@ def load_cached_exercise_motion_contract(
                 and previous_contract.get("contractPolicyVersion") == 34
                 and previous_contract.get("status") == "generated"
                 and previous_contract.get("exerciseName") == exercise.name
-                and previous_contract.get("motionContext", {}) == exercise.motion_context):
+                and previous_contract.get("motionContext", {}) == exercise.motion_context
+                # Policy 34 discarded model support proposals as an empty
+                # obligation. Only a current explicit definition requirement
+                # may migrate; an empty old cache must not become a hint.
+                and current_has_explicit_support):
             spec = previous_contract.get("observableMotionSpec")
             spec = spec if isinstance(spec, dict) else {}
             try:
@@ -6064,6 +6357,8 @@ EXERCISE_MOTION_CONTRACT_PROMPT_FIELD_KEYS = (
     "requiresReturnToStart",
     "definingAction",
     "variantQualifiers",
+    "bilateralExecution",
+    "bilateralExecutionAuthority",
     "validStartState",
     "validEndState",
     "startPoseConstraints",
@@ -6076,6 +6371,7 @@ EXERCISE_MOTION_CONTRACT_PROMPT_FIELD_KEYS = (
     "mustBeVisibleRegions",
     "handRelationship",
     "implementSupportMode",
+    "bodySupportRequirements",
     "allowedExerciseTransitions",
     "excludedSetupOrCleanup",
     "boundaryRule",
@@ -6323,6 +6619,16 @@ def exercise_motion_contract_quality_issues(
     ]
     posture_text = " ".join(posture_state_texts)
     issues = exercise_motion_contract_identity_issues(contract, exercise=exercise)
+    if (contract.get("contractScope") == "definition_only"
+            or contract.get("actionDefinitionAuthority") == "structured_definition"):
+        if (contract.get("bilateralExecutionAuthority") != "structured_definition"
+                or not isinstance(contract.get("bilateralExecution"), dict)):
+            issues.append("model execution intent needs an explicit reviewed bilateralExecution")
+        else:
+            try:
+                normalize_bilateral_execution(contract["bilateralExecution"])
+            except ValueError:
+                issues.append("model execution intent contains invalid bilateralExecution modes")
     if contract.get("implementSupportMode") == "hands_only" and contract.get("handRelationship") in {
         "independent", "single", "none",
     }:
@@ -6566,6 +6872,44 @@ def exercise_motion_contract_for_prompt(contract: dict[str, Any] | None) -> dict
         if isinstance(value, (list, dict)) and not value:
             continue
         prompt_contract[key] = value
+    support_requirements = normalize_body_support_requirements(
+        contract.get("bodySupportRequirements")
+    )
+    support_regions = []
+    if support_requirements is not None:
+        support_visibility_regions = {
+            "ankle": "feet",
+            "foot": "feet",
+            "hand": "hands",
+            "head": "head",
+            "knee": "knees",
+            "pelvis": "hips",
+            "upper_back": "torso",
+        }
+        support_regions = [
+            support_visibility_regions[item["region"]]
+            for disposition in ("required", "prohibited")
+            for item in support_requirements[disposition]
+        ]
+    reference_regions = prompt_contract.get("referenceRegions")
+    raw_visible_regions = prompt_contract.get("mustBeVisibleRegions")
+    existing_visible_regions = (
+        raw_visible_regions if isinstance(raw_visible_regions, list)
+        else [raw_visible_regions] if isinstance(raw_visible_regions, str)
+        else []
+    )
+    visible_regions = normalize_observable_motion_regions(
+        [*support_regions, *(reference_regions if isinstance(reference_regions, list) else []),
+         *existing_visible_regions], limit=8,
+    )
+    if visible_regions:
+        prompt_contract["mustBeVisibleRegions"] = visible_regions
+        observable_spec = prompt_contract.get("observableMotionSpec")
+        if isinstance(observable_spec, dict):
+            prompt_contract["observableMotionSpec"] = {
+                **observable_spec,
+                "mustBeVisibleRegions": visible_regions,
+            }
     return prompt_contract
 
 
@@ -6589,8 +6933,8 @@ def exercise_motion_contract_prompt_identity_matches(
     """Compare semantic prompt identities while ignoring generated source labels.
 
     The persisted prompt hash remains byte/structure-sensitive for receipt verification;
-    this comparison only normalizes equivalent approval UTC offsets and the generated
-    ``Source: ...`` provenance header. Exercise instructions remain exact.
+    this comparison omits approval receipt metadata and one-sided derived accessory
+    enrichment, retaining approval state and every compiled motion requirement.
     """
     left_prompt = exercise_motion_contract_for_prompt(left)
     right_prompt = exercise_motion_contract_for_prompt(right)
@@ -6613,6 +6957,17 @@ def exercise_motion_contract_prompt_identity_matches(
         prompt: dict[str, Any],
     ) -> dict[str, Any]:
         result = deepcopy(prompt)
+        # Match the source prompt's projection; technique targets belong to fitting.
+        result.pop("bilateralExecution", None)
+        result.pop("bilateralExecutionAuthority", None)
+        context = result.get("motionContext")
+        if isinstance(context, dict) and isinstance(context.get("exerciseDefinition"), dict):
+            context["exerciseDefinition"].pop("bilateralExecution", None)
+            review = context["exerciseDefinition"].get("review")
+            if isinstance(review, dict):
+                # Approval state is admission authority; receipt metadata is not motion.
+                for key in ("approvedAtUtc", "reviewArtifactSha256", "proposalContractSha256"):
+                    review.pop(key, None)
         result["motionContext"] = canonicalize_exercise_motion_context(
             result.get("motionContext")
         )
@@ -6630,12 +6985,34 @@ def exercise_motion_contract_prompt_identity_matches(
                 result["advisoryText"] = remainder
         return result
 
-    return canonicalize(left or {}, left_prompt) == canonicalize(right or {}, right_prompt)
+    left_identity = canonicalize(left or {}, left_prompt)
+    right_identity = canonicalize(right or {}, right_prompt)
+    left_accessories = (left_identity.get("motionContext") or {}).get("requiredAccessories")
+    right_accessories = (right_identity.get("motionContext") or {}).get("requiredAccessories")
+    if isinstance(left_accessories, list) and isinstance(right_accessories, list):
+        for left_item, right_item in zip(left_accessories, right_accessories):
+            if (isinstance(left_item, dict) and isinstance(right_item, dict)
+                    and left_item.get("id") and left_item.get("id") == right_item.get("id")
+                    and left_item.get("type") == right_item.get("type")
+                    and (("capabilities" in left_item) != ("capabilities" in right_item))):
+                # Missing derived details may be enriched. Two explicit capability
+                # sets remain authoritative, and all compiled requirements compare below.
+                enriched = left_item if "capabilities" in left_item else right_item
+                if isinstance(enriched.get("capabilities"), list):
+                    enriched.pop("capabilities")
+    return left_identity == right_identity
 
 
 def exercise_motion_contract_prompt_body(prompt_contract: dict[str, Any]) -> str:
     from .contract_authority import contract_field_authority
 
+    # Canonical technique preferences belong to the 3D fitting stage.
+    prompt_contract = deepcopy(prompt_contract)
+    prompt_contract.pop("bilateralExecution", None)
+    prompt_contract.pop("bilateralExecutionAuthority", None)
+    context = prompt_contract.get("motionContext")
+    if isinstance(context, dict) and isinstance(context.get("exerciseDefinition"), dict):
+        context["exerciseDefinition"].pop("bilateralExecution", None)
     if prompt_contract.get("contractScope") == "definition_only":
         name = str(prompt_contract.get("exerciseName") or "")
         context = prompt_contract.get("motionContext") or {}
@@ -7009,6 +7386,7 @@ def run_youtube_candidate_review_pass(
     semantic_elapsed = 0.0
     pose_elapsed = 0.0
     vision_elapsed = 0.0
+    recoverable_vlm_failures: list[CriticalVlmInteractionError] = []
 
     if settings.semantic_gate_enabled:
         semantic_gate_started = time.monotonic()
@@ -7059,6 +7437,7 @@ def run_youtube_candidate_review_pass(
                 semantic_elapsed_seconds=semantic_elapsed,
                 pose_elapsed_seconds=pose_elapsed,
                 vision_elapsed_seconds=time.monotonic() - vision_started,
+                recoverable_vlm_failures=recoverable_vlm_failures,
             )
         active_vision_ranker = vision_ranker
         owned_vision_ranker: LlamaCppVisionRanker | None = None
@@ -7073,6 +7452,7 @@ def run_youtube_candidate_review_pass(
                     settings=settings,
                     vision_ranker=active_vision_ranker,
                     exercise_motion_contract=exercise_motion_contract,
+                    recoverable_failures=recoverable_vlm_failures,
                 )
             else:
                 reranked = rank_candidates_with_vision_ranker(
@@ -7099,6 +7479,7 @@ def run_youtube_candidate_review_pass(
         semantic_elapsed_seconds=semantic_elapsed,
         pose_elapsed_seconds=pose_elapsed,
         vision_elapsed_seconds=vision_elapsed,
+        recoverable_vlm_failures=recoverable_vlm_failures,
     )
 
 
@@ -7429,7 +7810,7 @@ def run_youtube_candidate_review_batches(
     reviewed_by_key: dict[str, YouTubeCandidate] = {
         key: candidate
         for key, candidate in debug_by_key.items()
-        if candidate_has_debug_review_payload(candidate, exercise=exercise)
+        if candidate_review_is_complete_for_settings(candidate, settings, exercise=exercise)
     }
     if budget is not None:
         for key, payload in budget.reviewed.items():
@@ -7437,7 +7818,7 @@ def run_youtube_candidate_review_batches(
                 candidate = YouTubeCandidate(**payload)
             except (TypeError, ValueError):
                 continue
-            if not candidate_has_debug_review_payload(candidate, exercise=exercise):
+            if not candidate_review_is_complete_for_settings(candidate, settings, exercise=exercise):
                 continue
             if not youtube_candidate_is_excluded(candidate, set(settings.excluded_candidate_keys)):
                 reviewed_by_key[key] = candidate
@@ -7446,6 +7827,7 @@ def run_youtube_candidate_review_batches(
     semantic_elapsed = 0.0
     pose_elapsed = 0.0
     vision_elapsed = 0.0
+    recoverable_vlm_failures: list[CriticalVlmInteractionError] = []
 
     pending_ranked = [
         candidate for candidate in ranked if candidate.key() not in reviewed_by_key
@@ -7486,6 +7868,7 @@ def run_youtube_candidate_review_batches(
             debug_by_key[candidate.key()] = candidate
         if budget is not None:
             budget.record({candidate.key(): asdict(debug_by_key.get(candidate.key(), candidate)) for candidate in batch})
+        recoverable_vlm_failures.extend(pass_result.recoverable_vlm_failures)
         accumulated_ranked = sort_youtube_reviewed_candidates(reviewed_by_key.values(), settings)
         suitable_count = youtube_suitable_candidate_count(accumulated_ranked, settings)
         adaptive_target_suitable_count, best_readiness_tier = youtube_first_attempt_portfolio_target(
@@ -7526,13 +7909,18 @@ def run_youtube_candidate_review_batches(
         if suitable_count >= target_suitable_count:
             break
 
+    if recoverable_vlm_failures:
+        raise recoverable_vlm_failures[0]
+
     ranked_reviewed = demote_candidates_failing_source_gate(
         demote_candidates_missing_required_review(
             sort_youtube_reviewed_candidates(reviewed_by_key.values(), settings),
             settings,
         )
     )
-    if not ranked_reviewed and budget is None:
+    if not ranked_reviewed and (
+        budget is None or (budget.candidate_limit <= 0 and budget.seconds_limit <= 0)
+    ):
         ranked_reviewed = sort_youtube_reviewed_candidates(ranked, settings)
     return CandidateReviewPassResult(
         ranked=ranked_reviewed,
@@ -8742,29 +9130,28 @@ def discover_and_rank_youtube_candidates(
                 )
                 continue
 
-            review_budget = None
-            if settings.discovery_candidate_budget > 0 or settings.discovery_time_budget_seconds > 0:
-                signature_settings = {
-                    key: value for key, value in asdict(settings).items()
-                    if key.startswith(("llama_cpp_", "pose_prefilter_", "semantic_gate_", "vision_"))
-                    and not any(word in key for word in ("workers", "candidates", "timeout", "parallel", "batch", "ctx", "server", "base_url"))
-                }
-                signature = hashlib.sha256(json.dumps({
-                    "version": 4,
-                    "contractVersion": EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
-                    "prompt": build_exercise_motion_contract_prompt(exercise),
-                    "contract": {key: value for key, value in (review_motion_contract or {}).items()
-                                 if key not in {"cacheStatus", "cachePath", "generationElapsedSeconds"}},
-                    "settings": signature_settings,
-                }, sort_keys=True, default=str).encode()).hexdigest()
-                exercise_key = hashlib.sha256(exercise.exercise_id.encode()).hexdigest()[:16]
-                review_budget = DiscoveryBudget(
-                    settings.discovery_candidate_budget, settings.discovery_time_budget_seconds,
-                    out_json.with_name(f"discovery_review_{exercise_key}.json"), signature,
-                    started_at=exercise_turn_started,
-                    yield_path=out_json.with_name("discovery_yield.request"),
-                )
-                review_budget.load()
+            signature_settings = {
+                key: value for key, value in asdict(settings).items()
+                if key.startswith(("llama_cpp_", "pose_prefilter_", "semantic_gate_", "vision_"))
+                and not any(word in key for word in ("workers", "candidates", "timeout", "parallel", "batch", "ctx", "server", "base_url"))
+            }
+            signature = hashlib.sha256(json.dumps({
+                "version": 4,
+                "contractVersion": EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
+                "prompt": build_exercise_motion_contract_prompt(exercise),
+                "contract": {key: value for key, value in (review_motion_contract or {}).items()
+                             if key not in {"cacheStatus", "cachePath", "generationElapsedSeconds"}},
+                "settings": signature_settings,
+            }, sort_keys=True, default=str).encode()).hexdigest()
+            exercise_key = hashlib.sha256(exercise.exercise_id.encode()).hexdigest()[:16]
+            # Checkpoint completed candidate judgments even when no turn limit is configured.
+            review_budget = DiscoveryBudget(
+                settings.discovery_candidate_budget, settings.discovery_time_budget_seconds,
+                out_json.with_name(f"discovery_review_{exercise_key}.json"), signature,
+                started_at=exercise_turn_started,
+                yield_path=out_json.with_name("discovery_yield.request"),
+            )
+            review_budget.load()
 
 
             queries = (
@@ -9461,6 +9848,14 @@ def candidate_has_debug_review_payload(
         return False
     if pose_prefilter_review_incomplete(payload.get("posePrefilter")):
         return False
+    pose_payload = payload.get("posePrefilter")
+    if (
+        candidate.status == "rejected"
+        and isinstance(pose_payload, dict)
+        and "multiple_people" in pose_prefilter_blocking_issues(pose_payload)
+        and pose_payload.get("personCountPolicyVersion") != POSE_PERSON_COUNT_POLICY_VERSION
+    ):
+        return False
     if candidate.status != "recommended" and pose_camera_review_is_stale(payload.get("posePrefilter")):
         return False
     contract = payload.get("exerciseMotionContract") or {}
@@ -9477,6 +9872,24 @@ def candidate_has_debug_review_payload(
         "semanticGate" in payload
         or "posePrefilter" in payload
         or candidate.vision_score is not None
+    )
+
+
+def candidate_review_is_complete_for_settings(
+    candidate: YouTubeCandidate,
+    settings: YouTubeRankingSettings,
+    *,
+    exercise: ExerciseEntry | None = None,
+) -> bool:
+    if not candidate_has_debug_review_payload(candidate, exercise=exercise):
+        return False
+    if not settings.rank_with_vision:
+        return True
+    if "vision_review_failed" in candidate.score_reasons:
+        return False
+    return candidate.vision_score is not None or not candidate_is_eligible_for_vision_review(
+        candidate,
+        settings,
     )
 
 
@@ -9828,7 +10241,8 @@ class LlamaCppVisionRanker:
             try:
                 self._raise_if_server_model_mismatch(server_payload)
                 self._raise_if_server_runtime_mismatch()
-                self._wait_for_chat_completions_ready()
+                if not self._attaches_shared_server():
+                    self._wait_for_chat_completions_ready()
                 return
             except RuntimeError:
                 if (
@@ -9901,6 +10315,9 @@ class LlamaCppVisionRanker:
                     "all" if self.settings.llama_cpp_backend == "gpu" else "0",
                 ]
             )
+        elif DEFAULT_LLAMA_CPP_SPEC_TYPE:
+            # No draft model configured; n-gram drafting costs neither a second model nor VRAM.
+            args.extend(["--spec-type", DEFAULT_LLAMA_CPP_SPEC_TYPE])
         if self.settings.llama_cpp_ctx_size is not None:
             args.extend(["--ctx-size", str(max(1, self.settings.llama_cpp_ctx_size))])
         if self.settings.llama_cpp_batch_size is not None:
@@ -9953,6 +10370,14 @@ class LlamaCppVisionRanker:
             args.extend(["--load-mode", "mmap+mlock"])
         if mmproj_path is not None:
             args.append("--mmproj-offload" if self.settings.llama_cpp_mmproj_offload else "--no-mmproj-offload")
+            if (
+                DEFAULT_LLAMA_CPP_MMPROJ_DEVICE
+                and exclusive_gpu_device() is None
+                and not os.environ.get("CUDA_VISIBLE_DEVICES")
+            ):
+                # Encode on the otherwise idle second card so vision encoding overlaps
+                # decode. Unusable when the exclusive lane pins the server to GPU 0.
+                args.extend(["--mmproj-device", DEFAULT_LLAMA_CPP_MMPROJ_DEVICE])
         args.append("--cont-batching" if self.settings.llama_cpp_cont_batching else "--no-cont-batching")
         if self.settings.llama_cpp_backend == "gpu":
             # The secondary GPU's PCIe transfers slowed the resident 9B model in host benchmarks.
@@ -10067,7 +10492,6 @@ class LlamaCppVisionRanker:
             if server_payload is not None:
                 self._raise_if_server_model_mismatch(server_payload)
                 self._raise_if_server_runtime_mismatch()
-                self._wait_for_chat_completions_ready()
                 return
             if live_foreign_generation_holders(shared_session_dir):
                 # An overlapping wave's generation phase holds the GPU (and
@@ -10370,9 +10794,11 @@ def rank_candidates_with_prepared_vision_reviews(
     settings: YouTubeRankingSettings,
     vision_ranker: Any,
     exercise_motion_contract: dict[str, Any] | None = None,
+    recoverable_failures: list[CriticalVlmInteractionError] | None = None,
 ) -> list[YouTubeCandidate]:
     vision_limit = max(0, settings.vision_candidates_per_exercise)
     reranked: list[YouTubeCandidate] = []
+    critical_failures: list[CriticalVlmInteractionError] = []
     if settings.vision_llm_workers > 1:
         index = 0
         passing_candidate_count = 0
@@ -10398,6 +10824,18 @@ def rank_candidates_with_prepared_vision_reviews(
                     settings=settings,
                     vision_ranker=vision_ranker,
                 )
+                critical_failures.extend(
+                    error for _, error in getattr(vision_results_by_key, "critical_failures", [])
+                )
+                nonrecoverable = next((error for error in critical_failures if not error.recoverable), None)
+                if nonrecoverable is not None:
+                    raise nonrecoverable
+            except CriticalVlmInteractionError as exc:
+                if not exc.recoverable:
+                    raise
+                critical_failures.append(exc)
+                vision_results_by_key = {}
+            try:
                 passing_candidates_in_wave = 0
                 while index < batch_end:
                     candidate = ranked[index]
@@ -10436,6 +10874,10 @@ def rank_candidates_with_prepared_vision_reviews(
             finally:
                 for prepared in prepared_by_key.values():
                     prepared.close()
+        if critical_failures:
+            if recoverable_failures is None:
+                raise critical_failures[0]
+            recoverable_failures.extend(critical_failures)
         return reranked
 
     index = 0
@@ -10464,17 +10906,23 @@ def rank_candidates_with_prepared_vision_reviews(
                         exercise_motion_contract=exercise_motion_contract,
                     )
                 else:
-                    vision_score, vision_reasons, vision_payload = normalize_vision_result(
-                        vision_ranker.rank_prepared(prepared, settings)
-                    )
-                    reviewed = apply_vision_score(
-                        candidate,
-                        vision_score,
-                        vision_reasons,
-                        vision_payload,
-                        settings=settings,
-                        exercise_motion_contract=exercise_motion_contract,
-                    )
+                    try:
+                        vision_score, vision_reasons, vision_payload = normalize_vision_result(
+                            vision_ranker.rank_prepared(prepared, settings)
+                        )
+                        reviewed = apply_vision_score(
+                            candidate,
+                            vision_score,
+                            vision_reasons,
+                            vision_payload,
+                            settings=settings,
+                            exercise_motion_contract=exercise_motion_contract,
+                        )
+                    except CriticalVlmInteractionError as exc:
+                        if not exc.recoverable:
+                            raise
+                        critical_failures.append(exc)
+                        reviewed = candidate
                 reranked.append(reviewed)
                 if candidate_passes_vision_hard_gates(reviewed, settings):
                     reranked.extend(ranked[index + 1 :])
@@ -10483,11 +10931,21 @@ def rank_candidates_with_prepared_vision_reviews(
         finally:
             for prepared in prepared_by_key.values():
                 prepared.close()
+    if critical_failures:
+        if recoverable_failures is None:
+            raise critical_failures[0]
+        recoverable_failures.extend(critical_failures)
     return reranked
 
 
 class PreparedVisionReviewCancelled(RuntimeError):
     """An in-flight candidate stopped after another candidate satisfied the wave."""
+
+
+class PreparedVisionReviewResults(dict[str, VisionRankResult]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.critical_failures: list[tuple[PreparedVisionReview, CriticalVlmInteractionError]] = []
 
 
 def score_prepared_vision_reviews_parallel(
@@ -10499,11 +10957,10 @@ def score_prepared_vision_reviews_parallel(
     if not prepared_reviews:
         return {}
     workers = max(1, min(settings.vision_llm_workers, len(prepared_reviews)))
-    results: dict[str, VisionRankResult] = {}
+    results = PreparedVisionReviewResults()
     stop_event = threading.Event()
     target_suitable_count = settings.resolved_candidate_review_target_suitable_count()
     suitable_result_count = 0
-    critical_failures: list[tuple[PreparedVisionReview, BaseException]] = []
 
     def rank_prepared(prepared: PreparedVisionReview) -> VisionRankResult:
         if callable_accepts_keyword(vision_ranker.rank_prepared, "stop_event"):
@@ -10546,6 +11003,12 @@ def score_prepared_vision_reviews_parallel(
                 continue
             except Exception as exc:
                 if is_critical_vlm_interaction_error(exc):
+                    critical = add_vlm_context(
+                        exc,
+                        stage="source_video_suitability_parallel_review",
+                        videoId=prepared.candidate.video_id,
+                        title=prepared.candidate.title,
+                    )
                     write_prepared_vision_critical_vlm_error(
                         prepared,
                         exc,
@@ -10555,14 +11018,14 @@ def score_prepared_vision_reviews_parallel(
                             "title": prepared.candidate.title,
                         },
                     )
-                    critical_failures.append((prepared, exc))
+                    if critical is not None:
+                        results.critical_failures.append((prepared, critical))
                     continue
                 results[prepared.candidate.key()] = (0.0, ["vision_review_failed"])
-    if not results and critical_failures:
+    if not results and results.critical_failures:
         # Each request already performs one bounded server recovery and retries
-        # itself. If the whole wave still failed, surface the infrastructure
-        # failure instead of misclassifying every source as unsuitable.
-        raise critical_failures[0][1]
+        # itself. The caller can advance to later candidates before surfacing it.
+        raise results.critical_failures[0][1]
     return results
 
 
@@ -10665,6 +11128,7 @@ def prepare_vision_review(
 ) -> PreparedVisionReview:
     from exercise_motion_pkg.segment_detection import (
         DetectionSettings,
+        DetectionWindow,
         VideoMetadata,
         detect_motion_candidate_intervals,
         iter_detection_windows,
@@ -10753,6 +11217,23 @@ def prepare_vision_review(
             ),
             review_windows,
         )
+        if len(windows) == 1:
+            from .bake_and_rank import detect_source_scene_boundaries, cut_free_source_scene_windows
+
+            timeline = DetectionWindow(index=0, start_seconds=0.0, end_seconds=duration)
+            scenes = cut_free_source_scene_windows(
+                detect_source_scene_boundaries(
+                    video_path, timeline_window=timeline,
+                    cache_path=(artifact_dir or temp_path) / "source_scene_analysis.json",
+                ), timeline_window=timeline,
+            )
+            if len(scenes) > 1:
+                # A clean demonstration must not be rejected with its outro.
+                review_windows = prepend_preferred_review_windows([
+                    PreparedReviewWindow(index=scene.index, start_seconds=scene.start_seconds,
+                                         end_seconds=scene.end_seconds, source="source_scene")
+                    for scene in scenes
+                ], review_windows)
         # Adaptive review needs the fallback windows available even when its VLM
         # budget is small. Rendering remains lazy, so unused windows cost nothing.
         review_windows = select_review_windows_by_budget(
@@ -11945,6 +12426,7 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         and explicit_gate_values.get("contract_end_state_match") is not False
         and explicit_gate_values.get("all_required_phases_visible") is not False
         and not semantic_blocking_issue_present
+        and target_identity_match is not False
         and not note_conflict_reasons
     )
     if valid_motion_scene:
@@ -12329,7 +12811,7 @@ def build_candidate_vision_prompt(
     execution_score_guidance = (
         '- execution_quality: how naturally and continuously the prescribed hold is maintained, without setup, talking, interruptions or instructional breakdown.\n'
         if completion_mode == "stable_hold"
-        else '- execution_quality: how naturally the exercise is performed: normal-speed, continuous, not paused, slow teaching, step-by-step, setup, talking, or title-card content.\n'
+        else '- execution_quality: visible adherence to the target action and technique requirements, with controlled movement and stable intended support, as well as natural continuous execution. Penalize visible compensations or unintended assistance; do not invent technique restrictions absent from the target.\n'
     )
     return (
         "Score this sampled video chunk for exercise motion extraction source suitability as part of a full-video scan.\n"

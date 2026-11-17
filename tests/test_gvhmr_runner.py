@@ -27,6 +27,7 @@ def test_export_gvhmr_results_pkl_matches_reconstruction_world_schema(tmp_path: 
             "transl": torch.ones(frames, 3),
         }
     }
+    pred["smpl_params_incam"] = {"global_orient": torch.zeros(frames, 3)}
     results_pt = tmp_path / "hmr4d_results.pt"
     torch.save(pred, results_pt)
     output_pkl = tmp_path / "reconstruction_output.pkl"
@@ -46,6 +47,7 @@ def test_export_gvhmr_results_pkl_matches_reconstruction_world_schema(tmp_path: 
     assert torch.all(betas == 0)  # neutral SMPL betas by default
     assert payload.get("betasSource") == "neutral_smpl"
     assert list(payload["frame_ids"]) == list(range(frames))
+    assert payload["camera_global_orient"].shape == (frames, 3)
 
 
 def test_export_gvhmr_results_pkl_keep_source_betas(tmp_path: Path) -> None:
@@ -58,6 +60,7 @@ def test_export_gvhmr_results_pkl_keep_source_betas(tmp_path: Path) -> None:
             "transl": torch.zeros(frames, 3),
         }
     }
+    pred["smpl_params_incam"] = {"global_orient": torch.zeros(frames, 3)}
     results_pt = tmp_path / "hmr4d_results.pt"
     torch.save(pred, results_pt)
     output_pkl = tmp_path / "reconstruction_output.pkl"

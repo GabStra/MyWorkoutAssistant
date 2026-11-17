@@ -98,6 +98,39 @@ def test_an_overhead_event_elsewhere_cannot_support_wrong_citations():
     assert action_pose_grounding(requirements, source, frames=frames, observations=claims)['passed']
 
 
+def test_reviewed_phase_can_ground_aggregate_action_without_losing_bilateral_reach():
+    source = pose(False)
+    source['frames'][-1] = pose()['frames'][-1]
+    requirements = [
+        {'id': 'action', 'description': 'Press a barbell overhead and lower it'},
+        {'id': 'phase_1', 'description': 'Press overhead'},
+    ]
+    frames = [{'id': str(i), 'timestampSeconds': float(i)} for i in range(3)]
+    claims = [
+        {'requirementId': 'action', 'verdict': 'supported', 'evidenceFrameIds': ['0', '1']},
+        {'requirementId': 'phase_1', 'verdict': 'supported', 'evidenceFrameIds': ['1', '2']},
+    ]
+    assert not action_pose_grounding(requirements, source, frames=frames, observations=claims)['passed']
+    result = action_pose_grounding(requirements, source, frames=frames, observations=claims,
+                                   reviewed_phase_ids=('phase_1',))
+    assert result['passed']
+    assert result['checks'][0]['phaseEvidenceRequirementIds'] == ['phase_1']
+    assert claims[0]['evidenceFrameIds'] == ['0', '1']
+    source['frames'][-1]['joints']['right_wrist'][1] = .4
+    assert not action_pose_grounding(requirements, source, frames=frames, observations=claims,
+                                     reviewed_phase_ids=('phase_1',))['passed']
+
+
+def test_variant_configuration_citation_does_not_relocate_the_overhead_endpoint():
+    source = pose(False)
+    source['frames'][-1] = pose()['frames'][-1]
+    requirement = {'id': 'variant_1', 'description': 'Standing barbell overhead press without leg drive.'}
+    frames = [{'id': str(i), 'timestampSeconds': float(i)} for i in range(3)]
+    claims = [{'requirementId': 'variant_1', 'verdict': 'supported', 'evidenceFrameIds': ['0']}]
+    assert action_pose_grounding([requirement], source, frames=frames, observations=claims)['passed']
+    assert not action_pose_grounding([requirement], pose(False), frames=frames, observations=claims)['passed']
+
+
 def sheet(tmp_path, name):
     directory = tmp_path / name
     directory.mkdir()

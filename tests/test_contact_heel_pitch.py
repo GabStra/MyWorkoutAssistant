@@ -83,6 +83,19 @@ def test_native_heel_pitch_inversion_preserves_measured_events_with_fullsole_con
         expected_yaw, abs=1e-6)
     assert report['sides']['left']['fullSoleDirichletFrameCount'] == 2
 
+    repeated_payload = {**payload, 'frames': [
+        {'sourceTimeSec': time} for time in (0., 1., 1., 2., 4.)]}
+    timed, timed_report = contact_heel_pitch.propose_source_heel_pitch(
+        rig, np.zeros((count, 3)), repeated_payload, constraint, pinned, 30.,
+        contact_targets=contact_targets)
+    np.testing.assert_allclose(timed[[1, 2], 0, 1], np.sin(expected), atol=1e-12)
+    assert all(timed_report['pitchAuthorityMaskBySide']['left'][index] for index in (1, 2))
+    with pytest.raises(ValueError, match='nondecreasing'):
+        contact_heel_pitch.propose_source_heel_pitch(
+            rig, np.zeros((count, 3)),
+            {**payload, 'frames': [{'sourceTimeSec': time} for time in (0., 1., .5, 2., 4.)]},
+            constraint, pinned, 30., contact_targets=contact_targets)
+
     stale_baseline = {
         **constraint,
         'footGeometryPayload': {'footRestPitchRadians': {'left': .1, 'right': 0.}},
@@ -356,3 +369,152 @@ def test_source_pitch_authority_never_exceeds_mapped_trajectory():
     assert not trajectory.any()
     assert not authority.any()
     assert np.all(~authority | trajectory)
+
+
+def test_repeated_source_exposures_share_timed_pitch_without_nominal_fallback():
+    row = {'sourceTime': 1., 'leftFrame': 1, 'alpha': 0., 'state': 'toe_only',
+           'motionSide': 'left', 'sourceSide': 'left', 'stationaryAnchorGroupId': 'a'}
+    clock = [0., 1., 1., 2.]
+    kwargs = dict(frame_count=4, side='left', fullsole_frame_mask=np.zeros(4, bool),
+                  event_pitches=[(row, -.4)], frame_times=clock, fps=30.)
+    pitch, authority, trajectory, _ = contact_heel_pitch._shape_preserving_source_pitch(
+        {'sourceFootHeelImageObservations': [row, dict(row)]}, **kwargs)
+    np.testing.assert_allclose(pitch, [0., -.4, -.4, 0.])
+    np.testing.assert_array_equal(authority, [False, True, True, False])
+    np.testing.assert_array_equal(trajectory, authority)
+    # Independent contradictory measurements at one exposure remain unresolved.
+    _, authority, trajectory, _ = contact_heel_pitch._shape_preserving_source_pitch(
+        {'sourceFootHeelImageObservations': [row]},
+        **{**kwargs, 'event_pitches': [(row, -.4), (row, -.7)]})
+    assert not authority.any() and not trajectory.any()
+    with pytest.raises(ValueError, match='nondecreasing'):
+        contact_heel_pitch._shape_preserving_source_pitch(
+            {'sourceFootHeelImageObservations': [row]},
+            **{**kwargs, 'frame_times': [0., 1., .5, 2.]})
+
+
+def test_anatomical_heel_inverse_prefers_continuous_branch_over_antipodal_yaw():
+    """A toe-only heel observation must not flip the foot heading ~180 degrees.
+
+    Captured from the retained Dumbbell Lateral Lunge heel inverse: the source
+    heading is continuous while the 2-D marker projection admits an
+    antipodal-yaw branch. Both branches fit within the source noise, so the
+    measurement-equivalent branch continuous with the previous heading owns the
+    foot direction; legitimate heel pitch must still be measured.
+    """
+    names = ['pelvis', 'left_hip', 'left_knee', 'left_ankle', 'left_foot',
+             'right_hip', 'right_knee', 'right_ankle', 'right_foot']
+    ankles = [
+        [-0.029542, -0.740685, -0.133154],
+        [-0.030534, -0.740460, -0.133892],
+        [-0.030243, -0.740272, -0.134119],
+        [-0.030061, -0.740125, -0.134384],
+        [-0.029956, -0.739875, -0.133807],
+        [-0.029443, -0.739574, -0.132991],
+        [-0.029289, -0.739316, -0.132990],
+        [-0.028277, -0.738360, -0.134401],
+    ]
+    feet = [
+        [0.087671, -0.784649, -0.182328],
+        [0.086720, -0.784470, -0.182926],
+        [0.087001, -0.784380, -0.183087],
+        [0.087064, -0.784473, -0.183423],
+        [0.086927, -0.784649, -0.183034],
+        [0.087134, -0.784607, -0.182707],
+        [0.086863, -0.784482, -0.183572],
+        [0.087300, -0.783801, -0.186040],
+    ]
+    times = [0.367033, 0.400400, 0.433767, 0.467133, 0.500500, 0.533867, 0.567233, 0.600600]
+    targets = [
+        [-0.026500, -0.035330], [-0.029420, -0.035310], [-0.026370, -0.035360],
+        [-0.027980, -0.031910], [-0.027120, -0.030780], [-0.026110, -0.030700],
+        [-0.020780, -0.031340],
+    ]
+    marker = [-0.221960, -0.061230, -0.009840]
+    toe_target = [0.086912, -0.784544, -0.183050]
+    projection = [[-0.04530, -0.01240, -0.49380], [0.00560, -0.49590, 0.01190]]
+    rest = -0.33822488486705615
+
+    points = np.zeros((len(ankles), len(names), 3))
+    points[:, names.index('pelvis')] = [0., 1., 0.]
+    points[:, names.index('left_hip')] = [-0.035127, 1., 0.]
+    points[:, names.index('right_hip')] = [0.2, 1., 0.]
+    points[:, names.index('left_ankle')] = ankles
+    points[:, names.index('left_foot')] = feet
+    points[:, names.index('right_ankle')] = [0.2, 0., 0.]
+    points[:, names.index('right_foot')] = [0.2, 0., .2]
+    ankle_i, toe_i = names.index('left_ankle'), names.index('left_foot')
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[0, ankle_i] = pinned[0, toe_i] = True
+    pinned[1:len(targets), toe_i] = True
+    contact_targets = points.copy()
+    contact_targets[:, toe_i] = toe_target
+    contact_targets[0, ankle_i] = ankles[0]
+    rows = [{
+        'leftFrame': index, 'rightFrame': index, 'alpha': 0.,
+        'sourceTime': times[index], 'motionSide': 'left',
+        'state': 'full_sole' if index == 0 else 'toe_only',
+        'anatomicalMarkerLocalVector': marker,
+        'sourceHeelToToeVector': targets[index],
+        'sourceNoiseImageUnits': .0020833333333333333,
+    } for index in range(len(targets))]
+    payload = {
+        'footRestPitchRadians': {'left': rest, 'right': rest},
+        'sourcePoseCameraReference': {'sourcePose': {'imageHeight': 480.}},
+        'frames': [{'sourceTimeSec': time} for time in times],
+        'renderFloorY': None,
+    }
+    constraint = {'projection': projection, 'sourceTimeOriginSec': 0.,
+                  'sourceFootHeelImageObservations': rows}
+
+    desired, report = contact_heel_pitch._propose_anatomical_heel_pitch(
+        points, names, payload, constraint, 30., None, contact_targets, pinned=pinned)
+
+    side_report = report['sides']['left']
+    # Neither an antipodal (~165 deg) nor a wrapped branch may be admitted.
+    assert np.max(np.abs(side_report['yawRangeDegrees'])) < 30.
+    # Legitimate small heel rotation is still measured (not frozen to a constant).
+    assert np.ptp(side_report['yawRangeDegrees']) > 5.
+    assert np.ptp(side_report['pitchRangeDegrees']) > .5
+    # The emitted direction sequence must stay temporally continuous.
+    direction = desired[:, 0]
+    yaw = np.unwrap(np.arctan2(direction[:, 0], direction[:, 2]))
+    assert np.max(np.abs(np.diff(yaw))) < np.deg2rad(30.)
+
+
+def test_anatomical_heel_inverse_continuity_cannot_override_resolved_turn(monkeypatch):
+    from types import SimpleNamespace
+
+    names = ['pelvis', 'left_hip', 'left_ankle', 'left_foot',
+             'right_hip', 'right_ankle', 'right_foot']
+    pose = np.asarray([[0., 1., 0.], [-.1, .9, 0.], [-.1, .1, 0.],
+                       [-.1, .1, .2], [.1, .9, 0.], [.1, .1, 0.], [.1, .1, .2]])
+    points = np.stack([pose, pose])
+    # Both fits exceed the 1 px precision; only the turned branch explains
+    # the image closely. Continuity must not substitute the 100 px solution.
+    attempts = iter([(0., -.1, 10000.), (2., -.4, 1.0201)] * 4)
+
+    def inverse_attempt(*args, **kwargs):
+        yaw, pitch, cost = next(attempts)
+        return SimpleNamespace(x=np.asarray([yaw, pitch]), fun=cost)
+
+    monkeypatch.setattr('scipy.optimize.minimize', inverse_attempt)
+    payload = {
+        'footRestPitchRadians': {'left': 0., 'right': 0.},
+        'sourcePoseCameraReference': {'sourcePose': {'imageHeight': 480.}},
+        'frames': [{'sourceTimeSec': value} for value in (0., 1.)],
+    }
+    constraint = {
+        'projection': [[1., 0., 0.], [0., 1., 0.]], 'sourceTimeOriginSec': 0.,
+        'sourceFootHeelImageObservations': [{
+            'leftFrame': index, 'rightFrame': index, 'alpha': 0.,
+            'sourceTime': float(index), 'motionSide': 'left', 'state': 'toe_only',
+            'anatomicalMarkerLocalVector': [-.2, 0., 0.],
+            'sourceHeelToToeVector': [0., 0.], 'sourceNoiseImageUnits': 1. / 480.,
+        } for index in range(2)],
+    }
+    _, report = contact_heel_pitch._propose_anatomical_heel_pitch(
+        points, names, payload, constraint, 30., None)
+    side = report['sides']['left']
+    assert np.allclose(side['yawRangeDegrees'], np.rad2deg([2., 2.]))
+    assert np.allclose(side['pitchRangeDegrees'], np.rad2deg([-.4, -.4]))

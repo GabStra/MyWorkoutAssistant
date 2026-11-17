@@ -115,3 +115,76 @@ def validate_payload_alignment(payload, points=None, cursors=None):
         alpha = (cursors-first)[:, None, None]
         original = original[first]*(1.-alpha)+original[last]*alpha
     return validate_alignment(points, original, names, evidence)
+
+
+BILATERAL_EXECUTION_CHAINS = {
+    'arms': ('shoulder', 'elbow', 'wrist', 'hand'),
+    'legs': ('hip', 'knee', 'ankle', 'foot'),
+}
+POLICY_ALIGNMENT_FIT_WEIGHT = 2000.
+
+
+def mirrored_policy_joint_pairs(names, execution):
+    """Return only homologous joints covered by explicit mirrored intent."""
+    return [(f'left_{part}', f'right_{part}')
+            for group, chain in BILATERAL_EXECUTION_CHAINS.items()
+            if (execution or {}).get(group) == 'mirrored'
+            for part in chain if {f'left_{part}', f'right_{part}'}.issubset(names)]
+
+
+def authoritative_mirror_sides(pinned, names, execution):
+    """Use the supported chain only when the opposite chain has no contact pins."""
+    if pinned is None:
+        return {}
+    mask = np.asarray(pinned, dtype=bool)
+    if mask.ndim != 2 or mask.shape[1] != len(names):
+        return {}
+    index = {name: position for position, name in enumerate(names)}
+    authority = {}
+    for group, chain in BILATERAL_EXECUTION_CHAINS.items():
+        if (execution or {}).get(group) != 'mirrored':
+            continue
+        supported = {}
+        for side in ('left', 'right'):
+            columns = [index[f'{side}_{part}'] for part in chain if f'{side}_{part}' in index]
+            supported[side] = bool(np.any(mask[:, columns])) if columns else False
+        if supported['left'] != supported['right']:
+            authority[group] = 'left' if supported['left'] else 'right'
+    return authority
+
+
+def contact_consistent_policy_target(points, names, execution, pinned, anchors, *,
+                                     root_index=0, root_reference=None):
+    """Place contacts before deriving the mirrored target of an unsupported chain."""
+    from .motion_placement import contact_consistent_target
+    from .controlled_motion import canonical_bilateral_reference
+
+    points, _, placement = contact_consistent_target(
+        points, pinned, anchors, root_index=root_index, root_reference=root_reference)
+    authority = authoritative_mirror_sides(pinned, names, execution)
+    if authority:
+        points = canonical_bilateral_reference(points, names, execution, authoritative_sides=authority)
+        points, _, placement = contact_consistent_target(
+            points, pinned, anchors, root_index=root_index, root_reference=root_reference)
+    return points, placement
+
+
+def policy_alignment_errors(points, names, execution, pinned=None):
+    """Technique intent relative to this candidate, independently of source placement."""
+    if not any(mode == 'mirrored' or group == 'torso' and mode in {'sagittal', 'support_aligned'}
+               for group, mode in (execution or {}).items()):
+        return np.empty((len(points), 0))
+    from .controlled_motion import canonical_bilateral_reference
+    projected = canonical_bilateral_reference(
+        points, names, execution,
+        authoritative_sides=authoritative_mirror_sides(pinned, names, execution))
+    return (points-projected).reshape(len(points), -1)
+
+
+def policy_alignment_dependencies(rig, execution):
+    """Policy projection couples bilateral chains and the candidate's complete body frame."""
+    if not policy_alignment_errors(rig.decode(rig.initial[:1]), rig.names, execution).shape[1]:
+        return np.empty((0, rig.width))
+    # Conservative per-frame coverage: torso leveling can transport every limb.
+    # No policy row depends on another frame or a source observation.
+    return np.tile(np.any(rig.dependencies, axis=0), (len(rig.names)*3, 1))

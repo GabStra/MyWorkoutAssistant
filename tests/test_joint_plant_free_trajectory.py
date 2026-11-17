@@ -100,3 +100,20 @@ def test_contact_release_carries_placement_without_retiming_or_root_follow(
     assert not spec['ankleFollowsRoot'].any()
     assert not spec['toeFollowsRoot'].any()
     np.testing.assert_array_equal(pins, original_pins)
+    np.testing.assert_array_equal(spec['activeContact'], pins[:, ankle] | pins[:, toe])
+    assert spec['activePoseTarget'].all()
+
+    from exercise_motion_pkg.contact_heel_repair import _encode_root_adjusted_pose
+    encoded, _, _ = _encode_root_adjusted_pose(
+        rig, rig.initial, specs, np.zeros((len(points), 3)))
+    assert encoded is not None
+    actual = rig.decode(encoded)
+    for label, joint in [('targetAnkle', ankle), ('targetToe', toe)]:
+        np.testing.assert_allclose(actual[:, joint], spec[label], atol=1e-10)
+    # Legacy contact-only callers still leave released poses untouched.
+    spec.pop('activePoseTarget')
+    legacy, _, _ = _encode_root_adjusted_pose(
+        rig, rig.initial, specs, np.zeros((len(points), 3)))
+    assert legacy is not None
+    np.testing.assert_allclose(rig.decode(legacy)[~spec['activeContact'], ankle],
+                               points[~spec['activeContact'], ankle], atol=1e-10)

@@ -10,6 +10,165 @@ from exercise_motion_pkg.support_geometry import (
 )
 
 
+def test_native_material_side_axis_uses_incoming_foot_bone_fk_rotation():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    fixture = json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
+    names = list(fixture['joints'])
+    pose = np.asarray([fixture['joints'][name] for name in names], dtype=float)
+    rig = motion.FixedRig(np.asarray([pose]), names)
+    ankle = names.index('left_ankle')
+    foot = names.index('left_foot')
+    assert foot in rig.slots
+    source_axis = rig.global_rotations(rig.initial)[foot][0] @ np.array([1., 0., 0.])
+    baseline = rig.material_side_axes(rig.initial, source_axis[None, :], 'left')
+    twist = Rotation.from_rotvec([0., .6, 0.])
+
+    # Twist the incoming foot-bone owner about its rest offset: all joint
+    # points stay fixed, while the material surface frame changes.
+    rolled = rig.initial.copy()
+    slot = rig.slots[foot]
+    local = Rotation.from_rotvec(rolled[0, slot:slot + 3])
+    rolled[0, slot:slot + 3] = (local * twist).as_rotvec()
+    np.testing.assert_allclose(rig.decode(rolled), rig.decode(rig.initial), atol=1e-10)
+    current = rig.material_side_axes(rolled, source_axis[None, :], 'left')
+    assert np.linalg.norm(current - baseline) > .1
+    from exercise_motion_pkg.foot_geometry import shoe_vertices
+    from exercise_motion_pkg.material_region_support import shoe_triangles
+    native = json.loads((Path(__file__).parent/'fixtures/native_foot_geometry_v1.json').read_text())['reference']
+    points = rig.decode(rig.initial)
+    triangle = shoe_triangles()[12]
+    barycentric = np.asarray([.2, .3, .5])
+    def bound_material(axis):
+        mesh = shoe_vertices(points[0, ankle], points[0, foot], axis[0], None, .5,
+                             native_geometry=native['sides']['left'])
+        return barycentric @ mesh[triangle]
+    target = bound_material(baseline)
+    assert np.linalg.norm(bound_material(current) - target) > .01
+
+    # Counterrotate the ankle parent and foot child: FK foot matrix and all
+    # points stay fixed, so material side must not follow the shin matrix.
+    compensated = rig.initial.copy()
+    ankle_slot = rig.slots[ankle]
+    ankle_local = Rotation.from_rotvec(compensated[0, ankle_slot:ankle_slot + 3])
+    compensated[0, ankle_slot:ankle_slot + 3] = (ankle_local * twist).as_rotvec()
+    foot_slot = rig.slots[foot]
+    foot_local = Rotation.from_rotvec(compensated[0, foot_slot:foot_slot + 3])
+    compensated[0, foot_slot:foot_slot + 3] = (twist.inv() * foot_local).as_rotvec()
+    np.testing.assert_allclose(rig.decode(compensated), rig.decode(rig.initial), atol=1e-10)
+    actual_foot = rig.global_rotations(compensated)[foot]
+    original_foot = rig.global_rotations(rig.initial)[foot]
+    np.testing.assert_allclose(actual_foot, original_foot, atol=1e-10)
+    unchanged = rig.material_side_axes(compensated, source_axis[None, :], 'left')
+    np.testing.assert_allclose(unchanged, baseline, atol=1e-10)
+
+
+def test_native_bilateral_side_axis_mirror_uses_axial_vector_parity():
+    from exercise_motion_pkg.support_geometry import _native_foot_material_contact_residuals
+
+    native = json.loads((Path(__file__).parent/'fixtures/native_foot_geometry_v1.json').read_text())['reference']
+    names = ['left_hip', 'right_hip', 'left_ankle', 'left_foot',
+             'right_ankle', 'right_foot']
+    points = np.asarray([[[-.1, 1., 0.], [.1, 1., 0.], [-.1, 0., 0.],
+                          [-.1, 0., 1.], [.1, 0., 0.], [.1, 0., 1.]]])
+    tracks = {'version': 2}
+    for side in ('left', 'right'):
+        tracks[side] = {'active': [False], 'directions': [[0., 0., 1.]],
+                        'sideAxes': [[-1., 0., 0.]], 'episodes': []}
+    evidence = {'_nativeFootMaterialTracks': tracks,
+                'nativeFootGeometry': native,
+                '_nativeFootMirrorRequired': True}
+    values, errors = _native_foot_material_contact_residuals(
+        points, names, evidence)
+    assert not errors
+    assert values.shape == (1, 6)
+    np.testing.assert_allclose(values, 0., atol=1e-12)
+
+
+def test_supported_initializer_owns_native_free_shoe_floor_and_atomic_acceptance(monkeypatch):
+    from time import monotonic
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as c
+    from exercise_motion_pkg.shoe_floor import ShoeFloorConstraint
+    from exercise_motion_pkg.support_geometry import initialize_supported_motion
+    fixture = json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
+    names = list(fixture['joints'])
+    rig = c.FixedRig(np.tile([fixture['joints'][n] for n in names], (3, 1, 1)), names)
+    points = rig.decode(rig.initial)
+    payload = {'jointNames': names, 'frames': [{'joints': dict(zip(names, row.tolist()))} for row in points],
+               'renderFloorY': -10., 'footRestPitchRadians': {}}
+    shoes = ShoeFloorConstraint(rig, payload)
+    payload['renderFloorY'] = float(shoes.heights(rig.initial.ravel()).min()-10.-.01)
+    entry = rig.initial.copy()
+    evidence = {'stationaryJoints': ['left_knee', 'right_knee'], '_materialShoePayload': payload}
+    # Unknown contacts and absent pitch still require actual shoe clearance.
+    def solve_bad(residual, initial, pattern, max_evaluations, **options):
+        candidate = initial.reshape(entry.shape).copy()
+        candidate[:, 1] -= .2
+        assert np.any(residual(candidate.ravel())[-6:] < -1.)
+        return SimpleNamespace(x=candidate.ravel(), nfev=1)
+    monkeypatch.setattr(c, 'solve_trajectory', solve_bad)
+    calibration = {}
+    initialize_supported_motion(rig, points, evidence, points[0], calibration, monotonic()+10.)
+    np.testing.assert_array_equal(rig.initial, entry)
+    assert calibration['shoeFloorNonRegressionGuard']
+    def solve_timeout(*args, **kwargs):
+        solve_bad(*args, **kwargs)
+        raise TimeoutError
+    monkeypatch.setattr(c, 'solve_trajectory', solve_timeout)
+    import pytest
+    with pytest.raises(TimeoutError):
+        initialize_supported_motion(rig, points, evidence, points[0], {}, monotonic()+10.)
+    np.testing.assert_array_equal(rig.initial, entry)
+    def solve_clear(residual, initial, pattern, max_evaluations, **options):
+        candidate = initial.reshape(entry.shape).copy()
+        candidate[:, 1] += .02
+        assert np.all(residual(candidate.ravel())[-6:] == 0.)
+        return SimpleNamespace(x=candidate.ravel(), nfev=1)
+    monkeypatch.setattr(c, 'solve_trajectory', solve_clear)
+    initialize_supported_motion(rig, points, evidence, points[0], {}, monotonic()+10.)
+    np.testing.assert_allclose(rig.initial[:, 1], entry[:, 1]+.02)
+    assert not payload['footRestPitchRadians'] and 'supportContacts' not in payload
+    # A local frame is evaluated in its original global stored-frame context.
+    from copy import copy
+    local = copy(rig)
+    local.initial = entry[1:2].copy()
+    constraint = ShoeFloorConstraint(local, payload, frame_positions=np.array([1]), context=points)
+    jacobian = constraint.jacobian(local.initial.ravel()).toarray()
+    step = 1e-6
+    plus, minus = local.initial.copy(), local.initial.copy()
+    plus[:, 1] -= .2-step
+    minus[:, 1] -= .2+step
+    buried = local.initial.copy(); buried[:, 1] -= .2
+    derivative = (constraint.residual(plus.ravel())-constraint.residual(minus.ravel()))/(2*step)
+    np.testing.assert_allclose(constraint.jacobian(buried.ravel()).toarray()[:, 1], derivative, atol=1e-6)
+    assert jacobian.shape == (6, local.width)
+    local.initial = entry[:1].copy()
+    local.initial[:, 1] -= .2
+    context = points.copy(); context[:, :, 1] -= .2
+    constraint = ShoeFloorConstraint(local, payload, frame_positions=np.array([0]), context=context)
+    actual = constraint.jacobian(local.initial.ravel()).toarray()
+    expected = np.empty_like(actual)
+    for column in range(local.width):
+        plus, minus = local.initial.ravel().copy(), local.initial.ravel().copy()
+        plus[column] += step; minus[column] -= step
+        expected[:, column] = (constraint.residual(plus)-constraint.residual(minus))/(2*step)
+    np.testing.assert_allclose(actual, expected, atol=2e-6)
+    assert np.any(np.abs(expected[2:]) > 1e-7), 'A first-frame shoe side must affect later native shoes'
+    from exercise_motion_pkg.foot_geometry import shoe_orientation_context
+    anchored_payload = {**payload, 'groundContactMode': 'continuous'}
+    with shoe_orientation_context({'states': {'left': ['full_sole', 'unknown', 'full_sole'],
+                                             'right': ['unknown']*3},
+                                   'ground': np.ones(points.shape[:2], dtype=bool), 'planeGroups': []}):
+        anchored = ShoeFloorConstraint(local, anchored_payload, frame_positions=np.array([0]), context=context)
+        actual = anchored.jacobian(local.initial.ravel()).toarray()
+        for column in range(local.width):
+            plus, minus = local.initial.ravel().copy(), local.initial.ravel().copy()
+            plus[column] += step; minus[column] -= step
+            expected[:, column] = (anchored.residual(plus)-anchored.residual(minus))/(2*step)
+        np.testing.assert_allclose(actual, expected, atol=2e-6)
+
+
 def test_support_head_preservation_uses_body_relative_source_articulation():
     from exercise_motion_pkg.support_geometry import _head_articulation_residual
     names = ['left_hip', 'right_hip', 'pelvis', 'neck', 'head']
@@ -25,7 +184,7 @@ def test_support_head_preservation_uses_body_relative_source_articulation():
     np.testing.assert_allclose(_head_articulation_residual(rotated, source, names), 0., atol=1e-8)
 
 
-def test_supported_chain_range_uses_feasible_reference_but_free_arm_keeps_source():
+def test_supported_chain_range_keeps_immutable_source_angles():
     from exercise_motion_pkg.support_geometry import moving_support_articulations
     names = [f'{side}_{part}' for side in ('left', 'right') for part in ('hip', 'shoulder', 'elbow', 'wrist')]
     original = np.zeros((12, len(names), 3))
@@ -39,12 +198,12 @@ def test_supported_chain_range_uses_feasible_reference_but_free_arm_keeps_source
     tracks = {label: track for label, _, track in moving_support_articulations(
         original, names, {'stationaryJoints': ['right_wrist']}, support_corrected_points=corrected)}
     assert np.isclose(np.rad2deg(np.ptp(tracks['left_shoulder'])), 90.)
-    assert np.isclose(np.rad2deg(np.ptp(tracks['right_shoulder'])), 45.)
-    # Explicit support-like endpoints may still opt into the corrected chain.
+    assert np.isclose(np.rad2deg(np.ptp(tracks['right_shoulder'])), 90.)
+    # Placement/support endpoints do not redefine the source's angular excursion.
     paired = {label: track for label, _, track in moving_support_articulations(
         original, names, {}, support_corrected_points=corrected,
         constraint_endpoints=['left_wrist', 'right_wrist'])}
-    assert np.isclose(np.rad2deg(np.ptp(paired['left_shoulder'])), 45.)
+    assert np.isclose(np.rad2deg(np.ptp(paired['left_shoulder'])), 90.)
     # Grip equipment is not planted support: feet-only evidence must keep free-arm
     # source ROM even when a bar/dumbbell endpoint pair exists.
     feet_only = {label: track for label, _, track in moving_support_articulations(
@@ -93,50 +252,6 @@ def supported_payload():
                                          'joints': ['spine'], 'normal': [0, 1, 0]}]}
     return {'jointNames': names, 'frames': [{'joints': deepcopy(joints)} for _ in range(12)],
             'sourceFootSupportEvidence': {'bodySupport': evidence}}
-
-
-def test_validated_support_reference_preserves_observed_hinge_posture():
-    from exercise_motion_pkg.support_geometry import validated_support_reference
-
-    joints = {
-        'pelvis': [0., 0., 0.],
-        'left_hip': [0., 0., .15],
-        'right_hip': [0., 0., -.15],
-        'left_knee': [0., -.5, .15],
-        'right_knee': [0., -.5, -.15],
-        'left_ankle': [0., -1., .15],
-        'right_ankle': [0., -1., -.15],
-        'left_foot': [.1, -1., .15],
-        'right_foot': [.1, -1., -.15],
-        'spine1': [0., .1, 0.],
-        'spine2': [.16, .31, 0.],
-        'spine3': [.35, .53, 0.],
-        'neck': [.64, .87, 0.],
-        'left_collar': [.4225, .615, .1],
-        'right_collar': [.4225, .615, -.1],
-        'left_shoulder': [.524, .734, .15],
-        'right_shoulder': [.524, .734, -.15],
-    }
-    names = list(joints)
-    frames = [{
-        'joints': deepcopy(joints),
-        'supportCorrectedReferenceJoints': deepcopy(joints),
-    } for _ in range(8)]
-    payload = {
-        'jointNames': names,
-        'frames': frames,
-        'sourceFootSupportEvidence': {'bodySupport': {
-            'required': True,
-            'status': 'confirmed',
-            'stationaryJoints': ['left_hip', 'right_hip'],
-        }},
-    }
-
-    reference, reason = validated_support_reference(payload)
-
-    assert reason is None
-    np.testing.assert_allclose(reference, np.tile(
-        np.array([joints[name] for name in names]), (len(frames), 1, 1)))
 
 
 def test_detects_bounce_sag_and_wrong_surface_without_flattening_valid_arch():
@@ -388,18 +503,20 @@ def test_planted_feet_projection_preserves_moving_knees():
 def test_shoe_roll_uses_confirmed_surface_after_pose_correction():
     from exercise_motion_pkg.temporal_quality import transport_corrected_bone_sides
     from exercise_motion_pkg.support_geometry import validate_supported_shoe_orientation
-    payload = {'jointNames': ['knee', 'ankle', 'foot'], 'frames': [{'joints': {
-        'knee': [0., 1., .1], 'ankle': [0., 0., 0.], 'foot': [.2, 0., 0.]},
-        'boneSides': {'ankle->foot': [0., .5, .5]}}],
-        'footRestPitchRadians': {'ankle': 0.},
+    payload = {'jointNames': ['left_knee', 'left_ankle', 'left_foot'], 'frames': [{'joints': {
+        'left_knee': [0., 1., .1], 'left_ankle': [0., 0., 0.],
+        'left_foot': [.2, 0., 0.]},
+        'boneSides': {'left_ankle->left_foot': [0., .5, .5]}}],
+        'footRestPitchRadians': {'left': 0.},
         'sourceFootSupportEvidence': {'bodySupport': {'required': True, 'status': 'confirmed',
-            'stationaryJoints': ['ankle', 'foot'],
-            'soleContacts': [{'joints': ['knee', 'ankle', 'foot'], 'normal': [0, 1, 0]}]}}}
+            'stationaryJoints': ['left_ankle', 'left_foot'],
+            'soleContacts': [{'joints': ['left_knee', 'left_ankle', 'left_foot'],
+                              'normal': [0, 1, 0]}]}}}
     transport_corrected_bone_sides(deepcopy(payload['frames']), payload)
-    side = payload['frames'][0]['boneSides']['ankle->foot']
+    side = payload['frames'][0]['boneSides']['left_ankle->left_foot']
     np.testing.assert_allclose(np.cross(side, [1, 0, 0]), [0, 1, 0])
     assert validate_supported_shoe_orientation(payload)['passed']
-    payload['frames'][0]['boneSides']['ankle->foot'] = [0., .5, .5]
+    payload['frames'][0]['boneSides']['left_ankle->left_foot'] = [0., .5, .5]
     assert not validate_supported_shoe_orientation(payload)['passed']
 
 
@@ -704,6 +821,9 @@ def test_support_timing_scope_is_per_joint_for_raw_contact_and_legacy_torso():
     }
 
     masks, _ = support_contact_masks(evidence, names, 5)
+    timed_masks, _ = support_contact_masks(
+        evidence, names, 5, frame_positions=np.arange(5, dtype=float))
+    np.testing.assert_array_equal(timed_masks, masks)
 
     np.testing.assert_array_equal(masks[:, names.index('left_foot')],
                                   [False, True, True, True, False])
@@ -956,3 +1076,274 @@ def test_floor_correction_clears_rendered_shoe_when_joint_centres_are_clear():
     np.testing.assert_allclose(corrected, expected, atol=1e-12)
     reference['fixedRig'] = _sampling_payload(rig, corrected)
     assert free_material_floor_clearance_lift(reference, pinned, cyclic=False) < 1e-9
+
+def test_observed_knee_material_floor_uses_region_and_retains_clearance():
+    from exercise_motion_pkg.render_geometry import knee_support_region
+    from exercise_motion_pkg.support_geometry import geometry_errors
+    names = ['pelvis','neck','left_hip','right_hip','left_knee','left_ankle']
+    points = np.array([[[0.,.6,0.],[0.,1.,0.],[-.1,.6,0.],[.1,.6,0.],
+                        [-.1,.1,0.],[-.1,.1,.4]]])
+    lengths = [.5,.4]
+    sides = np.array([[1.,0.,0.]])
+    region = knee_support_region(points,names,'left_knee',lengths=lengths,side_axes=sides)
+    floor = float(region[:,:,1].min())
+    evidence = {'stationaryJoints':['left_knee'], 'status':'confirmed','required':True,
+                '_floorMaterialContacts':['left_knee'],'_renderFloorY':floor,
+                '_materialLegSides':[{'left_knee->left_ankle':[1.,0.,0.]}],
+                '_materialSegmentLengths':{'left':lengths}}
+    assert np.max(abs(geometry_errors(points,names,evidence))) < 1e-12
+    raised = points.copy(); raised[:,:,1] += .02
+    assert np.max(geometry_errors(raised,names,evidence)) > .019
+    lowered = points.copy(); lowered[:,:,1] -= .02
+    assert np.min(geometry_errors(lowered,names,evidence)) < -.019
+    # Source contact membership stays separate from material target/clearance.
+    assert evidence['stationaryJoints'] == ['left_knee']
+    # Native knee cap coefficient: .40 * max(.215*thigh,.225*shin).
+    radius = max(.215*.5,.225*.4)*.40
+    assert np.isclose(region[0,:18,1].min(), .1-radius)
+
+def test_knee_material_region_matches_production_native_mesh_samples():
+    from exercise_motion_pkg.render_geometry import knee_support_region
+    fixture = json.loads((Path(__file__).parent/'fixtures/native_knee_material_regions.json').read_text())
+    for sample in fixture['samples']:
+        names = list(sample['joints'])
+        points = np.array([[sample['joints'][name] for name in names]])
+        for side in ('left','right'):
+            region = knee_support_region(points,names,side+'_knee',
+                lengths=sample['lengths'][side],
+                side_axes=np.array([sample['sides'][side+'_knee->'+side+'_ankle']]),
+                body_axes=np.array([sample['bodyAxes']]))
+            np.testing.assert_allclose(region[:,:,1].min(),
+                sample['nativeRegionMinimumY'][side],atol=1e-6,rtol=0.)
+
+
+def test_coupled_support_anatomy_polish_keeps_ankle_gate_and_material_contacts():
+    from time import monotonic
+    from exercise_motion_pkg.controlled_motion import FixedRig, project_contact_plant_coordinates
+    from exercise_motion_pkg.anatomical_repair import repair_residuals, repair_residual_dependencies
+    from exercise_motion_pkg.support_geometry import (
+        _floor_material_region, repair_supported_motion_anatomy)
+    fixture = json.loads((Path(__file__).parent / 'fixtures/material_floor_anchor_conflict.json').read_text())
+    points = np.array(fixture['points']); names = fixture['names']; evidence = fixture['evidence']
+    evidence['_materialBodyAxes'] = np.array(evidence['_materialBodyAxes'])
+    reference = np.array(fixture['anatomicalReference'])
+    rig = FixedRig(points, names); rig.offsets[:] = fixture['offsets']; rig.initial[:] = fixture['coordinates']
+    np.testing.assert_allclose(rig.decode(rig.initial), points, atol=1e-12)
+    assert np.any(repair_residuals(points, names, reference=reference)[0] > 1e-6)
+    dependencies = repair_residual_dependencies(rig, points, reference=reference)
+    assert dependencies.shape[0] == repair_residuals(points, names, reference=reference)[0].shape[1]
+    # Retained feasible targets for this anatomy-polish counterexample; target
+    # calibration is tested independently rather than retargeted after solving.
+    positions = {'left_knee': [0.15824319, -0.52126731, -0.07764391],
+                 'right_knee': [0.16331782, -0.52192868, 0.10247262]}
+    pinned = np.zeros(points.shape[:2], dtype=bool); targets = points.copy()
+    for joint, target in positions.items():
+        pinned[:, names.index(joint)] = True; targets[:, names.index(joint)] = target
+    original_offsets = rig.offsets.copy()
+    corrected, report = repair_supported_motion_anatomy(
+        rig, points, evidence, np.array(fixture['supportPose']), {}, monotonic()+15,
+        pinned=pinned, contact_targets=targets, articulation_reference=reference)
+    projected = project_contact_plant_coordinates(
+        rig.initial, rig, pinned, targets, max_nfev=40, deadline=monotonic()+10)
+    corrected = rig.decode(projected)
+    assert report['passed'], report
+    assert not np.any(repair_residuals(corrected, names, reference=reference)[0] > 1e-6)
+    assert np.linalg.norm((corrected-targets)[pinned], axis=-1).max() <= .001
+    for joint in positions:
+        region = _floor_material_region(corrected, names, evidence, joint, None)
+        assert np.abs(region[:, :, 1].min(axis=1)-evidence['_renderFloorY']).max() <= .005
+    np.testing.assert_array_equal(rig.offsets, original_offsets)
+
+
+def test_coupled_anatomy_frame_timeout_is_atomic_and_success_commits(monkeypatch):
+    from time import monotonic
+    from exercise_motion_pkg import support_geometry
+    from exercise_motion_pkg.controlled_motion import FixedRig
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures/material_floor_anchor_conflict.json').read_text())
+    points = np.array(fixture['points']); names = fixture['names']
+    reference = np.array(fixture['anatomicalReference'])
+    for interrupted in (True, False):
+        rig = FixedRig(points, names)
+        rig.offsets[:] = fixture['offsets']; rig.initial[:] = fixture['coordinates']
+        before = rig.initial.copy()
+
+        def project(local, *args, **kwargs):
+            local.initial[:, 0] += .1
+            if interrupted:
+                raise TimeoutError
+            return local.decode(local.initial)
+
+        monkeypatch.setattr(support_geometry, 'initialize_supported_motion', project)
+        result, report = support_geometry.repair_supported_motion_anatomy(
+            rig, points, fixture['evidence'], np.array(fixture['supportPose']), {},
+            monotonic()+5, pinned=np.zeros(points.shape[:2], dtype=bool),
+            contact_targets=points, articulation_reference=reference)
+        assert report['attemptedFrameCount'] > 0
+        assert report['timedOutFrameCount'] == (report['attemptedFrameCount'] if interrupted else 0)
+        assert report['projectedFrameCount'] == (0 if interrupted else report['attemptedFrameCount'])
+        if interrupted:
+            np.testing.assert_array_equal(rig.initial, before)
+            np.testing.assert_allclose(result, points, atol=1e-12)
+        else:
+            assert np.max(result[:, :, 0]-points[:, :, 0]) > .09
+
+
+def test_explicit_policy_owns_shared_floor_height_and_not_source_angular_bounds():
+    from exercise_motion_pkg.support_alignment import policy_alignment_errors, policy_alignment_dependencies
+    from exercise_motion_pkg.controlled_motion import FixedRig, canonical_bilateral_reference
+    from exercise_motion_pkg.physical_validation import source_articulation_reference_field
+    from exercise_motion_pkg.bake_and_rank import baked_leg_articulation_preservation_metrics
+    fixture = json.loads((Path(__file__).parent / 'fixtures/material_floor_anchor_conflict.json').read_text())
+    points = np.array(fixture['points']); names = fixture['names']; evidence = fixture['evidence']
+    evidence['_materialBodyAxes'] = np.array(evidence['_materialBodyAxes'])
+    policy = {'arms': 'mirrored', 'legs': 'mirrored', 'torso': 'sagittal'}
+    assert policy_alignment_errors(points, names, None).shape == (len(points), 0)
+    assert policy_alignment_errors(points, names, {'legs': 'unconstrained'}).shape[1] == 0
+    projected = canonical_bilateral_reference(points, names, policy)
+    assert np.linalg.norm(policy_alignment_errors(points, names, policy)) > .01
+    np.testing.assert_allclose(policy_alignment_errors(projected, names, policy), 0., atol=1e-12)
+    rig = FixedRig(points, names)
+    assert policy_alignment_dependencies(rig, policy).shape == (len(names)*3, rig.width)
+    frames = [{'joints': dict(zip(names, row.tolist())),
+               'sourceJoints': dict(zip(names, row.tolist())),
+               'controlledArticulationReferenceJoints': dict(zip(names, source)),
+               'supportCorrectedReferenceJoints': dict(zip(names, row.tolist()))}
+              for row, source in zip(points, fixture['anatomicalReference'])]
+    assert source_articulation_reference_field(frames) == 'controlledArticulationReferenceJoints'
+    metric = baked_leg_articulation_preservation_metrics({'frames': frames, 'jointNames': names, 'fps': 30.})
+    assert metric['referenceField'] == 'controlledArticulationReferenceJoints'
+    del frames[1]['controlledArticulationReferenceJoints']
+    assert source_articulation_reference_field(frames) == 'controlledArticulationReferenceJoints'
+    invalid = baked_leg_articulation_preservation_metrics({'frames': frames, 'jointNames': names, 'fps': 30.})
+    assert invalid['invalidSupportReference'] and not invalid['available']
+
+
+def test_floor_material_fit_respects_contact_band_preserving_raw_and_other_rows():
+    from exercise_motion_pkg.render_geometry import knee_support_region
+    from exercise_motion_pkg.support_geometry import geometry_constraint_errors, TOLERANCE_METERS
+    names = ['pelvis','neck','left_hip','right_hip','left_knee','left_ankle','right_knee']
+    pose = np.array([[[0.,.6,0.],[0.,1.,0.],[-.1,.6,0.],[.1,.6,0.],
+                      [-.1,.1,0.],[-.1,.1,.4],[.1,.101,0.]]])
+    lengths = [.5,.4]
+    region = knee_support_region(pose,names,'left_knee',lengths=lengths,side_axes=np.array([[1.,0.,0.]]))
+    evidence = {'stationaryJoints':['left_knee','right_knee'],'status':'confirmed','required':True,
+                'coplanarGroups':[{'joints':['left_knee','right_knee'],'normal':[0.,1.,0.]}],
+                '_floorMaterialContacts':['left_knee'],'_renderFloorY':float(region[:,:,1].min()),
+                '_materialLegSides':[{'left_knee->left_ankle':[1.,0.,0.]}],
+                '_materialSegmentLengths':{'left':lengths}}
+    gaps = np.array([0.,.003657,.006,-.002])
+    points = np.repeat(pose,len(gaps),axis=0)
+    points[:,:,1] += gaps[:,None]
+    raw = geometry_errors(points,names,evidence)
+    fitted = geometry_constraint_errors(points,names,evidence)
+    np.testing.assert_allclose(raw[:,-1],gaps,atol=1e-12)
+    np.testing.assert_allclose(fitted[:,-1],[0.,0.,.001,-.002],atol=1e-12)
+    np.testing.assert_array_equal(fitted[:,:-1],raw[:,:-1])
+    np.testing.assert_array_equal(geometry_errors(points,names,evidence),raw)
+    assert abs(raw[2,-1]) > TOLERANCE_METERS  # Validator still rejects the outside gap.
+    assert raw[1,-1] > .0025  # Static calibration still sees its stricter raw error.
+
+
+def test_supported_range_baseline_transports_free_motion_from_corrected_anchor():
+    from exercise_motion_pkg.controlled_motion import support_joint_range_preserved
+    from exercise_motion_pkg.physical_validation import angles
+    from exercise_motion_pkg.support_geometry import moving_support_articulations
+
+    names = ['left_hip', 'left_shoulder', 'left_elbow', 'pelvis', 'right_shoulder']
+    theta = np.deg2rad(np.linspace(30., 70., 12))
+    drift = np.deg2rad(np.linspace(10., -10., 12))
+    raw = np.zeros((12, len(names), 3))
+    raw[:, 1, 0] = np.linspace(0., .03, 12)
+    raw[:, 0] = raw[:, 1] + np.c_[np.sin(drift), -np.cos(drift), np.zeros(12)]
+    raw[:, 2] = raw[:, 1] + np.c_[np.sin(theta), -np.cos(theta), np.zeros(12)]
+    corrected = np.zeros_like(raw)
+    corrected[:, 0] = [0., -1., 0.]
+    corrected[:, 2] = raw[:, 2] - raw[:, 1]
+    evidence = {'stationaryJoints': ['pelvis', 'left_shoulder', 'right_shoulder']}
+    tracks = moving_support_articulations(
+        raw, names, evidence, support_corrected_points=corrected,
+        constraint_endpoints=['left_shoulder'])
+    label, columns, baseline = tracks[0]
+    actual = angles(*(corrected[:, j] for j in columns))
+    assert label == 'left_shoulder'
+    assert support_joint_range_preserved({label: np.ptp(actual) / np.ptp(baseline)})
+    raw_track = moving_support_articulations(raw, names, evidence)[0][2]
+    assert not support_joint_range_preserved({label: np.ptp(actual) / np.ptp(raw_track)})
+
+    # Real distal ROM loss still fails; corrected body geometry is unchanged.
+    reduced = corrected.copy()
+    reduced_theta = np.deg2rad(np.linspace(40., 60., 12))
+    reduced[:, 2] = np.c_[np.sin(reduced_theta), -np.cos(reduced_theta), np.zeros(12)]
+    reduced_track = angles(*(reduced[:, j] for j in columns))
+    assert not support_joint_range_preserved(
+        {label: np.ptp(reduced_track) / np.ptp(baseline)})
+
+    # A held knee does not make its moving proximal hip a body-frame axis,
+    # even when a separate torso support frame is also present.
+    leg_names = ['left_hip', 'left_knee', 'left_ankle',
+                 'pelvis', 'left_shoulder', 'right_shoulder']
+    hip_angle = np.deg2rad(np.linspace(30., 90., 12))
+    leg_raw = np.zeros((12, len(leg_names), 3))
+    leg_raw[:, 0] = np.c_[np.sin(hip_angle), np.cos(hip_angle), np.zeros(12)]
+    leg_raw[:, 2] = [0., -1., 0.]
+    leg_corrected = leg_raw.copy()
+    shrunken = np.deg2rad(np.linspace(30., 40., 12))
+    leg_corrected[:, 0] = np.c_[np.sin(shrunken), np.cos(shrunken), np.zeros(12)]
+    leg_evidence = {'stationaryJoints': [
+        'left_knee', 'pelvis', 'left_shoulder', 'right_shoulder']}
+    raw_knee = moving_support_articulations(leg_raw, leg_names, leg_evidence)[0]
+    knee = moving_support_articulations(
+        leg_raw, leg_names, leg_evidence, support_corrected_points=leg_corrected,
+        constraint_endpoints=leg_evidence['stationaryJoints'])[0]
+    assert knee[0] == raw_knee[0] == 'left_knee'
+    np.testing.assert_array_equal(knee[2], raw_knee[2])
+    shortened = angles(*(leg_corrected[:, j] for j in knee[1]))
+    assert not support_joint_range_preserved(
+        {knee[0]: np.ptp(shortened) / np.ptp(knee[2])})
+def test_coupled_support_schedules_source_hinge_errors_with_valid_anatomy(monkeypatch):
+    import json
+    from pathlib import Path
+    from time import monotonic
+    from scipy.spatial.transform import Rotation
+    from exercise_motion_pkg import controlled_motion as motion, support_geometry
+    from exercise_motion_pkg.anatomical_repair import repair_residuals
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures/sequence_stabilization_stance.json').read_text())
+    names = list(fixture['joints'])
+    pose = np.asarray([fixture['joints'][name] for name in names])
+    for side in ('left', 'right'):
+        knee = names.index(side + '_knee')
+        distal = [names.index(side + '_' + part) for part in ('ankle', 'foot')]
+        pose[distal] = Rotation.from_rotvec([.9, 0., 0.]).apply(pose[distal] - pose[knee]) + pose[knee]
+    rig = motion.FixedRig(np.asarray([pose] * 7), names)
+    reference = rig.decode(rig.initial)
+    observed = reference.copy()
+    knee, hip = [names.index('left_' + part) for part in ('knee', 'hip')]
+    axis = reference[0, knee] - reference[0, hip]
+    axis /= np.linalg.norm(axis)
+    for part in ('ankle', 'foot'):
+        joint = names.index('left_' + part)
+        observed[:, joint] = Rotation.from_rotvec(axis * .24).apply(
+            observed[:, joint] - observed[:, knee]) + observed[:, knee]
+    assert repair_residuals(observed, names, reference=reference)[0].max() == 0.
+    parent, bend, sine = motion.hinge_coordinates(reference, names)
+    reliable = motion.source_hinge_reliability(parent, bend, sine, 30.)
+    rows = motion.reliable_knee_hinge_residuals(observed, names, parent, bend, reliable)
+    assert rows[:, 0].min() > 30. and not rows[:, 1].any()
+    assert motion.reliable_knee_hinge_dependencies(rig).shape == (2, rig.width)
+    rig.initial[:] = motion.FixedRig(observed, names).initial
+    attempts = []
+
+    def record_projection(local, original, *args, angular_reference=None, frame_positions=None, **kwargs):
+        np.testing.assert_array_equal(angular_reference, reference)
+        attempts.extend(frame_positions.tolist())
+        return original
+
+    monkeypatch.setattr(support_geometry, 'initialize_supported_motion', record_projection)
+    _, report = support_geometry.repair_supported_motion_anatomy(
+        rig, observed, {'stationaryJoints': ['left_knee', 'right_knee']}, pose, {}, monotonic() + 10.,
+        pinned=np.zeros(observed.shape[:2], dtype=bool), contact_targets=observed,
+        articulation_reference=reference, angular_reference=reference)
+    assert attempts == list(range(7))
+    assert not report['passed'] and len(report['remainingHingeEvents']) == 7

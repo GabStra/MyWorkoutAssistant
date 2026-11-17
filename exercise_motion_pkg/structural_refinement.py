@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
+from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3, axis_angle_rotation
 from exercise_motion_pkg.kinematic_policy import (
     DISTAL_STEP_BODY_RATIO,
     DISTAL_STEP_SPIKE_RATIO,
@@ -189,10 +189,17 @@ def reconstruction_camera_orientation(clip: MotionClip):
     """
     import numpy as np
 
-    if (clip.source.get('extractor') != 'RECONSTRUCTION'
-            or clip.metadata.get('reconstruction', {}).get('coordinateSpace') != 'camera'):
+    reconstruction = clip.metadata.get('reconstruction', {})
+    registration = reconstruction.get('cameraRegistration', {})
+    if reconstruction.get('coordinateSpace') == 'world' and registration:
+        camera = registration.get('rotationWorldToCamera')
+    elif (clip.source.get('extractor') == 'RECONSTRUCTION'
+            and reconstruction.get('coordinateSpace') == 'camera'):
+        camera = np.eye(3)
+    else:
         return None
     try:
+        camera = np.asarray(camera, dtype=float)
         angle = math.radians(float(clip.source.get('outputRotationDegrees', 0.0)))
         cosine, sine = math.cos(angle), math.sin(angle)
         transform = np.array([[cosine, -sine, 0.], [sine, cosine, 0.], [0., 0., 1.]])
@@ -213,7 +220,12 @@ def reconstruction_camera_orientation(clip: MotionClip):
                 or not np.allclose(transform.T @ transform, np.eye(3), atol=1e-6)
                 or not np.isclose(np.linalg.det(transform), 1., atol=1e-6)):
             return None
-        return transform.T
+        orientation = camera @ transform.T
+        if (orientation.shape != (3, 3) or not np.isfinite(orientation).all()
+                or not np.allclose(orientation.T @ orientation, np.eye(3), atol=1e-6)
+                or not np.isclose(np.linalg.det(orientation), 1., atol=1e-6)):
+            return None
+        return orientation
     except (TypeError, ValueError):
         return None
 
@@ -221,37 +233,12 @@ def reconstruction_camera_orientation(clip: MotionClip):
 def retain_camera_through_cleanup(
     before: MotionClip, after: MotionClip, source_pose: dict[str, Any] | None,
 ) -> MotionClip:
-    """Carry the pre-cleanup camera through a verified rigid torso mapping.
+    """Keep camera calibration separate from cleanup's pose corrections.
 
-    Fit only the coordinate change between processing stages, not a new camera
-    to the output under review. One mean translation preserves temporal root
-    errors; no per-frame image alignment can hide them.
+    Canonicalization already owns coordinate-basis changes. Cleanup changes
+    poses in that basis; inferring a new camera from them hides pose errors.
     """
-    import numpy as np
-
-    if not isinstance(source_pose, dict) or before.frame_count != after.frame_count:
-        return after
-    core = ('left_shoulder', 'right_shoulder', 'left_hip', 'right_hip')
-    if not before.frames or any(n not in f.joints for clip in (before, after)
-                                for f in clip.frames for n in core):
-        return after
-    if any(abs(a.time_sec - b.time_sec) > 1e-8 for a, b in zip(before.frames, after.frames)):
-        return after
-    x = np.array([[f.joints[n] for n in core] for f in before.frames])
-    y = np.array([[f.joints[n] for n in core] for f in after.frames])
-    x_center, y_center = x.mean(axis=1), y.mean(axis=1)
-    x0 = (x - x_center[:, None]).reshape(-1, 3)
-    y0 = (y - y_center[:, None]).reshape(-1, 3)
-    if not np.isfinite(x0).all() or not np.isfinite(y0).all() or np.linalg.matrix_rank(x0) < 2:
-        return after
-    u, _, vt = np.linalg.svd(x0.T @ y0)
-    rotation = u @ vt
-    if np.linalg.det(rotation) < 0:
-        u[:, -1] *= -1
-        rotation = u @ vt
-    error = float(np.max(np.linalg.norm(x0 @ rotation - y0, axis=1)))
-    extent = max(float(np.max(np.linalg.norm(x0, axis=1))), .01)
-    if error > extent * 1e-5:
+    if not isinstance(source_pose, dict) or not before.frames:
         return after
     camera = registered_camera_pose_fidelity_metrics(
         source_pose, _motion_clip_pose_payload(before),
@@ -264,19 +251,12 @@ def retain_camera_through_cleanup(
     )
     if mapping_identity is not None:
         camera = {**camera, "sourceTimelineMappingIdentity": mapping_identity}
-    translation = np.mean(y_center - x_center @ rotation, axis=0)
-    mapped_rotation = np.asarray(camera['cameraRotation']) @ rotation
-    transform = list(camera['cameraImageTransform'])
-    shift = mapped_rotation @ translation
-    transform[2] += float(shift[0])
-    transform[3] += float(shift[1])
     return replace(after, metadata={**after.metadata, 'sourcePoseRegistration': {
         'sourcePose': source_pose,
-        'camera': {**camera, 'cameraRotation': mapped_rotation.tolist(),
-                   'cameraImageTransform': transform},
-        'policy': 'pre_cleanup_camera_with_verified_rigid_torso_mapping',
-        'maximumMappingErrorMeters': error,
+        'camera': camera,
+        'policy': 'pre_cleanup_fixed_camera',
     }})
+
 
 
 def _point_angle_degrees_3d(
@@ -381,7 +361,7 @@ def constrain_to_source_articulation_envelope(
 
     numerical_tolerance_degrees = math.degrees(ANGLE_NUMERICAL_TOLERANCE_RADIANS)
     constrained_frames = [
-        MotionFrame(time_sec=frame.time_sec, joints=dict(frame.joints), source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+        frame.with_joints(dict(frame.joints))
         for frame in proposed.frames
     ]
     constrained_samples = 0
@@ -1350,7 +1330,7 @@ def _align_torso_axis_to_source_pose(
                 _rotate_vector_about_axis(relative, axis=axis, angle_radians=angle),
             )
         corrections.append(math.dist(shoulder_midpoint, target_shoulder_midpoint))
-        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        corrected_frames.append(frame.with_joints(joints))
     if not corrections:
         return clip, {"applied": False, "reason": "source_torso_axis_already_matched"}
     return replace(clip, frames=corrected_frames), {
@@ -1538,7 +1518,7 @@ def _align_core_for_same_phase_bilateral_travel(
         # Leg symmetry is not evidence for changing the arms. Keep the shoulder
         # anchors too, avoiding near-extension elbow snaps from torso leveling.
         joints, _ = _project_core_targets_with_fixed_endpoints(frame, joints, preserve_shoulders=True)
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     maximum_correction = max((_distance(before.joints[name], after.joints[name])
                               for before, after in zip(clip.frames, frames)
                               for name in before.joints), default=0.)
@@ -1929,16 +1909,10 @@ def _stabilize_distinct_contact_surfaces(
             ))
 
     stabilized_frames = [
-        MotionFrame(
-            time_sec=frame.time_sec,
-            source_time_sec=frame.source_time_sec,
-            source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-            joints={
+        frame.with_joints({
                 name: _add(point, resolved[frame_index])
                 for name, point in frame.joints.items()
-            },
-        )
+            })
         for frame_index, frame in enumerate(clip.frames)
     ]
     # A rigid episode correction fixes the support centroid, but it cannot stop
@@ -2045,16 +2019,10 @@ def _stabilize_distinct_contact_surfaces(
                     0.0,
                     anchor_center[2] - pelvis[2],
                 )
-                stabilized_frames[frame_index] = MotionFrame(
-                    time_sec=frame.time_sec,
-                    source_time_sec=frame.source_time_sec,
-                    source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                    joints={
+                stabilized_frames[frame_index] = frame.with_joints({
                         name: _add(point, landing_placement)
                         for name, point in frame.joints.items()
-                    },
-                )
+                    })
             landing_start_pelvis = stabilized_frames[start_index].joints["pelvis"]
             current_landing_pelvis = stabilized_frames[start_index].joints["pelvis"]
             airborne_count = start_index - departure_end_index
@@ -2069,13 +2037,7 @@ def _stabilize_distinct_contact_surfaces(
                     0.0,
                     target_pelvis[2] - current_pelvis[2],
                 )
-                stabilized_frames[frame_index] = MotionFrame(
-                    time_sec=frame.time_sec,
-                    source_time_sec=frame.source_time_sec,
-                    source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                    joints={name: _add(point, correction) for name, point in frame.joints.items()},
-                )
+                stabilized_frames[frame_index] = frame.with_joints({name: _add(point, correction) for name, point in frame.joints.items()})
             travel_horizontal = (pelvis_displacement[0], 0.0, pelvis_displacement[2])
             travel_length = _length(travel_horizontal)
             if travel_length > 1e-9:
@@ -2129,13 +2091,7 @@ def _stabilize_distinct_contact_surfaces(
                         joints[knee_name] = solved_knee
                         joints[ankle_name] = target_ankle
                         joints[foot_name] = target_foot
-                    stabilized_frames[frame_index] = MotionFrame(
-                        time_sec=frame.time_sec,
-                        source_time_sec=frame.source_time_sec,
-                        source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                        joints=joints,
-                    )
+                    stabilized_frames[frame_index] = frame.with_joints(joints)
                 # Symmetric jumps should not retain a source-reconstruction
                 # stagger where one foot sits ahead of the other. Preserve the
                 # lateral stance and each foot's height while removing only the
@@ -2197,13 +2153,7 @@ def _stabilize_distinct_contact_surfaces(
                         joints[knee_name] = solved_knee
                         joints[ankle_name] = target_ankle
                         joints[foot_name] = target_foot
-                    stabilized_frames[frame_index] = MotionFrame(
-                        time_sec=frame.time_sec,
-                        source_time_sec=frame.source_time_sec,
-                        source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                        joints=joints,
-                    )
+                    stabilized_frames[frame_index] = frame.with_joints(joints)
                 landing_pair = _subtract(anchors["right_foot"], anchors["left_foot"])
                 landing_body_frame = _body_local_frame(stabilized_frames[start_index])
                 landing_stance_axis = (
@@ -2302,13 +2252,7 @@ def _stabilize_distinct_contact_surfaces(
                             joints[knee_name] = solved_knee
                             joints[ankle_name] = target_ankle
                             joints[foot_name] = target_foot
-                        stabilized_frames[frame_index] = MotionFrame(
-                            time_sec=frame.time_sec,
-                            source_time_sec=frame.source_time_sec,
-                            source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                            joints=joints,
-                        )
+                        stabilized_frames[frame_index] = frame.with_joints(joints)
                 approach_start = apex_index
                 approach_duration = start_index - approach_start
                 if approach_duration > 0:
@@ -2361,13 +2305,7 @@ def _stabilize_distinct_contact_surfaces(
                             joints[knee_name] = solved_knee
                             joints[ankle_name] = target_ankle
                             joints[foot_name] = target_foot
-                        stabilized_frames[frame_index] = MotionFrame(
-                            time_sec=frame.time_sec,
-                            source_time_sec=frame.source_time_sec,
-                            source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                            joints=joints,
-                        )
+                        stabilized_frames[frame_index] = frame.with_joints(joints)
                 # A monocular reconstruction can briefly invert the vertical
                 # foot trajectory after takeoff even when the root follows a
                 # valid jump arc. The two known support surfaces provide a
@@ -2434,13 +2372,7 @@ def _stabilize_distinct_contact_surfaces(
                         joints[knee_name] = solved_knee
                         joints[ankle_name] = target_ankle
                         joints[foot_name] = target_foot
-                    stabilized_frames[frame_index] = MotionFrame(
-                        time_sec=frame.time_sec,
-                        source_time_sec=frame.source_time_sec,
-                        source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                        joints=joints,
-                    )
+                    stabilized_frames[frame_index] = frame.with_joints(joints)
         maximum_pelvis_settlement_correction = 0.0
         terminal_distinct_landing = (
             ascending_to_distinct_surface
@@ -2465,13 +2397,7 @@ def _stabilize_distinct_contact_surfaces(
                     maximum_pelvis_settlement_correction,
                     math.hypot(correction[0], correction[2]),
                 )
-                stabilized_frames[frame_index] = MotionFrame(
-                    time_sec=frame.time_sec,
-                    source_time_sec=frame.source_time_sec,
-                    source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                    joints={name: _add(point, correction) for name, point in frame.joints.items()},
-                )
+                stabilized_frames[frame_index] = frame.with_joints({name: _add(point, correction) for name, point in frame.joints.items()})
         maximum_displacement = 0.0
         for frame_index in frame_indices:
             frame = stabilized_frames[frame_index]
@@ -2507,7 +2433,7 @@ def _stabilize_distinct_contact_surfaces(
                 joints[knee_name] = solved_knee
                 joints[ankle_name] = solved_ankle
                 joints[foot_name] = solved_foot
-            stabilized_frames[frame_index] = MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+            stabilized_frames[frame_index] = frame.with_joints(joints)
         bilateral_anchor_payloads.append({
             "episodeIndex": episode_index,
             "startFrame": start_index,
@@ -2702,7 +2628,7 @@ def _stabilize_core_temporal_continuity(
         # unchanged wrists/ankles instead of leaving stretched bones behind.
         joints, scale = _project_core_targets_with_fixed_endpoints(frame, joints)
         projected_scales.append(scale)
-        proposed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        proposed_frames.append(frame.with_joints(joints))
 
     jerk_before = trajectory_jerk(list(clip.frames))
     jerk_proposed = trajectory_jerk(proposed_frames)
@@ -2929,16 +2855,10 @@ def _align_intermittent_vertical_trajectory_to_source_pose(
             )
         corrections.append(correction)
         corrected_frames.append(
-            MotionFrame(
-                time_sec=frame.time_sec,
-                source_time_sec=frame.source_time_sec,
-                source_frame_index=frame.source_frame_index,
-                inference_frame_index=frame.inference_frame_index,
-                joints={
+            frame.with_joints({
                     name: _add(point, correction)
                     for name, point in frame.joints.items()
-                },
-            )
+                })
         )
     return replace(clip, frames=corrected_frames), {
         "applied": True,
@@ -3022,7 +2942,7 @@ def _align_body_to_source_pose(
             if point is not None:
                 x, y = _inverse_similarity_point(point, tuple(camera['cameraImageTransform']))
                 joints[name] = (x, -y, joints[name][2])
-        targets.append(replace(frame, joints=joints))
+        targets.append(frame.with_joints(joints))
         weights.append(frame_weights)
     core = ('left_shoulder', 'right_shoulder', 'left_hip', 'right_hip')
     from .fit_runtime import cpu_fit_slot
@@ -3142,9 +3062,11 @@ def _align_hinge_articulation_to_source_pose(
         # Flipping both Y and Z preserves handedness and rigid limb geometry.
         rotation = np.diag([1., -1., -1.]) @ np.asarray(camera['cameraRotation'])
         def rotate_motion(value, matrix):
-            return replace(value, frames=[replace(frame, joints={
+            rigid_rotation = tuple(tuple(float(component) for component in row) for row in matrix)
+            return replace(value, frames=[frame.with_joints({
                 name: tuple(float(v) for v in matrix @ np.asarray(point))
-                for name, point in frame.joints.items()}) for frame in value.frames])
+                for name, point in frame.joints.items()}, rigid_rotation=rigid_rotation)
+                for frame in value.frames])
         camera_clip = rotate_motion(clip, rotation)
         result, report = _align_hinge_articulation_to_source_pose(camera_clip,
             source_pose_payload=source_pose_payload, chains=chains,
@@ -3276,7 +3198,7 @@ def _align_hinge_articulation_to_source_pose(
         # chains rigidly rather than altering their articulation by translation.
         # Restoring body-local widths afterwards moves both sides (including
         # an arm outside `chains`) and destroys those solved constraints.
-        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        corrected_frames.append(frame.with_joints(joints))
     if not corrections:
         return clip, {"applied": False, "reason": "source_hinge_angles_already_matched"}
     from .articulation_trajectory import fit_pose_and_temporal_trajectories
@@ -3532,7 +3454,7 @@ def _restore_support_relative_lateral_root_trajectory(
             name: point if name in support_joints else _add(point, correction)
             for name, point in frame.joints.items()
         }
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     return replace(clip, frames=frames), {
         "applied": True,
         "strategy": "preserve_support_relative_lateral_root_trajectory",
@@ -4031,7 +3953,7 @@ def _solve_clip_wide_skeleton_constraints(
         )
 
     frames = [
-        MotionFrame(time_sec=frame.time_sec, joints=dict(frame.joints), source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+        frame.with_joints(dict(frame.joints))
         for frame in clip.frames
     ]
     for _ in range(4):
@@ -4080,7 +4002,7 @@ def _solve_clip_wide_skeleton_constraints(
                     joints[joint_name] = anchor
                 project_axial_centerline(joints)
             solved_frames.append(
-                MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
+                frame.with_joints(joints)
             )
         frames = solved_frames
 
@@ -4234,7 +4156,7 @@ def _polish_motion_clip_temporally(
             total_correction += correction
             samples += 1
             joints[joint_name] = polished
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     polished_clip = replace(clip, frames=frames)
     return polished_clip, {
         "applied": True,
@@ -4622,7 +4544,7 @@ def _restore_authoritative_support_anchors(
                 descendant = joints.get(descendant_name)
                 if descendant is not None:
                     joints[descendant_name] = _add(descendant, correction)
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     solved_hip_widths = [
         _distance(frame.joints["left_hip"], frame.joints["right_hip"])
         for frame in frames
@@ -4738,7 +4660,7 @@ def _denoise_along_dominant_motion_axis(
             joint_name: denoised_by_joint.get(joint_name, [point] * clip.frame_count)[frame_index]
             for joint_name, point in frame.joints.items()
         }
-        trajectory_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        trajectory_frames.append(frame.with_joints(joints))
     trajectory_clip = replace(clip, frames=trajectory_frames)
     if stabilize_body_orientation:
         trajectory_clip, orientation_metadata = _stabilize_body_orientation_to_motion_plane(
@@ -4909,7 +4831,7 @@ def _stabilize_body_orientation_to_motion_plane(
                 shared_y,
                 right[2],
             )
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=rotated_joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(rotated_joints, rigid_rotation=axis_angle_rotation((0.0, 1.0, 0.0), angle)))
         corrections_degrees.append(abs(math.degrees(angle)))
         vertical_lifts.append(vertical_lift)
     if not corrections_degrees:
@@ -5170,7 +5092,7 @@ def _reconstruct_denoised_skeleton(
             maximum_correction = max(maximum_correction, correction)
             samples += 1
             joints[child] = target
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     return replace(clip, frames=frames), {
         "applied": bool(direction_tracks),
         "boneCount": len(direction_tracks),
@@ -5262,7 +5184,7 @@ def _align_upper_body_to_horizontal_support(
                 target = tuple(origin + rotation @ (np.asarray(joints[name]) - origin))
                 maximum_correction = max(maximum_correction, _distance(joints[name], target))
                 joints[name] = target
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     refined = replace(clip, frames=frames)
     resulting_axes = [
         _normalize(_subtract(
@@ -5345,7 +5267,7 @@ def _preserve_reference_head_pose(
             samples += 1
         joints = dict(frame.joints)
         joints["head"] = target_head
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     return replace(clip, frames=frames), {
         "applied": samples > 0,
         "strategy": "restore_reference_neck_to_head_vector_with_spine_axis_sanity",
@@ -5710,7 +5632,7 @@ def _restore_rigid_bilateral_support(
                         if descendant_name in joints:
                             joints[descendant_name] = _add(joints[descendant_name], correction)
                 maximum_correction = max(maximum_correction, _length(correction))
-            frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+            frames.append(frame.with_joints(joints))
         return replace(clip, frames=frames), {
             "applied": True,
             "strategy": "exact_bilateral_support_anchor_restoration",
@@ -5761,7 +5683,7 @@ def _restore_rigid_bilateral_support(
                 else relative
             )
             joints[name] = _add(_add(midpoint, rotated), translation)
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints, rigid_rotation=(axis_angle_rotation(axis, angle) if axis is not None else None)))
     return replace(clip, frames=frames), {
         "applied": True,
         "strategy": "rigid_bilateral_support_pose_restoration",
@@ -5848,7 +5770,7 @@ def _stabilize_torso_dominant_distal_leg_sliding(
                     max_displacement = max(max_displacement, displacement)
                     samples += 1
                 joints[foot] = target_foot
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     return replace(clip, frames=frames), {
         "applied": True,
         "sides": side_configs,
@@ -5926,7 +5848,7 @@ def _align_leg_motion_to_foot_axis(
                     max_displacement = max(max_displacement, displacement)
                     samples += 1
                 joints[joint_name] = target
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     return replace(clip, frames=frames), {
         "applied": samples > 0,
         "sides": side_configs,
@@ -6122,7 +6044,7 @@ def _suppress_low_magnitude_motion(
                 blend,
                 MAX_SUPPRESSION_CORRECTION_METERS,
             )
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     refined = replace(clip, frames=frames)
     displacement = _average_joint_displacement(clip, refined, list(smoothable))
     return refined, {
@@ -6531,7 +6453,7 @@ def _apply_soft_same_phase_pair_symmetry(
                             _scale(direction, shared_length),
                         )
                 parent_pair = child_pair
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     if samples == 0:
         return clip, {
             "applied": False,
@@ -6590,7 +6512,7 @@ def _suppress_temporal_spikes(
     if clip.frame_count < 3:
         return clip, {"applied": False, "reason": "too_few_frames"}
     spike_threshold = max(0.055, active_threshold * 3.0)
-    frames = [MotionFrame(time_sec=frame.time_sec, joints=dict(frame.joints), source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index) for frame in clip.frames]
+    frames = [frame.with_joints(dict(frame.joints)) for frame in clip.frames]
     corrections: list[dict[str, object]] = []
     for _ in range(3):
         pass_corrections = 0
@@ -6622,6 +6544,7 @@ def _suppress_temporal_spikes(
             "reason": "no_isolated_spikes",
             "threshold": spike_threshold,
         }
+    frames = [source.with_joints(updated.joints) for source, updated in zip(clip.frames, frames)]
     return replace(clip, frames=frames), {
         "applied": True,
         "threshold": spike_threshold,
@@ -6745,7 +6668,7 @@ def _constrain_to_stabilized_ik_targets(
             total_pullback += pullback
             max_pullback = max(max_pullback, pullback)
             samples += 1
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     return replace(clip, frames=frames), {
         "applied": bool(constrained_joints),
         "target": "stabilized_ik_target_skeleton",
@@ -7035,7 +6958,7 @@ def _preserve_reference_bone_lengths(
                 max_displacement = max(max_displacement, displacement)
                 samples += 1
             joints[child] = projected
-        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        frames.append(frame.with_joints(joints))
     return replace(clip, frames=frames), {
         "applied": True,
         "boneCount": len(reference_lengths),
@@ -7171,7 +7094,7 @@ def _stabilize_rigid_paired_hand_spacing(
             joints[elbow_name] = solved_elbow
             joints[wrist_name] = _add(solved_elbow, wrist_offset)
             joints[hand_name] = solved_hand
-        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
+        corrected_frames.append(frame.with_joints(joints))
     corrected = replace(clip, frames=corrected_frames)
     corrected_spacing = [
         _distance(frame.joints["left_hand"], frame.joints["right_hand"])

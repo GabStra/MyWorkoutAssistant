@@ -245,16 +245,19 @@ exclusive on a 12 GB GPU. The defaults can be tuned with `-StagedWaveSize`,
 The llama.cpp server uses eight HTTP worker threads by default, leaving the other
 logical CPU threads available for candidate downloads, FFmpeg, and orchestration.
 
-For the experimental two-GPU arrangement, set
-`$env:EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE = '1'` and add
-`-GvhmrStageSplit -SharedLlamaServer` to the workout-plan command. This requires
+The workout-plan wrapper defaults to the two-GPU arrangement when it verifies
+distinct physical GPUs 0 and 1. It enables shared inference, eight-item staged
+waves and split GVHMR workers. Set
+`$env:EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE` to select another secondary GPU.
+Explicitly disabling staged waves, shared inference or split workers preserves
+the single-worker path. The split arrangement requires
 staged waves, warm workers, GPU locking, and two distinct physical devices.
 Preprocessing uses the selected secondary GPU with one heavy model resident at a
 time. Prediction uses GPU 0 alongside the resident llama.cpp server; model requests
 pause while prediction runs. At most two candidates enter the split pipeline, so
 preprocessing the next candidate can overlap prediction of the current one.
-The default remains the single reconstruction worker until controlled production
-tests establish both rendered quality and time to an accepted movement.
+Single-GPU hosts retain the single reconstruction worker. Dual-GPU rendered
+quality and time to an accepted movement still require production verification.
 Handoffs bind the exact source, configuration, model image, code and artifact bytes;
 changed inputs require fresh evidence rather than silently reusing approval.
 

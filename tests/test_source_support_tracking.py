@@ -3,10 +3,44 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from exercise_motion_pkg.body_support_observation import (
+    CONTACT_TIMELINE_POLICY_VERSION,
+    POLICY_VERSION,
+)
+
+
+def test_material_identity_rejects_occluder_without_erasing_real_foot_travel():
+    import cv2
+    from exercise_motion_pkg.source_support_tracking import _material_identity_tracks
+
+    texture = np.random.default_rng(41).integers(30, 220, (18, 42), dtype=np.uint8)
+    for travel in (0, 2):
+        images, joints = [], []
+        for index in range(9):
+            shift = travel*index
+            image = np.zeros((100, 140), np.uint8)
+            image[60:78, 40+shift:82+shift] = texture
+            # A textured hand crosses the heel at the first exposure.
+            hand_y = 58-4*index
+            image[hand_y:hand_y+8, 41+shift:49+shift] = 255
+            images.append(image)
+            row = {}
+            for name, point in [('ankle', (49+shift, 61)), ('heel', (42+shift, 73)),
+                                ('toe', (79+shift, 73)), ('wrist', (45+shift, hand_y+4))]:
+                row['left_'+name] = {'image': [point[0]/140, point[1]/100], 'confidence': .99}
+            joints.append(row)
+        groups = _material_identity_tracks(images, joints, 'left', np.array([140, 100]), cv2)
+        assert groups is not None
+        assert groups['heel']['seedFrameOffset'] > 0
+        centers = groups['heel']['identityTracks'][:, :, 0].mean(axis=1)
+        assert np.max(np.abs((centers-centers[0])[:, 1])) < 1.
+        assert abs(float(centers[-1, 0]-centers[0, 0])-travel*8) < 1.
+
 
 def test_definition_contract_materializes_observed_body_support_without_pose_constraints():
     from exercise_motion_pkg.body_support_observation import materialize_body_support
 
+    digest = 'source'
     joints = {
         'pelvis': [0., 0., 0.], 'left_hip': [-0.2, 0., 0.],
         'right_hip': [0.2, 0., 0.], 'left_shoulder': [-0.3, 0., 0.],
@@ -14,21 +48,41 @@ def test_definition_contract_materializes_observed_body_support_without_pose_con
         'spine1': [0., 0., 0.], 'spine2': [0., 0.03, 0.],
         'spine3': [0., 0.06, 0.],
     }
+    # Physical support authority is exact-time direct contact on the observed
+    # surface, not a coarse stationary summary.
+    direct_contact_samples = [
+        {'sampleId': f'{joint}-{index}', 'sourceTimeSec': index / 30.,
+         'sourceFrameIndex': index, 'sourcePoseFrameIndex': index, 'sourceFps': 30.,
+         'side': side, 'landmark': 'joint', 'jointName': joint,
+         'contactState': 'direct_contact', 'surface': 'floor', 'visible': True,
+         'sourceTrackStationary': True}
+        for joint, side in (('pelvis', 'center'), ('left_shoulder', 'left'),
+                            ('right_shoulder', 'right'))
+        for index in (0, 1)
+    ]
     payload = {
         'jointNames': list(joints), 'frames': [{'joints': joints}],
         'sourceFootSupportEvidence': {'bodySupportObservation': {
-            'status': 'observed', 'sourceVideoSha256': 'source',
+            'status': 'observed', 'sourceVideoSha256': digest,
             'source': 'exact_source_visual_support_observation',
-            'policyVersion': 5,
+            'policyVersion': POLICY_VERSION,
             'observation': {
                 'pelvisAndUpperBackSameSurface': True,
                 'pelvis': 'stationary_support', 'upperBack': 'stationary_support',
                 'pelvisContactSurface': 'floor', 'upperBackContactSurface': 'floor',
                 'torsoSurface': 'horizontal',
             },
+            'contactTimeline': {
+                'schemaVersion': 1, 'policyVersion': CONTACT_TIMELINE_POLICY_VERSION,
+                'source': 'exact_source_visual_contact_timeline',
+                'sourceClock': 'video_frame_zero_seconds', 'status': 'observed',
+                'sourceVideoSha256': digest, 'samples': direct_contact_samples,
+            },
         }},
     }
-    source_pose = {'frames': [{'joints': joints} for _ in range(8)]}
+    source_pose = {'sourceVideoSha256': digest,
+                   'frames': [{'sourceTimeSec': index / 30., 'joints': joints}
+                              for index in range(8)]}
     contract = {
         'contractScope': 'definition_only', 'primaryMovingRegions': ['upper_limb'],
         'referenceRegions': ['torso'],
@@ -65,7 +119,7 @@ def test_pixel_support_tracks_remove_detector_drift_without_freezing_real_travel
     import hashlib
     observation = {'status': 'observed', 'source': 'exact_source_visual_support_observation',
         'sourceVideoSha256': hashlib.sha256(video.read_bytes()).hexdigest(),
-    'policyVersion': 5,
+    'policyVersion': POLICY_VERSION,
                    # A squat has planted feet but no supported pelvis. The
                    # pixel tracker measures hip travel relative to that foot.
                    'observation': {'rightFoot': 'stationary_full_sole',
@@ -89,6 +143,51 @@ def test_pixel_support_tracks_remove_detector_drift_without_freezing_real_travel
     assert result_without_planted_foot['reason'] == 'support_observation_unavailable'
 
 
+def test_hand_support_tracks_reject_carried_motion_and_allow_camera_motion(tmp_path):
+    import cv2
+    import hashlib
+    from exercise_motion_pkg.source_support_tracking import observe_support_relative_tracks
+
+    video = tmp_path / 'hand-support.avi'
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*'MJPG'), 10., (192, 128))
+    assert writer.isOpened()
+    rng = np.random.default_rng(18)
+    background = rng.integers(0, 256, (128, 192, 3), dtype=np.uint8)
+    patch = rng.integers(0, 256, (40, 40, 3), dtype=np.uint8)
+    frames = []
+    for index in range(12):
+        image = background.copy()
+        image[15:55, 20 + index:60 + index] = patch
+        image[15:55, 115:155] = patch
+        image[70:110, 56 + index:96 + index] = patch
+        camera_shift = index // 2
+        writer.write(np.roll(image, camera_shift, axis=1))
+        joints = {'left_wrist': [(40 + index + camera_shift) / 192, 35 / 128, 0.],
+                  'right_wrist': [(135 + camera_shift) / 192, 35 / 128, 0.],
+                  'left_hip': [(72 + index + camera_shift) / 192, 90 / 128, 0.],
+                  'right_hip': [(80 + index + camera_shift) / 192, 90 / 128, 0.]}
+        frames.append({'sourceTimeSec': index / 10., 'joints': joints,
+                       'jointConfidence': {name: .99 for name in joints}})
+    writer.release()
+    pose = {'coordinateSpace': 'normalized_image_xy', 'sourceTimeOriginSec': 0., 'frames': frames}
+    observation = {'status': 'observed', 'source': 'exact_source_visual_support_observation',
+                   'policyVersion': POLICY_VERSION, 'sourceVideoSha256': hashlib.sha256(video.read_bytes()).hexdigest(),
+                   'observation': {'leftHand': 'stationary_support', 'rightHand': 'stationary_support',
+                                   'leftHandContactSurface': 'fixed_bar', 'rightHandContactSurface': 'fixed_bar'}}
+
+    result = observe_support_relative_tracks(video, pose, observation, cache_dir=tmp_path / 'cache')
+
+    evidence = result['stationaryContactEvidence']
+    assert evidence['left_wrist']['available']
+    assert not evidence['left_wrist']['passed']
+    assert evidence['left_wrist']['maximumImageTravelPixels'] > evidence['left_wrist']['limitPixels']
+    assert evidence['left_wrist']['movesWithBody']
+    assert evidence['right_wrist']['available']
+    assert evidence['right_wrist']['passed']
+    assert evidence['right_wrist']['maximumImageTravelPixels'] < .5
+    assert not evidence['right_wrist']['movesWithBody']
+
+
 def test_unobservable_pixel_support_keeps_detector_evidence(tmp_path):
     import cv2
     from exercise_motion_pkg.source_support_tracking import observe_support_relative_tracks
@@ -105,7 +204,7 @@ def test_unobservable_pixel_support_keeps_detector_evidence(tmp_path):
                         'jointConfidence': {n: .99 for n in joints}} for i in range(8)]}
     observation = {'status': 'observed', 'source': 'exact_source_visual_support_observation',
         'sourceVideoSha256': hashlib.sha256(video.read_bytes()).hexdigest(),
-    'policyVersion': 5,
+    'policyVersion': POLICY_VERSION,
                    'observation': {'pelvis': 'stationary_support', 'rightFoot': 'stationary_full_sole',
                                    'rightFootSurface': 'ground'}}
     result = observe_support_relative_tracks(video, pose, observation, cache_dir=tmp_path/'cache')
@@ -113,7 +212,33 @@ def test_unobservable_pixel_support_keeps_detector_evidence(tmp_path):
     assert result.get('tracks', {}) == {}
 
 
-def test_foot_material_tracks_are_exact_window_and_fail_closed(tmp_path):
+@pytest.mark.parametrize(('width', 'height', 'toe'), [
+    (1920, 1080, [.3, .4]), (1920, 1080, [.2, .5]), (1080, 1920, [.2, .5]),
+])
+def test_material_spread_tolerance_uses_pixel_geometry(tmp_path, monkeypatch, width, height, toe):
+    from exercise_motion_pkg import source_support_tracking as tracking
+    from exercise_motion_pkg.foot_contact_observation import _corroborate_observed_full_sole_material
+
+    video = tmp_path / 'source.mp4'
+    video.touch()
+    frame = {'joints': {
+        'right_heel': {'image': [.2, .4], 'confidence': .99},
+        'right_toe': {'image': toe, 'confidence': .99},
+    }}
+    observations = {'imageWidth': width, 'imageHeight': height, 'frames': [frame] * 3}
+    patch = {'sourceFrameCount': 3, 'sourceTimesSec': [0., .1, .2],
+             'feet': {'right': {'states': ['full_sole'] * 3}},
+             'contacts': [{'jointName': 'right_foot', 'contactState': 'full_sole',
+                           'contactMotion': 'unknown', 'startRatio': 0., 'endRatio': 1.}]}
+    captured = []
+    monkeypatch.setattr(tracking, 'observe_foot_material_episodes',
+                        lambda _video, _observations, _patch, episodes, **kwargs: captured.extend(episodes))
+    _corroborate_observed_full_sole_material(video, observations, patch)
+    expected = .15 * np.linalg.norm((np.asarray(toe) - [.2, .4]) * [width, height])
+    assert captured[0]['maximumDisplacementPixels'] == pytest.approx(expected)
+
+
+def test_foot_material_tracks_are_exact_window_and_fail_closed(tmp_path, monkeypatch):
     import hashlib
     import cv2
     from exercise_motion_pkg.source_support_tracking import observe_foot_material_episodes
@@ -181,6 +306,71 @@ def test_foot_material_tracks_are_exact_window_and_fail_closed(tmp_path):
     assert stable['timedMaterialCenters'][0]['sourceTimeSec'] == pytest.approx(2.7)
     assert stable['heel']['coverageRatio'] == stable['toe']['coverageRatio'] == 1.
 
+    camera_video = tmp_path / 'panned-shoe.avi'
+    writer = cv2.VideoWriter(str(camera_video), cv2.VideoWriter_fourcc(*'MJPG'), fps, (width, height))
+    assert writer.isOpened()
+    for index, image in enumerate(rendered_frames):
+        transform = np.asarray([[1., 0., index], [0., 1., 0.]])
+        writer.write(cv2.warpAffine(image, transform, (width, height), borderMode=cv2.BORDER_REFLECT))
+    writer.release()
+    camera_digest = hashlib.sha256(camera_video.read_bytes()).hexdigest()
+    camera_observations = {
+        **observations, 'sourceVideoSha256': camera_digest,
+        'frames': [{**frame, 'joints': {
+            name: {**point, 'image': [point['image'][0] + index / width, point['image'][1]]}
+            for name, point in frame['joints'].items()
+        }} for index, frame in enumerate(observation_frames)],
+    }
+    panned = observe_foot_material_episodes(
+        camera_video, camera_observations, {**patch, 'sourceVideoSha256': camera_digest},
+        [episode], cache_dir=tmp_path/'cache')
+    camera_heel = panned['episodes'][0]['heel']
+    assert panned['episodes'][0]['passed'] is True
+    assert camera_heel['reference'] == 'registered_scene'
+    assert camera_heel['maximumRawDisplacementPixels'] > episode['maximumDisplacementPixels']
+
+    from exercise_motion_pkg import camera_stability
+    background_transform = camera_stability.estimate_background_camera_transform
+    registration_calls = 0
+
+    def lose_registration(**kwargs):
+        nonlocal registration_calls
+        registration_calls += 1
+        return ({'status': 'unavailable'} if registration_calls == 3
+                else background_transform(**kwargs))
+
+    with monkeypatch.context() as local_patch:
+        local_patch.setattr(camera_stability, 'estimate_background_camera_transform',
+                            lose_registration)
+        unregistered = observe_foot_material_episodes(
+            camera_video, camera_observations, {**patch, 'sourceVideoSha256': camera_digest},
+            [episode], cache_dir=tmp_path/'unregistered-camera-cache')['episodes'][0]
+    assert unregistered['heel']['coverageRatio'] == 1.
+    assert unregistered['heel']['maximumRawDisplacementPixels'] > episode['maximumDisplacementPixels']
+    assert unregistered['heel']['reference'] == 'source_image'
+    assert unregistered['status'] == 'unresolved'
+    assert unregistered['passed'] is None
+    assert unregistered['reason'] == 'background_camera_registration_incomplete'
+    assert unregistered['cameraRegistration']['status'] == 'incomplete'
+
+    optical_flow = cv2.calcOpticalFlowPyrLK
+
+    def lose_features(*args, **kwargs):
+        moved, status, error = optical_flow(*args, **kwargs)
+        if status is not None:
+            # Drop one side of the texture while retaining sufficient static features.
+            points = args[2][:, 0]
+            status[points[:, 0] > np.quantile(points[:, 0], .8)] = 0
+        return moved, status, error
+
+    with monkeypatch.context() as local_patch:
+        local_patch.setattr(cv2, 'calcOpticalFlowPyrLK', lose_features)
+        dropout = observe_foot_material_episodes(
+            video, observations, patch, [episode], cache_dir=tmp_path/'dropout-cache')
+    assert dropout['episodes'][0]['passed'] is True
+    for part in ('heel', 'toe'):
+        assert dropout['episodes'][0][part]['maximumDisplacementPixels'] < .05
+
     drifting = observe_foot_material_episodes(
         video, observations, patch,
         [{**episode, 'startFrame': 8, 'endFrame': 13,
@@ -188,6 +378,7 @@ def test_foot_material_tracks_are_exact_window_and_fail_closed(tmp_path):
         cache_dir=tmp_path/'cache')
     assert drifting['episodes'][0]['status'] == 'failed'
     assert drifting['episodes'][0]['passed'] is False
+    assert drifting['episodes'][0]['heel']['reference'] == 'registered_scene'
 
     pivot = observe_foot_material_episodes(
         video, observations, patch,

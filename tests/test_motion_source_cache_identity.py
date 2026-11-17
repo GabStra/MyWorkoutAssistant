@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from exercise_motion_pkg import bake_and_rank as bake
 
 
@@ -54,3 +56,37 @@ def test_source_cache_manifest_verifies_bytes_and_download_lock_is_persistent(
 
     cached.write_bytes(b"tampered-video-bytes")
     assert bake.find_cached_youtube_source(cache_dir, bake.youtube_source_cache_stem(candidate)) is None
+
+@pytest.mark.parametrize('local_source', [False, True])
+def test_source_copy_never_exposes_partial_video(tmp_path, monkeypatch, local_source):
+    source = tmp_path / 'cached.mp4'
+    source.write_bytes(b'new complete video')
+    destination_dir = tmp_path / 'destination'
+    destination_dir.mkdir()
+    destination = destination_dir / (source.name if local_source else 'source.mp4')
+    destination.write_bytes(b'old complete video')
+    observed = []
+
+    def copy_stream(source_stream, target_stream, *_args, **_kwargs):
+        data = source_stream.read()
+        target_stream.write(data[:3])
+        target_stream.flush()
+        observed.append(destination.read_bytes())
+        assert observed[-1] == b'old complete video'
+        target_stream.write(data[3:])
+
+    def copy_in_place(source_path, target_path):
+        with open(source_path, 'rb') as source_stream, open(target_path, 'wb') as target_stream:
+            copy_stream(source_stream, target_stream)
+
+    monkeypatch.setattr(bake.shutil, 'copyfileobj', copy_stream)
+    monkeypatch.setattr(bake.shutil, 'copy2', copy_in_place)
+    monkeypatch.setattr(bake, 'rebind_existing_source_frame_clock_for_video_copy', lambda **_kwargs: None)
+    if local_source:
+        result = bake.copy_or_download_candidate_source(
+            _ranked_candidate({'videoPath': str(source)}), destination_dir)
+    else:
+        result = bake.copy_cached_source_to_destination(source, destination_dir)
+    assert result == destination
+    assert destination.read_bytes() == source.read_bytes()
+    assert observed == [b'old complete video']

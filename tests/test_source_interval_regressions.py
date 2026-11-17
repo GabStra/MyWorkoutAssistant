@@ -10,10 +10,170 @@ from exercise_motion_pkg.cleanup import cleanup_motion_clip
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 
 
+@pytest.mark.parametrize(
+    ("exercise_name", "root_delta", "expected_inconsistent"),
+    [
+        ("Pull-Up", (0.005214, 0.16653), {"rootVerticalPosition"}),
+        ("Bench Press", (0.16653, 0.005214), {"rootHorizontalPosition"}),
+        ("Barbell Bench Press", (0.0000446, 0.012021), set()),
+    ],
+)
+def test_source_return_endpoint_consistency_checks_both_root_axes(
+    exercise_name, root_delta, expected_inconsistent,
+):
+    endpoint_features = {
+        "available": True,
+        "exerciseName": exercise_name,
+        "start": {
+            "bodySpan": 1.0,
+            "medianJointPositions": {"pelvis": [0.0, 0.0, 0.0]},
+        },
+        "end": {
+            "bodySpan": 1.0,
+            "medianJointPositions": {"pelvis": [root_delta[0], root_delta[1], 0.0]},
+        },
+    }
+
+    result = bake.source_pose_return_endpoint_consistency(endpoint_features)
+    root_comparisons = {
+        row["field"]: row
+        for row in result["comparisons"]
+        if row["field"] in {"rootHorizontalPosition", "rootVerticalPosition"}
+    }
+
+    assert root_comparisons["rootHorizontalPosition"]["normalizedDelta"] == pytest.approx(
+        abs(root_delta[0]), abs=5e-7
+    )
+    assert root_comparisons["rootVerticalPosition"]["normalizedDelta"] == pytest.approx(
+        abs(root_delta[1])
+    )
+    assert {
+        field for field, comparison in root_comparisons.items() if not comparison["passed"]
+    } == expected_inconsistent
+    assert result["passed"] is (not expected_inconsistent)
+
+
+def _generated_pull_endpoint_features_with_vertical_return_mismatch():
+    return {
+        "available": True,
+        "start": {
+            "handHeight": "hip",
+            "bodySpan": 0.452442,
+            "medianJointPositions": {"pelvis": [0.7159953776, 0.4320285956, 0.0]},
+        },
+        "end": {
+            "handHeight": "hip",
+            "bodySpan": 0.46996,
+            "medianJointPositions": {"pelvis": [0.7135905639, 0.508832, 0.0]},
+        },
+    }
+
+
+def test_trusted_return_definition_keeps_root_mismatch_blocking_after_generated_pose_downgrade():
+    contract = {
+        "exerciseName": "Pull-Up",
+        "status": "generated",
+        "actionDefinitionAuthority": "structured_definition",
+        "completionMode": "return_to_start",
+        "primaryMovingRegions": ["arms"],
+        "startPoseConstraints": {"handHeight": "above_head"},
+    }
+
+    result = bake.validate_source_pose_endpoints_against_contract(
+        _generated_pull_endpoint_features_with_vertical_return_mismatch(),
+        contract,
+    )
+
+    assert result["passed"] is False
+    assert any(
+        mismatch["field"] == "handHeight"
+        and mismatch["endpoint"] == "start"
+        for mismatch in result["generatedExpectationMismatches"]
+    )
+    geometry = next(
+        mismatch for mismatch in result["blockingMismatches"]
+        if mismatch["field"] == "returnEndpointConsistency"
+    )
+    assert geometry["requirementOrigin"] == "exercise_definition"
+    assert geometry["definitionField"] == "completionMode"
+    assert geometry["inconsistentFields"] == ["rootVerticalPosition"]
+
+
+def test_generated_return_geometry_without_structured_authority_remains_advisory():
+    contract = {
+        "exerciseName": "Pull-Up",
+        "status": "generated",
+        "completionMode": "return_to_start",
+        "primaryMovingRegions": ["arms"],
+        "startPoseConstraints": {"handHeight": "above_head"},
+    }
+
+    result = bake.validate_source_pose_endpoints_against_contract(
+        _generated_pull_endpoint_features_with_vertical_return_mismatch(),
+        contract,
+    )
+
+    assert result["passed"] is True
+    assert "rootVerticalPosition" in next(
+        mismatch for mismatch in result["diagnosticOnlyMismatches"]
+        if mismatch["field"] == "returnEndpointConsistency"
+    )["inconsistentFields"]
+
+
+@pytest.mark.parametrize("completion_mode", ["stable_hold", "return_to_start"])
+def test_exact_source_phase_rejects_multiple_people_before_pose_extraction(
+    tmp_path, monkeypatch, completion_mode,
+):
+    pose_payload = {
+        "blockingIssues": ["multiple_people"],
+        "maxSignificantPersonCount": 2,
+    }
+    monkeypatch.setattr(bake, "read_basic_video_metadata", lambda _: SimpleNamespace(duration_seconds=4.))
+    monkeypatch.setattr(bake, "target_motion_contract_from_ranking_payload", lambda _: {
+        "completionMode": completion_mode,
+    })
+    monkeypatch.setattr(bake, "run_yolo_pose_prefilter", lambda **_: SimpleNamespace(payload=pose_payload))
+    monkeypatch.setattr(
+        bake, "source_pose_skeleton_payload_for_window",
+        lambda *args, **kwargs: pytest.fail("dominant pose extraction must not run"),
+    )
+
+    with pytest.raises(bake.SourceCandidateRejected) as error:
+        bake.source_video_phase_completeness_metrics(
+            source_video_path=tmp_path / "source.mp4",
+            exercise_name="Bench Press",
+            ranking_payload={"exerciseMotionContract": {"completionMode": completion_mode}},
+        )
+
+    assert "source_multiple_people_detected" in error.value.reason_tags
+    assert error.value.evidence["posePrefilter"] is pose_payload
+
+
+def test_exact_source_phase_keeps_single_person_phase_path(tmp_path, monkeypatch):
+    pose_payload = {"blockingIssues": ["weak_body_joint_motion"], "maxSignificantPersonCount": 1}
+    source_pose = {"frames": []}
+    expected = {"passed": True, "reason": "single_person_phase_checked"}
+    monkeypatch.setattr(bake, "read_basic_video_metadata", lambda _: SimpleNamespace(duration_seconds=4.))
+    monkeypatch.setattr(bake, "target_motion_contract_from_ranking_payload", lambda _: {
+        "completionMode": "return_to_start",
+    })
+    monkeypatch.setattr(bake, "run_yolo_pose_prefilter", lambda **_: SimpleNamespace(payload=pose_payload))
+    monkeypatch.setattr(bake, "source_pose_skeleton_payload_for_window", lambda payload, **_: source_pose)
+    monkeypatch.setattr(bake, "source_pose_phase_completeness_metrics", lambda **kwargs: expected)
+
+    result = bake.source_video_phase_completeness_metrics(
+        source_video_path=tmp_path / "source.mp4",
+        exercise_name="Bench Press",
+        ranking_payload={"exerciseMotionContract": {"completionMode": "return_to_start"}},
+    )
+
+    assert result is expected
+
+
 def test_source_overview_preserves_dense_integrity_evidence(tmp_path, monkeypatch):
     samples = [tmp_path / f"frame_{index:03d}.jpg" for index in range(24)]
     candidate = bake.SourceCutCandidate(
-        candidate_id="A", window=bake.DetectionWindow(index=0, start_seconds=2., end_seconds=8.),
+        candidate_id="A", window=bake.DetectionWindow(index=0, start_seconds=2., end_seconds=7.),
         frame_paths=[tmp_path / f"sheet_{index}.jpg" for index in range(3)],
         sample_frame_paths=samples, visual_integrity={"passed": False},
     )
@@ -210,3 +370,160 @@ def test_source_reviewed_cleanup_preserves_stationary_endpoint_frames(recorded_s
     assert len(cleaned.frames) == len(frames)
     assert [frame.time_sec for frame in cleaned.frames] == [frame.time_sec for frame in frames]
     assert stats.trimmed_start_frames == stats.trimmed_end_frames == 0
+
+
+@pytest.mark.parametrize('duration', [7.66, 9.01, 30.])
+def test_source_overview_sampling_meets_timing_gate_without_inventing_dense_samples(tmp_path, duration):
+    cv2 = pytest.importorskip('cv2')
+    np = pytest.importorskip('numpy')
+    from exercise_motion_pkg.source_evidence import MAX_TIMING_EVIDENCE_SAMPLE_GAP_SECONDS, temporal_observation_bins
+    samples = []
+    for index in range(24):
+        path = tmp_path / f'frame_{index:02d}.jpg'
+        assert cv2.imwrite(str(path), np.full((80, 120, 3), index * 8, dtype=np.uint8))
+        samples.append(path)
+    candidate = bake.SourceCutCandidate('A', bake.DetectionWindow(0, 0., duration),
+        [tmp_path / 'old1.jpg', tmp_path / 'old2.jpg', tmp_path / 'old3.jpg'],
+        sample_frame_paths=samples)
+    reviewed = bake.source_cut_review_overview(candidate, tmp_path)
+    inventory = bake.source_cut_candidate_evidence_inventory(reviewed)
+    original_times = bake.source_cut_sample_timestamps(candidate_window=candidate.window, sample_count=24)
+    assert all(frame['timestampSeconds'] in original_times for frame in inventory)
+    assert len({frame['id'] for frame in inventory}) == len(inventory)
+    assert len({frame['timestampSeconds'] for frame in inventory}) == len(inventory)
+    assert reviewed.sample_frame_paths == samples
+    assert len(inventory) > 8
+    prompt = bake.source_cut_candidate_timing_prompt(reviewed)
+    for frame in inventory:
+        assert json.dumps({'id': frame['id'], 'tileNumber': frame['tileNumber'],
+            'sheet': frame['image'], 'timestampSeconds': frame['timestampSeconds']}, separators=(',', ':')) in prompt
+    assert max(sum(frame['image'] == image for frame in inventory) for image in {frame['image'] for frame in inventory}) <= 8
+    observations = [{'phaseId': 'lower', 'visible': True, 'evidenceFrameIds': [frame['id'] for frame in inventory[:2]]},
+                    {'phaseId': 'return', 'visible': True, 'evidenceFrameIds': [frame['id'] for frame in inventory[-2:]]}]
+    timing = temporal_observation_bins(observations, ['lower', 'return'], inventory,
+        id_field='phaseId', require_visible=True)
+    assert (timing['status'] == 'sampled') is (duration <= 9.01)
+    if duration > 9.01:
+        assert timing['reason'] == 'sample_gap_too_large_for_timing'
+    else:
+        assert timing['maximumAdjacentSampleGapSeconds'] <= MAX_TIMING_EVIDENCE_SAMPLE_GAP_SECONDS
+        # Dense evidence cannot turn a missing return observation into a complete action.
+        partial = temporal_observation_bins(observations[:1], ['lower', 'return'], inventory,
+            id_field='phaseId', require_visible=True)
+        assert partial['status'] == 'unresolved'
+
+
+def test_promoted_shared_source_receipt_is_consumable_and_hash_bound(tmp_path, recorded_sources):
+    import hashlib
+    import cv2
+    import numpy as np
+
+    from exercise_motion_pkg import wave_pipeline as wave
+
+    def write_video(path, color):
+        writer = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (64, 64),
+        )
+        assert writer.isOpened()
+        for _ in range(96):
+            writer.write(np.full((64, 64, 3), color, dtype=np.uint8))
+        writer.release()
+
+    shared_root = tmp_path / "shared-source-cache"
+    candidate_workspace = tmp_path / "candidate"
+    selected_video = candidate_workspace / "input" / "selected_segment.mp4"
+    selected_video.parent.mkdir(parents=True)
+    write_video(selected_video, 70)
+    source_sha256 = hashlib.sha256(selected_video.read_bytes()).hexdigest()
+
+    shared_entry = shared_root / "placeholder"
+    shared_entry.mkdir(parents=True)
+    shared_reference = shared_entry / "exact_source_pose_reference.json"
+    shared_reference.write_text(json.dumps({
+        "sourceVideoSha256": source_sha256,
+        "pose": recorded_sources["barbell-bench-press"]["pose"],
+    }), encoding="utf-8")
+
+    exercise_name = "Barbell Bench Press"
+    contract = None
+    cache_payload, cache_key = bake.exact_source_phase_validation_cache_key(
+        source_video_path=selected_video,
+        exercise_name=exercise_name,
+        exercise_motion_contract=contract,
+    )
+    cache_entry = shared_root / cache_key
+    cache_entry.mkdir()
+    shared_cache_receipt = cache_entry / "exact_source_phase_validation.json"
+    validation = {
+        "required": True,
+        "passed": True,
+        "reason": "validated",
+        "requiredRegionObservations": {"passed": True},
+        "sourceVideoPath": str(selected_video.resolve()),
+        "sourceVideoSha256": source_sha256,
+        "sourcePoseReferencePath": str(shared_reference.resolve()),
+    }
+    bake.write_exact_source_phase_validation_cache(
+        cache_path=shared_cache_receipt,
+        cache_key=cache_key,
+        metrics=validation,
+    )
+    shared_receipt_before = shared_cache_receipt.read_bytes()
+    shared_reference_before = shared_reference.read_bytes()
+    loaded_validation = bake.load_cached_exact_source_phase_validation(
+        cache_path=shared_cache_receipt,
+        cache_key=cache_key,
+        source_video_path=selected_video,
+    )
+    assert loaded_validation is not None
+
+    promoted = bake.promote_and_require_exact_source_phase_validation(
+        candidate_workspace=candidate_workspace,
+        exercise_name=exercise_name,
+        validation=loaded_validation,
+        exercise_motion_contract=contract,
+        rejection_context="test source receipt promotion",
+    )
+    canonical_receipt = (
+        candidate_workspace / "segment_detection" / "exact_source_phase_validation.json"
+    )
+    support_evidence = {"sourceVideoSha256": source_sha256, "review": "retained"}
+    assert promoted["sourceVideoSha256"] == source_sha256
+    assert canonical_receipt.is_file()
+    assert wave._persist_exact_source_support_evidence(
+        candidate_workspace, source_sha256, support_evidence,
+    )
+
+    canonical_metrics = json.loads(canonical_receipt.read_text(encoding="utf-8"))["metrics"]
+    inline_metrics = json.loads(
+        (candidate_workspace / "segment_detection" / "segment_selection.json").read_text(
+            encoding="utf-8"
+        )
+    )["exactSourcePhaseValidation"]
+    assert canonical_metrics["sourceFootSupportEvidence"] == support_evidence
+    assert inline_metrics["sourceFootSupportEvidence"] == support_evidence
+    assert shared_cache_receipt.read_bytes() == shared_receipt_before
+    assert shared_reference.read_bytes() == shared_reference_before
+
+    mismatched_workspace = tmp_path / "mismatched-candidate"
+    mismatched_video = mismatched_workspace / "input" / "selected_segment.mp4"
+    mismatched_video.parent.mkdir(parents=True)
+    write_video(mismatched_video, 150)
+    bake.promote_and_require_exact_source_phase_validation(
+        candidate_workspace=mismatched_workspace,
+        exercise_name=exercise_name,
+        validation=loaded_validation,
+        exercise_motion_contract=contract,
+        rejection_context="test mismatched source receipt promotion",
+    )
+    assert not (
+        mismatched_workspace / "segment_detection" / "exact_source_phase_validation.json"
+    ).exists()
+    mismatched_sha256 = hashlib.sha256(mismatched_video.read_bytes()).hexdigest()
+    assert not wave._persist_exact_source_support_evidence(
+        mismatched_workspace,
+        mismatched_sha256,
+        {"sourceVideoSha256": mismatched_sha256},
+    )
+    assert shared_cache_receipt.read_bytes() == shared_receipt_before
+    assert shared_reference.read_bytes() == shared_reference_before

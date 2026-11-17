@@ -1,5 +1,6 @@
 """Rank reconstruction evidence without rejecting every occluded source."""
 import math
+import re
 
 
 def observability_ranking_adjustment(observability):
@@ -22,6 +23,21 @@ REGION_JOINTS = {
     'upper_limb': ('left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist'),
     'lower_limb': ('left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle'),
 }
+HEAD_REGION_JOINTS = ('head', 'neck', *REGION_JOINTS['head'],
+                      'left_eye', 'right_eye', 'left_ear', 'right_ear')
+
+
+def associated_observable_moving_regions(regions, motion_pattern):
+    """Measure limb-away motion at the limb as well as its stationary pivot."""
+    if motion_pattern != 'limb_away_from_body':
+        return list(regions)
+    associated = {'shoulders': 'upper_limb', 'hips': 'lower_limb'}
+    expanded = []
+    for region in regions:
+        for candidate in (region, associated.get(region)):
+            if candidate and candidate not in expanded:
+                expanded.append(candidate)
+    return expanded
 
 
 def required_region_observation_metrics(payload, contract=None):
@@ -34,6 +50,27 @@ def required_region_observation_metrics(payload, contract=None):
     contract = contract if isinstance(contract, dict) else {}
     spec = contract.get('observableMotionSpec') or contract
     regions = spec.get('mustBeVisibleRegions', []) if isinstance(spec, dict) else []
+    context = contract.get('motionContext')
+    definition = context.get('exerciseDefinition') if isinstance(context, dict) else None
+    if (contract.get('contractScope') == 'definition_only'
+            and contract.get('actionDefinitionAuthority') == 'structured_definition'
+            and isinstance(spec, dict) and isinstance(definition, dict)
+            and isinstance(definition.get('definingAction'), str)):
+        from .target_motion import ANATOMICAL_MOTION_REGION_ALIASES
+        # A generated visibility checklist cannot replace the approved action.
+        text = ' '.join(value for value in [definition['definingAction'],
+                         *(definition.get('requiredPhases') or []),
+                         *(definition.get('variantQualifiers') or [])]
+                        if isinstance(value, str)).casefold()
+        regions = [*(spec.get('primaryMovingRegions') or []), *(
+            region for term, region in ANATOMICAL_MOTION_REGION_ALIASES.items()
+            if re.search(r'\b' + re.escape(term) + r'\b', text))]
+        for disposition in ('required', 'prohibited'):
+            for support in (contract.get('bodySupportRequirements') or {}).get(disposition, []):
+                name = support.get('region')
+                regions.append('torso' if name == 'upper_back' else
+                               ANATOMICAL_MOTION_REGION_ALIASES.get(name, name))
+        regions = list(dict.fromkeys(regions))
     regions = [region for region in regions if region in REGION_JOINTS]
     frames = payload.get('frames') or []
     normalized = payload.get('coordinateSpace') == 'normalized_image_xy'
@@ -42,7 +79,7 @@ def required_region_observation_metrics(payload, contract=None):
     for region in regions:
         names = REGION_JOINTS[region]
         if region == 'head':
-            names = (*names, 'head', 'neck', 'left_eye', 'right_eye', 'left_ear', 'right_ear')
+            names = HEAD_REGION_JOINTS
         if active_side in ('left', 'right'):
             other = 'right_' if active_side == 'left' else 'left_'
             names = tuple(name for name in names if not name.startswith(other))

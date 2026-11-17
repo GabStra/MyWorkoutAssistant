@@ -79,7 +79,8 @@ def _frame_state(specs, frame, translation):
     margins, target_knees = [], []
     unreachable = False
     for spec in specs:
-        if 'activeContact' in spec and not spec['activeContact'][frame]:
+        active_pose = spec.get('activePoseTarget', spec.get('activeContact'))
+        if active_pose is not None and not active_pose[frame]:
             # A free/unknown frame does not own a support IK target. Carry its
             # source knee with the root track, leaving its articulation intact.
             margins.extend((np.pi, np.pi))
@@ -122,6 +123,13 @@ def _frame_state(specs, frame, translation):
         interior = np.deg2rad(_INTERIOR_MARGIN_DEGREES)
         knee_margin = (spec['kneeTolerance'] - interior
                        - abs(knee_angle - float(spec['referenceKneeAngle'][frame])))
+        if 'kneeLower' in spec and 'kneeUpper' in spec:
+            lower_margin = knee_angle - float(spec['kneeLower'][frame])
+            upper_margin = float(spec['kneeUpper'][frame]) - knee_angle
+            knee_margin = min(knee_margin, lower_margin, upper_margin)
+            # The final source envelope is exact: optimizer tolerance must not
+            # make an out-of-envelope pose an encodable initializer seed.
+            unreachable |= lower_margin < 0. or upper_margin < 0.
         ankle_margin = (spec['ankleTolerance'] - interior
                         - abs(ankle_angle - float(spec['referenceAnkleAngle'][frame])))
         # Keep the established two articulation constraints per leg. Outside
@@ -289,6 +297,42 @@ def _encode_targets(rig, coordinates, target_points, moving_joints):
     return encoded
 
 
+def _encode_foot_world_orientations(rig, coordinates, world_orientations):
+    """Encode desired foot world rotations against the actual ankle parents.
+
+    Closed-chain target points constrain the ankle-to-foot bone direction but
+    not its remaining twist. A full-sole material constraint owns the whole
+    world foot orientation, so each desired matrix is rebased on the encoded
+    ankle world rotation first. Only the foot local rotation changes; the
+    fixed offset keeps the bone length and actual foot point.
+    """
+    encoded = np.asarray(coordinates, dtype=float).copy()
+    if not isinstance(world_orientations, dict) or not world_orientations:
+        return encoded
+    if encoded.ndim != 2 or encoded.shape[1] != rig.width:
+        return None
+    world = rig.global_rotations(encoded)
+    for side, values in world_orientations.items():
+        try:
+            frames = np.asarray(values['frames'], dtype=int)
+            rotations = np.asarray(values['worldRotations'], dtype=float)
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (frames.ndim != 1 or rotations.shape != (len(frames), 3, 3)
+                or not np.isfinite(rotations).all()
+                or np.any(frames < 0) or np.any(frames >= len(encoded))):
+            return None
+        foot = rig.names.index(f'{side}_foot')
+        ankle = rig.names.index(f'{side}_ankle')
+        if foot not in rig.slots or ankle not in rig.parents:
+            return None
+        parent_world = world[ankle][frames]
+        local = np.einsum('fji,fjk->fik', parent_world, rotations)
+        slot = rig.slots[foot]
+        encoded[frames, slot:slot + 3] = Rotation.from_matrix(local).as_rotvec()
+    return encoded
+
+
 def _encode_root_adjusted_pose(rig, coordinates, specs, offsets):
     """Re-solve and encode the closed chains for a trial common-root track."""
     coordinates = np.asarray(coordinates, dtype=float)
@@ -307,7 +351,8 @@ def _encode_root_adjusted_pose(rig, coordinates, specs, offsets):
         margins_by_frame[frame] = margins
         translation = offsets[frame]
         for spec, knee in zip(specs, knees):
-            if 'activeContact' in spec and not spec['activeContact'][frame]:
+            active_pose = spec.get('activePoseTarget', spec.get('activeContact'))
+            if active_pose is not None and not active_pose[frame]:
                 continue
             hip_i, knee_i, ankle_i, toe_i = spec['indices']
             targets[frame, hip_i] = spec['hip'][frame] + translation
@@ -403,6 +448,479 @@ def _root_invariant_source_context(constraint, specs):
     excluded['materialHeelEvents'] = (
         len(original_events) - len(context['sourceFootHeelTrajectoryEvents']))
     return context, excluded
+
+
+def _camera_ray_mirrored_toe_points(
+        rig, coordinates, points, targets, pinned, projection, theta):
+    """Apply a common camera-normal yaw and its sagittal reflection to two legs."""
+    from .contact_interpolation import _solve_knee
+
+    names = list(rig.names)
+    index = {name: i for i, name in enumerate(names)}
+    output = np.asarray(points, dtype=float).copy()
+    frames = len(output)
+    reflection_normal = (output[:, index['right_hip']] - output[:, index['left_hip']])
+    reflection_length = np.linalg.norm(reflection_normal, axis=1, keepdims=True)
+    if not np.isfinite(reflection_length).all() or np.any(reflection_length <= 1e-8):
+        raise ValueError('mirrored toe repair needs a defined sagittal hip plane')
+    reflection_normal /= reflection_length
+    reflection = (np.eye(3)[None] - 2. * reflection_normal[:, :, None]
+                  * reflection_normal[:, None, :])
+    camera_normal = np.cross(projection[0], projection[1])
+    camera_normal /= max(float(np.linalg.norm(camera_normal)), _EPS)
+    yaw = Rotation.from_rotvec(camera_normal * float(theta))
+
+    for side in ('right', 'left'):
+        hip, knee, ankle, foot = (index[f'{side}_{part}']
+                                  for part in ('hip', 'knee', 'ankle', 'foot'))
+        vector = output[:, foot] - output[:, ankle]
+        if side == 'right':
+            changed = yaw.apply(vector)
+        else:
+            changed = np.einsum('fij,fj->fi', reflection, vector)
+            changed = yaw.apply(changed)
+            changed = np.einsum('fij,fj->fi', reflection, changed)
+        foot_target = np.where(pinned[:, foot, None], targets[:, foot], output[:, foot])
+        foot_length = float(np.linalg.norm(rig.offsets[foot]))
+        output[:, foot] = foot_target
+        output[:, ankle] = foot_target - foot_length * _unit(changed)
+        output[:, knee] = _solve_knee(
+            output[:, hip], points[:, knee], points[:, ankle], output[:, ankle],
+            np.full(frames, np.linalg.norm(rig.offsets[knee])),
+            np.full(frames, np.linalg.norm(rig.offsets[ankle])), side)
+    return output
+
+
+def _free_camera_ray_authority(payload, constraint, pinned, index):
+    """Require the current source evidence and resolved pins to leave both feet free."""
+    if (payload.get('canonicalExecution') or {}).get('legs') != 'mirrored':
+        return False
+    if constraint.get('sourceFootHeelTrajectoryObservations'):
+        return False
+    free_states = {'unknown', 'unsupported', 'moving', 'airborne', 'free'}
+    for row in constraint.get('sourceFootHeelImageObservations') or []:
+        state = str(row.get('state', '')).casefold()
+        if state not in free_states:
+            return False
+    authority_confirmed = False
+    for evidence in (payload.get('sourceFootSupportEvidence') or {},
+                     payload.get('motionSpaceSupportEvidence') or {}):
+        patch = evidence.get('footPatchEvidence') or {}
+        if patch.get('available') is not True:
+            continue
+        authority_confirmed = True
+        feet = patch.get('feet') or {}
+        for side in ('left', 'right'):
+            side_data = feet.get(side)
+            states = {str(state).casefold() for state in
+                      (side_data or {}).get('states') or []}
+            if not states or not states.issubset(free_states):
+                return False
+        for collection in ('contacts', 'supportContacts'):
+            for contact in evidence.get(collection) or []:
+                joint = str(contact.get('jointName') or '').casefold()
+                kind = str(contact.get('supportKind') or '').casefold()
+                if (joint in {f'{side}_{part}' for side in ('left', 'right')
+                              for part in ('ankle', 'foot')}
+                        or 'foot' in kind or 'sole' in kind):
+                    return False
+        stationary = {str(name).casefold()
+                      for name in ((evidence.get('bodySupport') or {}).get(
+                          'stationaryJoints') or [])}
+        if any(f'{side}_{part}' in stationary for side in ('left', 'right')
+               for part in ('ankle', 'foot')):
+            return False
+    if not authority_confirmed:
+        return False
+    for side in ('left', 'right'):
+        ankle, foot = index[f'{side}_ankle'], index[f'{side}_foot']
+        if np.any(pinned[:, ankle]) or np.any(pinned[:, foot]):
+            return False
+    return True
+
+
+def _camera_ray_mirrored_free_foot_points(
+        points, index, projection, yaw_radians, pitch_radians):
+    """Rotate only free ankle-to-foot vectors with one reflected 2-DOF pair."""
+    points = np.asarray(points, dtype=float)
+    output = points.copy()
+    hip_axis = points[:, index['right_hip']] - points[:, index['left_hip']]
+    hip_length = np.linalg.norm(hip_axis, axis=1, keepdims=True)
+    if not np.isfinite(hip_length).all() or np.any(hip_length <= 1e-8):
+        raise ValueError('free-foot mirrored correction needs a sagittal plane')
+    hip_axis /= hip_length
+    reflection = (np.eye(3)[None] - 2. * hip_axis[:, :, None]
+                  * hip_axis[:, None, :])
+    left_knee = points[:, index['left_knee']]
+    left_ankle = points[:, index['left_ankle']]
+    left_foot = points[:, index['left_foot']]
+    shin = _unit(left_ankle - left_knee)
+    foot_vector = left_foot - left_ankle
+    lateral = _unit(np.cross(shin, foot_vector))
+    if (not np.isfinite(shin).all() or not np.isfinite(lateral).all()
+            or np.any(np.linalg.norm(lateral, axis=1) <= 1e-8)):
+        raise ValueError('free-foot mirrored correction needs a defined ankle plane')
+    pitch = Rotation.from_rotvec(lateral * float(pitch_radians))
+    yaw = Rotation.from_rotvec(shin * float(yaw_radians))
+    left_changed = yaw.apply(pitch.apply(foot_vector))
+    output[:, index['left_foot']] = left_ankle + left_changed
+    # Reflect the exact left-side proper rotation into the opposite leg.
+    right_ankle = points[:, index['right_ankle']]
+    right_vector = points[:, index['right_foot']] - right_ankle
+    left_rotation = (yaw * pitch).as_matrix()
+    right_rotation = np.einsum('fij,fjk,fkl->fil', reflection,
+                               left_rotation, reflection)
+    right_changed = np.einsum('fij,fj->fi', right_rotation, right_vector)
+    output[:, index['right_foot']] = right_ankle + right_changed
+    return output
+
+
+def _propose_camera_ray_mirrored_free_foot_repair(
+        rig, coordinates, *, payload, source_projection_constraint,
+        anatomical_reference, pinned, deadline, cyclic=False):
+    """Fit one bounded mirrored yaw/pitch pair for unpinned, non-owned feet."""
+    from .controlled_motion import _source_foot_ray_fit_evidence
+    from .contact_interpolation import build_contact_foot_tracks
+
+    if monotonic() >= deadline:
+        return None
+    names = list(rig.names)
+    index = {name: i for i, name in enumerate(names)}
+    required = {f'{side}_{part}' for side in ('left', 'right')
+                for part in ('hip', 'knee', 'ankle', 'foot')}
+    if (not required.issubset(index)
+            or not _free_camera_ray_authority(
+                payload, source_projection_constraint, pinned, index)):
+        return None
+    constraint = source_projection_constraint
+    observations = constraint.get('sourceFootRayObservations') or []
+    projection = np.asarray(constraint.get('projection'), dtype=float)
+    coordinates = np.asarray(coordinates, dtype=float)
+    reference = np.asarray(anatomical_reference, dtype=float)
+    pinned = np.asarray(pinned, dtype=bool)
+    points = rig.decode(coordinates)
+    if (len(observations) < 2 or projection.shape != (2, 3)
+            or not np.isfinite(projection).all()
+            or np.linalg.matrix_rank(projection) != 2
+            or reference.shape != points.shape
+            or pinned.shape != points.shape[:2]):
+        return None
+    for row in observations:
+        if not isinstance(row, dict) or row.get('sourceSide') not in ('left', 'right'):
+            return None
+        side = row['sourceSide']
+        if (row.get('ankleJointIndex') != index[f'{side}_ankle']
+                or row.get('footJointIndex') != index[f'{side}_foot']):
+            return None
+    before = _source_foot_ray_fit_evidence(points, constraint)
+    if (not before.get('available') or before.get('passed') is True
+            or any((before.get('bySide') or {}).get(side, {}).get('available') is not True
+                   for side in ('left', 'right'))):
+        return None
+    tolerance = float(before.get('headingToleranceDegrees') or 0.) - _INTERIOR_MARGIN_DEGREES
+    if not np.isfinite(tolerance) or tolerance <= 0.:
+        return None
+
+    # Bound common pitch by the existing per-side ankle articulation allowance
+    # relative to its established anatomical reference.
+    ankle_limits = {row[0]: np.deg2rad(float(row[4]) - _INTERIOR_MARGIN_DEGREES)
+                    for row in ARTICULATIONS if row[0].endswith('_ankle')}
+    pitch_low, pitch_high = -np.inf, np.inf
+    for side in ('left', 'right'):
+        knee, ankle, foot = (index[f'{side}_{part}']
+                             for part in ('knee', 'ankle', 'foot'))
+        actual = angles(points[:, knee], points[:, ankle], points[:, foot])
+        expected = angles(reference[:, knee], reference[:, ankle], reference[:, foot])
+        limit = ankle_limits.get(f'{side}_ankle')
+        if limit is None or not np.isfinite(actual).all() or not np.isfinite(expected).all():
+            return None
+        # Positive pitch is defined to reduce this angle by pitch radians.
+        pitch_low = max(pitch_low, float(np.max(actual - expected - limit)))
+        pitch_high = min(pitch_high, float(np.min(actual - expected + limit)))
+    if (not np.isfinite(pitch_low) or not np.isfinite(pitch_high)
+            or pitch_low >= pitch_high):
+        return None
+
+    from scipy.optimize import least_squares
+
+    weight = float(constraint.get('sourceFootRayWeight', constraint.get('weight', 1.)))
+    if not np.isfinite(weight) or weight <= 0.:
+        return None
+    weights = np.asarray([float(row.get('confidenceWeight', 1.)) * weight
+                          for row in observations], dtype=float)
+    if not np.isfinite(weights).all() or np.any(weights <= 0.):
+        return None
+
+    def residual(parameters):
+        if monotonic() >= deadline:
+            raise TimeoutError('free-foot camera-ray solve exceeded its deadline')
+        try:
+            trial = _camera_ray_mirrored_free_foot_points(
+                points, index, projection, parameters[0], parameters[1])
+        except (ValueError, FloatingPointError):
+            return np.full(len(observations), 1e3, dtype=float)
+        values = np.empty(len(observations), dtype=float)
+        for i, row in enumerate(observations):
+            left, right, alpha = int(row['leftFrame']), int(row['rightFrame']), float(row['alpha'])
+            ankle = (trial[left, row['ankleJointIndex']] * (1. - alpha)
+                     + trial[right, row['ankleJointIndex']] * alpha)
+            foot = (trial[left, row['footJointIndex']] * (1. - alpha)
+                    + trial[right, row['footJointIndex']] * alpha)
+            fitted = projection @ (foot - ankle)
+            target = np.asarray(row.get('targetRay'), dtype=float)
+            if (target.shape != (2,) or not np.isfinite(target).all()
+                    or np.linalg.norm(target) <= _EPS
+                    or not np.isfinite(fitted).all() or np.linalg.norm(fitted) <= _EPS):
+                return np.full(len(observations), 1e3, dtype=float)
+            values[i] = np.arctan2(
+                target[0] * fitted[1] - target[1] * fitted[0],
+                float(np.dot(target, fitted)))
+        return values * np.sqrt(weights)
+
+    try:
+        fit = least_squares(
+            residual, np.zeros(2), bounds=([-np.pi, pitch_low], [np.pi, pitch_high]),
+            method='trf', x_scale=np.deg2rad([30., 10.]), max_nfev=80,
+            ftol=1e-10, xtol=1e-10, gtol=1e-10,
+        )
+    except (ValueError, FloatingPointError, TimeoutError, KeyError, TypeError):
+        return None
+    if monotonic() >= deadline:
+        return None
+    yaw, pitch = map(float, fit.x)
+    target_points = _camera_ray_mirrored_free_foot_points(
+        points, index, projection, yaw, pitch)
+    after = _source_foot_ray_fit_evidence(target_points, constraint)
+    if (not after.get('available') or not after.get('passed')
+            or any(float((after.get('bySide') or {}).get(side, {}).get(
+                'absoluteAngularResidualP95Degrees') or np.inf) > tolerance
+                for side in ('left', 'right'))):
+        return None
+    for side in ('left', 'right'):
+        knee, ankle, foot = (index[f'{side}_{part}']
+                             for part in ('knee', 'ankle', 'foot'))
+        actual = angles(target_points[:, knee], target_points[:, ankle],
+                        target_points[:, foot])
+        expected = angles(reference[:, knee], reference[:, ankle], reference[:, foot])
+        if np.max(np.abs(actual - expected), initial=0.) > ankle_limits[f'{side}_ankle'] + 1e-9:
+            return None
+        length_before = np.linalg.norm(points[:, foot] - points[:, ankle], axis=1)
+        length_after = np.linalg.norm(target_points[:, foot] - target_points[:, ankle], axis=1)
+        if np.max(np.abs(length_after - length_before), initial=0.) > 1e-9:
+            return None
+    moving = sorted((index['left_foot'], index['right_foot']), key=rig.order.index)
+    encoded = _encode_targets(rig, coordinates, target_points, moving)
+    if encoded is None or monotonic() >= deadline:
+        return None
+    decoded = rig.decode(encoded)
+    decode_error = float(np.max(np.abs(decoded[:, moving] - target_points[:, moving]), initial=0.))
+    unchanged = sorted(set(range(len(names))) - set(moving))
+    unchanged_error = float(np.max(np.abs(decoded[:, unchanged] - points[:, unchanged]), initial=0.))
+    foot_slots = {rig.slots[joint] for joint in moving if joint in rig.slots}
+    if (decode_error > 1e-5 or unchanged_error > 1e-9
+            or not np.array_equal(encoded[:, :3], coordinates[:, :3])
+            or any(not np.array_equal(
+                encoded[:, slot:slot + 3], coordinates[:, slot:slot + 3])
+                for slot in range(3, rig.width, 3) if slot not in foot_slots)):
+        return None
+    tracks = build_contact_foot_tracks(rig, decoded, pinned)
+    return encoded, tracks, {
+        'appliedProposal': True,
+        'strategy': 'source_camera_ray_mirrored_free_foot_yaw_pitch_v1',
+        'cameraHeadingBefore': before,
+        'cameraHeadingAfter': after,
+        'derivedMirroredYawRadians': yaw,
+        'derivedMirroredYawDegrees': float(np.degrees(yaw)),
+        'derivedMirroredPitchRadians': pitch,
+        'derivedMirroredPitchDegrees': float(np.degrees(pitch)),
+        'cameraHeadingIs2DInference': True,
+        'heelOr3DHeadingClaimed': False,
+        'cyclicProposal': bool(cyclic),
+        'contactFootTrackVersion': int(tracks['version']),
+        'keyframeDecodeMaximumErrorMeters': decode_error,
+        'maximumNonFootPointChangeMeters': unchanged_error,
+        'fitEvaluations': int(fit.nfev),
+        'anklePitchBoundsDegrees': [float(np.degrees(pitch_low)), float(np.degrees(pitch_high))],
+    }
+
+
+def _propose_camera_ray_mirrored_toe_repair(
+        rig, coordinates, *, payload, source_projection_constraint,
+        anatomical_reference, pinned, contact_targets, deadline, cyclic=False):
+    """Build a toe-anchored mirrored leg proposal from qualified 2D ray rows.
+
+    No 3D shoe heading or heel state is inferred here. The existing immutable
+    candidate validator remains the final owner of all anatomy, support,
+    source, playback, and temporal checks.
+    """
+    from .controlled_motion import _source_foot_ray_fit_evidence
+    from .contact_interpolation import build_contact_foot_tracks
+
+    if monotonic() >= deadline or (payload.get('canonicalExecution') or {}).get('legs') != 'mirrored':
+        return None
+    names = list(rig.names)
+    index = {name: i for i, name in enumerate(names)}
+    required = {f'{side}_{part}' for side in ('left', 'right')
+                for part in ('hip', 'knee', 'ankle', 'foot')}
+    if not required.issubset(index):
+        return None
+    constraint = source_projection_constraint
+    observations = constraint.get('sourceFootRayObservations') or []
+    projection = np.asarray(constraint.get('projection'), dtype=float)
+    if (len(observations) < 2 or projection.shape != (2, 3)
+            or not np.isfinite(projection).all()
+            or np.linalg.matrix_rank(projection) != 2):
+        return None
+    coordinates = np.asarray(coordinates, dtype=float)
+    reference = np.asarray(anatomical_reference, dtype=float)
+    pinned = np.asarray(pinned, dtype=bool)
+    targets = np.asarray(contact_targets, dtype=float)
+    points = rig.decode(coordinates)
+    if (reference.shape != points.shape or pinned.shape != points.shape[:2]
+            or targets.shape != points.shape or not np.isfinite(targets).all()):
+        return None
+    sides = {side: {'ankle': index[f'{side}_ankle'],
+                    'foot': index[f'{side}_foot']} for side in ('left', 'right')}
+    sagittal = points[:, index['right_hip']] - points[:, index['left_hip']]
+    sagittal_lengths = np.linalg.norm(sagittal, axis=1)
+    if not np.isfinite(sagittal_lengths).all() or np.any(sagittal_lengths <= 1e-8):
+        return None
+    if (any(not np.any(pinned[:, sides[side]['foot']]) for side in ('left', 'right'))
+            or any(np.any(pinned[:, sides[side]['ankle']]) for side in ('left', 'right'))):
+        return None
+    for row in observations:
+        if not isinstance(row, dict):
+            return None
+        side = row.get('sourceSide')
+        if side not in sides:
+            return None
+        if (row.get('ankleJointIndex') != sides[side]['ankle']
+                or row.get('footJointIndex') != sides[side]['foot']):
+            return None
+
+    # Full-sole/material orientation and measured heel pitch retain their
+    # existing owners. This path is only for toe-supported camera-ray fitting.
+    if constraint.get('sourceFootHeelTrajectoryObservations'):
+        return None
+    for row in constraint.get('sourceFootHeelImageObservations') or []:
+        if str(row.get('state', '')).casefold() == 'full_sole':
+            return None
+    for evidence in (payload.get('sourceFootSupportEvidence') or {},
+                     payload.get('motionSpaceSupportEvidence') or {}):
+        patch = evidence.get('footPatchEvidence') or {}
+        if patch.get('available') is True and any(
+                str(state).casefold() == 'full_sole'
+                for side_data in (patch.get('feet') or {}).values()
+                for state in (side_data.get('states') or [])):
+            return None
+
+    before = _source_foot_ray_fit_evidence(points, constraint)
+    if not before.get('available') or before.get('passed') is True:
+        return None
+    by_side = before.get('bySide') or {}
+    if any(by_side.get(side, {}).get('available') is not True
+           for side in ('left', 'right')):
+        return None
+    repair_tolerance = float(before.get('headingToleranceDegrees') or 0.) - _INTERIOR_MARGIN_DEGREES
+    if not np.isfinite(repair_tolerance) or repair_tolerance <= 0.:
+        return None
+
+    def evaluate(theta):
+        if monotonic() >= deadline:
+            return None
+        trial_points = _camera_ray_mirrored_toe_points(
+            rig, coordinates, points, targets, pinned, projection, theta)
+        evidence = _source_foot_ray_fit_evidence(trial_points, constraint)
+        side_evidence = evidence.get('bySide') or {}
+        if (not evidence.get('available')
+                or any(side_evidence.get(side, {}).get('available') is not True
+                       or side_evidence.get(side, {}).get(
+                           'absoluteAngularResidualP95Degrees') is None
+                       or float(side_evidence[side]['absoluteAngularResidualP95Degrees'])
+                       > repair_tolerance
+                       for side in ('left', 'right'))):
+            return None
+        return trial_points, evidence
+
+    # Find the nearest feasible common angle from the existing p95 ray limit.
+    step = np.deg2rad(1.)
+    bracket = None
+    for degree in range(1, 181):
+        if monotonic() >= deadline:
+            return None
+        magnitude = step * degree
+        for theta in (-magnitude, magnitude):
+            result = evaluate(theta)
+            if result is not None:
+                bracket = (theta, theta - np.sign(theta) * step, result)
+                break
+        if bracket is not None:
+            break
+    if bracket is None:
+        return None
+    passing, failing, result = bracket
+    for _ in range(20):
+        if monotonic() >= deadline:
+            return None
+        middle = (passing + failing) * .5
+        candidate = evaluate(middle)
+        if candidate is None:
+            failing = middle
+        else:
+            passing, result = middle, candidate
+    angle = passing
+    target_points, after = result
+
+    from .physical_validation import ARTICULATIONS
+    limits = {row[0]: np.deg2rad(float(row[4]) - _INTERIOR_MARGIN_DEGREES)
+              for row in ARTICULATIONS}
+    for side in ('left', 'right'):
+        hip, knee, ankle, foot = (index[f'{side}_{part}']
+                                  for part in ('hip', 'knee', 'ankle', 'foot'))
+        comparisons = (
+            (f'{side}_knee', angles(target_points[:, hip], target_points[:, knee],
+                                    target_points[:, ankle]),
+             angles(reference[:, hip], reference[:, knee], reference[:, ankle])),
+            (f'{side}_ankle', angles(target_points[:, knee], target_points[:, ankle],
+                                     target_points[:, foot]),
+             angles(reference[:, knee], reference[:, ankle], reference[:, foot])),
+        )
+        if any(np.max(np.abs(actual - expected), initial=0.) > limits[label]
+               for label, actual, expected in comparisons):
+            return None
+
+    moving = sorted({index[f'{side}_{part}'] for side in ('left', 'right')
+                     for part in ('knee', 'ankle', 'foot')}, key=rig.order.index)
+    encoded = _encode_targets(rig, coordinates, target_points, moving)
+    if encoded is None or monotonic() >= deadline:
+        return None
+    decoded = rig.decode(encoded)
+    decode_error = float(np.max(
+        np.abs(decoded[:, moving] - target_points[:, moving]), initial=0.))
+    if decode_error > 1e-5:
+        return None
+    unchanged = sorted(set(range(len(names))) - set(moving))
+    unchanged_error = float(np.max(
+        np.abs(decoded[:, unchanged] - points[:, unchanged]), initial=0.))
+    if unchanged_error > 1e-9:
+        return None
+    tracks = build_contact_foot_tracks(rig, decoded, pinned)
+    if tracks.get('version') != 1 or any(side not in tracks for side in ('left', 'right')):
+        return None
+    return encoded, tracks, {
+        'appliedProposal': True,
+        'strategy': 'source_camera_ray_mirrored_toe_chain_v1',
+        'cameraHeadingBefore': before,
+        'cameraHeadingAfter': after,
+        'derivedMirroredYawRadians': float(angle),
+        'derivedMirroredYawDegrees': float(np.degrees(angle)),
+        'cameraHeadingIs2DInference': True,
+        'heelOr3DHeadingClaimed': False,
+        'cyclicProposal': bool(cyclic),
+        'contactFootTrackVersion': int(tracks['version']),
+        'keyframeDecodeMaximumErrorMeters': decode_error,
+        'maximumNonLegPointChangeMeters': unchanged_error,
+    }
 
 
 def _coupled_root_fit(
@@ -613,11 +1131,11 @@ def propose_contact_heel_repair(
     rig, coordinates, *, payload, source_projection_constraint,
     anatomical_reference, pinned, fps, cyclic, deadline,
     jerk_reference, shake_reference, jerk_limit, body_scale,
-    failure_report=None,
+    failure_report=None, contact_targets=None,
 ):
     """Return an exact local closed-chain proposal, or decline without mutation."""
     started = monotonic()
-    if cyclic or not np.isfinite(fps) or fps <= 0. or monotonic() >= deadline:
+    if not np.isfinite(fps) or fps <= 0. or monotonic() >= deadline:
         return None
     from .contact_heel_pitch import propose_source_heel_pitch
 
@@ -631,6 +1149,32 @@ def propose_contact_heel_repair(
             or not np.isfinite(coordinates).all() or not np.isfinite(reference).all()):
         return None
     if not source_projection_constraint.get('sourceFootHeelTrajectoryObservations'):
+        has_foot_pins = any(
+            np.any(pinned[:, names.index(f'{side}_{part}')])
+            for side in ('left', 'right') for part in ('ankle', 'foot')
+            if f'{side}_{part}' in names)
+        if not has_foot_pins:
+            proposal = _propose_camera_ray_mirrored_free_foot_repair(
+                rig, coordinates, payload=payload,
+                source_projection_constraint=source_projection_constraint,
+                anatomical_reference=reference, pinned=pinned,
+                deadline=deadline, cyclic=cyclic)
+            if proposal is None and isinstance(failure_report, dict):
+                failure_report['reason'] = 'camera_ray_free_foot_ineligible_or_infeasible'
+            return proposal
+        if contact_targets is None:
+            if isinstance(failure_report, dict):
+                failure_report['reason'] = 'camera_ray_contact_targets_unavailable'
+            return None
+        proposal = _propose_camera_ray_mirrored_toe_repair(
+            rig, coordinates, payload=payload,
+            source_projection_constraint=source_projection_constraint,
+            anatomical_reference=reference, pinned=pinned,
+            contact_targets=contact_targets, deadline=deadline, cyclic=cyclic)
+        if proposal is None and isinstance(failure_report, dict):
+            failure_report['reason'] = 'camera_ray_toe_chain_ineligible_or_infeasible'
+        return proposal
+    if cyclic:
         return None
     image_states = {
         str(row.get('state', 'unknown')).lower()

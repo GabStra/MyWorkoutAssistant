@@ -143,12 +143,124 @@ def contact_mask(payload, names, count, *, support_evidence=None):
             continue
         start, end = contact_frame_bounds(contact, count)
         pinned[start:end+1, names.index(name)] = True
-        if contact.get('contactState') == 'full_sole' and name.endswith(('_ankle', '_foot')):
+        # Preserve the legacy paired endpoint mask for full-sole contacts.
+        # Native material fitting later removes the implicit ankle sibling
+        # together with the raw foot pin, unless an independent ankle row owns it.
+        if (contact.get('contactState') == 'full_sole'
+                and name.endswith(('_ankle', '_foot'))):
             for part in ('ankle', 'foot'):
                 sibling = name.split('_')[0]+'_'+part
                 if sibling in names:
                     pinned[start:end+1, names.index(sibling)] = True
     return pinned
+
+
+def _stance_intent(payload):
+    """Read the explicit model stance intent without inferring it from source motion."""
+    containers = [payload]
+    for key in ('exerciseDefinition', 'exerciseMotionContract', 'motionContract',
+                'sourceExerciseDefinition', 'actionDefinition'):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            containers.append(value)
+    for container in containers:
+        execution = container.get('canonicalExecution') or container.get('bilateralExecution')
+        if isinstance(execution, dict) and execution.get('stance') is not None:
+            return str(execution['stance']).casefold()
+    return None
+
+
+def _fit_scope_state_indices(evidence, count):
+    """Map fit frames to native source states; invalid mappings stay unknown."""
+    mapping = (evidence or {}).get('_fitFrameStateIndices')
+    if not isinstance(mapping, (list, tuple)) or len(mapping) != count:
+        return None
+    result = []
+    for value in mapping:
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            value = -1
+        result.append(value)
+    return result
+
+
+def canonical_stance_compatibility(payload, names=None, count=None, support_evidence=None):
+    """Check whether a declared bilateral stationary stance fits the observed scope.
+
+    The intent is a model target, not an observation. Only validated evidence
+    that contradicts it inside the chosen native fit frames rejects execution.
+    """
+    intent = _stance_intent(payload)
+    if intent != 'stationary_bilateral':
+        return {'required': False, 'passed': True,
+                'reason': 'inactive_no_stationary_bilateral_intent', 'stance': intent}
+    if payload.get('groundContactMode') != 'continuous':
+        return {'required': True, 'passed': False,
+                'reason': 'stationary_stance_requires_continuous_ground_contact', 'stance': intent}
+    names = list(payload.get('jointNames') or []) if names is None else list(names)
+    if not {'left_foot', 'right_foot'}.issubset(names):
+        return {'required': True, 'passed': False,
+                'reason': 'stationary_stance_requires_both_foot_joints', 'stance': intent}
+    count = len(payload.get('frames') or []) if count is None else int(count)
+    evidence = (support_evidence if isinstance(support_evidence, dict)
+                else motion_space_support_evidence(payload))
+    from .body_support_observation import validated_body_support_answer
+    observed = validated_body_support_answer(evidence.get('bodySupportObservation') or {})
+    if observed is not None:
+        for side in ('left', 'right'):
+            surface = str(observed.get(f'{side}FootSurface') or '').casefold()
+            if surface in {'raised_surface', 'none'}:
+                return {'required': True, 'passed': False,
+                        'reason': f'observed_{side}_foot_surface_{surface}',
+                        'stance': intent}
+    state_indices = _fit_scope_state_indices(evidence, count)
+    patch_feet = (evidence.get('footPatchEvidence') or {}).get('feet') or {}
+    for side in ('left', 'right'):
+        states = (patch_feet.get(side) or {}).get('states')
+        if not isinstance(states, (list, tuple)) or not states:
+            continue
+        indexes = state_indices if state_indices is not None else (
+            list(range(count)) if len(states) == count else None)
+        if indexes is None:
+            continue
+        if any(0 <= index < len(states)
+               and str(states[index]).casefold() == 'airborne' for index in indexes):
+            return {'required': True, 'passed': False,
+                    'reason': f'known_{side}_airborne_in_fit_scope', 'stance': intent}
+    # Material tracking retains its existing clock-bound source-readiness owner.
+    return {'required': True, 'passed': True, 'reason': 'compatible', 'stance': intent}
+
+
+def model_intent_contact_mask(payload, names, count, *, support_evidence=None):
+    """Return model-declared stance pins, separate from observed contact facts.
+
+    These pins have model-owned identity for the whole declared stance. Keep
+    them out of ``stationary_contact_anchor_ids`` so source anchor evidence is
+    never synthesized or rewritten.
+    """
+    pinned = np.zeros((count, len(names)), dtype=bool)
+    compatibility = canonical_stance_compatibility(
+        payload, names, count, support_evidence=support_evidence)
+    if not (compatibility['required'] and compatibility['passed']):
+        return pinned
+    for name in ('left_foot', 'right_foot'):
+        if name in names:
+            pinned[:, names.index(name)] = True
+    return pinned
+
+
+def fit_contact_mask(payload, names, count, *, support_evidence=None):
+    """Add model-intent forefoot pins only when the declared stance is compatible.
+
+    The observed-only contact mask remains the source authority. This mask is for
+    physics conditioning and never mutates source evidence or raw contacts.
+    """
+    baseline = contact_mask(payload, names, count, support_evidence=support_evidence)
+    pinned = (np.zeros((count, len(names)), dtype=bool) if baseline is None
+              else np.array(baseline, dtype=bool, copy=True))
+    return pinned | model_intent_contact_mask(
+        payload, names, count, support_evidence=support_evidence)
 
 
 def pose_digest(payload):
