@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.insights
 
 import android.content.Context
 import androidx.core.content.edit
+import com.gabstra.myworkoutassistant.R
 
 private const val INSIGHTS_PREFS = "litert_lm_insights"
 private const val ENABLED_KEY = "enabled"
@@ -92,19 +93,19 @@ object WorkoutInsightsSettingsStore {
         return when (mode) {
             WorkoutInsightsMode.LOCAL -> WorkoutInsightsConfigurationState(
                 mode = mode,
-                modeLabel = mode.label,
+                modeLabel = context.getString(R.string.loc_mode_local),
                 isConfigured = LiteRtLmModelStore.getConfiguredModelPath(context) != null,
-                missingConfigurationMessage = "No LiteRT-LM model is configured. Import a local .litertlm model file to enable on-device insights.",
-                configureActionLabel = "Import model",
+                missingConfigurationMessage = context.getString(R.string.loc_no_litert_model),
+                configureActionLabel = context.getString(R.string.loc_import_model),
             )
             WorkoutInsightsMode.REMOTE -> {
                 val config = getRemoteConfig(context)
                 WorkoutInsightsConfigurationState(
                     mode = mode,
-                    modeLabel = mode.label,
+                    modeLabel = context.getString(R.string.loc_mode_remote),
                     isConfigured = config.isComplete(),
-                    missingConfigurationMessage = "Remote insights are selected, but the base URL or model is missing. Configure them in Settings to enable the hosted OpenAI-compatible API.",
-                    configureActionLabel = "Open settings",
+                    missingConfigurationMessage = context.getString(R.string.loc_remote_insights_missing_config),
+                    configureActionLabel = context.getString(R.string.loc_open_settings),
                 )
             }
         }

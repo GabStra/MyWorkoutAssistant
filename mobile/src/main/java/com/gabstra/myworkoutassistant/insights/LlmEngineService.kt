@@ -1,10 +1,12 @@
 package com.gabstra.myworkoutassistant.insights
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
+import com.gabstra.myworkoutassistant.R
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
@@ -89,6 +91,7 @@ class LlmEngineService : Service() {
             // thread is fine here — the :llm process has no UI to freeze.
             val conversation = kotlinx.coroutines.runBlocking {
                 LiteRtLmEnginePool.acquireAndCreateConversation(
+                context = applicationContext,
                 modelPath = requireNotNull(spec.getString(LlmEngineIpcContract.SPEC_MODEL_PATH)),
                 cacheDir = spec.getString(LlmEngineIpcContract.SPEC_CACHE_DIR)
                     ?: cacheDir.absolutePath,
@@ -112,7 +115,7 @@ class LlmEngineService : Service() {
         override fun sendMessage(sessionId: String?, message: Bundle?, callback: ILlmStreamCallback?) {
             if (sessionId == null || message == null || callback == null) return
             val session = sessions[sessionId] ?: run {
-                callback.onError("The inference session has expired. Start the request again.")
+                callback.onError(getString(R.string.loc_llm_session_expired))
                 return
             }
             session.sendJob?.cancel()
@@ -215,7 +218,7 @@ class LlmEngineService : Service() {
                 callback.onChunk(chunk)
             }
         }
-        return lastMessage ?: error("The model returned no response.")
+        return lastMessage ?: error(getString(R.string.loc_llm_no_response))
     }
 
     private fun readInitialMessages(spec: Bundle): List<Message> {
@@ -257,6 +260,7 @@ internal object LiteRtLmEnginePool {
     )
 
     suspend fun acquireAndCreateConversation(
+        context: Context,
         modelPath: String,
         cacheDir: String,
         visionEnabled: Boolean,
@@ -275,6 +279,7 @@ internal object LiteRtLmEnginePool {
             Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
             cachedHandle?.engine?.close()
             val created = createEngine(
+                context = context,
                 modelPath = modelPath,
                 cacheDir = cacheDir,
                 visionEnabled = visionEnabled,
@@ -302,6 +307,7 @@ internal object LiteRtLmEnginePool {
     }
 
     private fun createEngine(
+        context: Context,
         modelPath: String,
         cacheDir: String,
         visionEnabled: Boolean,
@@ -328,8 +334,10 @@ internal object LiteRtLmEnginePool {
                 initializeEngine(modelPath, resolvedPreference, visionEnabled, cacheDir)
             } catch (cpuFailure: Throwable) {
                 throw LiteRtLmModelHealth.UnsafeModelException(
-                    "The local model failed to initialize on both the GPU and CPU backends: " +
-                        (cpuFailure.message ?: cpuFailure.javaClass.simpleName),
+                    context.getString(
+                        R.string.loc_llm_init_failed,
+                        cpuFailure.message ?: cpuFailure.javaClass.simpleName
+                    ),
                     cpuFailure,
                 )
             }

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.insights
 
 import android.content.Context
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -58,12 +59,13 @@ class ConfigurableWorkoutInsightsEngine(
         request: WorkoutInsightsRequest,
     ): Flow<WorkoutInsightsChunk> {
         if (!MobileLlmFeatureFlags.isEnabled(context)) {
+            val disabledMessage = context.getString(R.string.loc_llm_temporarily_disabled)
             return flowOf(
                 WorkoutInsightsChunk(
                     title = request.title,
-                    text = "LLM features are temporarily disabled.",
+                    text = disabledMessage,
                     phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                    statusText = "LLM features are temporarily disabled."
+                    statusText = disabledMessage
                 )
             )
         }
@@ -95,7 +97,8 @@ class ConfigurableWorkoutInsightsEngine(
                 throw cancellationException
             } catch (exception: Exception) {
                 debugRecorder.finishFailure(
-                    errorMessage = exception.message ?: "Unable to generate insights.",
+                    errorMessage = exception.message
+                        ?: context.getString(R.string.loc_unable_generate_insights),
                     lastDisplayedText = lastChunkText,
                 )
                 throw exception

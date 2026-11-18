@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.llm
 
 import android.content.Context
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsPhase
@@ -27,7 +28,7 @@ class PhoneLlmOperationExecutor(
             return PhoneLlmOperationResult.error(
                 requestId = requestId,
                 operation = operation,
-                errorMessage = "Phone LLM operations are temporarily disabled."
+                errorMessage = appContext.getString(R.string.loc_phone_llm_disabled)
             )
         }
         val prompt = request.prompt.trim()
@@ -35,14 +36,14 @@ class PhoneLlmOperationExecutor(
             return PhoneLlmOperationResult.error(
                 requestId = requestId,
                 operation = operation,
-                errorMessage = "Missing LLM operation request id."
+                errorMessage = appContext.getString(R.string.loc_phone_llm_missing_request_id)
             )
         }
         if (prompt.isBlank()) {
             return PhoneLlmOperationResult.error(
                 requestId = requestId,
                 operation = operation,
-                errorMessage = "Missing LLM operation prompt."
+                errorMessage = appContext.getString(R.string.loc_phone_llm_missing_prompt)
             )
         }
 
@@ -66,7 +67,7 @@ class PhoneLlmOperationExecutor(
                 PhoneLlmOperationResult.error(
                     requestId = requestId,
                     operation = operation,
-                    errorMessage = "No LLM output was generated."
+                    errorMessage = appContext.getString(R.string.loc_phone_llm_no_output)
                 )
             } else {
                 PhoneLlmOperationResult.success(
@@ -81,7 +82,7 @@ class PhoneLlmOperationExecutor(
             PhoneLlmOperationResult.error(
                 requestId = requestId,
                 operation = operation,
-                errorMessage = exception.message ?: "LLM operation failed."
+                errorMessage = exception.message ?: appContext.getString(R.string.loc_phone_llm_failed)
             )
         }
     }

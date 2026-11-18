@@ -73,7 +73,8 @@ class WorkoutInsightsDebugDumpRecorder(
             put("index", blocks.size + 1)
             put("recorded_at_epoch_ms", System.currentTimeMillis())
             put("label", label)
-            put("body", body)
+            // Debug artifacts must never contain display-only provenance markers.
+            put("body", body.stripAppGeneratedInsightMarkup())
         }
     }
 
@@ -134,7 +135,7 @@ class WorkoutInsightsDebugDumpRecorder(
             "result",
             JSONObject().apply {
                 put("outcome", outcome)
-                put("final_displayed_text", finalDisplayedText)
+                put("final_displayed_text", finalDisplayedText.stripAppGeneratedInsightMarkup())
                 put("error_message", errorMessage ?: JSONObject.NULL)
             }
         )
@@ -184,7 +185,7 @@ private fun List<HistoryChatMessage>.toJsonArray(): JSONArray {
         map { message ->
             JSONObject().apply {
                 put("role", message.role.name)
-                put("content", message.content)
+                put("content", message.content.stripAppGeneratedInsightMarkup())
             }
         }
     )

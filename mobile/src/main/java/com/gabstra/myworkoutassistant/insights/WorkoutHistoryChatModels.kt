@@ -16,9 +16,15 @@ enum class HistoryChatMessageRole {
 data class HistoryChatMessage(
     val id: UUID = UUID.randomUUID(),
     val role: HistoryChatMessageRole,
+    /** Canonical marker-free text: the only content sent to the model or serialized. */
     val content: String,
     val createdAtEpochMs: Long = System.currentTimeMillis(),
     val isUiOnly: Boolean = false,
+    /**
+     * Optional display-only variant carrying app provenance markers for localized rendering.
+     * Never sent to the model, stored in debug dumps or logged; UI reads it instead of [content].
+     */
+    val displayContent: String? = null,
 )
 
 internal fun selectConversationWindowMessages(

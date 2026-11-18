@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.insights
 
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionReason
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionReasonId
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationSessionAssessmentReasonId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -634,6 +637,285 @@ class WorkoutInsightMarkdownTest {
         )
 
         assertEquals(listOf("Average HR was 140 bpm, peak 154 bpm."), accepted)
+    }
+
+    @Test
+    fun localizeAppGeneratedInsightMarkdown_localizesAppComposedTargetHeading() {
+        val composed = composeNextSessionTargetSection(
+            markdown = "## What stood out\n- Solid session.",
+            bullet = "Keep average heart rate at or under 131 bpm for about 55 minutes.",
+        )
+
+        val localized = localizeAppGeneratedInsightMarkdown(
+            markdown = compactTopLevelHeadingLevelsForDisplay(composed),
+            nextSessionTargetHeading = "Obiettivo prossima sessione",
+            recordedValue = "il valore registrato",
+            recordedSet = "la serie registrata",
+        )
+
+        assertTrue(localized.contains("### Obiettivo prossima sessione"))
+        assertFalse(localized.contains("Next session target"))
+        assertFalse(localized.contains("mwa:"))
+    }
+
+    @Test
+    fun localizeAppGeneratedInsightMarkdown_localizesTaggedHrZoneTargetBullet() {
+        val promptBullet =
+            "Repeat the planned work in the configured 131-150 bpm zone; compare heart rate only at a similar workload."
+        val displayBullet = appNextSessionTargetHrZoneDisplayBullet(promptBullet, "131-150 bpm")
+        val composed = composeNextSessionTargetSection(
+            markdown = "## What stood out\n- Solid session.",
+            bullet = promptBullet,
+            displayBullet = displayBullet,
+        )
+
+        // Canonical/model-facing text stays English and marker-free; only the display
+        // variant carries the app marker.
+        val canonical = composed.stripAppGeneratedInsightMarkup()
+        assertTrue(canonical.contains("- $promptBullet"))
+        assertFalse(canonical.contains("mwa:"))
+
+        val localized = localizeAppGeneratedInsightMarkdown(
+            markdown = compactTopLevelHeadingLevelsForDisplay(composed),
+            nextSessionTargetHeading = "Obiettivo prossima sessione",
+            recordedValue = "il valore registrato",
+            recordedSet = "la serie registrata",
+            nextSessionTargetHrZoneBullet =
+                "Ripeti il lavoro pianificato nella zona configurata %1\$s; confronta la frequenza cardiaca solo a un carico simile.",
+        )
+
+        assertTrue(localized.contains("### Obiettivo prossima sessione"))
+        assertTrue(
+            localized.contains(
+                "- Ripeti il lavoro pianificato nella zona configurata 131-150 bpm; " +
+                    "confronta la frequenza cardiaca solo a un carico simile."
+            )
+        )
+        assertFalse(localized.contains("Repeat the planned work"))
+        assertFalse(localized.contains("mwa:"))
+    }
+
+    @Test
+    fun localizeAppGeneratedInsightMarkdown_localizesTaggedDurationTargetBullet() {
+        val promptBullet = "Complete 900 seconds of Squat in the prescribed HR zone; " +
+            "increase: 3 consecutive sessions met the configured criteria."
+        val displayBullet = appNextSessionTargetDurationDisplayBullet(
+            promptText = promptBullet,
+            nextSeconds = 900,
+            exerciseName = "Squat",
+            reason = DurationProgressionReason(
+                id = DurationProgressionReasonId.INCREASE_CRITERIA_MET,
+                qualifyingSessions = 3,
+                requiredSessions = 3,
+            ),
+        )
+        val composed = composeNextSessionTargetSection(
+            markdown = "## What stood out\n- Solid session.",
+            bullet = promptBullet,
+            displayBullet = displayBullet,
+        )
+
+        val canonical = composed.stripAppGeneratedInsightMarkup()
+        assertTrue(canonical.contains("- $promptBullet"))
+        assertFalse(canonical.contains("mwa:"))
+
+        val localized = localizeAppGeneratedInsightMarkdown(
+            markdown = compactTopLevelHeadingLevelsForDisplay(composed),
+            nextSessionTargetHeading = "Obiettivo prossima sessione",
+            recordedValue = "il valore registrato",
+            recordedSet = "la serie registrata",
+            durationDisplayText = durationDisplayText(),
+        )
+
+        assertTrue(localized.contains("### Obiettivo prossima sessione"))
+        assertTrue(
+            localized.contains(
+                "- Completa 900 secondi di Squat nella zona di frequenza cardiaca prescritta; " +
+                    "aumenta: 3 sessioni consecutive hanno soddisfatto i criteri configurati."
+            )
+        )
+        assertFalse(localized.contains("Complete 900 seconds"))
+        assertFalse(localized.contains("mwa:"))
+    }
+
+    @Test
+    fun localizeAppGeneratedInsightMarkdown_localizesNestedDurationAssessmentReason() {
+        val promptBullet = "Complete 900 seconds of Row in the prescribed HR zone; " +
+            "hold: work HR zone adherence below configured threshold."
+        val displayBullet = appNextSessionTargetDurationDisplayBullet(
+            promptText = promptBullet,
+            nextSeconds = 900,
+            exerciseName = "Row",
+            reason = DurationProgressionReason(
+                id = DurationProgressionReasonId.HOLD_ASSESSMENT,
+                assessmentReasonId = DurationSessionAssessmentReasonId.HR_ZONE_BELOW_THRESHOLD,
+            ),
+        )
+        val composed = composeNextSessionTargetSection(
+            markdown = "## What stood out\n- Solid session.",
+            bullet = promptBullet,
+            displayBullet = displayBullet,
+        )
+
+        val localized = localizeAppGeneratedInsightMarkdown(
+            markdown = compactTopLevelHeadingLevelsForDisplay(composed),
+            nextSessionTargetHeading = "Obiettivo prossima sessione",
+            recordedValue = "il valore registrato",
+            recordedSet = "la serie registrata",
+            durationDisplayText = durationDisplayText(),
+        )
+
+        assertTrue(
+            localized.contains(
+                "- Completa 900 secondi di Row nella zona di frequenza cardiaca prescritta; " +
+                    "mantieni: aderenza alla zona di frequenza cardiaca del lavoro inferiore " +
+                    "alla soglia configurata."
+            )
+        )
+        assertFalse(localized.contains("work HR zone adherence"))
+        assertFalse(localized.contains("mwa:"))
+    }
+
+    private fun durationDisplayText(): AppDurationProgressionDisplayText =
+        AppDurationProgressionDisplayText(
+            targetBullet =
+                "Completa %1\$d secondi di %2\$s nella zona di frequenza cardiaca prescritta; %3\$s.",
+            decisionReasons = mapOf(
+                DurationProgressionReasonId.CEILING_REACHED to
+                    "mantieni: limite di durata configurato raggiunto",
+                DurationProgressionReasonId.INCREASE_CRITERIA_MET to
+                    "aumenta: %1\$d sessioni consecutive hanno soddisfatto i criteri configurati",
+                DurationProgressionReasonId.HOLD_ASSESSMENT to "mantieni: %1\$s",
+                DurationProgressionReasonId.NO_COMPARABLE_SESSIONS to
+                    "mantieni: nessuna sessione comparabile registrata con questa politica e durata",
+                DurationProgressionReasonId.INSUFFICIENT_QUALIFYING_SESSIONS to
+                    "mantieni: %1\$d di %2\$d sessioni consecutive qualificanti richieste",
+                DurationProgressionReasonId.SESSION_NOT_COMPLETED_NORMALLY to
+                    "mantieni: la sessione corrente non è stata completata normalmente",
+            ),
+            assessmentReasons = mapOf(
+                DurationSessionAssessmentReasonId.WORK_NOT_COMPLETED_NORMALLY to
+                    "il lavoro prescritto non è stato completato normalmente",
+                DurationSessionAssessmentReasonId.LOAD_DIFFERS_FROM_PRESCRIPTION to
+                    "il carico registrato differisce dalla prescrizione di durata senza carico",
+                DurationSessionAssessmentReasonId.TIMESTAMPS_UNAVAILABLE to
+                    "orari del lavoro non disponibili",
+                DurationSessionAssessmentReasonId.WORK_DURATION_SHORTER_THAN_PRESCRIPTION to
+                    "la durata registrata del lavoro è inferiore alla prescrizione",
+                DurationSessionAssessmentReasonId.INSUFFICIENT_HR_COVERAGE to
+                    "copertura della frequenza cardiaca insufficiente; impossibile valutare",
+                DurationSessionAssessmentReasonId.HR_ZONE_BELOW_THRESHOLD to
+                    "aderenza alla zona di frequenza cardiaca del lavoro inferiore alla soglia configurata",
+                DurationSessionAssessmentReasonId.QUALIFYING_WORK to
+                    "lavoro completato con copertura della frequenza cardiaca e aderenza alla zona qualificanti",
+            ),
+        )
+
+    @Test
+    fun localizeAppGeneratedInsightMarkdown_leavesModelAuthoredEnglishUntouched() {
+        val displayed = compactTopLevelHeadingLevelsForDisplay(
+            "## Next session target\n- Keep around the recorded value and the recorded set."
+        )
+
+        val localized = localizeAppGeneratedInsightMarkdown(
+            markdown = displayed,
+            nextSessionTargetHeading = "Obiettivo prossima sessione",
+            recordedValue = "il valore registrato",
+            recordedSet = "la serie registrata",
+        )
+
+        assertEquals(displayed, localized)
+    }
+
+    @Test
+    fun localizeAppGeneratedInsightMarkdown_localizesOnlyTaggedMetricFallbacks() {
+        val outcome = postProcessInsightMarkdownWithDropReport(
+            markdown = "## Exercise highlights\n" +
+                "- Squat used 1234 kg and 999 x 8 with average HR 140 bpm.",
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "A Squat/Bench",
+                markdown = "FACT Average heart rate: 140 bpm",
+            ),
+        )
+        val processed = outcome.displayMarkdown
+
+        assertTrue(processed.contains("the recorded value"))
+        assertTrue(processed.contains("the recorded set"))
+        assertFalse(processed.contains("1234 kg"))
+        assertFalse(processed.contains("999 x 8"))
+
+        val localized = localizeAppGeneratedInsightMarkdown(
+            markdown = processed,
+            nextSessionTargetHeading = "Obiettivo prossima sessione",
+            recordedValue = "il valore registrato",
+            recordedSet = "la serie registrata",
+        )
+
+        assertTrue(localized.contains("il valore registrato"))
+        assertTrue(localized.contains("la serie registrata"))
+        assertFalse(localized.contains("the recorded value"))
+        assertFalse(localized.contains("the recorded set"))
+        assertFalse(localized.contains("mwa:"))
+    }
+
+    @Test
+    fun postProcessInsightMarkdownWithDropReport_separatesCanonicalAndDisplayMarkdown() {
+        val outcome = postProcessInsightMarkdownWithDropReport(
+            markdown = "## Exercise highlights\n" +
+                "- Squat used 1234 kg and 999 x 8 with average HR 140 bpm.",
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "A Squat/Bench",
+                markdown = "FACT Average heart rate: 140 bpm",
+            ),
+        )
+
+        // Canonical text is marker-free and is what model/log/storage sinks must use.
+        assertFalse(outcome.markdown.contains("mwa:"))
+        assertTrue(outcome.markdown.contains("the recorded value"))
+        assertTrue(outcome.markdown.contains("the recorded set"))
+
+        // The display variant keeps the markers needed for localization only.
+        assertTrue(outcome.displayMarkdown.contains("mwa:"))
+    }
+
+    @Test
+    fun preserveMarkdownPath_storesMarkerFreeAssistantMessageAcrossConversationBoundary() {
+        // Regression: history chat replies now carry display provenance markers. Those markers
+        // must never reach the stored assistant message or the prompt text sent back to the model.
+        val outcome = postProcessInsightMarkdownWithDropReport(
+            markdown = "## Exercise highlights\n" +
+                "- Compare S8 (677 x 8) with S9 (67 x 8).",
+            toolContext = WorkoutInsightsToolContext.Exercise(
+                title = "Pull-Ups chat",
+                exerciseName = "Pull-Ups",
+                markdown = "# Pull-Ups\n## S8\n- Sets: 67x8, 67x7, 67x7\n## S9\n- Sets: 67x8, 67x8, 67x7",
+            ),
+            preserveMarkdown = true,
+        )
+
+        assertTrue(outcome.displayMarkdown.contains("mwa:"))
+        assertFalse(outcome.markdown.contains("mwa:"))
+
+        val storedMessages = listOf(
+            HistoryChatMessage(role = HistoryChatMessageRole.User, content = "How did S8 compare?"),
+            HistoryChatMessage(role = HistoryChatMessageRole.Assistant, content = outcome.markdown),
+        )
+        val window = selectConversationWindowMessages(
+            messages = storedMessages,
+            maxTurns = HistoryChatLimits.MAX_PRIOR_TURNS,
+            maxChars = HistoryChatLimits.MAX_CONVERSATION_HISTORY_CHARS,
+            includeAssistantMessages = true,
+        )
+        val prompt = buildHistoryChatUserPrompt(
+            priorMessages = window,
+            currentUserContent = "And S9?",
+        )
+
+        assertFalse(prompt.contains("mwa:"))
+        assertTrue(prompt.contains("the recorded set"))
+        assertFalse(storedMessages.any { it.content.contains("mwa:") })
     }
 
 }

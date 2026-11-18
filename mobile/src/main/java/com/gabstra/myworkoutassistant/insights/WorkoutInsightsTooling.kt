@@ -189,6 +189,11 @@ sealed class WorkoutInsightsToolContext {
          * insight pipeline renders this section deterministically instead of model text.
          */
         val nextSessionTargetBullet: String? = null,
+        /**
+         * Display-only variant of [nextSessionTargetBullet] carrying app provenance markers
+         * for localized rendering. Never included in canonical or model-facing text.
+         */
+        val nextSessionTargetDisplayBullet: String? = null,
     ) : WorkoutInsightsToolContext()
 }
 

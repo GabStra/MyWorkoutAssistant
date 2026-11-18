@@ -23,6 +23,7 @@ import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
 import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionDecision
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -492,6 +493,16 @@ suspend fun buildWorkoutSessionInsightsPrompt(
             val durationDecisions = markdownResult.durationProgressionDecisions
             val sessionFactsBlock = (listOf(sessionFacts.asPromptBlock()) +
                 durationDecisions.map { it.asFactBlock() }).joinToString("\n\n")
+            val durationNextSessionTargetBullet = durationDecisions.firstOrNull()
+                ?.let(::durationProgressionNextSessionTargetBullet)
+            val durationNextSessionTargetDisplayBullet = durationDecisions.firstOrNull()?.let { decision ->
+                appNextSessionTargetDurationDisplayBullet(
+                    promptText = durationProgressionNextSessionTargetBullet(decision),
+                    nextSeconds = decision.nextSeconds,
+                    exerciseName = decision.exerciseName,
+                    reason = decision.reasonDetail,
+                )
+            }
 
             WorkoutInsightsPromptResult.Success(
                 title = "Workout session insights",
@@ -533,9 +544,15 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                             }
                         }
                     },
-                    nextSessionTargetBullet = durationDecisions.firstOrNull()?.let { decision ->
-                        "Complete ${decision.nextSeconds} seconds of ${decision.exerciseName} in the prescribed HR zone; ${decision.reason}."
-                    } ?: sessionFacts.nextSessionTargetBullet,
+                    nextSessionTargetBullet = durationNextSessionTargetBullet
+                        ?: sessionFacts.nextSessionTargetBullet,
+                    // Duration decisions carry a structured shared reason identity, so their
+                    // display variant can be localized without touching model-authored prose.
+                    nextSessionTargetDisplayBullet = if (durationNextSessionTargetBullet == null) {
+                        sessionFacts.displayNextSessionTargetBullet
+                    } else {
+                        durationNextSessionTargetDisplayBullet
+                    },
                     markdown = buildString {
                         append(sessionStatusLine)
                         if (workoutCategoryGuidance.isNotBlank()) {
@@ -551,6 +568,12 @@ suspend fun buildWorkoutSessionInsightsPrompt(
         }
     }
 }
+
+/** Canonical English target bullet; the display variant adds a structured localization marker. */
+private fun durationProgressionNextSessionTargetBullet(
+    decision: DurationProgressionDecision,
+): String = "Complete ${decision.nextSeconds} seconds of ${decision.exerciseName} " +
+    "in the prescribed HR zone; ${decision.reason}."
 
 internal fun buildExercisePrompt(
     markdown: String,

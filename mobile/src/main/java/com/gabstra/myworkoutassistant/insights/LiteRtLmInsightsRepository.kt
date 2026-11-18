@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.insights
 
 import android.content.Context
 import android.util.Log
+import com.gabstra.myworkoutassistant.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -13,9 +14,15 @@ import kotlin.coroutines.coroutineContext
 
 data class WorkoutInsightsChunk(
     val title: String,
+    /** Canonical marker-free text: safe for prompts, storage, logs and debug dumps. */
     val text: String,
     val phase: WorkoutInsightsPhase,
     val statusText: String = "",
+    /**
+     * Optional marker-tagged display variant, consumed only by the markdown renderer so it can
+     * localize app-generated text. Must never be sent to the model, stored or logged.
+     */
+    val displayText: String? = null,
 )
 
 enum class WorkoutInsightsPhase {
@@ -79,7 +86,7 @@ class LiteRtLmInsightsRepository(
         request: WorkoutInsightsRequest,
     ): Flow<WorkoutInsightsChunk> = flow {
         val modelPath = LiteRtLmModelStore.getConfiguredModelPath(context)
-            ?: error("No LiteRT-LM model configured.")
+            ?: error(context.getString(R.string.loc_no_litert_model_configured))
         runWorkoutInsightsGeneration(
             request = request,
             logTag = LOG_TAG,
@@ -100,6 +107,7 @@ class LiteRtLmInsightsRepository(
                 )
             },
             onAfterChartAnalysis = { releaseChartAnalysisResources() },
+            labels = workoutInsightsGenerationLabels(context),
         )
     }.flowOn(Dispatchers.IO)
 }
@@ -115,7 +123,9 @@ private suspend fun LiteRtLmInsightsRepository.generateResponse(
         onChunk = { chunk -> accumulated.append(chunk) },
         onProgress = { _, _ -> }
     )
-    val finalText = accumulated.toString().ifBlank { "No insights were generated." }
+    val finalText = accumulated.toString().ifBlank {
+        context.getString(R.string.loc_no_insights_generated)
+    }
     logWorkoutInsightsBlock(
         LiteRtLmInsightsRepository.LOG_TAG,
         transportRequest.responseLogLabel,
@@ -275,7 +285,10 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
     )
 
     try {
-        onProgress(WorkoutInsightsPhase.CHART_ANALYSIS, "Analyzing heart-rate chart (timeline tools)...")
+        onProgress(
+            WorkoutInsightsPhase.CHART_ANALYSIS,
+            context.getString(R.string.loc_analyzing_heart_rate_chart)
+        )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_system_prompt",
@@ -328,7 +341,7 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
             val status = toolCalls.joinToString { it.name }.lowercase()
             onProgress(
                 WorkoutInsightsPhase.CHART_ANALYSIS,
-                "Chart analysis: $status"
+                context.getString(R.string.loc_chart_analysis_progress, status)
             )
             val toolResponses = toolCalls.map { toolCall ->
                 val arguments = JSONObject(toolCall.argumentsJson)
@@ -413,7 +426,10 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
     )
 
     try {
-        onProgress(WorkoutInsightsPhase.PREPARING_TOOLS, "Preparing insight tools...")
+        onProgress(
+            WorkoutInsightsPhase.PREPARING_TOOLS,
+            context.getString(R.string.loc_preparing_insight_tools)
+        )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_system_prompt",
@@ -463,7 +479,7 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
             val status = toolCalls.joinToString { it.name }.lowercase()
             onProgress(
                 phaseForToolCalls(toolCalls.map { it.name }),
-                "Reading your workout data (step ${round + 1})..."
+                context.getString(R.string.loc_reading_workout_data_step, round + 1)
             )
             val toolResponses = toolCalls.map { toolCall ->
                 val arguments = JSONObject(toolCall.argumentsJson)

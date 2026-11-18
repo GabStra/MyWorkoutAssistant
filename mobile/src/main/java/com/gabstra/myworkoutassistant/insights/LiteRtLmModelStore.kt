@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.edit
 import androidx.documentfile.provider.DocumentFile
+import com.gabstra.myworkoutassistant.R
 import java.io.File
 
 private const val INSIGHTS_PREFS = "litert_lm_insights"
@@ -71,7 +72,7 @@ object LiteRtLmModelStore {
         val document = DocumentFile.fromSingleUri(context, uri)
         val sourceName = document?.name ?: ACTIVE_MODEL_FILE_NAME
         require(sourceName.endsWith(".litertlm", ignoreCase = true)) {
-            "Select a .litertlm model file."
+            context.getString(R.string.loc_select_litertlm_model_file)
         }
 
         val modelDirectory = File(context.filesDir, MODEL_DIRECTORY).apply { mkdirs() }
@@ -80,7 +81,7 @@ object LiteRtLmModelStore {
             targetFile.outputStream().use { output ->
                 input.copyTo(output)
             }
-        } ?: error("Unable to read the selected model file.")
+        } ?: error(context.getString(R.string.loc_unable_read_model_file))
 
         // Reject files the runtime cannot parse before they become the active
         // model — a bad bundle would otherwise crash inside native code on the

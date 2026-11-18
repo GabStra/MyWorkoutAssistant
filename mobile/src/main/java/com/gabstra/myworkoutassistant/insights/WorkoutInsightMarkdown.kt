@@ -4,9 +4,17 @@ import android.text.util.Linkify
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
+import com.gabstra.myworkoutassistant.R
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionReason
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionReasonId
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationSessionAssessmentReasonId
 import dev.jeziellago.compose.markdowntext.MarkdownText
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.util.Locale
 import kotlin.math.abs
 
 @Composable
@@ -30,7 +38,63 @@ internal fun WorkoutInsightMarkdown(
     )
 
     MarkdownText(
-        markdown = compactTopLevelHeadingLevelsForDisplay(markdown),
+        markdown = localizeAppGeneratedInsightMarkdown(
+            markdown = compactTopLevelHeadingLevelsForDisplay(markdown),
+            nextSessionTargetHeading = stringResource(R.string.loc_insight_markdown_next_session_target),
+            recordedValue = stringResource(R.string.loc_insight_markdown_recorded_value),
+            recordedSet = stringResource(R.string.loc_insight_markdown_recorded_set),
+            nextSessionTargetHrZoneBullet = stringResource(
+                R.string.loc_insight_markdown_next_session_target_hr_zone_bullet
+            ),
+            durationDisplayText = AppDurationProgressionDisplayText(
+                targetBullet = stringResource(
+                    R.string.loc_insight_markdown_next_session_target_duration_bullet
+                ),
+                decisionReasons = mapOf(
+                    DurationProgressionReasonId.CEILING_REACHED to stringResource(
+                        R.string.loc_insight_markdown_duration_reason_ceiling_reached
+                    ),
+                    DurationProgressionReasonId.INCREASE_CRITERIA_MET to stringResource(
+                        R.string.loc_insight_markdown_duration_reason_increase_criteria_met
+                    ),
+                    DurationProgressionReasonId.HOLD_ASSESSMENT to stringResource(
+                        R.string.loc_insight_markdown_duration_reason_hold_assessment
+                    ),
+                    DurationProgressionReasonId.NO_COMPARABLE_SESSIONS to stringResource(
+                        R.string.loc_insight_markdown_duration_reason_no_comparable_sessions
+                    ),
+                    DurationProgressionReasonId.INSUFFICIENT_QUALIFYING_SESSIONS to stringResource(
+                        R.string.loc_insight_markdown_duration_reason_insufficient_qualifying_sessions
+                    ),
+                    DurationProgressionReasonId.SESSION_NOT_COMPLETED_NORMALLY to stringResource(
+                        R.string.loc_insight_markdown_duration_reason_session_not_completed_normally
+                    ),
+                ),
+                assessmentReasons = mapOf(
+                    DurationSessionAssessmentReasonId.WORK_NOT_COMPLETED_NORMALLY to stringResource(
+                        R.string.loc_insight_markdown_duration_assessment_work_not_completed_normally
+                    ),
+                    DurationSessionAssessmentReasonId.LOAD_DIFFERS_FROM_PRESCRIPTION to stringResource(
+                        R.string.loc_insight_markdown_duration_assessment_load_differs
+                    ),
+                    DurationSessionAssessmentReasonId.TIMESTAMPS_UNAVAILABLE to stringResource(
+                        R.string.loc_insight_markdown_duration_assessment_timestamps_unavailable
+                    ),
+                    DurationSessionAssessmentReasonId.WORK_DURATION_SHORTER_THAN_PRESCRIPTION to stringResource(
+                        R.string.loc_insight_markdown_duration_assessment_work_shorter_than_prescription
+                    ),
+                    DurationSessionAssessmentReasonId.INSUFFICIENT_HR_COVERAGE to stringResource(
+                        R.string.loc_insight_markdown_duration_assessment_insufficient_hr_coverage
+                    ),
+                    DurationSessionAssessmentReasonId.HR_ZONE_BELOW_THRESHOLD to stringResource(
+                        R.string.loc_insight_markdown_duration_assessment_hr_zone_below_threshold
+                    ),
+                    DurationSessionAssessmentReasonId.QUALIFYING_WORK to stringResource(
+                        R.string.loc_insight_markdown_duration_assessment_qualifying_work
+                    ),
+                ),
+            ),
+        ),
         modifier = modifier,
         isTextSelectable = true,
         style = insightTextStyle,
@@ -59,6 +123,199 @@ internal fun settledMarkdownPrefix(partial: String): String {
  */
 internal fun compactTopLevelHeadingLevelsForDisplay(markdown: String): String =
     markdown.replace(Regex("""(?m)^##(\s+)"""), "###$1")
+
+/**
+ * App-generated text is tagged while the markdown is assembled so the display boundary can
+ * localize it without touching user questions or model-authored prose. The tags are HTML
+ * comments: markdown renderers ignore them, and [localizeAppGeneratedInsightMarkdown] consumes
+ * them before rendering.
+ */
+private const val APP_NEXT_SESSION_TARGET_HEADING = "Next session target"
+private const val APP_NEXT_SESSION_TARGET_MARKER = "<!--mwa:app-next-session-target-->"
+private const val APP_NEXT_SESSION_TARGET_HR_ZONE_MARKER_PREFIX = "<!--mwa:app-next-session-target-hr-zone:"
+private const val APP_NEXT_SESSION_TARGET_DURATION_MARKER_PREFIX =
+    "<!--mwa:app-next-session-target-duration:"
+private const val APP_DURATION_MARKER_VERSION = "1"
+private const val APP_RECORDED_VALUE_MARKER = "<!--mwa:app-recorded-value-->"
+private const val APP_RECORDED_SET_MARKER = "<!--mwa:app-recorded-set-->"
+
+private val appGeneratedMarkupRegex = Regex("""[ \t]*<!--mwa:[a-z0-9-]+[^>]*-->""")
+
+private val appNextSessionTargetHrZoneBulletRegex = Regex(
+    "(?m)^[ \\t]*-[ \\t]+.*?" +
+        Regex.escape(APP_NEXT_SESSION_TARGET_HR_ZONE_MARKER_PREFIX) +
+        "([^>]*)-->[ \\t]*$"
+)
+
+private val appNextSessionTargetDurationBulletRegex = Regex(
+    "(?m)^[ \\t]*-[ \\t]+.*?" +
+        Regex.escape(APP_NEXT_SESSION_TARGET_DURATION_MARKER_PREFIX) +
+        "([^>]*)-->[ \\t]*$"
+)
+
+private val appNextSessionTargetHeadingRegex = Regex(
+    "(?m)^(#{2,6})[ \\t]*" +
+        Regex.escape(APP_NEXT_SESSION_TARGET_HEADING) +
+        "[ \\t]*" +
+        Regex.escape(APP_NEXT_SESSION_TARGET_MARKER) +
+        "[ \\t]*$"
+)
+
+/**
+ * Localizes only the visible additions assembled by the app. Model quotes of the same English
+ * heading/phrases carry no app marker and are therefore left untouched.
+ */
+internal fun localizeAppGeneratedInsightMarkdown(
+    markdown: String,
+    nextSessionTargetHeading: String,
+    recordedValue: String,
+    recordedSet: String,
+    nextSessionTargetHrZoneBullet: String? = null,
+    durationDisplayText: AppDurationProgressionDisplayText? = null,
+): String {
+    val localizedDurationBullets = if (durationDisplayText == null) {
+        markdown
+    } else {
+        markdown.replace(appNextSessionTargetDurationBulletRegex) { match ->
+            localizeAppDurationProgressionTargetBullet(match, durationDisplayText) ?: match.value
+        }
+    }
+    val localizedBullets = localizedDurationBullets.replace(appNextSessionTargetHrZoneBulletRegex) { match ->
+        val zoneBpm = decodeAppMarkerArgument(match.groupValues[1])
+        val template = nextSessionTargetHrZoneBullet ?: return@replace match.value
+        "- " + template.format(Locale.getDefault(), zoneBpm)
+    }
+    val localizedHeadings = localizedBullets.replace(appNextSessionTargetHeadingRegex) { match ->
+        "${match.groupValues[1]} $nextSessionTargetHeading"
+    }
+    return localizedHeadings
+        .replace(REDACTED_METRIC_VALUE_PHRASE + APP_RECORDED_VALUE_MARKER, recordedValue)
+        .replace(REDACTED_METRIC_SET_PHRASE + APP_RECORDED_SET_MARKER, recordedSet)
+        .replace(APP_NEXT_SESSION_TARGET_MARKER, "")
+        .replace(APP_RECORDED_VALUE_MARKER, "")
+        .replace(APP_RECORDED_SET_MARKER, "")
+        .replace(appGeneratedMarkupRegex, "")
+}
+
+/**
+ * Removes the display-only provenance markers from text intended for the model, logs, debug
+ * dumps or stored conversation messages. The surviving app fallback phrases stay as plain
+ * English text; localization only happens on the display variant (see
+ * [PostProcessOutcome.displayMarkdown]).
+ */
+internal fun String.stripAppGeneratedInsightMarkup(): String = replace(appGeneratedMarkupRegex, "")
+
+/**
+ * Builds the display variant of the app-authored configured-HR-zone next-session target.
+ * The visible English text stays intact with a provenance marker carrying the exact zone
+ * string, so the UI can substitute a localized sentence without parsing numbers or names.
+ */
+internal fun appNextSessionTargetHrZoneDisplayBullet(
+    promptText: String,
+    zoneBpm: String,
+): String = promptText +
+    " " +
+    APP_NEXT_SESSION_TARGET_HR_ZONE_MARKER_PREFIX +
+    URLEncoder.encode(zoneBpm, Charsets.UTF_8.name()) +
+    "-->"
+
+/**
+ * Display-only variant of an app-authored duration-prescription target bullet. The marker
+ * carries the shared reason identity and arguments (plus the exact duration and exercise
+ * name) so the UI can render localized prose without inspecting or translating the
+ * canonical English sentence.
+ */
+internal fun appNextSessionTargetDurationDisplayBullet(
+    promptText: String,
+    nextSeconds: Int,
+    exerciseName: String,
+    reason: DurationProgressionReason?,
+): String {
+    reason ?: return promptText
+    val payload = listOf(
+        APP_DURATION_MARKER_VERSION,
+        reason.id.name,
+        reason.qualifyingSessions.toString(),
+        reason.requiredSessions.toString(),
+        reason.assessmentReasonId?.name.orEmpty(),
+        nextSeconds.toString(),
+        exerciseName,
+    ).joinToString("|") { part -> URLEncoder.encode(part, Charsets.UTF_8.name()) }
+    return promptText + " " + APP_NEXT_SESSION_TARGET_DURATION_MARKER_PREFIX + payload + "-->"
+}
+
+/** Display strings for the app-authored duration-prescription target bullet. */
+internal data class AppDurationProgressionDisplayText(
+    val targetBullet: String,
+    val decisionReasons: Map<DurationProgressionReasonId, String>,
+    val assessmentReasons: Map<DurationSessionAssessmentReasonId, String>,
+)
+
+private data class AppDurationTargetMarker(
+    val reasonId: DurationProgressionReasonId,
+    val qualifyingSessions: Int,
+    val requiredSessions: Int,
+    val assessmentReasonId: DurationSessionAssessmentReasonId?,
+    val nextSeconds: Int,
+    val exerciseName: String,
+)
+
+private fun localizeAppDurationProgressionTargetBullet(
+    match: MatchResult,
+    strings: AppDurationProgressionDisplayText,
+): String? = runCatching {
+    val marker = parseAppDurationTargetMarker(match.groupValues[1]) ?: return@runCatching null
+    val reasonText = resolveAppDurationReasonText(marker, strings) ?: return@runCatching null
+    val template = strings.targetBullet.takeIf { it.isNotBlank() } ?: return@runCatching null
+    "- " + template.format(Locale.getDefault(), marker.nextSeconds, marker.exerciseName, reasonText)
+}.getOrNull()
+
+private fun parseAppDurationTargetMarker(
+    encoded: String,
+): AppDurationTargetMarker? {
+    val parts = encoded.split('|').map(::decodeAppMarkerArgument)
+    if (parts.size != 7 || parts[0] != APP_DURATION_MARKER_VERSION) return null
+    val reasonId = DurationProgressionReasonId.entries.firstOrNull { it.name == parts[1] } ?: return null
+    val qualifyingSessions = parts[2].toIntOrNull() ?: return null
+    val requiredSessions = parts[3].toIntOrNull() ?: return null
+    val assessmentReasonId = parts[4].takeIf { it.isNotEmpty() }?.let { id ->
+        DurationSessionAssessmentReasonId.entries.firstOrNull { it.name == id }
+    }
+    if (parts[4].isNotEmpty() && assessmentReasonId == null) return null
+    val nextSeconds = parts[5].toIntOrNull() ?: return null
+    return AppDurationTargetMarker(
+        reasonId = reasonId,
+        qualifyingSessions = qualifyingSessions,
+        requiredSessions = requiredSessions,
+        assessmentReasonId = assessmentReasonId,
+        nextSeconds = nextSeconds,
+        exerciseName = parts[6],
+    )
+}
+
+private fun resolveAppDurationReasonText(
+    marker: AppDurationTargetMarker,
+    strings: AppDurationProgressionDisplayText,
+): String? {
+    val template = strings.decisionReasons[marker.reasonId] ?: return null
+    return when (marker.reasonId) {
+        DurationProgressionReasonId.CEILING_REACHED,
+        DurationProgressionReasonId.NO_COMPARABLE_SESSIONS,
+        DurationProgressionReasonId.SESSION_NOT_COMPLETED_NORMALLY -> template
+        DurationProgressionReasonId.INCREASE_CRITERIA_MET ->
+            template.format(Locale.getDefault(), marker.qualifyingSessions)
+        DurationProgressionReasonId.HOLD_ASSESSMENT -> {
+            val assessmentId = marker.assessmentReasonId ?: return null
+            val assessmentText = strings.assessmentReasons[assessmentId] ?: return null
+            template.format(Locale.getDefault(), assessmentText)
+        }
+        DurationProgressionReasonId.INSUFFICIENT_QUALIFYING_SESSIONS ->
+            template.format(Locale.getDefault(), marker.qualifyingSessions, marker.requiredSessions)
+    }
+}
+
+private fun decodeAppMarkerArgument(encoded: String): String =
+    runCatching { URLDecoder.decode(encoded, Charsets.UTF_8.name()) }.getOrDefault(encoded)
 
 /**
  * Normalizes model-produced markdown for [MarkdownText]: line endings, glued prose, star-blob
@@ -236,9 +493,25 @@ internal data class MisquotedLineDrop(
 )
 
 internal data class PostProcessOutcome(
+    /** Canonical marker-free markdown: safe for prompts, stored messages, logs and debug dumps. */
     val markdown: String,
     /** Lines dropped for misquoting facts; candidates for the one-shot rewrite recovery. */
     val misquotedDrops: List<MisquotedLineDrop>,
+    /**
+     * Display-only variant carrying app provenance markers so the renderer can localize the
+     * app-generated phrases without translating user/LLM-authored text. Never send this text
+     * to the model, persist it as conversation content, or write it to logs/debug dumps.
+     */
+    val displayMarkdown: String = markdown,
+)
+
+private fun postProcessOutcome(
+    displayMarkdown: String,
+    misquotedDrops: List<MisquotedLineDrop>,
+): PostProcessOutcome = PostProcessOutcome(
+    markdown = displayMarkdown.stripAppGeneratedInsightMarkup(),
+    misquotedDrops = misquotedDrops,
+    displayMarkdown = displayMarkdown,
 )
 
 internal fun postProcessInsightMarkdown(
@@ -290,15 +563,19 @@ internal fun postProcessInsightMarkdownWithDropReport(
         processed = removeEmptyMarkdownSections(processed)
     }
     if (applySessionTargetSection && sessionContext?.nextSessionTargetBullet != null) {
-        processed = ensureNextSessionTargetSection(processed, sessionContext.nextSessionTargetBullet)
+        processed = ensureNextSessionTargetSection(
+            markdown = processed,
+            fallbackBullet = sessionContext.nextSessionTargetBullet,
+            displayBullet = sessionContext.nextSessionTargetDisplayBullet,
+        )
     }
 
-    if (preserveMarkdown) return PostProcessOutcome(processed, misquotedDrops)
-    val workoutSessionContext = sessionContext ?: return PostProcessOutcome(processed, misquotedDrops)
+    if (preserveMarkdown) return postProcessOutcome(processed, misquotedDrops)
+    val workoutSessionContext = sessionContext ?: return postProcessOutcome(processed, misquotedDrops)
     if (!isLiftingDominantLowIntensitySession(workoutSessionContext.markdown)) {
-        return PostProcessOutcome(processed, misquotedDrops)
+        return postProcessOutcome(processed, misquotedDrops)
     }
-    return PostProcessOutcome(removeLowIntensityLiftingRiskBullets(processed), misquotedDrops)
+    return postProcessOutcome(removeLowIntensityLiftingRiskBullets(processed), misquotedDrops)
 }
 
 /**
@@ -315,7 +592,7 @@ private fun dropMisquotedLines(
     var currentHeading: String? = null
     for (line in markdown.lines()) {
         if (line.startsWith("## ")) {
-            currentHeading = line.removePrefix("## ").trim()
+            currentHeading = line.removePrefix("## ").trim().stripAppGeneratedInsightMarkup().trim()
         }
         val violations = if (line.isBlank()) emptyList() else validateSessionNumericContract(line, facts)
         if (violations.isEmpty()) {
@@ -323,7 +600,8 @@ private fun dropMisquotedLines(
         } else {
             dropped += MisquotedLineDrop(
                 sectionHeading = currentHeading,
-                originalLine = line,
+                // Recovery prompts are model-facing; never leak display-only app markers into them.
+                originalLine = line.stripAppGeneratedInsightMarkup(),
                 reason = violations.joinToString("; ") { "\"${it.quotedText}\" — ${it.correction}" },
             )
         }
@@ -399,8 +677,14 @@ private val nextSessionTargetSectionRegex = Regex(
  * Renders the app-composed next-session-target bullet as the whole section body: replaces the
  * model's section when present, appends the section when the model omitted it.
  */
-internal fun composeNextSessionTargetSection(markdown: String, bullet: String): String {
-    val replacement = "## Next session target\n- ${bullet.trim()}\n"
+internal fun composeNextSessionTargetSection(
+    markdown: String,
+    bullet: String,
+    displayBullet: String? = null,
+): String {
+    val replacement =
+        "## $APP_NEXT_SESSION_TARGET_HEADING $APP_NEXT_SESSION_TARGET_MARKER\n" +
+            "- ${(displayBullet ?: bullet).trim()}\n"
     val section = nextSessionTargetSectionRegex.find(markdown) ?: return markdown.trimEnd() +
         "\n\n" + replacement
     return markdown.replaceRange(section.range, replacement)
@@ -408,9 +692,13 @@ internal fun composeNextSessionTargetSection(markdown: String, bullet: String): 
         .trim() + "\n"
 }
 
-internal fun ensureNextSessionTargetSection(markdown: String, fallbackBullet: String): String =
+internal fun ensureNextSessionTargetSection(
+    markdown: String,
+    fallbackBullet: String,
+    displayBullet: String? = null,
+): String =
     if (nextSessionTargetSectionRegex.find(markdown) == null) {
-        composeNextSessionTargetSection(markdown, fallbackBullet)
+        composeNextSessionTargetSection(markdown, fallbackBullet, displayBullet)
     } else {
         markdown
     }
@@ -489,14 +777,14 @@ private fun replaceUnsupportedExactMetricMentions(
             if (isSupportedMetric(match)) {
                 match.value
             } else {
-                REDACTED_METRIC_VALUE_PHRASE
+                REDACTED_METRIC_VALUE_PHRASE + APP_RECORDED_VALUE_MARKER
             }
         }.let { exactFiltered ->
             setLikeMetricMentionRegex.replace(exactFiltered) { match ->
                 if (match.value.normalizeSetLikeMetricMention() in allowedSetLikeMentions) {
                     match.value
                 } else {
-                    REDACTED_METRIC_SET_PHRASE
+                    REDACTED_METRIC_SET_PHRASE + APP_RECORDED_SET_MARKER
                 }
             }
         }

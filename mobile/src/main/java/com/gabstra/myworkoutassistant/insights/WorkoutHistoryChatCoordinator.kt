@@ -12,14 +12,33 @@ import java.util.UUID
 
 sealed class WorkoutHistoryChatPrepareResult {
     data class Ready(
-        val title: String,
+        val title: WorkoutHistoryChatTitle,
         val toolContext: WorkoutInsightsToolContext,
         val systemPrompt: String,
     ) : WorkoutHistoryChatPrepareResult()
 
     data class Failure(
-        val message: String,
+        val reason: WorkoutHistoryChatFailureReason,
+        val diagnostic: String,
     ) : WorkoutHistoryChatPrepareResult()
+}
+
+/**
+ * App-owned chat title subject. User-written names stay as-is; the screen adds the
+ * localized chat framing so no English UI prose is baked into the coordinator.
+ */
+sealed class WorkoutHistoryChatTitle {
+    data class Exercise(val exerciseName: String) : WorkoutHistoryChatTitle()
+
+    data object WorkoutSession : WorkoutHistoryChatTitle()
+}
+
+enum class WorkoutHistoryChatFailureReason {
+    WORKOUT_NOT_FOUND,
+    EXERCISE_NOT_FOUND,
+    EXERCISE_HISTORY_UNAVAILABLE,
+    WORKOUT_SESSION_UNAVAILABLE,
+    CHAT_PREPARATION_FAILED,
 }
 
 suspend fun prepareExerciseHistoryChatContext(
@@ -43,12 +62,18 @@ suspend fun prepareExerciseHistoryChatContext(
         )
     ) {
         is WorkoutInsightsPromptResult.Failure ->
-            WorkoutHistoryChatPrepareResult.Failure(promptResult.message)
+            WorkoutHistoryChatPrepareResult.Failure(
+                reason = WorkoutHistoryChatFailureReason.EXERCISE_HISTORY_UNAVAILABLE,
+                diagnostic = promptResult.message,
+            )
         is WorkoutInsightsPromptResult.Success -> {
             val toolContext = promptResult.toolContext
-                ?: return WorkoutHistoryChatPrepareResult.Failure("Missing tool context for exercise chat.")
+                ?: return WorkoutHistoryChatPrepareResult.Failure(
+                    reason = WorkoutHistoryChatFailureReason.CHAT_PREPARATION_FAILED,
+                    diagnostic = "Missing tool context for exercise chat.",
+                )
             WorkoutHistoryChatPrepareResult.Ready(
-                title = "${exercise.name} — chat",
+                title = WorkoutHistoryChatTitle.Exercise(exercise.name),
                 toolContext = toolContext,
                 systemPrompt = buildHistoryChatToolCallingSystemPrompt("one exercise"),
             )
@@ -77,12 +102,18 @@ suspend fun prepareWorkoutSessionHistoryChatContext(
         )
     ) {
         is WorkoutInsightsPromptResult.Failure ->
-            WorkoutHistoryChatPrepareResult.Failure(promptResult.message)
+            WorkoutHistoryChatPrepareResult.Failure(
+                reason = WorkoutHistoryChatFailureReason.WORKOUT_SESSION_UNAVAILABLE,
+                diagnostic = promptResult.message,
+            )
         is WorkoutInsightsPromptResult.Success -> {
             val toolContext = promptResult.toolContext
-                ?: return WorkoutHistoryChatPrepareResult.Failure("Missing tool context for workout chat.")
+                ?: return WorkoutHistoryChatPrepareResult.Failure(
+                    reason = WorkoutHistoryChatFailureReason.CHAT_PREPARATION_FAILED,
+                    diagnostic = "Missing tool context for workout chat.",
+                )
             WorkoutHistoryChatPrepareResult.Ready(
-                title = "${promptResult.title} — chat",
+                title = WorkoutHistoryChatTitle.WorkoutSession,
                 toolContext = toolContext,
                 systemPrompt = withAlwaysAvailableFacts(
                     systemPrompt = buildHistoryChatToolCallingSystemPrompt("one completed workout session"),

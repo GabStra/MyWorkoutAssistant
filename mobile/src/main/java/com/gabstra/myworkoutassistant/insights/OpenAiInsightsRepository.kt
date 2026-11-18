@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.insights
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import com.gabstra.myworkoutassistant.R
 import com.openai.client.okhttp.OpenAIOkHttpClient
 import com.openai.client.OpenAIClient
 import com.openai.core.http.StreamResponse
@@ -35,7 +36,7 @@ class OpenAiInsightsRepository(
     ): Flow<WorkoutInsightsChunk> = flow {
         val config = WorkoutInsightsSettingsStore.getRemoteConfig(context)
         require(config.isComplete()) {
-            "Remote insights are not configured. Set the base URL and model in Settings."
+            context.getString(R.string.loc_remote_insights_not_configured)
         }
         val client = createClient(config)
         runWorkoutInsightsGeneration(
@@ -59,6 +60,7 @@ class OpenAiInsightsRepository(
                     onProgress = onProgress,
                 )
             },
+            labels = workoutInsightsGenerationLabels(context),
         )
     }.flowOn(Dispatchers.IO)
 
@@ -82,7 +84,8 @@ class OpenAiInsightsRepository(
             onChunk = { chunk -> accumulated.append(chunk) },
             onProgress = { _, _ -> },
         )
-        val finalText = accumulated.toString().ifBlank { "No insights were generated." }
+        val finalText = accumulated.toString()
+            .ifBlank { context.getString(R.string.loc_no_insights_generated) }
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             transportRequest.responseLogLabel,
@@ -178,7 +181,10 @@ class OpenAiInsightsRepository(
         messages.add(systemMessage(transportRequest.systemPrompt))
         messages.add(userMessageOfTextAndImageParts(transportRequest.prompt, imageDataUrl))
 
-        onProgress(WorkoutInsightsPhase.CHART_ANALYSIS, "Analyzing heart-rate chart (timeline tools)...")
+        onProgress(
+            WorkoutInsightsPhase.CHART_ANALYSIS,
+            context.getString(R.string.loc_analyzing_heart_rate_chart),
+        )
         transportRequest.debugRecorder?.recordTransportRequest(
             transportRequest = transportRequest,
             backendMetadata = mapOf(
@@ -222,7 +228,7 @@ class OpenAiInsightsRepository(
 
             val completion = client.chat().completions().create(builder.build())
             val message = completion.choices().firstOrNull()?.message()
-                ?: return "No insights were generated."
+                ?: return context.getString(R.string.loc_no_insights_generated)
             val assistantContent = message.content().orElse("<empty>")
             val toolCalls = message.toolCalls().orElse(emptyList())
             logOpenAiAssistantMessage(
@@ -238,7 +244,9 @@ class OpenAiInsightsRepository(
                     LiteRtLmInsightsRepository.LOG_TAG,
                     "${transportRequest.requestLogLabel}_tool_loop_exit reason=no_tool_calls turn=${round + 1}"
                 )
-                return assistantContent.ifBlank { "No insights were generated." }
+                return assistantContent.ifBlank {
+                    context.getString(R.string.loc_no_insights_generated)
+                }
             }
 
             Log.d(
@@ -247,7 +255,10 @@ class OpenAiInsightsRepository(
             )
             onProgress(
                 WorkoutInsightsPhase.CHART_ANALYSIS,
-                "Chart analysis: ${toolCalls.joinToString { it.toolName() }.lowercase()}"
+                context.getString(
+                    R.string.loc_chart_analysis_progress,
+                    toolCalls.joinToString { it.toolName() }.lowercase(),
+                )
             )
 
             messages.add(ChatCompletionMessageParam.ofAssistant(message.toParam()))
@@ -285,7 +296,7 @@ class OpenAiInsightsRepository(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_tool_loop_exit reason=tool_budget_exhausted rounds=$MAX_INSIGHTS_TOOL_ROUNDS"
         )
-        return "Unable to complete chart analysis within the configured tool-call budget."
+        return context.getString(R.string.loc_unable_chart_analysis_budget)
     }
 
     private suspend fun generateToolCallingResponse(
@@ -311,7 +322,10 @@ class OpenAiInsightsRepository(
             messages.add(userMessage(transportRequest.prompt))
         }
 
-        onProgress(WorkoutInsightsPhase.PREPARING_TOOLS, "Preparing insight tools...")
+        onProgress(
+            WorkoutInsightsPhase.PREPARING_TOOLS,
+            context.getString(R.string.loc_preparing_insight_tools),
+        )
         transportRequest.debugRecorder?.recordTransportRequest(
             transportRequest = transportRequest,
             backendMetadata = mapOf(
@@ -354,7 +368,7 @@ class OpenAiInsightsRepository(
 
             val completion = client.chat().completions().create(builder.build())
             val message = completion.choices().firstOrNull()?.message()
-                ?: return "No insights were generated."
+                ?: return context.getString(R.string.loc_no_insights_generated)
             val assistantContent = message.content().orElse("<empty>")
             val toolCalls = message.toolCalls().orElse(emptyList())
             logOpenAiAssistantMessage(
@@ -370,7 +384,9 @@ class OpenAiInsightsRepository(
                     LiteRtLmInsightsRepository.LOG_TAG,
                     "${transportRequest.requestLogLabel}_tool_loop_exit reason=no_tool_calls turn=${round + 1}"
                 )
-                return assistantContent.ifBlank { "No insights were generated." }
+                return assistantContent.ifBlank {
+                    context.getString(R.string.loc_no_insights_generated)
+                }
             }
 
             Log.d(
@@ -379,7 +395,7 @@ class OpenAiInsightsRepository(
             )
             onProgress(
                 phaseForToolCalls(toolCalls.map { it.toolName() }),
-                "Reading your workout data (step ${round + 1})..."
+                context.getString(R.string.loc_reading_workout_data_step, round + 1),
             )
 
             messages.add(ChatCompletionMessageParam.ofAssistant(message.toParam()))
@@ -417,7 +433,7 @@ class OpenAiInsightsRepository(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_tool_loop_exit reason=tool_budget_exhausted rounds=$MAX_INSIGHTS_TOOL_ROUNDS"
         )
-        return "Unable to complete tool-driven insight synthesis within the configured tool-call budget."
+        return context.getString(R.string.loc_unable_synthesis_budget)
     }
 
     private fun buildChatCompletionParams(

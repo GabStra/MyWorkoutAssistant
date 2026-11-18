@@ -52,6 +52,12 @@ class WorkoutSessionFactsBuilderTest {
         assertTrue(Regex("""FACT Whole-session time in target zone: \d+% of HR samples inside 60-70% of heart-rate reserve \(\d+-\d+ bpm\)""").containsMatchIn(text))
         assertTrue(text.contains("FACT Next-session target: stay within the configured"))
         assertTrue(facts.nextSessionTargetBullet.orEmpty().contains("zone; compare heart rate only at a similar workload."))
+        assertFalse(facts.nextSessionTargetBullet.orEmpty().contains("mwa:"))
+        assertTrue(
+            facts.displayNextSessionTargetBullet.orEmpty()
+                .contains("<!--mwa:app-next-session-target-hr-zone:")
+        )
+        assertTrue(facts.displayNextSessionTargetBullet.orEmpty().contains("+bpm-->"))
         assertFalse(text.contains("target check"))
         assertFalse(text.contains("versus recent sessions"))
     }

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
+import com.gabstra.myworkoutassistant.R
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -94,7 +95,9 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
                 if (stub == null) {
                     connecting = null
                     deferred.completeExceptionally(
-                        IllegalStateException("The local AI engine service returned no gateway.")
+                        IllegalStateException(
+                            appContext.getString(R.string.loc_llm_no_gateway)
+                        )
                     )
                     return
                 }
@@ -116,7 +119,9 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
             this.connection = null
             connecting = null
             deferred.completeExceptionally(
-                IllegalStateException("Could not start the isolated local AI engine service.")
+                IllegalStateException(
+                    appContext.getString(R.string.loc_llm_cannot_start)
+                )
             )
         }
     }
@@ -124,7 +129,9 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
     private fun handleBinderDeath() {
         gateway = null
         connecting?.completeExceptionally(
-            IllegalStateException("The on-device AI engine crashed before it was ready.")
+            IllegalStateException(
+                appContext.getString(R.string.loc_llm_crashed_before_ready)
+            )
         )
         connecting = null
         // Drop the dead binding so it cannot accumulate across crashes; the
@@ -136,7 +143,7 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
         activeCallbacks.forEach { callback ->
             runCatching {
                 callback.onError(
-                    "The on-device AI engine crashed. It restarts automatically on the next request."
+                    appContext.getString(R.string.loc_llm_crashed_restarts)
                 )
             }
         }
@@ -167,7 +174,7 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
             )
         }
         val sessionId = stub.createSession(specBundle)
-        return IpcLlmSession(stub, sessionId, activeCallbacks) {
+        return IpcLlmSession(stub, sessionId, activeCallbacks, appContext) {
             runCatching { stub.closeSession(sessionId) }
         }
     }
@@ -181,6 +188,7 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
         private val stub: ILlmEngineGateway,
         private val sessionId: String,
         private val activeCallbacks: MutableSet<ILlmStreamCallback>,
+        private val appContext: Context,
         private val onClose: () -> Unit,
     ) : LlmInferenceSession {
         @Volatile
@@ -258,14 +266,23 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
                 }
 
                 override fun onError(message: String?) {
-                    close(IllegalStateException(message ?: "The local AI engine failed."))
+                    close(
+                        IllegalStateException(
+                            message ?: appContext.getString(R.string.loc_llm_failed)
+                        )
+                    )
                 }
             }
             activeCallbacks.add(callback)
             try {
                 stub.sendMessage(sessionId, messageBundle, callback)
             } catch (t: Throwable) {
-                close(IllegalStateException("The on-device AI engine failed during generation.", t))
+                close(
+                    IllegalStateException(
+                        appContext.getString(R.string.loc_llm_failed_generation),
+                        t
+                    )
+                )
             }
             awaitClose { activeCallbacks.remove(callback) }
         }

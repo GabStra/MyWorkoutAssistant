@@ -21,6 +21,13 @@ internal data class WorkoutSessionFacts(
      * removed by validation. Null when no next-session target fact exists.
      */
     val nextSessionTargetBullet: String? = null,
+    /**
+     * Display-only variant of [nextSessionTargetBullet]. It carries the same visible
+     * English text plus a provenance marker with the structured values needed to
+     * localize the app-authored sentence at the UI boundary. Never send it to the
+     * model or persist it as canonical text.
+     */
+    val displayNextSessionTargetBullet: String? = null,
 )
 
 internal fun WorkoutSessionFacts.asPromptBlock(): String =
@@ -162,11 +169,20 @@ internal object WorkoutSessionFactsBuilder {
         }
 
         var nextSessionTargetBullet: String? = null
+        var displayNextSessionTargetBullet: String? = null
         if (targetZoneBpm != null) {
             lines += "FACT Next-session target: stay within the configured $targetZoneBpm zone during the targeted exercise"
             nextSessionTargetBullet = "Repeat the planned work in the configured $targetZoneBpm zone; compare heart rate only at a similar workload."
+            displayNextSessionTargetBullet = appNextSessionTargetHrZoneDisplayBullet(
+                promptText = nextSessionTargetBullet,
+                zoneBpm = targetZoneBpm,
+            )
         }
 
-        return WorkoutSessionFacts(lines, nextSessionTargetBullet)
+        return WorkoutSessionFacts(
+            lines = lines,
+            nextSessionTargetBullet = nextSessionTargetBullet,
+            displayNextSessionTargetBullet = displayNextSessionTargetBullet,
+        )
     }
 }

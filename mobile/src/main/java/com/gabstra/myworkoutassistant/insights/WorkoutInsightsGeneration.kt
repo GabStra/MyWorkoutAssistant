@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.insights
 
+import android.content.Context
+import com.gabstra.myworkoutassistant.R
+
 internal const val FINAL_SYNTHESIS_PLACEHOLDER = "Generating insight..."
 internal const val PREPARING_TOOLS_PLACEHOLDER = "Loading insight model..."
 private const val HEART_RATE_CHART_ANALYSIS_SYSTEM_PROMPT_BASE = """
@@ -66,6 +69,30 @@ The previous generation was stopped because it began repeating text.
 Regenerate the insight from scratch. Keep each idea once, do not repeat sentences or clauses, and finish concisely.
 """
 
+/** User-visible status/error text supplied by the mobile layer so prompts stay language-neutral. */
+internal data class WorkoutInsightsGenerationLabels(
+    val finalSynthesisPlaceholder: String = FINAL_SYNTHESIS_PLACEHOLDER,
+    val preparingToolsPlaceholder: String = PREPARING_TOOLS_PLACEHOLDER,
+    val repeatedTextRestartStatus: String = REPEATED_TEXT_RESTART_STATUS,
+    val repeatedChatFailure: String =
+        "Chat generation repeated text after retry. Please try again.",
+    val repeatedInsightFailure: String =
+        "Insight generation repeated text after retry. Please try again.",
+    val noInsightsGenerated: String = "No insights were generated.",
+    val noReplyGenerated: String = "No reply was generated.",
+)
+
+internal fun workoutInsightsGenerationLabels(context: Context): WorkoutInsightsGenerationLabels =
+    WorkoutInsightsGenerationLabels(
+        finalSynthesisPlaceholder = context.getString(R.string.loc_insight_generating),
+        preparingToolsPlaceholder = context.getString(R.string.loc_loading_insight_model),
+        repeatedTextRestartStatus = context.getString(R.string.loc_insight_repeated_restart),
+        repeatedChatFailure = context.getString(R.string.loc_insight_repeated_chat_failure),
+        repeatedInsightFailure = context.getString(R.string.loc_insight_repeated_failure),
+        noInsightsGenerated = context.getString(R.string.loc_no_insights_generated),
+        noReplyGenerated = context.getString(R.string.loc_no_reply_generated),
+    )
+
 private class RepeatedInsightTextException(
     val result: InsightRepetitionResult,
 ) : RuntimeException("Repeated insight text detected: ${result.reason}")
@@ -82,18 +109,19 @@ internal suspend fun runWorkoutInsightsGeneration(
         onProgress: suspend (WorkoutInsightsPhase, String) -> Unit,
     ) -> Unit,
     onAfterChartAnalysis: (suspend () -> Unit)? = null,
+    labels: WorkoutInsightsGenerationLabels = WorkoutInsightsGenerationLabels(),
 ) {
     request.debugRecorder?.recordStatus(
         phase = WorkoutInsightsPhase.PREPARING_TOOLS,
-        statusText = PREPARING_TOOLS_PLACEHOLDER,
+        statusText = labels.preparingToolsPlaceholder,
     )
     if (request.useTransportToolCalling && request.toolContext != null) {
         emitChunk(
             WorkoutInsightsChunk(
                 title = request.title,
-                text = PREPARING_TOOLS_PLACEHOLDER,
+                text = labels.preparingToolsPlaceholder,
                 phase = WorkoutInsightsPhase.PREPARING_TOOLS,
-                statusText = PREPARING_TOOLS_PLACEHOLDER
+                statusText = labels.preparingToolsPlaceholder
             )
         )
         val chatSystemPrompt = appendCustomInsightInstructions(
@@ -148,7 +176,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                                 title = request.title,
                                 text = accumulated.toString(),
                                 phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                                statusText = FINAL_SYNTHESIS_PLACEHOLDER
+                                statusText = labels.finalSynthesisPlaceholder
                             )
                         )
                     },
@@ -159,11 +187,11 @@ internal suspend fun runWorkoutInsightsGeneration(
                                 title = request.title,
                                 text = accumulated.toString().ifBlank {
                                     when (phase) {
-                                        WorkoutInsightsPhase.PREPARING_TOOLS -> PREPARING_TOOLS_PLACEHOLDER
+                                        WorkoutInsightsPhase.PREPARING_TOOLS -> labels.preparingToolsPlaceholder
                                         WorkoutInsightsPhase.FETCHING_CONTEXT -> statusText
                                         WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> statusText
-                                        WorkoutInsightsPhase.CHART_ANALYSIS -> statusText.ifBlank { FINAL_SYNTHESIS_PLACEHOLDER }
-                                        WorkoutInsightsPhase.FINAL_SYNTHESIS -> FINAL_SYNTHESIS_PLACEHOLDER
+                                        WorkoutInsightsPhase.CHART_ANALYSIS -> statusText.ifBlank { labels.finalSynthesisPlaceholder }
+                                        WorkoutInsightsPhase.FINAL_SYNTHESIS -> labels.finalSynthesisPlaceholder
                                     }
                                 },
                                 phase = phase,
@@ -185,7 +213,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                 )
                 if (finalAttempt >= MAX_FINAL_SYNTHESIS_ATTEMPTS) {
                     throw IllegalStateException(
-                        "Chat generation repeated text after retry. Please try again."
+                        labels.repeatedChatFailure
                     )
                 }
                 finalAttempt += 1
@@ -193,9 +221,9 @@ internal suspend fun runWorkoutInsightsGeneration(
                 emitChunk(
                     WorkoutInsightsChunk(
                         title = request.title,
-                        text = REPEATED_TEXT_RESTART_STATUS,
+                        text = labels.repeatedTextRestartStatus,
                         phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                        statusText = REPEATED_TEXT_RESTART_STATUS
+                        statusText = labels.repeatedTextRestartStatus
                     )
                 )
             }
@@ -204,7 +232,7 @@ internal suspend fun runWorkoutInsightsGeneration(
         logWorkoutInsightsBlock(
             logTag,
             "${transportLabel}_chat_final_raw_response",
-            rawReply.ifBlank { "No reply was generated." },
+            rawReply.ifBlank { labels.noReplyGenerated },
             request.debugRecorder,
         )
         val isHistoryChat = request.conversationMessages.isNotEmpty()
@@ -216,10 +244,12 @@ internal suspend fun runWorkoutInsightsGeneration(
             enforceNumericContract = !isHistoryChat,
             preserveMarkdown = isHistoryChat,
         )
-        var normalizedReply = outcome.markdown
+        // Work on the display variant so app provenance survives for localized rendering; the
+        // marker-free canonical text is derived once at the boundary below.
+        var displayReply = outcome.displayMarkdown
         if (!isHistoryChat && outcome.misquotedDrops.isNotEmpty()) {
-            normalizedReply = recoverMisquotedLines(
-                outcome = outcome,
+            displayReply = recoverMisquotedLines(
+                outcome = outcome.copy(markdown = displayReply, displayMarkdown = displayReply),
                 request = request,
                 logTag = logTag,
                 transportLabel = transportLabel,
@@ -227,15 +257,23 @@ internal suspend fun runWorkoutInsightsGeneration(
             )
         }
         if (!isHistoryChat) {
-            (request.toolContext as? WorkoutInsightsToolContext.WorkoutSession)?.nextSessionTargetBullet?.let { fallback ->
-                normalizedReply = ensureNextSessionTargetSection(normalizedReply, fallback)
+            (request.toolContext as? WorkoutInsightsToolContext.WorkoutSession)?.let { session ->
+                session.nextSessionTargetBullet?.let { fallback ->
+                    displayReply = ensureNextSessionTargetSection(
+                        markdown = displayReply,
+                        fallbackBullet = fallback,
+                        displayBullet = session.nextSessionTargetDisplayBullet,
+                    )
+                }
             }
         }
+        val normalizedReply = displayReply.stripAppGeneratedInsightMarkup()
+        val displayReplyVariant = displayReply.takeIf { it != normalizedReply }
         if (normalizedReply != rawReply) {
             logWorkoutInsightsBlock(
                 logTag,
                 "${transportLabel}_chat_final_postprocessed_response",
-                normalizedReply.ifBlank { "No reply was generated." },
+                normalizedReply.ifBlank { labels.noReplyGenerated },
                 request.debugRecorder,
             )
             accumulated.clear()
@@ -244,8 +282,9 @@ internal suspend fun runWorkoutInsightsGeneration(
                 WorkoutInsightsChunk(
                     title = request.title,
                     text = normalizedReply,
+                    displayText = displayReplyVariant,
                     phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                    statusText = FINAL_SYNTHESIS_PLACEHOLDER
+                    statusText = labels.finalSynthesisPlaceholder
                 )
             )
         }
@@ -261,9 +300,9 @@ internal suspend fun runWorkoutInsightsGeneration(
     emitChunk(
         WorkoutInsightsChunk(
             title = request.title,
-            text = PREPARING_TOOLS_PLACEHOLDER,
+            text = labels.preparingToolsPlaceholder,
             phase = WorkoutInsightsPhase.PREPARING_TOOLS,
-            statusText = PREPARING_TOOLS_PLACEHOLDER
+            statusText = labels.preparingToolsPlaceholder
         )
     )
     val finalPrompt = finalSynthesisBasePrompt
@@ -309,7 +348,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                             title = request.title,
                             text = accumulated.toString(),
                             phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                            statusText = FINAL_SYNTHESIS_PLACEHOLDER
+                            statusText = labels.finalSynthesisPlaceholder
                         )
                     )
                 },
@@ -320,11 +359,11 @@ internal suspend fun runWorkoutInsightsGeneration(
                             title = request.title,
                             text = accumulated.toString().ifBlank {
                                 when (phase) {
-                                    WorkoutInsightsPhase.PREPARING_TOOLS -> PREPARING_TOOLS_PLACEHOLDER
+                                    WorkoutInsightsPhase.PREPARING_TOOLS -> labels.preparingToolsPlaceholder
                                     WorkoutInsightsPhase.FETCHING_CONTEXT -> statusText
                                     WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> statusText
-                                    WorkoutInsightsPhase.CHART_ANALYSIS -> statusText.ifBlank { FINAL_SYNTHESIS_PLACEHOLDER }
-                                    WorkoutInsightsPhase.FINAL_SYNTHESIS -> FINAL_SYNTHESIS_PLACEHOLDER
+                                    WorkoutInsightsPhase.CHART_ANALYSIS -> statusText.ifBlank { labels.finalSynthesisPlaceholder }
+                                    WorkoutInsightsPhase.FINAL_SYNTHESIS -> labels.finalSynthesisPlaceholder
                                 }
                             },
                             phase = phase,
@@ -346,7 +385,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                 )
                 if (finalAttempt >= MAX_FINAL_SYNTHESIS_ATTEMPTS) {
                     throw IllegalStateException(
-                    "Insight generation repeated text after retry. Please try again."
+                    labels.repeatedInsightFailure
                 )
             }
             finalAttempt += 1
@@ -354,9 +393,9 @@ internal suspend fun runWorkoutInsightsGeneration(
             emitChunk(
                 WorkoutInsightsChunk(
                     title = request.title,
-                    text = REPEATED_TEXT_RESTART_STATUS,
+                    text = labels.repeatedTextRestartStatus,
                     phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                    statusText = REPEATED_TEXT_RESTART_STATUS
+                    statusText = labels.repeatedTextRestartStatus
                 )
             )
         }
@@ -365,21 +404,23 @@ internal suspend fun runWorkoutInsightsGeneration(
     logWorkoutInsightsBlock(
         logTag,
         "${transportLabel}_final_raw_response",
-        rawInsight.ifBlank { "No insights were generated." },
+        rawInsight.ifBlank { labels.noInsightsGenerated },
         request.debugRecorder,
     )
-    val normalizedInsight = postProcessInsightMarkdown(
+    val finalOutcome = postProcessInsightMarkdownWithDropReport(
         markdown = rawInsight,
         toolContext = request.toolContext,
         evidencePrompt = finalPrompt,
         applySessionTargetSection = request.conversationMessages.isEmpty(),
         preserveMarkdown = request.conversationMessages.isNotEmpty(),
     )
+    val normalizedInsight = finalOutcome.markdown
+    val displayInsightVariant = finalOutcome.displayMarkdown.takeIf { it != normalizedInsight }
     if (normalizedInsight != rawInsight) {
         logWorkoutInsightsBlock(
             logTag,
             "${transportLabel}_final_postprocessed_response",
-            normalizedInsight.ifBlank { "No insights were generated." },
+            normalizedInsight.ifBlank { labels.noInsightsGenerated },
             request.debugRecorder,
         )
         accumulated.clear()
@@ -388,8 +429,9 @@ internal suspend fun runWorkoutInsightsGeneration(
             WorkoutInsightsChunk(
                 title = request.title,
                 text = normalizedInsight,
+                displayText = displayInsightVariant,
                 phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                statusText = FINAL_SYNTHESIS_PLACEHOLDER
+                statusText = labels.finalSynthesisPlaceholder
             )
         )
     }
