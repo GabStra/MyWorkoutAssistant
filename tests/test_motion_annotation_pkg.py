@@ -7,7 +7,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from motion_annotation_pkg.loader import copy_export_into_workspace, load_export_bundle
+from motion_annotation_pkg.loader import _decode_binary_chunk, copy_export_into_workspace, load_export_bundle
 from motion_annotation_pkg.pipeline import (
     build_dataset_index,
     finalize_review_session,
@@ -33,6 +33,60 @@ def test_loader_parses_export_bundle(tmp_path: Path) -> None:
         "rest_started",
     ]
     assert set(bundle["sensor_chunks"]) == {"chunk_00001.csv", "chunk_00002.csv"}
+
+
+def test_binary_chunk_decoder_matches_kotlin_encoder_layout(tmp_path: Path) -> None:
+    import struct
+
+    samples = [
+        (0, 1_731_846_000_000, 452_811_234_567_890, 3, 0.1234567, -9.8765432, 3.5, None),
+        (1, 1_731_846_000_020, 452_811_254_567_890, 3, 0.01, -0.02, 0.03, None),
+        (2, 1_731_846_000_015, 452_811_274_567_890, 3, 0.5, 0.6, 0.7, 0.9),
+        (3, 1_731_846_000_030, 452_811_294_567_890, 3, 72.0, np.nan, np.nan, None),
+    ]
+
+    def zigzag_varint(value: int) -> bytes:
+        v = ((value << 1) ^ (value >> 63)) & 0xFFFFFFFFFFFFFFFF
+        out = bytearray()
+        while True:
+            byte = v & 0x7F
+            v >>= 7
+            out.append(byte | (0x80 if v else 0))
+            if not v:
+                return bytes(out)
+
+    payload = bytearray(b"MCF2" + bytes([2]) + struct.pack("<Hqq", len(samples), samples[0][1], samples[0][2]))
+    payload += bytes(sample[0] for sample in samples)
+    payload += bytes(sample[3] for sample in samples)
+    for column in (1, 2):
+        previous = samples[0][column]
+        for sample in samples:
+            payload += zigzag_varint(sample[column] - previous)
+            previous = sample[column]
+    for axis in range(4):
+        for byte_index in range(4):
+            for sample in samples:
+                value = float("nan") if sample[4 + axis] is None else sample[4 + axis]
+                bits = struct.unpack("<I", struct.pack("<f", value))[0]
+                payload.append((bits >> (byte_index * 8)) & 0xFF)
+
+    decoded = _decode_binary_chunk(bytes(payload))
+
+    assert [str(name) for name in decoded["sensorType"]] == [
+        "ACCELEROMETER", "GYROSCOPE", "ROTATION_VECTOR", "HEART_RATE"
+    ]
+    assert list(decoded["epochTimeMs"]) == [sample[1] for sample in samples]
+    assert list(decoded["elapsedRealtimeNanos"]) == [sample[2] for sample in samples]
+    assert list(decoded["accuracy"]) == [3, 3, 3, 3]
+    for axis_index, axis in enumerate(("x", "y", "z")):
+        assert np.array_equal(
+            decoded[axis].view(np.uint8),
+            np.array([np.float32(sample[4 + axis_index]) for sample in samples]).view(np.uint8),
+        )
+    assert np.array_equal(
+        decoded["w"].view(np.uint8),
+        np.array([np.nan, np.nan, np.float32(0.9), np.nan], dtype=np.float32).view(np.uint8),
+    )
 
 
 def test_prepare_review_session_writes_review_json_and_signals(tmp_path: Path) -> None:

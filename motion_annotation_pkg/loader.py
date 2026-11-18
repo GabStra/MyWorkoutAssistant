@@ -82,9 +82,15 @@ def _load_events(path: Path) -> list[dict[str, Any]]:
 def _load_chunk(path: Path) -> dict[str, np.ndarray]:
     """Load a raw sensor chunk without assuming a fixed set of sensor types.
 
-    Rows from forward-compatible sensor types (heart rate, pressure, ...) are parsed
-    generically; rows missing required numeric fields are skipped instead of raising.
+    v2 chunks are binary columnar files (see MotionCaptureChunkFormat on the Kotlin side);
+    legacy v1 chunks are CSV. Rows from forward-compatible sensor types (heart rate,
+    pressure, ...) are parsed generically; rows missing required numeric fields are
+    skipped instead of raising.
     """
+    if path.name.endswith(".bin") or path.name.endswith(".bin.gz"):
+        opener = gzip.open if path.name.endswith(".gz") else open
+        with opener(path, "rb") as handle:  # type: ignore[call-overload]
+            return _decode_binary_chunk(handle.read())
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8", newline="") as handle:  # type: ignore[call-overload]
         reader = csv.DictReader(handle)
@@ -139,3 +145,76 @@ def _optional_int(value: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+# Mirrors MotionSensorType's Kotlin declaration order, which the v2 chunk format pins by ordinal.
+_MOTION_SENSOR_TYPE_NAMES = [
+    "ACCELEROMETER",
+    "GYROSCOPE",
+    "ROTATION_VECTOR",
+    "HEART_RATE",
+    "STEP_COUNTER",
+    "GRAVITY",
+    "LINEAR_ACCELERATION",
+    "PRESSURE",
+]
+
+_BINARY_CHUNK_MAGIC = b"MCF2"
+
+
+def _decode_binary_chunk(data: bytes) -> dict[str, np.ndarray]:
+    """Decode a v2 columnar chunk (MotionCaptureChunkFormat): header, delta-timestamp columns and
+    byte-plane-shuffled float32 value columns. Lossless — values are bit-identical to the watch's."""
+    if data[:4] != _BINARY_CHUNK_MAGIC:
+        raise ValueError("Not a motion chunk v2 file")
+    if data[4] != 2:
+        raise ValueError(f"Unsupported motion chunk version {data[4]}")
+    count = int.from_bytes(data[5:7], "little")
+    base_epoch = int.from_bytes(data[7:15], "little", signed=True)
+    base_elapsed = int.from_bytes(data[15:23], "little", signed=True)
+    offset = 23
+    type_ordinals = np.frombuffer(data[offset:offset + count], dtype=np.uint8)
+    offset += count
+    accuracy = np.frombuffer(data[offset:offset + count], dtype=np.int8).astype(np.int32)
+    offset += count
+    epoch_deltas, offset = _decode_varints(data, offset, count)
+    elapsed_deltas, offset = _decode_varints(data, offset, count)
+    epoch = base_epoch + np.cumsum(epoch_deltas, dtype=np.int64)
+    elapsed = base_elapsed + np.cumsum(elapsed_deltas, dtype=np.int64)
+
+    def _value_column() -> np.ndarray:
+        nonlocal offset
+        planes = np.frombuffer(data[offset:offset + 4 * count], dtype=np.uint8).reshape(4, count)
+        offset += 4 * count
+        return np.ascontiguousarray(planes.T).view("<f4").reshape(-1)
+
+    return {
+        "sensorType": np.array([
+            _MOTION_SENSOR_TYPE_NAMES[o] if o < len(_MOTION_SENSOR_TYPE_NAMES) else f"UNKNOWN_{o}"
+            for o in type_ordinals
+        ], dtype=str),
+        "epochTimeMs": epoch,
+        "elapsedRealtimeNanos": elapsed,
+        "accuracy": accuracy,
+        "x": _value_column(),
+        "y": _value_column(),
+        "z": _value_column(),
+        "w": _value_column(),
+    }
+
+
+def _decode_varints(data: bytes, offset: int, count: int) -> tuple[np.ndarray, int]:
+    """Decode `count` zigzag LEB128 varints starting at `offset`; returns (values, next_offset)."""
+    values = np.empty(count, dtype=np.int64)
+    for index in range(count):
+        result = 0
+        shift = 0
+        while True:
+            byte = data[offset]
+            offset += 1
+            result |= (byte & 0x7F) << shift
+            if not byte & 0x80:
+                break
+            shift += 7
+        values[index] = (result >> 1) ^ -(result & 1)
+    return values, offset

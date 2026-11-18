@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.motion
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.zip.Deflater
 import java.util.zip.GZIPOutputStream
 
 /**
@@ -19,7 +20,10 @@ object MotionCaptureChunkCompressor {
     fun gzipFile(source: File): File? {
         val target = File(source.parentFile, source.name + ".gz")
         return try {
-            GZIPOutputStream(FileOutputStream(target)).use { output ->
+            // GZIPOutputStream hides the deflate level; a subclass reaches it for max ratio.
+            object : GZIPOutputStream(FileOutputStream(target)) {
+                init { def.setLevel(Deflater.BEST_COMPRESSION) }
+            }.use { output ->
                 FileInputStream(source).use { input -> input.copyTo(output) }
             }
             if (source.delete()) {
