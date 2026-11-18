@@ -50,7 +50,9 @@ data class MotionCaptureSensorConfig(
     // True only when the user explicitly toggled capture on for this session (vs routine auto-capture
     // that rides the default-on preference); null on legacy records. Drives whether the on-watch
     // review UI is offered after the workout.
-    val userInitiated: Boolean? = null
+    val userInitiated: Boolean? = null,
+    // True when the session records a freeform (no workout) capture; null on legacy records.
+    val freeform: Boolean? = null
 )
 
 /**

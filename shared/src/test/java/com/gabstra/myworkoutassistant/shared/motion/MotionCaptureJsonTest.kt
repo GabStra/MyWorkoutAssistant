@@ -33,4 +33,14 @@ class MotionCaptureJsonTest {
             parsed.enabledSensors
         )
     }
+
+    @Test
+    fun `freeform flag round-trips and legacy configs parse as null`() {
+        val freeform = MotionCaptureSensorConfig(freeform = true)
+        assertEquals(freeform, MotionCaptureJson.sensorConfigFromJson(MotionCaptureJson.sensorConfigToJson(freeform)))
+
+        val legacyJson = "{\"sampleRateHz\":50,\"chunkSampleCount\":500," +
+            "\"enabledSensors\":[\"ACCELEROMETER\",\"GYROSCOPE\",\"ROTATION_VECTOR\"]}"
+        assertNull(MotionCaptureJson.sensorConfigFromJson(legacyJson).freeform)
+    }
 }
