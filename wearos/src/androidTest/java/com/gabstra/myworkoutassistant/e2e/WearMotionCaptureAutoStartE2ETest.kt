@@ -116,10 +116,12 @@ class WearMotionCaptureAutoStartE2ETest : WearBaseE2ETest() {
         var sawPlainChunk = false
         while (System.currentTimeMillis() < deadline) {
             val gzipped = sessionDirectory.listFiles { file ->
-                file.isFile && file.name.startsWith("chunk_") && file.name.endsWith(".csv.gz")
+                file.isFile && file.name.startsWith("chunk_") &&
+                    (file.name.endsWith(".bin.gz") || file.name.endsWith(".csv.gz"))
             }.orEmpty()
             val plain = sessionDirectory.listFiles { file ->
-                file.isFile && file.name.startsWith("chunk_") && file.name.endsWith(".csv")
+                file.isFile && file.name.startsWith("chunk_") &&
+                    (file.name.endsWith(".bin") || file.name.endsWith(".csv"))
             }.orEmpty()
             sawGzippedChunk = sawGzippedChunk || gzipped.isNotEmpty()
             sawPlainChunk = sawPlainChunk || plain.isNotEmpty()

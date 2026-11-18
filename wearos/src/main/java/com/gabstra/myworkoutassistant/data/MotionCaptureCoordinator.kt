@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureChunkCompressor
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureChunkFormat
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureDetailLevel
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureExerciseCandidate
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureEventRecord
@@ -26,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionRecord
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionStatus
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureWorkoutCatalog
+import com.gabstra.myworkoutassistant.shared.motion.MotionSensorSample
 import com.gabstra.myworkoutassistant.shared.motion.MotionSensorType
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
@@ -36,6 +38,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.reps.RepDetector
 import com.gabstra.myworkoutassistant.reps.StillnessTracker
 import com.gabstra.myworkoutassistant.repository.MotionSensorRepository
+import com.gabstra.myworkoutassistant.sync.SensorSessionSyncWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,7 +48,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedWriter
 import java.io.File
 import java.util.UUID
 
@@ -61,6 +63,8 @@ data class MotionCaptureUiState(
     val sampleRate: MotionCaptureSampleRate = MotionCaptureSampleRate.HZ_50,
     val hasRequiredSensors: Boolean = false,
     val isCapturing: Boolean = false,
+    /** True while a freeform (no workout) capture session is active. */
+    val isFreeformCapture: Boolean = false,
     val activeSessionId: UUID? = null,
     val latestReviewSession: MotionCaptureReviewSession? = null,
     val lastExportDirectory: String? = null
@@ -135,9 +139,8 @@ class MotionCaptureCoordinator(
     private var lastObservedWorkoutState: com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState? = null
     private var segmentSequenceIndex = 0
     private var captureJob: Job? = null
-    private var currentChunkWriter: BufferedWriter? = null
-    private var currentChunkFileName: String? = null
-    private var currentChunkSampleCount = 0
+    /** Samples buffered for the in-progress chunk; serialized to a binary chunk file on flush. */
+    private val pendingChunkSamples = mutableListOf<MotionSensorSample>()
     private var currentChunkIndex = 0
     private var lowStorageAbortTriggered = false
     private var captureToggledOnManually = false
@@ -383,7 +386,7 @@ class MotionCaptureCoordinator(
         lastProcessedWorkout = screenState.selectedWorkout
         if (!enabled || !_uiState.value.hasRequiredSensors) {
             if (activeSession != null) {
-                scope.launch { stopCapture(MotionCaptureSessionStatus.ABANDONED) }
+                scope.launch { stopCapture(effectiveStopStatus(MotionCaptureSessionStatus.ABANDONED)) }
             }
             return
         }
@@ -411,12 +414,103 @@ class MotionCaptureCoordinator(
     suspend fun onPaused() {
         captureJob?.cancel()
         captureJob = null
-        flushChunkWriter()
+        activeSession?.let { flushPendingChunk(it) }
         _uiState.value = _uiState.value.copy(isCapturing = false)
     }
 
     suspend fun onWorkoutExited() {
-        stopCapture(MotionCaptureSessionStatus.ABANDONED)
+        stopCapture(effectiveStopStatus(MotionCaptureSessionStatus.ABANDONED))
+    }
+
+    /** A freeform session is a deliberate recording: never discard it, only complete it. */
+    private fun effectiveStopStatus(status: MotionCaptureSessionStatus): MotionCaptureSessionStatus =
+        if (status == MotionCaptureSessionStatus.ABANDONED && activeSession?.sensorConfig?.freeform == true) {
+            MotionCaptureSessionStatus.COMPLETED
+        } else {
+            status
+        }
+
+    /**
+     * Starts a freeform capture session with no workout attached: one open TRANSITION segment
+     * spans the whole recording, and exercise labeling happens offline during review/analysis.
+     */
+    fun startFreeformCapture() {
+        scope.launch {
+            if (activeSession != null) return@launch
+            if (!_uiState.value.hasRequiredSensors) {
+                Log.e(TAG, "Freeform capture not started - required sensors missing")
+                return@launch
+            }
+            val usableSpace = withContext(Dispatchers.IO) { sessionsRootDirectory().usableSpace }
+            if (usableSpace < MIN_FREE_BYTES_FOR_CAPTURE) {
+                Log.e(TAG, "Freeform capture not started - low storage (free=$usableSpace bytes)")
+                return@launch
+            }
+            val sessionId = UUID.randomUUID()
+            val session = MotionCaptureSessionRecord(
+                id = sessionId,
+                workoutId = UUID.randomUUID(),
+                workoutHistoryId = null,
+                status = MotionCaptureSessionStatus.ACTIVE,
+                startedAtEpochMs = System.currentTimeMillis(),
+                endedAtEpochMs = null,
+                deviceManufacturer = Build.MANUFACTURER,
+                deviceModel = Build.MODEL,
+                deviceName = Build.DEVICE,
+                appVersion = appVersionProvider(),
+                sessionDirectoryName = sessionId.toString(),
+                sensorConfig = sensorConfig.copy(
+                    observedSensors = sensorRepository.observedSensors(sensorConfig).sorted().toList(),
+                    // The watch review panel was rejected by design; freeform labeling lives
+                    // offline (PC review tool / phone Sensor Sessions).
+                    userInitiated = false,
+                    freeform = true
+                ),
+                exerciseCandidates = emptyList()
+            )
+            sessionDao.insert(session.toEntity())
+            activeSession = session
+            activeLabel = null
+            lastObservedWorkoutState = null
+            activeSegment = null
+            segmentSequenceIndex = 0
+            currentChunkIndex = 0
+            pendingChunkSamples.clear()
+            lowStorageAbortTriggered = false
+            captureToggledOnManually = false
+            withContext(Dispatchers.IO) {
+                val sessionDirectory = sessionsRootDirectory().resolve(session.sessionDirectoryName).apply { mkdirs() }
+                initializeEventsFile(sessionDirectory)
+            }
+            // One segment for the whole recording; flushPendingChunk attaches every chunk to it.
+            val startedAtEpochMs = System.currentTimeMillis()
+            val startedAtElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+            val segment = MotionCaptureSessionEditor.startSegment(
+                sessionId = sessionId,
+                sequenceIndex = segmentSequenceIndex++,
+                label = MotionCaptureLabel(
+                    kind = MotionCaptureLabelKind.TRANSITION,
+                    stateName = "Freeform",
+                    noRepExpected = true
+                ),
+                startedAtEpochMs = startedAtEpochMs,
+                startedAtElapsedRealtimeNanos = startedAtElapsedRealtimeNanos
+            )
+            segmentDao.insert(segment.toEntity())
+            activeSegment = segment
+            activeLabel = segment.autoLabel
+            startSensorCollection(session)
+            _uiState.value = _uiState.value.copy(isFreeformCapture = true)
+        }
+    }
+
+    /** Stops the active freeform session as COMPLETED and schedules its sync to the phone. */
+    fun stopFreeformCapture() {
+        scope.launch {
+            if (activeSession?.sensorConfig?.freeform != true) return@launch
+            stopCapture(MotionCaptureSessionStatus.COMPLETED)
+            SensorSessionSyncWorker.enqueue(context)
+        }
     }
 
     suspend fun confirmSegment(segmentId: UUID) {
@@ -511,7 +605,7 @@ class MotionCaptureCoordinator(
             }
         }
         if (currentSession != null) {
-            stopCapture(MotionCaptureSessionStatus.ABANDONED)
+            stopCapture(effectiveStopStatus(MotionCaptureSessionStatus.ABANDONED))
         }
         val sessionId = UUID.randomUUID()
         val sessionDirectoryName = sessionId.toString()
@@ -541,8 +635,7 @@ class MotionCaptureCoordinator(
         activeSegment = null
         segmentSequenceIndex = 0
         currentChunkIndex = 0
-        currentChunkSampleCount = 0
-        currentChunkFileName = null
+        pendingChunkSamples.clear()
         lowStorageAbortTriggered = false
         captureToggledOnManually = false
         withContext(Dispatchers.IO) {
@@ -566,6 +659,9 @@ class MotionCaptureCoordinator(
         val transitionEpochMs = System.currentTimeMillis()
         val transitionElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         if (newLabel == null) {
+            if (activeSegment != null) {
+                flushPendingChunk(session)
+            }
             recordExitEvents(previousLabel, previousSegment, transitionEpochMs, transitionElapsedRealtimeNanos, previousWorkoutState)
             closeActiveSegment(transitionEpochMs, transitionElapsedRealtimeNanos)
             activeLabel = null
@@ -574,6 +670,10 @@ class MotionCaptureCoordinator(
         if (activeLabel == newLabel && activeSegment != null) {
             return
         }
+        if (activeSegment != null) {
+            // The buffered tail belongs to the segment being closed: flush while it is still open.
+            flushPendingChunk(session)
+        }
         recordExitEvents(previousLabel, previousSegment, transitionEpochMs, transitionElapsedRealtimeNanos, previousWorkoutState)
         closeActiveSegment(transitionEpochMs, transitionElapsedRealtimeNanos)
         if (newLabel.kind == MotionCaptureLabelKind.EXERCISE && !newLabel.noRepExpected) {
@@ -581,20 +681,18 @@ class MotionCaptureCoordinator(
         }
         val startedAtEpochMs = transitionEpochMs
         val startedAtElapsedRealtimeNanos = transitionElapsedRealtimeNanos
-        var segment = MotionCaptureSessionEditor.startSegment(
+        val segment = MotionCaptureSessionEditor.startSegment(
             sessionId = session.id,
             sequenceIndex = segmentSequenceIndex++,
             label = newLabel,
             startedAtEpochMs = startedAtEpochMs,
-            startedAtElapsedRealtimeNanos = startedAtElapsedRealtimeNanos,
-            initialChunkFileName = currentChunkFileName
+            startedAtElapsedRealtimeNanos = startedAtElapsedRealtimeNanos
         )
-        currentChunkFileName?.let {
-            segment = MotionCaptureSessionEditor.appendChunkReference(segment, it)
-        }
         segmentDao.insert(segment.toEntity())
         activeSegment = segment
         activeLabel = newLabel
+        // Samples captured before the first segment existed attach to it now that it is open.
+        flushPendingChunk(session)
         recordEnterEvents(previousLabel, newLabel, segment, startedAtEpochMs, startedAtElapsedRealtimeNanos)
     }
 
@@ -615,6 +713,11 @@ class MotionCaptureCoordinator(
     private suspend fun stopCapture(status: MotionCaptureSessionStatus) {
         stillnessTracker.reset()
         notifyStillness(true)
+        val sessionBeforeStop = activeSession
+        if (sessionBeforeStop != null) {
+            // Flush while the last segment is still open so the final chunk is attached to it.
+            flushPendingChunk(sessionBeforeStop)
+        }
         val endedAtEpochMs = System.currentTimeMillis()
         val endedAtElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         recordExitEvents(activeLabel, activeSegment, endedAtEpochMs, endedAtElapsedRealtimeNanos, lastObservedWorkoutState)
@@ -622,7 +725,6 @@ class MotionCaptureCoordinator(
         activeLabel = null
         captureJob?.cancel()
         captureJob = null
-        flushChunkWriter()
         val session = activeSession ?: return
         val updated = session.copy(
             status = status,
@@ -633,6 +735,7 @@ class MotionCaptureCoordinator(
         gzipSessionChunks(session.id, session.sessionDirectoryName)
         _uiState.value = _uiState.value.copy(
             isCapturing = false,
+            isFreeformCapture = false,
             activeSessionId = null
         )
         refreshLatestReview()
@@ -642,7 +745,8 @@ class MotionCaptureCoordinator(
         withContext(Dispatchers.IO) {
             val sessionDirectory = sessionsRootDirectory().resolve(sessionDirectoryName)
             val chunkFiles = sessionDirectory.listFiles { file ->
-                file.isFile && file.name.startsWith("chunk_") && file.name.endsWith(".csv")
+                file.isFile && file.name.startsWith("chunk_") &&
+                    (file.name.endsWith(".csv") || file.name.endsWith(MotionCaptureChunkFormat.FILE_EXTENSION))
             }.orEmpty()
             if (chunkFiles.isEmpty()) {
                 return@withContext
@@ -730,26 +834,15 @@ class MotionCaptureCoordinator(
         repDetector = RepDetector(subtractGravity = !useLinear)
     }
 
-    private suspend fun writeSample(sample: com.gabstra.myworkoutassistant.shared.motion.MotionSensorSample) {
+    private suspend fun writeSample(sample: MotionSensorSample) {
         val session = activeSession ?: return
         if (sample.sensorType == repDetectorSensor) {
             repDetector?.addSample(sample.elapsedRealtimeNanos, sample.x, sample.y, sample.z)
             notifyStillness(stillnessTracker.addSample(sample.elapsedRealtimeNanos, sample.x, sample.y, sample.z))
         }
-        ensureChunkWriter(session)
-        currentChunkWriter?.apply {
-            append(
-                "${sample.sensorType},${sample.epochTimeMs},${sample.elapsedRealtimeNanos}," +
-                    "${sample.accuracy},${sample.x},${sample.y},${sample.z},${sample.w ?: ""}\n"
-            )
-            currentChunkSampleCount += 1
-            if (currentChunkSampleCount >= sensorConfig.chunkSampleCount) {
-                flush()
-                close()
-                currentChunkWriter = null
-                currentChunkFileName = null
-                currentChunkSampleCount = 0
-            }
+        pendingChunkSamples.add(sample)
+        if (pendingChunkSamples.size >= sensorConfig.chunkSampleCount) {
+            flushPendingChunk(session)
         }
     }
 
@@ -966,37 +1059,34 @@ class MotionCaptureCoordinator(
         return "\"${value.replace("\"", "\"\"")}\""
     }
 
-    private suspend fun ensureChunkWriter(session: MotionCaptureSessionRecord) {
-        if (currentChunkWriter != null) return
-        val sessionDirectory = sessionsRootDirectory().resolve(session.sessionDirectoryName).apply { mkdirs() }
-        if (sessionDirectory.usableSpace < MIN_FREE_BYTES_FOR_CAPTURE) {
+    /**
+     * Serializes the buffered samples into this session's next binary chunk file and attaches it
+     * to the active segment. Callers flush before closing a segment so the chunk lands in the
+     * segment that was live while its samples were recorded.
+     */
+    private suspend fun flushPendingChunk(session: MotionCaptureSessionRecord) {
+        if (pendingChunkSamples.isEmpty()) return
+        val lowStorage = withContext(Dispatchers.IO) {
+            sessionsRootDirectory().usableSpace < MIN_FREE_BYTES_FOR_CAPTURE
+        }
+        if (lowStorage) {
+            pendingChunkSamples.clear()
             abortCaptureForLowStorage(session)
             return
         }
         currentChunkIndex += 1
-        currentChunkSampleCount = 0
-        val chunkFileName = "chunk_${currentChunkIndex.toString().padStart(5, '0')}.csv"
-        currentChunkFileName = chunkFileName
-        currentChunkWriter = withContext(Dispatchers.IO) {
-            File(sessionDirectory, chunkFileName).bufferedWriter().also { writer ->
-                writer.write("sensorType,epochTimeMs,elapsedRealtimeNanos,accuracy,x,y,z,w\n")
-            }
+        val chunkFileName = "chunk_${currentChunkIndex.toString().padStart(5, '0')}${MotionCaptureChunkFormat.FILE_EXTENSION}"
+        val encoded = MotionCaptureChunkFormat.encode(pendingChunkSamples.toList())
+        pendingChunkSamples.clear()
+        withContext(Dispatchers.IO) {
+            sessionsRootDirectory().resolve(session.sessionDirectoryName).apply { mkdirs() }
+                .resolve(chunkFileName).writeBytes(encoded)
         }
         val segment = activeSegment
         if (segment != null) {
             val updated = MotionCaptureSessionEditor.appendChunkReference(segment, chunkFileName)
             segmentDao.insert(updated.toEntity())
             activeSegment = updated
-        }
-    }
-
-    private suspend fun flushChunkWriter() {
-        withContext(Dispatchers.IO) {
-            currentChunkWriter?.flush()
-            currentChunkWriter?.close()
-            currentChunkWriter = null
-            currentChunkFileName = null
-            currentChunkSampleCount = 0
         }
     }
 
