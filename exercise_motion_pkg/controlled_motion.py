@@ -146,6 +146,30 @@ def retain_rejected_fit_candidate(
         return False
 
 
+def record_rejected_candidate_identity(candidate, input_payload, report):
+    """Name the rejected fitted pose before the boundary publishes the input.
+
+    The fit publishes its unchanged input when the solved candidate fails a
+    gate, while the report keeps that candidate's acceptance measurements.
+    Without a caller-installed capture callback nothing in the report names the
+    measured pose, so the exhausted solve silently looks like the returned
+    payload. Record the rejected pose digest and the published-input role so
+    candidate provenance is provable from the report alone and the exact state
+    can be replayed faithfully.
+    """
+    if not isinstance(report, dict) or report.get('applied'):
+        return report
+    if not isinstance(candidate, dict) or candidate is input_payload:
+        return report
+    report['rejectedCandidateIdentity'] = {
+        'poseDigest': pose_digest(candidate),
+        'withFixedRig': bool(candidate.get('fixedRig')),
+        'publishedPayload': 'input_payload',
+        'captureRetained': bool(report.get('rejectedFitDiagnostic')),
+    }
+    return report
+
+
 REPAIR_REJECTED_PROPOSAL_CAPTURE_LIMIT = 8
 
 
@@ -19907,6 +19931,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             leftover = set(failed_check_names(report.get('checks')))
             nested_left = _playback_nested_failures(report.get('playback'))
             play_ok = bool((report.get('playback') or {}).get('passed'))
+        record_rejected_candidate_identity(candidate, payload, report)
             seam_pending = cyclic and play_ok and leftover == {'loopSeam'}
             if seam_pending:
                 # Reserve the bounded 10-second projection plus its before/after
@@ -21017,3 +21042,5 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
+        record_rejected_candidate_identity(candidate, payload, report)
+    record_rejected_candidate_identity(candidate, payload, report)

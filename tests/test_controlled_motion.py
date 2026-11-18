@@ -6627,6 +6627,47 @@ def test_initial_validation_preserves_polish_reserve_within_outer_budget(monkeyp
     assert report['polishUntilSeconds'] <= 60.
 
 
+def test_rejected_fit_boundary_names_the_measured_candidate(monkeypatch):
+    """A rejected fit must report the pose it measured, not the returned input."""
+    from exercise_motion_pkg import controlled_motion as motion
+    names, points = stance(12)
+    current = payload(names, points)
+    current['loop'] = {'enabled': True}
+
+    def invalid_progress(residual, initial, pattern, max_evaluations, **solver_options):
+        shifted = initial.copy().reshape(12, -1)
+        shifted[:, 1] -= 1.
+        residual(shifted.ravel())
+        raise TimeoutError
+
+    monkeypatch.setattr(motion, 'solve_trajectory', invalid_progress)
+    # Without a capture callback the boundary must still name its rejected pose.
+    rejected, failure = motion.fit_controlled_motion(current, timeout_seconds=180.)
+    assert rejected is current
+    assert failure['applied'] is False
+    assert failure['reason'] == 'fit_validation_failed', failure
+    identity = failure['rejectedCandidateIdentity']
+    assert identity['publishedPayload'] == 'input_payload'
+    assert identity['withFixedRig'] is True
+    assert identity['captureRetained'] is False
+    input_digest = motion.pose_digest(current)
+    assert identity['poseDigest'] != input_digest
+    assert 'rejectedFitDiagnostic' not in failure
+
+    # With the existing capture callback active the same digest names the pose
+    # actually handed to the callback, so the rejected state stays reproducible.
+    captured = []
+    with motion.capture_rejected_fit_candidate(
+            lambda candidate, report, input_payload: captured.append(
+                (candidate, report, input_payload)) or 'captured'):
+        rejected, failure = motion.fit_controlled_motion(current, timeout_seconds=180.)
+    assert rejected is current
+    assert failure['rejectedCandidateIdentity']['captureRetained'] is True
+    captured_digests = {motion.pose_digest(candidate) for candidate, _, _ in captured}
+    assert failure['rejectedCandidateIdentity']['poseDigest'] in captured_digests
+    assert input_digest not in captured_digests
+
+
 def test_time_budget_validates_saved_progress_before_discarding_it(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion
     names, points = stance(12)
