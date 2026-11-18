@@ -25,6 +25,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.util.size
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
@@ -48,7 +49,10 @@ class WhoopHeartRateViewModel : BaseExternalHeartRateViewModel(HeartRateSource.W
             publishConnectionState(
                 ExternalHeartRateConnectionState.MissingConfiguration(
                     source = source,
-                    message = "Configure ${source.displayName()} in Settings first."
+                    message = hrMessage(
+                        R.string.wear_hr_configure_source_first,
+                        source.displayName()
+                    )
                 )
             )
             return
@@ -59,7 +63,7 @@ class WhoopHeartRateViewModel : BaseExternalHeartRateViewModel(HeartRateSource.W
         publishConnectionState(
             ExternalHeartRateConnectionState.Connecting(
                 source = source,
-                message = "Connecting to your WHOOP..."
+                message = context.getString(R.string.wear_hr_connecting_whoop)
             )
         )
 
@@ -88,7 +92,7 @@ class WhoopHeartRateViewModel : BaseExternalHeartRateViewModel(HeartRateSource.W
                     publishConnectionState(
                         ExternalHeartRateConnectionState.Streaming(
                             source = source,
-                            message = "Streaming from your WHOOP.",
+                            message = context.getString(R.string.wear_hr_streaming_whoop),
                             deviceLabel = whoopConfig.displayName ?: whoopConfig.deviceId
                         )
                     )
@@ -101,7 +105,9 @@ class WhoopHeartRateViewModel : BaseExternalHeartRateViewModel(HeartRateSource.W
                         publishConnectionState(
                             ExternalHeartRateConnectionState.Error(
                                 source = source,
-                                message = error.message ?: "Couldn't connect to your WHOOP."
+                                message = error.message ?: context.getString(
+                                    R.string.wear_hr_couldnt_connect_whoop
+                                )
                             )
                         )
                     }
@@ -176,18 +182,19 @@ private class WhoopBleClient(
 
     private fun ensureBluetoothScanPermission(): Boolean {
         if (hasBluetoothScanPermission()) return true
-        failTerminal("Bluetooth scan permission is required to find your WHOOP.")
+        failTerminal(context.getString(R.string.wear_hr_bluetooth_scan_permission))
         return false
     }
 
     private fun ensureBluetoothConnectPermission(): Boolean {
         if (hasBluetoothConnectPermission()) return true
-        failTerminal("Bluetooth connect permission is required to connect to your WHOOP.")
+        failTerminal(context.getString(R.string.wear_hr_bluetooth_connect_permission))
         return false
     }
 
     private fun configuredDeviceLabel(): String {
-        return config.displayName?.trim()?.takeIf { it.isNotEmpty() } ?: "your WHOOP"
+        return config.displayName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: context.getString(R.string.wear_hr_your_whoop)
     }
 
     @SuppressLint("MissingPermission")
@@ -238,7 +245,7 @@ private class WhoopBleClient(
         val label = if (!hasBluetoothConnectPermission()) {
             config.displayName?.trim()?.takeIf { it.isNotEmpty() }
                 ?: config.deviceId?.trim()?.takeIf { it.isNotEmpty() }
-                ?: "your WHOOP"
+                ?: context.getString(R.string.wear_hr_your_whoop)
         } else {
             gattDeviceName(gatt) ?: gattDeviceAddress(gatt)
         }
@@ -353,11 +360,11 @@ private class WhoopBleClient(
         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter = bluetoothManager?.adapter
         if (adapter == null) {
-            failTerminal("Bluetooth is unavailable on this watch.")
+            failTerminal(context.getString(R.string.wear_hr_bluetooth_unavailable_watch))
             return
         }
         if (!adapter.isEnabled) {
-            failTerminal("Bluetooth is turned off.")
+            failTerminal(context.getString(R.string.wear_hr_bluetooth_off))
             return
         }
 
@@ -379,7 +386,7 @@ private class WhoopBleClient(
 
         val scanner = adapter.bluetoothLeScanner
         if (scanner == null) {
-            failTerminal("BLE scanning is unavailable on this watch.")
+            failTerminal(context.getString(R.string.wear_hr_ble_scanning_unavailable))
             return
         }
 
@@ -426,7 +433,7 @@ private class WhoopBleClient(
         onStateChange(
             ExternalHeartRateConnectionState.Connecting(
                 source = HeartRateSource.WHOOP_BLE,
-                message = "Scanning for your WHOOP..."
+                message = context.getString(R.string.wear_hr_scanning_whoop)
             )
         )
 
@@ -452,7 +459,9 @@ private class WhoopBleClient(
 
             override fun onScanFailed(errorCode: Int) {
                 Log.e(TAG, "WHOOP scan failed with errorCode=$errorCode")
-                failTerminal("WHOOP scan failed ($errorCode).")
+                failTerminal(
+                    context.getString(R.string.wear_hr_whoop_scan_failed, errorCode)
+                )
             }
         }
         scanCallback = callback
@@ -466,7 +475,7 @@ private class WhoopBleClient(
             if (scanCallback === callback) {
                 Log.d(TAG, "WHOOP scan timed out after ${SCAN_TIMEOUT_MS}ms without a match")
                 stopScan()
-                failTerminal("Couldn't find your WHOOP.")
+                failTerminal(context.getString(R.string.wear_hr_couldnt_find_whoop))
             }
         }, SCAN_TIMEOUT_MS)
     }
@@ -546,12 +555,12 @@ private class WhoopBleClient(
         onStateChange(
             ExternalHeartRateConnectionState.Connecting(
                 source = HeartRateSource.WHOOP_BLE,
-                message = "Connecting to $label..."
+                message = context.getString(R.string.wear_hr_connecting_label, label)
             )
         )
         bluetoothGatt = connectGatt(device)
         if (bluetoothGatt == null) {
-            failTerminal("Couldn't connect to $label.")
+            failTerminal(context.getString(R.string.wear_hr_couldnt_connect_label, label))
         }
     }
 
@@ -589,7 +598,7 @@ private class WhoopBleClient(
         }
 
         if (!setCharacteristicNotification(gatt, characteristic, true)) {
-            failTerminal("Couldn't subscribe to WHOOP heart-rate notifications.")
+            failTerminal(context.getString(R.string.wear_hr_couldnt_subscribe_whoop))
             return
         }
 
@@ -599,7 +608,7 @@ private class WhoopBleClient(
             onStateChange(
                 ExternalHeartRateConnectionState.Connected(
                     source = HeartRateSource.WHOOP_BLE,
-                    message = "Connected. Enable Broadcast HR.",
+                    message = context.getString(R.string.wear_hr_connected_enable_broadcast),
                     deviceLabel = config.displayName ?: config.deviceId
                 )
             )
@@ -640,7 +649,9 @@ private class WhoopBleClient(
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (!hasBluetoothConnectPermission()) {
-                failTerminal("Bluetooth connect permission was removed.")
+                failTerminal(
+                    context.getString(R.string.wear_hr_bluetooth_connect_permission_removed)
+                )
                 return
             }
 
@@ -655,7 +666,9 @@ private class WhoopBleClient(
                     prefs.edit().remove(PREF_LAST_ADDRESS).apply()
                 }
                 if (!manualDisconnect) {
-                    failTerminal("WHOOP connection failed ($status).")
+                    failTerminal(
+                        context.getString(R.string.wear_hr_whoop_connection_failed, status)
+                    )
                 }
                 return
             }
@@ -673,7 +686,10 @@ private class WhoopBleClient(
                     onStateChange(
                         ExternalHeartRateConnectionState.Connected(
                             source = HeartRateSource.WHOOP_BLE,
-                            message = "Connected to $label.",
+                            message = context.getString(
+                                R.string.wear_hr_connected_label,
+                                label
+                            ),
                             deviceLabel = label
                         )
                     )
@@ -687,7 +703,10 @@ private class WhoopBleClient(
                         onStateChange(
                             ExternalHeartRateConnectionState.Error(
                                 source = HeartRateSource.WHOOP_BLE,
-                                message = "Disconnected from ${gattLabel(gatt)}."
+                                message = context.getString(
+                                    R.string.wear_hr_disconnected_label,
+                                    gattLabel(gatt)
+                                )
                             )
                         )
                     }
@@ -697,7 +716,9 @@ private class WhoopBleClient(
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (!hasBluetoothConnectPermission()) {
-                failTerminal("Bluetooth connect permission was removed.")
+                failTerminal(
+                    context.getString(R.string.wear_hr_bluetooth_connect_permission_removed)
+                )
                 return
             }
 
@@ -710,13 +731,13 @@ private class WhoopBleClient(
                     "status=$status, services=$discoveredServiceUuids"
             )
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                failTerminal("Couldn't discover WHOOP heart-rate services.")
+                failTerminal(context.getString(R.string.wear_hr_couldnt_discover_services))
                 return
             }
             val service: BluetoothGattService? = gatt.getService(HEART_RATE_SERVICE_UUID)
             val characteristic = service?.getCharacteristic(HEART_RATE_MEASUREMENT_UUID)
             if (characteristic == null) {
-                failTerminal("WHOOP heart-rate service is unavailable.")
+                failTerminal(context.getString(R.string.wear_hr_service_unavailable))
                 return
             }
             enableNotifications(gatt, characteristic)
@@ -728,7 +749,9 @@ private class WhoopBleClient(
             status: Int,
         ) {
             if (!hasBluetoothConnectPermission()) {
-                failTerminal("Bluetooth connect permission was removed.")
+                failTerminal(
+                    context.getString(R.string.wear_hr_bluetooth_connect_permission_removed)
+                )
                 return
             }
 
@@ -738,14 +761,14 @@ private class WhoopBleClient(
                     "descriptor=${descriptor.uuid}, status=$status"
             )
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                failTerminal("Couldn't enable WHOOP heart-rate notifications.")
+                failTerminal(context.getString(R.string.wear_hr_couldnt_enable_notifications))
                 return
             }
             // Subscribed, but don't claim streaming until the strap actually sends a sample.
             onStateChange(
                 ExternalHeartRateConnectionState.Connected(
                     source = HeartRateSource.WHOOP_BLE,
-                    message = "Connected. Enable Broadcast HR.",
+                    message = context.getString(R.string.wear_hr_connected_enable_broadcast),
                     deviceLabel = gattLabel(gatt)
                 )
             )
@@ -757,7 +780,9 @@ private class WhoopBleClient(
             characteristic: BluetoothGattCharacteristic,
         ) {
             if (!hasBluetoothConnectPermission()) {
-                failTerminal("Bluetooth connect permission was removed.")
+                failTerminal(
+                    context.getString(R.string.wear_hr_bluetooth_connect_permission_removed)
+                )
                 return
             }
 
@@ -777,7 +802,7 @@ private class WhoopBleClient(
                 onStateChange(
                     ExternalHeartRateConnectionState.Streaming(
                         source = HeartRateSource.WHOOP_BLE,
-                        message = "Streaming from your WHOOP.",
+                        message = context.getString(R.string.wear_hr_streaming_whoop),
                         deviceLabel = gattLabel(gatt)
                     )
                 )

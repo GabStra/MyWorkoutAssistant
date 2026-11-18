@@ -47,6 +47,7 @@ fun buildExtraHeartRateSeries(
     streams: Map<String, List<Int>>,
     times: Map<String, List<Long>> = emptyMap(),
     activeSource: HeartRateSource?,
+    labelForSource: (HeartRateSource) -> String = HeartRateSource::displayName,
 ): List<HeartRateSourceSeries> = streams
     .mapNotNull { (rawName, samples) ->
         val source = HeartRateSource.fromName(rawName) ?: return@mapNotNull null
@@ -57,7 +58,7 @@ fun buildExtraHeartRateSeries(
         if (source == HeartRateSource.WATCH_SENSOR) -1 else source.ordinal
     }
     .map { (source, samples, streamTimes) ->
-        HeartRateSourceSeries(source.displayName(), samples, streamTimes)
+        HeartRateSourceSeries(labelForSource(source), samples, streamTimes)
     }
 
 /** Real sample times for the stream of record, or null for records without timestamps. */

@@ -22,6 +22,8 @@ import android.os.Looper
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
+import com.gabstra.myworkoutassistant.R
+import com.gabstra.myworkoutassistant.screens.localizedLabel
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
@@ -76,13 +78,19 @@ abstract class StandardBleHeartRateViewModel(
         val configuredSource = config
         if (configuredSource == null || configuredSource.source != source) {
             mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                "Configure ${source.displayName()} in Settings first.",
+                context.getString(
+                    R.string.loc_configure_source_first,
+                    source.localizedLabel(context),
+                ),
             )
             return
         }
         if (!hasBluetoothPermission(context)) {
             mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                "Bluetooth permission is required to connect to ${source.displayName()}.",
+                context.getString(
+                    R.string.loc_bluetooth_permission_required,
+                    source.localizedLabel(context),
+                ),
             )
             return
         }
@@ -92,7 +100,7 @@ abstract class StandardBleHeartRateViewModel(
             ?.bluetoothLeScanner
         if (scanner == null) {
             mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                "Bluetooth is unavailable.",
+                context.getString(R.string.loc_bluetooth_unavailable),
             )
             return
         }
@@ -102,7 +110,10 @@ abstract class StandardBleHeartRateViewModel(
         bluetoothGatt = null
         mutableHeartRate.value = null
         mutableConnectionState.value = ExternalHeartRateConnectionState.Connecting(
-            "Scanning for ${source.displayName()}…",
+            context.getString(
+                R.string.loc_scanning_for_source,
+                source.localizedLabel(context),
+            ),
         )
 
         val callback = object : ScanCallback() {
@@ -111,14 +122,14 @@ abstract class StandardBleHeartRateViewModel(
                 stopScan()
                 val label = result.scanRecord?.deviceName
                     ?: result.device.name
-                    ?: source.displayName()
+                    ?: source.localizedLabel(context)
                 mutableConnectionState.value = ExternalHeartRateConnectionState.Connecting(
-                    "Connecting to $label…",
+                    context.getString(R.string.loc_connecting_to_label, label),
                 )
-                val pendingGatt = connectGatt(result.device, context, createGattCallback(label))
+                val pendingGatt = connectGatt(result.device, context, createGattCallback(label, context))
                     ?: run {
                         mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                            "Couldn't connect to $label.",
+                            context.getString(R.string.loc_couldnt_connect_label, label),
                         )
                         return
                     }
@@ -132,7 +143,7 @@ abstract class StandardBleHeartRateViewModel(
                         pendingGatt.close()
                         bluetoothGatt = null
                         mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                            "Couldn't connect to $label.",
+                            context.getString(R.string.loc_couldnt_connect_label, label),
                         )
                     }
                 }, ConnectionTimeoutMillis)
@@ -140,7 +151,7 @@ abstract class StandardBleHeartRateViewModel(
 
             override fun onScanFailed(errorCode: Int) {
                 mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                    "Bluetooth scan failed ($errorCode).",
+                    context.getString(R.string.loc_bluetooth_scan_failed, errorCode),
                 )
             }
         }
@@ -154,14 +165,17 @@ abstract class StandardBleHeartRateViewModel(
             if (scanCallback === callback) {
                 stopScan()
                 mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                    "Couldn't find ${source.displayName()}.",
+                    context.getString(
+                        R.string.loc_couldnt_find_source,
+                        source.localizedLabel(context),
+                    ),
                 )
             }
         }, ScanTimeoutMillis)
     }
 
     @SuppressLint("MissingPermission")
-    private fun createGattCallback(deviceLabel: String) = object : BluetoothGattCallback() {
+    private fun createGattCallback(deviceLabel: String, context: Context) = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> gatt.discoverServices()
@@ -169,7 +183,7 @@ abstract class StandardBleHeartRateViewModel(
                     mutableHeartRate.value = null
                     if (bluetoothGatt === gatt) {
                         mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                            "Connection to $deviceLabel was lost.",
+                            context.getString(R.string.loc_connection_lost_label, deviceLabel),
                         )
                     }
                     gatt.close()
@@ -183,7 +197,7 @@ abstract class StandardBleHeartRateViewModel(
                 ?.getCharacteristic(HeartRateMeasurementUuid)
             if (status != BluetoothGatt.GATT_SUCCESS || measurement == null) {
                 mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                    "$deviceLabel does not expose heart-rate broadcast data.",
+                    context.getString(R.string.loc_no_heart_rate_broadcast, deviceLabel),
                 )
                 return
             }
@@ -191,7 +205,7 @@ abstract class StandardBleHeartRateViewModel(
             val descriptor = measurement.getDescriptor(ClientCharacteristicConfigurationUuid)
             if (descriptor == null) {
                 mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                    "Couldn't subscribe to $deviceLabel.",
+                    context.getString(R.string.loc_couldnt_subscribe_label, deviceLabel),
                 )
                 return
             }

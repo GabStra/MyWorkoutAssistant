@@ -18,6 +18,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -37,6 +38,7 @@ import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.ExternalHeartRateConnectionState
 import com.gabstra.myworkoutassistant.data.ExternalHeartRateDeviceController
@@ -161,10 +163,10 @@ fun PreparingExternalHeartRateScreen(
         externalHeartRateControllers[it].source.displayName()
     }
     val loadingText = when {
-        isStreaming && !watchHeartRateReady -> "Checking your heart rate"
-        isStreaming -> "Getting your workout ready"
-        pendingName != null -> "Connecting to $pendingName"
-        else -> "Connecting to your sensor"
+        isStreaming && !watchHeartRateReady -> stringResource(R.string.wear_checking_heart_rate)
+        isStreaming -> stringResource(R.string.wear_getting_workout_ready)
+        pendingName != null -> stringResource(R.string.wear_connecting_to_device, pendingName)
+        else -> stringResource(R.string.wear_connecting_to_sensor)
     }
     PreparingHeartRateContent(
         canSkip = canSkip,
@@ -213,13 +215,15 @@ internal fun PreparingHeartRateContent(
     onBack: () -> Unit,
 ) {
     var connectionHelp by remember { mutableStateOf<String?>(null) }
+    val sensorSetupMessage = stringResource(R.string.wear_hr_sensor_setup_help)
+    val noSignalMessage = stringResource(R.string.wear_hr_no_signal_help)
     LaunchedEffect(canSkip, needsSensorSetup) {
         // Once a choice is offered, retry callbacks must not replace it or move its controls.
         if (canSkip && connectionHelp == null) {
             connectionHelp = if (needsSensorSetup) {
-                "Set up your heart-rate sensor in the phone app, or skip for now."
+                sensorSetupMessage
             } else {
-                "No heart rate yet.\nCheck your sensor or skip for now."
+                noSignalMessage
             }
         }
     }
@@ -286,7 +290,7 @@ internal fun ExternalHeartRateConnectionFallback(
                         .fillMaxWidth()
                         .transformedHeight(this, spec),
                     transformation = SurfaceTransformation(spec),
-                    text = "Skip",
+                    text = stringResource(R.string.wear_skip),
                     onClick = onSkip,
                 )
             }
@@ -296,7 +300,7 @@ internal fun ExternalHeartRateConnectionFallback(
                         .fillMaxWidth()
                         .transformedHeight(this, spec),
                     transformation = SurfaceTransformation(spec),
-                    text = "Back",
+                    text = stringResource(R.string.wear_back),
                     onClick = onBack,
                 )
             }

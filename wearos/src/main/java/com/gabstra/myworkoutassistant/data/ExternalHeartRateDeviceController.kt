@@ -1,9 +1,11 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.MyApplication
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import kotlin.coroutines.EmptyCoroutineContext
@@ -155,6 +157,10 @@ abstract class BaseExternalHeartRateViewModel(
     protected val isReleaseInProgress: Boolean
         get() = releaseInProgress
 
+    /** Resolves a user-facing status message; an empty string if the context is gone. */
+    protected fun hrMessage(@StringRes resId: Int, vararg formatArgs: Any): String =
+        applicationContext?.getString(resId, *formatArgs).orEmpty()
+
     final override fun initialize(context: Context, config: ExternalHeartRateConfig?) {
         connectionAttemptId++
         releaseDeviceConnection()
@@ -169,7 +175,7 @@ abstract class BaseExternalHeartRateViewModel(
         if (!hasUsableConfig(config)) {
             _connectionState.value = ExternalHeartRateConnectionState.MissingConfiguration(
                 source = source,
-                message = "Configure ${source.displayName()} in Settings first."
+                message = hrMessage(R.string.wear_hr_configure_source_first, source.displayName())
             )
             return
         }
@@ -196,7 +202,7 @@ abstract class BaseExternalHeartRateViewModel(
         if (!hasUsableConfig(config)) {
             _connectionState.value = ExternalHeartRateConnectionState.MissingConfiguration(
                 source = source,
-                message = "Configure ${source.displayName()} in Settings first."
+                message = hrMessage(R.string.wear_hr_configure_source_first, source.displayName())
             )
             return
         }
@@ -215,7 +221,7 @@ abstract class BaseExternalHeartRateViewModel(
                 releaseDeviceConnection()
                 _connectionState.value = ExternalHeartRateConnectionState.Error(
                     source = source,
-                    message = "Couldn't connect to ${source.displayName()}.",
+                    message = hrMessage(R.string.wear_hr_couldnt_connect_label, source.displayName()),
                 )
             }
         }
@@ -234,7 +240,7 @@ abstract class BaseExternalHeartRateViewModel(
         releaseDeviceConnection()
         _connectionState.value = ExternalHeartRateConnectionState.Skipped(
             source = source,
-            message = "${source.displayName()} skipped for this workout."
+            message = hrMessage(R.string.wear_hr_source_skipped, source.displayName())
         )
     }
 
@@ -248,7 +254,7 @@ abstract class BaseExternalHeartRateViewModel(
         _connectionState.value = if (skipped) {
             ExternalHeartRateConnectionState.Skipped(
                 source = source,
-                message = "${source.displayName()} skipped for this workout."
+                message = hrMessage(R.string.wear_hr_source_skipped, source.displayName())
             )
         } else {
             ExternalHeartRateConnectionState.Idle
@@ -298,7 +304,7 @@ abstract class BaseExternalHeartRateViewModel(
                 receivedSampleSinceConnect = false
                 _connectionState.value = ExternalHeartRateConnectionState.Error(
                     source = source,
-                    message = "Lost the heart-rate signal from ${source.displayName()}.",
+                    message = hrMessage(R.string.wear_hr_lost_signal, source.displayName()),
                 )
                 scheduleNextRetry(now)
             }
