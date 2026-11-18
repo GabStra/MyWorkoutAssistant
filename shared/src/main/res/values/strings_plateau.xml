@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plateau_reason_summary">No improvement detected in the last %1$d sessions.</string>
+    <string name="plateau_reason_recent_sessions">Recent sessions:</string>
+    <string name="plateau_reason_session_line">• Session %1$d: %2$s × %3$d reps</string>
+    <string name="plateau_reason_recommendation">To break the plateau, try increasing weight, reps, or total volume.</string>
+</resources>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Etichette indicatori candlestick del grafico frequenza cardiaca -->
+    <string name="loc_chart_marker_open">Apertura</string>
+    <string name="loc_chart_marker_close">Chiusura</string>
+    <string name="loc_chart_marker_low">Minimo</string>
+    <string name="loc_chart_marker_high">Massimo</string>
+</resources>

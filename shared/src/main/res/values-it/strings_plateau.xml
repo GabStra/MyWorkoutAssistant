@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plateau_reason_summary">Nessun miglioramento rilevato nelle ultime %1$d sessioni.</string>
+    <string name="plateau_reason_recent_sessions">Sessioni recenti:</string>
+    <string name="plateau_reason_session_line">• Sessione %1$d: %2$s × %3$d ripetizioni</string>
+    <string name="plateau_reason_recommendation">Per superare lo stallo, prova ad aumentare il carico, le ripetizioni o il volume totale.</string>
+</resources>

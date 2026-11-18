@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Anteprima movimento esercizio -->
+    <string name="loc_ex_view_named_cd">Visualizza %1$s</string>
+    <string name="loc_ex_no_movement_available">Nessun movimento disponibile</string>
+    <string name="loc_ex_loading_movement">Caricamento movimento</string>
+    <string name="loc_ex_movement_unavailable">Movimento non disponibile</string>
+
+    <!-- Panoramica esercizio -->
+    <string name="loc_ex_waiting_for_calibration">In attesa della calibrazione. Disattiva \"Usa modalità Calibrazione\" per disabilitare.</string>
+    <string name="loc_ex_add_set">Aggiungi serie</string>
+    <string name="loc_ex_add_rest">Aggiungi recupero</string>
+
+    <!-- Cronologia esercizio -->
+    <string name="loc_ex_no_history_found">Nessuna cronologia trovata</string>
+    <string name="loc_ex_no_history_in_selected_range">Nessuna cronologia nell\'intervallo selezionato.</string>
+    <string name="loc_ex_volume_kg">Volume (kg)</string>
+    <string name="loc_ex_estimated_1rm_session_kg">1RM stimato / sessione (kg)</string>
+    <string name="loc_ex_session_performance">Prestazione della sessione</string>
+    <string name="loc_ex_performed_named">Eseguito: %1$s</string>
+
+    <!-- Dettaglio esercizio -->
+    <string name="loc_ex_edit_exercise_menu">Modifica esercizio</string>
+    <string name="loc_ex_export_md">Esporta come .md</string>
+    <string name="loc_ex_move_up">Sposta su</string>
+    <string name="loc_ex_move_down">Sposta giù</string>
+    <string name="loc_ex_unable_import_model">Impossibile importare il modello LiteRT-LM selezionato.</string>
+    <string name="loc_ex_chat_with_history_cd">Chatta con la cronologia dell\'esercizio</string>
+    <string name="loc_ex_delete_selected_set_title">Eliminare la serie selezionata?</string>
+    <string name="loc_ex_delete_selected_sets_title">Eliminare le serie selezionate?</string>
+    <string name="loc_ex_delete_selected_set_message">Questo rimuove la serie selezionata dall\'esercizio.</string>
+    <string name="loc_ex_delete_selected_sets_message">Questo rimuove le %1$d serie selezionate dall\'esercizio.</string>
+    <string name="loc_ex_insights_title">Insight esercizio</string>
+
+    <!-- Controlli esercizio ricorrente -->
+    <string name="loc_ex_weight_history">Cronologia pesi</string>
+    <string name="loc_ex_weight_history_unsupported">Gli slot della cronologia pesi e il recupero del carico iniziale sono disponibili per esercizi con pesi e a corpo libero.</string>
+    <string name="loc_ex_create_new_weight_history_slot">Crea nuovo slot cronologia pesi</string>
+    <string name="loc_ex_no_history_link">Nessun collegamento alla cronologia</string>
+    <string name="loc_ex_recurring_weight_history">Cronologia pesi ricorrente</string>
+    <string name="loc_ex_weight_history_slot">Slot cronologia pesi</string>
+    <string name="loc_ex_recurring_slots_hint">Ogni nuovo slot mantiene una cronologia separata. Scollegare o scegliere il peso prescritto non elimina la cronologia registrata.</string>
+    <string name="loc_ex_weight_behavior">Comportamento del peso</string>
+    <string name="loc_ex_auto_existing_behavior">Automatico (comportamento esistente)</string>
+    <string name="loc_ex_prescribed_weight">Peso prescritto</string>
+    <string name="loc_ex_last_working_load">Ultimo carico di lavoro</string>
+    <string name="loc_ex_prescribed_weight_hint">I pesi prescritti restano fissi; cronologia, progressione e calibrazione non li sostituiscono.</string>
+    <string name="loc_ex_automatic_behavior_hint">Automatico mantiene il comportamento esistente di cronologia, progressione e calibrazione.</string>
+    <string name="loc_ex_add_work_set_hint">Aggiungi una serie di lavoro con pesi o a corpo libero per abilitare l\'ultimo carico di lavoro.</string>
+    <string name="loc_ex_last_load_requires_supported_sets">L\'ultimo carico di lavoro richiede serie di lavoro supportate con pesi o a corpo libero.</string>
+    <string name="loc_ex_choose_history_slot_hint">Scegli uno slot della cronologia per usare il suo ultimo carico di lavoro.</string>
+    <string name="loc_ex_calibration_precedence_hint">La calibrazione o una progressione attiva è abilitata e può avere precedenza sul carico trasferito.</string>
+    <string name="loc_ex_last_load_explanation">Se selezionato, l\'ultima sessione corrispondente completata fornisce il peso iniziale. La calibrazione o una progressione attiva possono avere precedenza.</string>
+    <string name="loc_ex_prescription_unknown">Prescrizione ?</string>
+    <string name="loc_ex_exercise_n">Esercizio %1$d</string>
+    <string name="loc_ex_track_label">%1$s · %2$s · %3$s · %4$s</string>
+
+    <!-- Etichette tipo esercizio -->
+    <string name="loc_ex_type_weight">Peso</string>
+    <string name="loc_ex_type_body_weight">Peso corporeo</string>
+    <string name="loc_ex_type_count_up">Conteggio crescente</string>
+    <string name="loc_ex_type_count_down">Conteggio decrescente</string>
+    <string name="loc_ex_type_running">Corsa</string>
+
+    <!-- Etichette categoria esercizio -->
+    <string name="loc_ex_category_heavy_compound">Multiarticolare pesante</string>
+    <string name="loc_ex_category_moderate_compound">Multiarticolare moderato</string>
+    <string name="loc_ex_category_isolation">Isolamento</string>
+
+    <!-- Etichette gruppi muscolari -->
+    <string name="loc_ex_muscle_front_abs">Addominali</string>
+    <string name="loc_ex_muscle_front_adductors">Adduttori</string>
+    <string name="loc_ex_muscle_front_ankles">Caviglie</string>
+    <string name="loc_ex_muscle_front_biceps">Bicipiti</string>
+    <string name="loc_ex_muscle_front_calves">Polpacci</string>
+    <string name="loc_ex_muscle_front_chest">Petto</string>
+    <string name="loc_ex_muscle_front_deltoids">Deltoidi</string>
+    <string name="loc_ex_muscle_front_feet">Piedi</string>
+    <string name="loc_ex_muscle_front_forearm">Avambraccio</string>
+    <string name="loc_ex_muscle_front_hands">Mani</string>
+    <string name="loc_ex_muscle_front_knees">Ginocchia</string>
+    <string name="loc_ex_muscle_front_neck">Collo</string>
+    <string name="loc_ex_muscle_front_obliques">Obliqui</string>
+    <string name="loc_ex_muscle_front_quadriceps">Quadricipiti</string>
+    <string name="loc_ex_muscle_front_tibialis">Tibiale</string>
+    <string name="loc_ex_muscle_front_trapezius">Trapezio</string>
+    <string name="loc_ex_muscle_front_triceps">Tricipiti</string>
+    <string name="loc_ex_muscle_back_adductors">Adduttori</string>
+    <string name="loc_ex_muscle_back_ankles">Caviglie</string>
+    <string name="loc_ex_muscle_back_calves">Polpacci</string>
+    <string name="loc_ex_muscle_back_deltoids">Deltoidi</string>
+    <string name="loc_ex_muscle_back_feet">Piedi</string>
+    <string name="loc_ex_muscle_back_forearm">Avambraccio</string>
+    <string name="loc_ex_muscle_back_gluteal">Glutei</string>
+    <string name="loc_ex_muscle_back_hamstring">Femorali</string>
+    <string name="loc_ex_muscle_back_hands">Mani</string>
+    <string name="loc_ex_muscle_back_lower_back">Lombari</string>
+    <string name="loc_ex_muscle_back_neck">Collo</string>
+    <string name="loc_ex_muscle_back_trapezius">Trapezio</string>
+    <string name="loc_ex_muscle_back_triceps">Tricipiti</string>
+    <string name="loc_ex_muscle_back_upper_back">Parte superiore della schiena</string>
+</resources>

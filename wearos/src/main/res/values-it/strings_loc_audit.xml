@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wear_rest_screen_description">Schermata serie di recupero</string>
+    <string name="wear_unassigned_plan_name">Non assegnato</string>
+    <string name="wear_exercise_context_round">GIRO %1$s</string>
+    <string name="wear_exercise_context_side">LATO %1$s</string>
+    <string name="wear_exercise_context_warmup_counter">RISCALDAMENTO %1$d/%2$d</string>
+    <string name="wear_exercise_context_work_set_counter">SERIE DI LAVORO %1$d/%2$d</string>
+    <string name="wear_exercise_context_set_counter">SERIE %1$d/%2$d</string>
+    <string name="wear_exercise_context_calibration_counter">CALIBRAZIONE %1$d/%2$d</string>
+</resources>

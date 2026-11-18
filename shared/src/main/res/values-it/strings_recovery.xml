@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="incomplete_workout_singular">Allenamento incompleto</string>
+    <string name="incomplete_workout_plural">Allenamenti incompleti</string>
+    <string name="incomplete_workout_suffix">(Incompleto)</string>
+
+    <string name="incomplete_workout_resume_description">Hai allenamenti che non sono stati completati. Selezionane uno da riprendere:</string>
+
+    <string name="incomplete_workout_dismiss">Chiudi</string>
+    <string name="incomplete_workout_discard">Scarta</string>
+
+    <string name="incomplete_workout_delete">Elimina</string>
+    <string name="incomplete_workout_delete_title">Rimuovi allenamento incompleto</string>
+    <string name="incomplete_workout_delete_message">Rimuovere questo allenamento che non è stato completato?</string>
+    <string name="incomplete_workout_start_new_message">Una sessione aperta verrà rimossa. Continuare?</string>
+
+    <string name="incomplete_workout_clear_menu">Cancella allenamenti incompleti</string>
+    <string name="incomplete_workout_clear_title">Cancella tutti gli allenamenti incompleti</string>
+    <string name="incomplete_workout_clear_message">Rimuovi ogni allenamento che non è stato completato (dati obsoleti dall\'orologio o uscita senza aver finito). Questa azione non può essere annullata.</string>
+
+    <!-- Recovery dialog body on Wear (resume vs discard). -->
+    <string name="recovery_resume_or_discard_body">Riprendi o scarta questo allenamento incompleto.</string>
+
+    <!-- Wear recovery: section headers (avoid “recovery” as user-facing jargon). -->
+    <string name="recovery_section_timer">Timer</string>
+    <string name="recovery_section_calibration">Calibrazione</string>
+
+    <!-- Wear loading line (animated dots may be appended in the Wear UI). -->
+    <string name="incomplete_workout_checking_session_progress">Verifica sessione</string>
+    <string name="incomplete_workout_checking_session">Verifica sessione…</string>
+
+    <!-- Wear: confirming start when an incomplete session exists. -->
+    <string name="incomplete_workout_start_new_title">Avvia un nuovo allenamento</string>
+</resources>

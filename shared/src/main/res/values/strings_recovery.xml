@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="incomplete_workout_singular">Incomplete Workout</string>
+    <string name="incomplete_workout_plural">Incomplete workouts</string>
+    <string name="incomplete_workout_suffix">(Incomplete)</string>
+
+    <string name="incomplete_workout_resume_description">You have workouts that weren\'t completed. Select one to resume:</string>
+
+    <string name="incomplete_workout_dismiss">Dismiss</string>
+    <string name="incomplete_workout_discard">Discard</string>
+
+    <string name="incomplete_workout_delete">Delete</string>
+    <string name="incomplete_workout_delete_title">Remove incomplete workout</string>
+    <string name="incomplete_workout_delete_message">Remove this workout that wasn\'t completed?</string>
+    <string name="incomplete_workout_start_new_message">An open session will be removed. Continue?</string>
+
+    <string name="incomplete_workout_clear_menu">Clear incomplete workouts</string>
+    <string name="incomplete_workout_clear_title">Clear all incomplete workouts</string>
+    <string name="incomplete_workout_clear_message">Remove every workout that wasn\'t completed (stale watch data or after exiting without finishing). This can\'t be undone.</string>
+
+    <!-- Recovery dialog body on Wear (resume vs discard). -->
+    <string name="recovery_resume_or_discard_body">Resume or discard this incomplete workout.</string>
+
+    <!-- Wear recovery: section headers (avoid “recovery” as user-facing jargon). -->
+    <string name="recovery_section_timer">Timer</string>
+    <string name="recovery_section_calibration">Calibration</string>
+
+    <!-- Wear loading line (animated dots may be appended in the Wear UI). -->
+    <string name="incomplete_workout_checking_session_progress">Checking session</string>
+    <string name="incomplete_workout_checking_session">Checking session…</string>
+
+    <!-- Wear: confirming start when an incomplete session exists. -->
+    <string name="incomplete_workout_start_new_title">Start a new workout</string>
+</resources>

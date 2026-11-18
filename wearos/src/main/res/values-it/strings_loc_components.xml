@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Control buttons -->
+    <string name="components_cd_subtract">Sottrai</string>
+    <string name="components_cd_add">Aggiungi</string>
+    <string name="components_cd_reset">Ripristina</string>
+
+    <!-- Set timer notifications -->
+    <string name="components_notif_set_timer_finished">Timer della serie terminato</string>
+    <string name="components_notif_run_finished">Corsa terminata</string>
+
+    <!-- Pickers -->
+    <string name="components_choose_equipment">Scegli attrezzo</string>
+    <string name="components_current_suffix">%1$s (attuale)</string>
+    <string name="components_current_label">(Attuale)</string>
+    <string name="components_what_is_loaded">Cosa è caricato?</string>
+    <string name="components_action_cancel">Annulla</string>
+    <string name="components_superset_rotation_description">Un movimento per posizione, in questo ordine</string>
+    <string name="components_action_not_now">Non ora</string>
+    <string name="components_action_got_it">Ho capito</string>
+    <string name="components_plateau_details_title">Dettagli rilevamento plateau</string>
+
+    <!-- Metadata strips -->
+    <string name="components_label_exercise">Esercizio:</string>
+    <string name="components_label_set">Serie</string>
+    <string name="components_label_target">Obiettivo:</string>
+    <string name="components_reps_suffix">\u0020rip.</string>
+    <string name="components_side_left">S</string>
+    <string name="components_side_right">D</string>
+    <string name="components_target_reps">RIPETIZIONI OBIETTIVO: %1$s</string>
+
+    <!-- Set table -->
+    <string name="components_table_set">SERIE</string>
+    <string name="components_table_time">TEMPO (HH:MM:SS)</string>
+    <string name="components_value_tbd">DA DEFINIRE</string>
+    <string name="components_calibration_warmup_label">R?</string>
+    <string name="components_calibration_pending_load">carico calibrazione in attesa</string>
+    <string name="components_row_select_load">SELEZIONA CARICO</string>
+    <string name="components_row_set_rir">IMPOSTA RIR</string>
+    <string name="components_rest_row">RECUPERO %1$s</string>
+
+    <!-- Notes, muscles and movement previews -->
+    <string name="components_notes_title">Note</string>
+    <string name="components_notes_empty">Nessuna nota disponibile.</string>
+    <string name="components_muscle_groups_title">Gruppi muscolari</string>
+    <string name="components_muscle_groups_empty">Nessun gruppo muscolare</string>
+    <string name="components_no_movement">Nessun movimento</string>
+    <string name="components_movement_syncing">Sincronizzazione movimento</string>
+
+    <!-- Calibration load -->
+    <string name="components_calibration_load_instruction">Imposta il carico per %1$d rip.\na 1-2 RIR</string>
+    <string name="components_confirm_weight_title">Conferma peso</string>
+    <string name="components_confirm_weight_message">Usare questo peso per la serie?</string>
+
+    <!-- Progression comparison -->
+    <string name="components_progression_progress">Progressione</string>
+    <string name="components_progression_repeat">Ripeti</string>
+    <string name="components_progression_deload">Scarico</string>
+    <string name="components_progression_failed">Fallito</string>
+    <string name="components_session_comparison">Confronto sessioni</string>
+    <string name="components_no_change">Nessuna variazione</string>
+    <string name="components_weight_kg">%1$s kg</string>
+
+    <!-- Progression status descriptions -->
+    <string name="components_trend_above">Sopra</string>
+    <string name="components_trend_equal">Uguale</string>
+    <string name="components_trend_below">Sotto</string>
+    <string name="components_trend_mixed">Misto</string>
+
+    <!-- Recovery -->
+    <string name="components_duration_hours_minutes">%1$dh %2$02dm</string>
+    <string name="components_duration_minutes_seconds">%1$dm %2$02ds</string>
+
+    <!-- Permission rationale -->
+    <string name="components_permission_heart_rate">L\'accesso alla frequenza cardiaca consente all\'allenamento di registrare il battito.</string>
+    <string name="components_permission_bluetooth">L\'accesso Bluetooth consente all\'allenamento di collegarsi al dispositivo per la frequenza cardiaca esterno.</string>
+    <string name="components_permission_location">L\'accesso alla posizione consente all\'allenamento di registrare il percorso.</string>
+    <string name="components_permission_notifications">L\'accesso alle notifiche consente all\'allenamento di mostrare lo stato in corso.</string>
+    <string name="components_permission_optional_footer">Puoi continuare senza i permessi facoltativi; la funzione correlata potrebbe non essere disponibile.</string>
+
+    <!-- Accessibility descriptions used by the set screens -->
+    <string name="components_semantics_reps_value">Valore ripetizioni</string>
+    <string name="components_semantics_weight_value">Valore peso</string>
+    <string name="components_semantics_timed_duration_value">Valore durata</string>
+    <string name="components_semantics_weight_set_screen">Schermata serie con peso</string>
+    <string name="components_semantics_body_weight_set_screen">Schermata serie a corpo libero</string>
+    <string name="components_semantics_timed_duration_set_screen">Schermata serie a tempo</string>
+    <string name="components_semantics_endurance_set_screen">Schermata serie di resistenza</string>
+
+    <!-- Accessibility descriptions on the rest page -->
+    <string name="components_rest_next_exercise">Prossimo esercizio dopo il recupero: %1$s</string>
+    <string name="components_rest_duration_row">Riga durata recupero tra gli esercizi: %1$s</string>
+</resources>

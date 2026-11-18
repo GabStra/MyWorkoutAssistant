@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_resume_current_exercise">Current exercise</string>
+    <string name="loc_resume_set_numbered">%1$s %2$d</string>
+    <string name="loc_resume_set_work">Work set</string>
+    <string name="loc_resume_set_warm_up">Warm-up set</string>
+    <string name="loc_resume_set_back_off">Back-off set</string>
+    <string name="loc_resume_set_rest_pause">Rest-pause set</string>
+    <string name="loc_resume_set_calibration">Calibration set</string>
+    <string name="loc_resume_set_rest">Rest</string>
+</resources>

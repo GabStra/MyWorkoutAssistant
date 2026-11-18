@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App-generated additions rendered inside workout-insight markdown -->
+    <string name="loc_insight_markdown_next_session_target">Next session target</string>
+    <string name="loc_insight_markdown_recorded_value">the recorded value</string>
+    <string name="loc_insight_markdown_recorded_set">the recorded set</string>
+    <string name="loc_insight_markdown_next_session_target_hr_zone_bullet">Repeat the planned work in the configured %1$s zone; compare heart rate only at a similar workload.</string>
+    <string name="loc_insight_markdown_next_session_target_duration_bullet">Complete %1$d seconds of %2$s in the prescribed HR zone; %3$s.</string>
+    <string name="loc_insight_markdown_duration_reason_ceiling_reached">hold: configured duration ceiling reached</string>
+    <string name="loc_insight_markdown_duration_reason_increase_criteria_met">increase: %1$d consecutive sessions met the configured criteria</string>
+    <string name="loc_insight_markdown_duration_reason_hold_assessment">hold: %1$s</string>
+    <string name="loc_insight_markdown_duration_reason_no_comparable_sessions">hold: no comparable sessions recorded under this policy and duration</string>
+    <string name="loc_insight_markdown_duration_reason_insufficient_qualifying_sessions">hold: %1$d of %2$d required consecutive qualifying sessions</string>
+    <string name="loc_insight_markdown_duration_reason_session_not_completed_normally">hold: current session was not completed normally</string>
+    <string name="loc_insight_markdown_duration_assessment_work_not_completed_normally">prescribed work was not completed normally</string>
+    <string name="loc_insight_markdown_duration_assessment_load_differs">recorded load differs from the unweighted duration prescription</string>
+    <string name="loc_insight_markdown_duration_assessment_timestamps_unavailable">work timestamps unavailable</string>
+    <string name="loc_insight_markdown_duration_assessment_work_shorter_than_prescription">recorded work duration is shorter than the prescription</string>
+    <string name="loc_insight_markdown_duration_assessment_insufficient_hr_coverage">insufficient HR coverage; cannot assess</string>
+    <string name="loc_insight_markdown_duration_assessment_hr_zone_below_threshold">work HR zone adherence below configured threshold</string>
+    <string name="loc_insight_markdown_duration_assessment_qualifying_work">completed work with qualifying HR coverage and zone adherence</string>
+</resources>

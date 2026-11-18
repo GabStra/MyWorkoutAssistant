@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- String-formatted status of the paused/running workout timer in app notifications. -->
+    <string name="timer_notification_rest_running">Rest · %1$s</string>
+    <string name="timer_notification_rest_paused">Rest · %1$s (paused)</string>
+    <string name="timer_notification_set_running">Set · %1$s</string>
+    <string name="timer_notification_set_paused">Set · %1$s (paused)</string>
+    <string name="timer_notification_set_elapsed_running">Set elapsed · %1$s</string>
+    <string name="timer_notification_set_elapsed_paused">Set elapsed · %1$s (paused)</string>
+    <string name="timer_notification_time_left_running">Time left · %1$s</string>
+    <string name="timer_notification_time_left_paused">Time left · %1$s (paused)</string>
+    <string name="timer_notification_round_running">Round · %1$s</string>
+    <string name="timer_notification_round_paused">Round · %1$s (paused)</string>
+</resources>

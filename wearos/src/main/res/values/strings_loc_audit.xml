@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wear_rest_screen_description">Rest Set screen</string>
+    <string name="wear_unassigned_plan_name">Unassigned</string>
+    <string name="wear_exercise_context_round">ROUND %1$s</string>
+    <string name="wear_exercise_context_side">SIDE %1$s</string>
+    <string name="wear_exercise_context_warmup_counter">WARM-UP %1$d/%2$d</string>
+    <string name="wear_exercise_context_work_set_counter">WORK SET %1$d/%2$d</string>
+    <string name="wear_exercise_context_set_counter">SET %1$d/%2$d</string>
+    <string name="wear_exercise_context_calibration_counter">CALIBRATION %1$d/%2$d</string>
+</resources>

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Control buttons -->
+    <string name="components_cd_subtract">Subtract</string>
+    <string name="components_cd_add">Add</string>
+    <string name="components_cd_reset">Reset</string>
+
+    <!-- Set timer notifications -->
+    <string name="components_notif_set_timer_finished">Set timer finished</string>
+    <string name="components_notif_run_finished">Run finished</string>
+
+    <!-- Pickers -->
+    <string name="components_choose_equipment">Choose equipment</string>
+    <string name="components_current_suffix">%1$s (Current)</string>
+    <string name="components_current_label">(Current)</string>
+    <string name="components_what_is_loaded">What is loaded?</string>
+    <string name="components_action_cancel">Cancel</string>
+    <string name="components_superset_rotation_description">One movement per slot, rotating in this order</string>
+    <string name="components_action_not_now">Not now</string>
+    <string name="components_action_got_it">Got it</string>
+    <string name="components_plateau_details_title">Plateau Detection Details</string>
+
+    <!-- Metadata strips -->
+    <string name="components_label_exercise">Exercise:</string>
+    <string name="components_label_set">Set</string>
+    <string name="components_label_target">Target:</string>
+    <string name="components_reps_suffix">\u0020reps</string>
+    <string name="components_side_left">L</string>
+    <string name="components_side_right">R</string>
+    <string name="components_target_reps">TARGET REPS: %1$s</string>
+
+    <!-- Set table -->
+    <string name="components_table_set">SET</string>
+    <string name="components_table_time">TIME (HH:MM:SS)</string>
+    <string name="components_value_tbd">TBD</string>
+    <string name="components_calibration_warmup_label">W?</string>
+    <string name="components_calibration_pending_load">pending calibration load</string>
+    <string name="components_row_select_load">SELECT LOAD</string>
+    <string name="components_row_set_rir">SET RIR</string>
+    <string name="components_rest_row">REST %1$s</string>
+
+    <!-- Notes, muscles and movement previews -->
+    <string name="components_notes_title">Notes</string>
+    <string name="components_notes_empty">No notes available.</string>
+    <string name="components_muscle_groups_title">Muscle groups</string>
+    <string name="components_muscle_groups_empty">No muscle groups</string>
+    <string name="components_no_movement">No movement</string>
+    <string name="components_movement_syncing">Movement syncing</string>
+
+    <!-- Calibration load -->
+    <string name="components_calibration_load_instruction">Set load for %1$d reps\nat 1-2 RIR</string>
+    <string name="components_confirm_weight_title">Confirm weight</string>
+    <string name="components_confirm_weight_message">Use this weight for the set?</string>
+
+    <!-- Progression comparison -->
+    <string name="components_progression_progress">Progress</string>
+    <string name="components_progression_repeat">Repeat</string>
+    <string name="components_progression_deload">Deload</string>
+    <string name="components_progression_failed">Failed</string>
+    <string name="components_session_comparison">Session Comparison</string>
+    <string name="components_no_change">No change</string>
+    <string name="components_weight_kg">%1$s kg</string>
+
+    <!-- Progression status descriptions -->
+    <string name="components_trend_above">Above</string>
+    <string name="components_trend_equal">Equal</string>
+    <string name="components_trend_below">Below</string>
+    <string name="components_trend_mixed">Mixed</string>
+
+    <!-- Recovery -->
+    <string name="components_duration_hours_minutes">%1$dh %2$02dm</string>
+    <string name="components_duration_minutes_seconds">%1$dm %2$02ds</string>
+
+    <!-- Permission rationale -->
+    <string name="components_permission_heart_rate">Heart-rate access lets the workout record your pulse.</string>
+    <string name="components_permission_bluetooth">Bluetooth access lets the workout connect to your external heart-rate device.</string>
+    <string name="components_permission_location">Location access lets the workout record your route.</string>
+    <string name="components_permission_notifications">Notification access lets the workout show its ongoing status.</string>
+    <string name="components_permission_optional_footer">You can continue without optional access; the related feature may be unavailable.</string>
+
+    <!-- Accessibility descriptions used by the set screens -->
+    <string name="components_semantics_reps_value">Reps value</string>
+    <string name="components_semantics_weight_value">Weight value</string>
+    <string name="components_semantics_timed_duration_value">Timed duration value</string>
+    <string name="components_semantics_weight_set_screen">Weight Set screen</string>
+    <string name="components_semantics_body_weight_set_screen">BodyWeight Set screen</string>
+    <string name="components_semantics_timed_duration_set_screen">TimedDuration Set screen</string>
+    <string name="components_semantics_endurance_set_screen">Endurance Set screen</string>
+
+    <!-- Accessibility descriptions on the rest page -->
+    <string name="components_rest_next_exercise">Rest page next exercise: %1$s</string>
+    <string name="components_rest_duration_row">Rest between exercises duration row: %1$s</string>
+</resources>

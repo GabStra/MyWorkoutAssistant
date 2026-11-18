@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_validation_duplicate_set_ids_intro">The workout store contains duplicate set IDs inside one or more workouts, so it was not applied automatically.</string>
+    <string name="loc_validation_duplicate_set_id_block">Workout: %1$s\nDuplicate set ID: %2$s\nExercises: %3$s</string>
+    <string name="loc_validation_duplicate_set_ids_more">...and %1$d more duplicate set ID issue(s).</string>
+    <string name="loc_validation_recurring_intro">Recurring workout metadata is inconsistent:</string>
+    <string name="loc_validation_recurring_issue_line">- %1$s</string>
+    <string name="loc_validation_recurring_more">...and %1$d more issue(s).</string>
+    <string name="loc_validation_recurring_fixed_prescribed_load_unsupported">%1$s / %2$s: fixed prescribed load only supports weight or bodyweight sets.</string>
+    <string name="loc_validation_recurring_missing_session_id">%1$s: recurring slot or prescription metadata needs a recurring session ID.</string>
+    <string name="loc_validation_recurring_non_positive_ordinal">%1$s: recurring prescriptions need a positive ordinal.</string>
+    <string name="loc_validation_recurring_duplicate_ordinal">%1$s: prescription ordinal %2$d is duplicated in its recurring session.</string>
+    <string name="loc_validation_recurring_duplicate_slot_ids">%1$s: recurring exercise slot IDs must be unique within the workout.</string>
+    <string name="loc_validation_recurring_last_load_missing_slot_id">%1$s / %2$s: last-load carry needs a recurring exercise slot ID.</string>
+    <string name="loc_validation_recurring_last_load_unsupported_sets">%1$s / %2$s: last-load carry only supports loaded weight and bodyweight sets.</string>
+    <string name="loc_validation_recurring_conflicting_slot_identity">Recurring exercise slot %1$s changes definition, exercise type, or equipment within one session.</string>
+</resources>

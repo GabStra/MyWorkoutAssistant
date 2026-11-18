@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_form_audit_hr_source_watch_sensor">Watch sensor</string>
+    <string name="loc_form_audit_hr_source_polar">Polar</string>
+    <string name="loc_form_audit_hr_source_whoop">WHOOP</string>
+
+    <string name="loc_form_audit_conflict_message">Cannot schedule workouts at the same time: %1$s</string>
+    <string name="loc_form_audit_conflict_pair">%1$s and %2$s</string>
+    <string name="loc_form_audit_conflict_schedule_time">%1$s (%2$s)</string>
+    <string name="loc_form_audit_conflict_day_recurring">recurring</string>
+    <string name="loc_form_audit_conflict_day_unknown">unknown</string>
+    <plurals name="loc_form_audit_conflict_more">
+        <item quantity="one">and %1$d more</item>
+        <item quantity="other">and %1$d more</item>
+    </plurals>
+</resources>

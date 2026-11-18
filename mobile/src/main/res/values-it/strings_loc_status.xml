@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_status_finished_early">Terminato in anticipo</string>
+    <string name="loc_status_in_progress">In corso</string>
+    <string name="loc_status_stopped_on_watch">Fermato</string>
+    <string name="loc_status_stale_on_watch">Orologio disconnesso</string>
+    <string name="loc_status_interrupted">Interrotto</string>
+
+    <string name="loc_status_rest_label">RECUPERO</string>
+    <string name="loc_status_rest_fallback">Recupero</string>
+    <string name="loc_status_rest_duration">%1$s %2$s</string>
+    <string name="loc_status_rest_elapsed">%1$s %2$s trascorso</string>
+    <string name="loc_status_rest_elapsed_planned">%1$s %2$s trascorso (%3$s pianificato)</string>
+</resources>

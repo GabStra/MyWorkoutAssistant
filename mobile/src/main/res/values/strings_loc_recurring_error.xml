@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_recurring_error_already_in_session">Workout already belongs to a recurring session.</string>
+    <string name="loc_recurring_error_detach_before_attach">Detach this workout before attaching it to another recurring session.</string>
+    <string name="loc_recurring_error_source_not_in_session">Source workout is not in this recurring session.</string>
+    <string name="loc_recurring_error_empty_session_name">Recurring session name cannot be empty.</string>
+    <string name="loc_recurring_error_workout_not_in_session">Workout is not in this recurring session.</string>
+    <string name="loc_recurring_error_reorder_incomplete">Reordering must include each active prescription exactly once.</string>
+    <string name="loc_recurring_error_workout_not_recurring_for_track">Add this workout to a recurring session before creating a history track.</string>
+    <string name="loc_recurring_error_load_policy_unsupported">Load policies support loaded weight and bodyweight exercises.</string>
+    <string name="loc_recurring_error_exercise_not_in_workout">Exercise is not part of this workout.</string>
+    <string name="loc_recurring_error_incompatible_track">Selected history track is incompatible with this exercise or recurring session.</string>
+    <string name="loc_recurring_error_no_active_prescriptions">Recurring session has no active prescriptions.</string>
+    <string name="loc_recurring_error_mixed_sessions">Selected workouts do not belong to one recurring session.</string>
+</resources>

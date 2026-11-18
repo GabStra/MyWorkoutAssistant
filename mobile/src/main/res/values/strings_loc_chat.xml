@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- History chat -->
+    <string name="loc_chat_title_exercise">%1$s — chat</string>
+    <string name="loc_chat_title_workout_session">Workout session insights — chat</string>
+    <string name="loc_chat_error_exercise_history_unavailable">Couldn\'t load this exercise\'s history for chat.</string>
+    <string name="loc_chat_error_workout_session_unavailable">Couldn\'t load this workout session for chat.</string>
+    <string name="loc_chat_error_preparation_failed">Couldn\'t prepare this history chat.</string>
+</resources>

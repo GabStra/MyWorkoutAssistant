@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Chat cronologia -->
+    <string name="loc_chat_title_exercise">Chat: %1$s</string>
+    <string name="loc_chat_title_workout_session">Chat: approfondimenti sessione</string>
+    <string name="loc_chat_error_exercise_history_unavailable">Impossibile caricare la cronologia di questo esercizio per la chat.</string>
+    <string name="loc_chat_error_workout_session_unavailable">Impossibile caricare questa sessione di allenamento per la chat.</string>
+    <string name="loc_chat_error_preparation_failed">Impossibile preparare questa chat sulla cronologia.</string>
+</resources>

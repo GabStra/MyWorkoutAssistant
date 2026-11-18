@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_workout_plan_filter_no_plan">No plan</string>
+    <string name="loc_workout_plan_filter_no_enabled_workouts">No enabled workouts without a plan.</string>
+    <string name="loc_workout_plan_filter_no_workouts">No workouts without a plan yet.</string>
+    <string name="loc_plan_name_reserved">The name \"Unassigned\" is reserved and cannot be used for a plan.</string>
+    <string name="loc_plan_error_save">Could not save the plan. Try again.</string>
+    <string name="loc_workout_plan_move_unavailable">That plan is no longer available. Choose another plan.</string>
+</resources>

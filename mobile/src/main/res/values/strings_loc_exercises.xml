@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Exercise movement preview -->
+    <string name="loc_ex_view_named_cd">View %1$s</string>
+    <string name="loc_ex_no_movement_available">No movement available</string>
+    <string name="loc_ex_loading_movement">Loading movement</string>
+    <string name="loc_ex_movement_unavailable">Movement unavailable</string>
+
+    <!-- Exercise overview -->
+    <string name="loc_ex_waiting_for_calibration">Waiting for calibration. Turn off \"Use Calibration mode\" to disable.</string>
+    <string name="loc_ex_add_set">Add Set</string>
+    <string name="loc_ex_add_rest">Add Rest</string>
+
+    <!-- Exercise history -->
+    <string name="loc_ex_no_history_found">No history found</string>
+    <string name="loc_ex_no_history_in_selected_range">No history in selected range.</string>
+    <string name="loc_ex_volume_kg">Volume (kg)</string>
+    <string name="loc_ex_estimated_1rm_session_kg">Estimated 1RM / session (kg)</string>
+    <string name="loc_ex_session_performance">Session performance</string>
+    <string name="loc_ex_performed_named">Performed: %1$s</string>
+
+    <!-- Exercise detail -->
+    <string name="loc_ex_edit_exercise_menu">Edit Exercise</string>
+    <string name="loc_ex_export_md">Export as .md</string>
+    <string name="loc_ex_move_up">Move Up</string>
+    <string name="loc_ex_move_down">Move Down</string>
+    <string name="loc_ex_unable_import_model">Unable to import the selected LiteRT-LM model.</string>
+    <string name="loc_ex_chat_with_history_cd">Chat with exercise history</string>
+    <string name="loc_ex_delete_selected_set_title">Delete selected set?</string>
+    <string name="loc_ex_delete_selected_sets_title">Delete selected sets?</string>
+    <string name="loc_ex_delete_selected_set_message">This removes the selected set from the exercise.</string>
+    <string name="loc_ex_delete_selected_sets_message">This removes the %1$d selected sets from the exercise.</string>
+    <string name="loc_ex_insights_title">Exercise insights</string>
+
+    <!-- Recurring exercise controls -->
+    <string name="loc_ex_weight_history">Weight history</string>
+    <string name="loc_ex_weight_history_unsupported">Weight history slots and starting-load carry are available for weight and bodyweight exercises.</string>
+    <string name="loc_ex_create_new_weight_history_slot">Create new weight history slot</string>
+    <string name="loc_ex_no_history_link">No history link</string>
+    <string name="loc_ex_recurring_weight_history">Recurring weight history</string>
+    <string name="loc_ex_weight_history_slot">Weight history slot</string>
+    <string name="loc_ex_recurring_slots_hint">Each new slot keeps separate history. Unlinking or choosing prescribed weight does not delete recorded history.</string>
+    <string name="loc_ex_weight_behavior">Weight behavior</string>
+    <string name="loc_ex_auto_existing_behavior">Automatic (existing behavior)</string>
+    <string name="loc_ex_prescribed_weight">Prescribed weight</string>
+    <string name="loc_ex_last_working_load">Last working load</string>
+    <string name="loc_ex_prescribed_weight_hint">Prescribed weights stay fixed; history, progression, and calibration do not replace them.</string>
+    <string name="loc_ex_automatic_behavior_hint">Automatic keeps the existing history, progression, and calibration behavior.</string>
+    <string name="loc_ex_add_work_set_hint">Add a weight or bodyweight work set to enable last working load.</string>
+    <string name="loc_ex_last_load_requires_supported_sets">Last working load requires supported weight or bodyweight work sets.</string>
+    <string name="loc_ex_choose_history_slot_hint">Choose a history slot to use its last working load.</string>
+    <string name="loc_ex_calibration_precedence_hint">Calibration or active progression is enabled and may take precedence over the carried load.</string>
+    <string name="loc_ex_last_load_explanation">When selected, the last completed matching session supplies the starting weight. Calibration or active progression can take precedence.</string>
+    <string name="loc_ex_prescription_unknown">Prescription ?</string>
+    <string name="loc_ex_exercise_n">Exercise %1$d</string>
+    <string name="loc_ex_track_label">%1$s · %2$s · %3$s · %4$s</string>
+
+    <!-- Exercise type labels -->
+    <string name="loc_ex_type_weight">Weight</string>
+    <string name="loc_ex_type_body_weight">Body Weight</string>
+    <string name="loc_ex_type_count_up">Count Up</string>
+    <string name="loc_ex_type_count_down">Count Down</string>
+    <string name="loc_ex_type_running">Running</string>
+
+    <!-- Exercise category labels -->
+    <string name="loc_ex_category_heavy_compound">Heavy Compound</string>
+    <string name="loc_ex_category_moderate_compound">Moderate Compound</string>
+    <string name="loc_ex_category_isolation">Isolation</string>
+
+    <!-- Muscle group labels -->
+    <string name="loc_ex_muscle_front_abs">Front Abs</string>
+    <string name="loc_ex_muscle_front_adductors">Front Adductors</string>
+    <string name="loc_ex_muscle_front_ankles">Front Ankles</string>
+    <string name="loc_ex_muscle_front_biceps">Front Biceps</string>
+    <string name="loc_ex_muscle_front_calves">Front Calves</string>
+    <string name="loc_ex_muscle_front_chest">Front Chest</string>
+    <string name="loc_ex_muscle_front_deltoids">Front Deltoids</string>
+    <string name="loc_ex_muscle_front_feet">Front Feet</string>
+    <string name="loc_ex_muscle_front_forearm">Front Forearm</string>
+    <string name="loc_ex_muscle_front_hands">Front Hands</string>
+    <string name="loc_ex_muscle_front_knees">Front Knees</string>
+    <string name="loc_ex_muscle_front_neck">Front Neck</string>
+    <string name="loc_ex_muscle_front_obliques">Front Obliques</string>
+    <string name="loc_ex_muscle_front_quadriceps">Front Quadriceps</string>
+    <string name="loc_ex_muscle_front_tibialis">Front Tibialis</string>
+    <string name="loc_ex_muscle_front_trapezius">Front Trapezius</string>
+    <string name="loc_ex_muscle_front_triceps">Front Triceps</string>
+    <string name="loc_ex_muscle_back_adductors">Back Adductors</string>
+    <string name="loc_ex_muscle_back_ankles">Back Ankles</string>
+    <string name="loc_ex_muscle_back_calves">Back Calves</string>
+    <string name="loc_ex_muscle_back_deltoids">Back Deltoids</string>
+    <string name="loc_ex_muscle_back_feet">Back Feet</string>
+    <string name="loc_ex_muscle_back_forearm">Back Forearm</string>
+    <string name="loc_ex_muscle_back_gluteal">Back Gluteal</string>
+    <string name="loc_ex_muscle_back_hamstring">Back Hamstring</string>
+    <string name="loc_ex_muscle_back_hands">Back Hands</string>
+    <string name="loc_ex_muscle_back_lower_back">Back Lower Back</string>
+    <string name="loc_ex_muscle_back_neck">Back Neck</string>
+    <string name="loc_ex_muscle_back_trapezius">Back Trapezius</string>
+    <string name="loc_ex_muscle_back_triceps">Back Triceps</string>
+    <string name="loc_ex_muscle_back_upper_back">Back Upper Back</string>
+</resources>

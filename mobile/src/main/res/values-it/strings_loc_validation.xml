@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_validation_duplicate_set_ids_intro">L\'archivio degli allenamenti contiene ID serie duplicati all\'interno di uno o più allenamenti, quindi non è stato applicato automaticamente.</string>
+    <string name="loc_validation_duplicate_set_id_block">Allenamento: %1$s\nID serie duplicato: %2$s\nEsercizi: %3$s</string>
+    <string name="loc_validation_duplicate_set_ids_more">...e %1$d ulteriori segnalazioni di ID serie duplicati.</string>
+    <string name="loc_validation_recurring_intro">I metadati degli allenamenti ricorrenti non sono coerenti:</string>
+    <string name="loc_validation_recurring_issue_line">- %1$s</string>
+    <string name="loc_validation_recurring_more">...e %1$d ulteriori segnalazioni.</string>
+    <string name="loc_validation_recurring_fixed_prescribed_load_unsupported">%1$s / %2$s: il carico fisso prescritto supporta solo serie con peso o a corpo libero.</string>
+    <string name="loc_validation_recurring_missing_session_id">%1$s: lo slot ricorrente o i metadati della prescrizione richiedono un ID sessione ricorrente.</string>
+    <string name="loc_validation_recurring_non_positive_ordinal">%1$s: le prescrizioni ricorrenti richiedono un ordinale positivo.</string>
+    <string name="loc_validation_recurring_duplicate_ordinal">%1$s: l\'ordinale della prescrizione %2$d è duplicato nella sua sessione ricorrente.</string>
+    <string name="loc_validation_recurring_duplicate_slot_ids">%1$s: gli ID degli slot degli esercizi ricorrenti devono essere univoci nell\'allenamento.</string>
+    <string name="loc_validation_recurring_last_load_missing_slot_id">%1$s / %2$s: il riporto dell\'ultimo carico richiede un ID slot esercizio ricorrente.</string>
+    <string name="loc_validation_recurring_last_load_unsupported_sets">%1$s / %2$s: il riporto dell\'ultimo carico supporta solo serie con peso o a corpo libero.</string>
+    <string name="loc_validation_recurring_conflicting_slot_identity">Lo slot dell\'esercizio ricorrente %1$s cambia definizione, tipo di esercizio o attrezzatura all\'interno di una sessione.</string>
+</resources>

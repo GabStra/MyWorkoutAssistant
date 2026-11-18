@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_workout_plan_filter_no_plan">Nessun piano</string>
+    <string name="loc_workout_plan_filter_no_enabled_workouts">Nessun allenamento attivo senza piano.</string>
+    <string name="loc_workout_plan_filter_no_workouts">Ancora nessun allenamento senza piano.</string>
+    <string name="loc_plan_name_reserved">Il nome \"Unassigned\" è riservato e non può essere usato per un piano.</string>
+    <string name="loc_plan_error_save">Impossibile salvare il piano. Riprova.</string>
+    <string name="loc_workout_plan_move_unavailable">Quel piano non è più disponibile. Scegli un altro piano.</string>
+</resources>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_audit_set_type_countup">Countup set</string>
+    <string name="loc_audit_set_type_body_weight">Body weight set</string>
+    <string name="loc_audit_set_type_countdown">Countdown set</string>
+    <string name="loc_audit_set_type_weight">Weight set</string>
+    <string name="loc_audit_set_type_running">Running set</string>
+
+    <string name="loc_audit_equipment_generic">Generic</string>
+    <string name="loc_audit_equipment_barbell">Barbell</string>
+    <string name="loc_audit_equipment_dumbbells">Dumbbell Pair</string>
+    <string name="loc_audit_equipment_dumbbell">Dumbbell</string>
+    <string name="loc_audit_equipment_plate_loaded_cable">Plate Loaded Cable</string>
+    <string name="loc_audit_equipment_weight_vest">Weight Vest</string>
+    <string name="loc_audit_equipment_machine">Machine</string>
+    <string name="loc_audit_equipment_cardio_machine">Cardio Machine</string>
+    <string name="loc_audit_equipment_iron_neck">Iron Neck</string>
+    <string name="loc_audit_equipment_accessory">Accessory</string>
+
+    <string name="loc_audit_sensor_status_active">ACTIVE</string>
+    <string name="loc_audit_sensor_status_completed">COMPLETED</string>
+    <string name="loc_audit_sensor_status_abandoned">ABANDONED</string>
+    <string name="loc_audit_sensor_state_set">Set</string>
+    <string name="loc_audit_sensor_state_rest">Rest</string>
+    <string name="loc_audit_sensor_review_pending">PENDING</string>
+    <string name="loc_audit_sensor_review_confirmed">CONFIRMED</string>
+    <string name="loc_audit_sensor_review_relabeled">RELABELED</string>
+    <string name="loc_audit_sensor_review_marked_rest">MARKED_REST</string>
+    <string name="loc_audit_sensor_review_dropped">DROPPED</string>
+    <string name="loc_audit_sensor_kind_exercise">EXERCISE</string>
+    <string name="loc_audit_sensor_kind_rest">REST</string>
+    <string name="loc_audit_sensor_kind_transition">TRANSITION</string>
+</resources>

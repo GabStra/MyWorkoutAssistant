@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_audit_set_type_countup">Serie a conteggio crescente</string>
+    <string name="loc_audit_set_type_body_weight">Serie a corpo libero</string>
+    <string name="loc_audit_set_type_countdown">Serie a conteggio decrescente</string>
+    <string name="loc_audit_set_type_weight">Serie con peso</string>
+    <string name="loc_audit_set_type_running">Serie di corsa</string>
+
+    <string name="loc_audit_equipment_generic">Generica</string>
+    <string name="loc_audit_equipment_barbell">Bilanciere</string>
+    <string name="loc_audit_equipment_dumbbells">Coppia di manubri</string>
+    <string name="loc_audit_equipment_dumbbell">Manubrio</string>
+    <string name="loc_audit_equipment_plate_loaded_cable">Cavo a piastre</string>
+    <string name="loc_audit_equipment_weight_vest">Gilet zavorrato</string>
+    <string name="loc_audit_equipment_machine">Macchina</string>
+    <string name="loc_audit_equipment_cardio_machine">Macchina cardio</string>
+    <string name="loc_audit_equipment_iron_neck">Iron Neck</string>
+    <string name="loc_audit_equipment_accessory">Accessorio</string>
+
+    <string name="loc_audit_sensor_status_active">ATTIVA</string>
+    <string name="loc_audit_sensor_status_completed">COMPLETATA</string>
+    <string name="loc_audit_sensor_status_abandoned">ABBANDONATA</string>
+    <string name="loc_audit_sensor_state_set">Serie</string>
+    <string name="loc_audit_sensor_state_rest">Recupero</string>
+    <string name="loc_audit_sensor_review_pending">IN ATTESA</string>
+    <string name="loc_audit_sensor_review_confirmed">CONFERMATO</string>
+    <string name="loc_audit_sensor_review_relabeled">RIETICHETTATO</string>
+    <string name="loc_audit_sensor_review_marked_rest">CONTRASSEGNATO COME RECUPERO</string>
+    <string name="loc_audit_sensor_review_dropped">SCARTATO</string>
+    <string name="loc_audit_sensor_kind_exercise">ESERCIZIO</string>
+    <string name="loc_audit_sensor_kind_rest">RECUPERO</string>
+    <string name="loc_audit_sensor_kind_transition">TRANSIZIONE</string>
+</resources>

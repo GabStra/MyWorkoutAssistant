@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Aggiunte generate dall'app nel markdown degli approfondimenti allenamento -->
+    <string name="loc_insight_markdown_next_session_target">Obiettivo prossima sessione</string>
+    <string name="loc_insight_markdown_recorded_value">il valore registrato</string>
+    <string name="loc_insight_markdown_recorded_set">la serie registrata</string>
+    <string name="loc_insight_markdown_next_session_target_hr_zone_bullet">Ripeti il lavoro pianificato nella zona configurata %1$s; confronta la frequenza cardiaca solo a un carico simile.</string>
+    <string name="loc_insight_markdown_next_session_target_duration_bullet">Completa %1$d secondi di %2$s nella zona di frequenza cardiaca prescritta; %3$s.</string>
+    <string name="loc_insight_markdown_duration_reason_ceiling_reached">mantieni: limite di durata configurato raggiunto</string>
+    <string name="loc_insight_markdown_duration_reason_increase_criteria_met">aumenta: %1$d sessioni consecutive hanno soddisfatto i criteri configurati</string>
+    <string name="loc_insight_markdown_duration_reason_hold_assessment">mantieni: %1$s</string>
+    <string name="loc_insight_markdown_duration_reason_no_comparable_sessions">mantieni: nessuna sessione comparabile registrata con questa politica e durata</string>
+    <string name="loc_insight_markdown_duration_reason_insufficient_qualifying_sessions">mantieni: %1$d di %2$d sessioni consecutive qualificanti richieste</string>
+    <string name="loc_insight_markdown_duration_reason_session_not_completed_normally">mantieni: la sessione corrente non è stata completata normalmente</string>
+    <string name="loc_insight_markdown_duration_assessment_work_not_completed_normally">il lavoro prescritto non è stato completato normalmente</string>
+    <string name="loc_insight_markdown_duration_assessment_load_differs">il carico registrato differisce dalla prescrizione di durata senza carico</string>
+    <string name="loc_insight_markdown_duration_assessment_timestamps_unavailable">orari del lavoro non disponibili</string>
+    <string name="loc_insight_markdown_duration_assessment_work_shorter_than_prescription">la durata registrata del lavoro è inferiore alla prescrizione</string>
+    <string name="loc_insight_markdown_duration_assessment_insufficient_hr_coverage">copertura della frequenza cardiaca insufficiente; impossibile valutare</string>
+    <string name="loc_insight_markdown_duration_assessment_hr_zone_below_threshold">aderenza alla zona di frequenza cardiaca del lavoro inferiore alla soglia configurata</string>
+    <string name="loc_insight_markdown_duration_assessment_qualifying_work">lavoro completato con copertura della frequenza cardiaca e aderenza alla zona qualificanti</string>
+</resources>

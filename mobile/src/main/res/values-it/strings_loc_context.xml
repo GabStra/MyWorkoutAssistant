@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_ctx_round_format">GIRO %1$s</string>
+    <string name="loc_ctx_set_counter_format">%1$s %2$d/%3$d</string>
+    <string name="loc_ctx_side_format">LATO %1$s</string>
+    <string name="loc_ctx_counter_warmup">RISCALDAMENTO</string>
+    <string name="loc_ctx_counter_work_set">SERIE DI LAVORO</string>
+    <string name="loc_ctx_counter_calibration">CALIBRAZIONE</string>
+</resources>

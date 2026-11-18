@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wear_running_error_health_services_failed">Monitoraggio della salute non riuscito</string>
+    <string name="wear_running_error_start_failed">Impossibile avviare il monitoraggio della corsa</string>
+</resources>

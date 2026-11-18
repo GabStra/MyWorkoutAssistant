@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="loc_status_finished_early">Finished early</string>
+    <string name="loc_status_in_progress">In progress</string>
+    <string name="loc_status_stopped_on_watch">Stopped</string>
+    <string name="loc_status_stale_on_watch">Watch disconnected</string>
+    <string name="loc_status_interrupted">Interrupted</string>
+
+    <string name="loc_status_rest_label">REST</string>
+    <string name="loc_status_rest_fallback">Rest</string>
+    <string name="loc_status_rest_duration">%1$s %2$s</string>
+    <string name="loc_status_rest_elapsed">%1$s %2$s elapsed</string>
+    <string name="loc_status_rest_elapsed_planned">%1$s %2$s elapsed (%3$s planned)</string>
+</resources>

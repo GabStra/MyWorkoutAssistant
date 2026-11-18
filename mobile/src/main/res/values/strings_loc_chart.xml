@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Heart-rate chart candlestick marker labels -->
+    <string name="loc_chart_marker_open">Open</string>
+    <string name="loc_chart_marker_close">Close</string>
+    <string name="loc_chart_marker_low">Low</string>
+    <string name="loc_chart_marker_high">High</string>
+</resources>
