@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -12,7 +13,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ContentSubtitle
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
@@ -191,12 +195,13 @@ fun RecurringExerciseControls(
     progressionMode: ProgressionMode,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val supportsWeightHistory = exercise.exerciseType in setOf(ExerciseType.WEIGHT, ExerciseType.BODY_WEIGHT)
     if (!supportsWeightHistory) {
-        FormSectionTitle(text = "Weight history")
+        FormSectionTitle(text = stringResource(R.string.loc_ex_weight_history))
         StyledCard(modifier = modifier.fillMaxWidth()) {
             Text(
-                "Weight history slots and starting-load carry are available for weight and bodyweight exercises.",
+                stringResource(R.string.loc_ex_weight_history_unsupported),
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -221,12 +226,22 @@ fun RecurringExerciseControls(
     }
 
     val options = buildList {
-        add(TrackOption(RecurringTrackSelection(RecurringTrackMode.NEW_TRACK), "Create new weight history slot"))
-        add(TrackOption(RecurringTrackSelection(RecurringTrackMode.UNLINKED), "No history link"))
+        add(
+            TrackOption(
+                RecurringTrackSelection(RecurringTrackMode.NEW_TRACK),
+                context.getString(R.string.loc_ex_create_new_weight_history_slot),
+            )
+        )
+        add(
+            TrackOption(
+                RecurringTrackSelection(RecurringTrackMode.UNLINKED),
+                context.getString(R.string.loc_ex_no_history_link),
+            )
+        )
         trackChoices.forEach { choice ->
             add(TrackOption(
                 RecurringTrackSelection(RecurringTrackMode.EXISTING_TRACK, choice.trackId),
-                choice.displayLabel(),
+                choice.displayLabel(context),
             ))
         }
     }
@@ -239,14 +254,14 @@ fun RecurringExerciseControls(
         hasLoadableWorkingSet,
     )
 
-    FormSectionTitle(text = "Recurring weight history")
+    FormSectionTitle(text = stringResource(R.string.loc_ex_recurring_weight_history))
     StyledCard(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
             StandardFilterDropdown(
-                label = "Weight history slot",
+                label = stringResource(R.string.loc_ex_weight_history_slot),
                 selectedText = selectedOption.label,
                 items = options.map { StandardFilterDropdownItem(it.selection, it.label) },
                 onItemSelected = onTrackSelectionChange,
@@ -255,19 +270,34 @@ fun RecurringExerciseControls(
                 modifier = Modifier.fillMaxWidth().testTag("recurring_weight_history_slot"),
                 itemMaxLines = 2,
             )
-            ContentSubtitle("Each new slot keeps separate history. Unlinking or choosing prescribed weight does not delete recorded history.")
+            ContentSubtitle(stringResource(R.string.loc_ex_recurring_slots_hint))
             StandardFilterDropdown(
-                label = "Weight behavior",
+                label = stringResource(R.string.loc_ex_weight_behavior),
                 selectedText = when (displayedLoadPolicy) {
-                    LoadHistoryPolicy.NONE -> "Automatic (existing behavior)"
-                    LoadHistoryPolicy.PRESCRIBED_WEIGHT -> "Prescribed weight"
-                    LoadHistoryPolicy.LAST_WORKING_LOAD -> "Last working load"
+                    LoadHistoryPolicy.NONE -> context.getString(R.string.loc_ex_auto_existing_behavior)
+                    LoadHistoryPolicy.PRESCRIBED_WEIGHT -> context.getString(R.string.loc_ex_prescribed_weight)
+                    LoadHistoryPolicy.LAST_WORKING_LOAD -> context.getString(R.string.loc_ex_last_working_load)
                 },
                 items = buildList {
-                    add(StandardFilterDropdownItem(LoadHistoryPolicy.NONE, "Automatic (existing behavior)"))
-                    add(StandardFilterDropdownItem(LoadHistoryPolicy.PRESCRIBED_WEIGHT, "Prescribed weight"))
+                    add(
+                        StandardFilterDropdownItem(
+                            LoadHistoryPolicy.NONE,
+                            context.getString(R.string.loc_ex_auto_existing_behavior),
+                        )
+                    )
+                    add(
+                        StandardFilterDropdownItem(
+                            LoadHistoryPolicy.PRESCRIBED_WEIGHT,
+                            context.getString(R.string.loc_ex_prescribed_weight),
+                        )
+                    )
                     if (canSelectLastWorkingLoad) {
-                        add(StandardFilterDropdownItem(LoadHistoryPolicy.LAST_WORKING_LOAD, "Last working load"))
+                        add(
+                            StandardFilterDropdownItem(
+                                LoadHistoryPolicy.LAST_WORKING_LOAD,
+                                context.getString(R.string.loc_ex_last_working_load),
+                            )
+                        )
                     }
                 },
                 onItemSelected = onLoadHistoryPolicyChange,
@@ -278,17 +308,17 @@ fun RecurringExerciseControls(
             ContentSubtitle(
                 when (displayedLoadPolicy) {
                     LoadHistoryPolicy.PRESCRIBED_WEIGHT ->
-                        "Prescribed weights stay fixed; history, progression, and calibration do not replace them."
+                        stringResource(R.string.loc_ex_prescribed_weight_hint)
                     LoadHistoryPolicy.NONE ->
-                        "Automatic keeps the existing history, progression, and calibration behavior."
+                        stringResource(R.string.loc_ex_automatic_behavior_hint)
                     LoadHistoryPolicy.LAST_WORKING_LOAD -> when {
-                        workingSets.isEmpty() -> "Add a weight or bodyweight work set to enable last working load."
-                        !hasLoadableWorkingSet -> "Last working load requires supported weight or bodyweight work sets."
-                        !canSelectLastWorkingLoad -> "Choose a history slot to use its last working load."
+                        workingSets.isEmpty() -> stringResource(R.string.loc_ex_add_work_set_hint)
+                        !hasLoadableWorkingSet -> stringResource(R.string.loc_ex_last_load_requires_supported_sets)
+                        !canSelectLastWorkingLoad -> stringResource(R.string.loc_ex_choose_history_slot_hint)
                         requiresLoadCalibration || progressionMode != ProgressionMode.OFF ->
-                            "Calibration or active progression is enabled and may take precedence over the carried load."
+                            stringResource(R.string.loc_ex_calibration_precedence_hint)
                         else ->
-                            "When selected, the last completed matching session supplies the starting weight. Calibration or active progression can take precedence."
+                            stringResource(R.string.loc_ex_last_load_explanation)
                     }
                 }
             )
@@ -297,8 +327,16 @@ fun RecurringExerciseControls(
     Spacer(Modifier.height(Spacing.md))
 }
 
-private fun RecurringTrackChoice.displayLabel(): String {
+private fun RecurringTrackChoice.displayLabel(context: Context): String {
     val prescription = prescriptionLabel?.takeIf(String::isNotBlank)
-        ?: "Prescription ${prescriptionOrdinal.takeIf { it > 0 } ?: "?"}"
-    return "$exerciseName · $sourceWorkoutName · $prescription · Exercise $exercisePosition"
+        ?: prescriptionOrdinal.takeIf { it > 0 }
+            ?.let { context.getString(R.string.loc_scr_prescription_n, it) }
+        ?: context.getString(R.string.loc_ex_prescription_unknown)
+    return context.getString(
+        R.string.loc_ex_track_label,
+        exerciseName,
+        sourceWorkoutName,
+        prescription,
+        context.getString(R.string.loc_ex_exercise_n, exercisePosition),
+    )
 }

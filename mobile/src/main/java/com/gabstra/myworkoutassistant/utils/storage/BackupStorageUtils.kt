@@ -456,7 +456,11 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
         }
     } ?: run {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
-            Toast.makeText(context, "Couldn't save the file to Downloads.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                context.getString(R.string.loc_couldnt_save_file_downloads),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 }
@@ -1204,7 +1208,9 @@ suspend fun cleanupDuplicateBackupFiles(context: Context) {
             
             Log.d("Utils", "Cleanup complete: deleted $deletedCount duplicate backup file(s), kept: ${targetFile.name}")
             if (deletedCount > 0) {
-                showCleanupToast("Removed $deletedCount duplicate backup file(s).")
+                showCleanupToast(
+                    context.getString(R.string.loc_removed_duplicate_backups, deletedCount)
+                )
             }
         } catch (e: Exception) {
             Log.e("Utils", "Error cleaning up duplicate backup files", e)
@@ -1306,7 +1312,13 @@ suspend fun cleanupDuplicateBackupFilesByContent(context: Context) {
             Log.d("Utils", "Cleanup complete: $uniqueFiles unique content(s), $totalDuplicates duplicate(s) found, $deletedCount deleted, ${allBackupFiles.size - deletedCount} kept")
             
             if (deletedCount > 0) {
-                showCleanupToast("Removed $deletedCount duplicate backup file(s). Kept $uniqueFiles unique backup version(s).")
+                showCleanupToast(
+                    context.getString(
+                        R.string.loc_removed_duplicate_backups_kept,
+                        deletedCount,
+                        uniqueFiles
+                    )
+                )
             } else if (totalDuplicates == 0) {
                 Log.d("Utils", "No duplicates found - all backup files have unique content")
             }
@@ -1473,11 +1485,19 @@ suspend fun writeMarkdownToDownloadsFolder(context: Context, fileName: String, f
             outputStream?.write(fileContent.toByteArray())
         }
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Export saved to Downloads.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                context.getString(R.string.loc_export_saved_downloads),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     } ?: run {
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Couldn't save the file to Downloads.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                context.getString(R.string.loc_couldnt_save_file_downloads),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 }
@@ -1496,7 +1516,7 @@ suspend fun streamMarkdownToDownloadsFolder(
 
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-            ?: error("Couldn't create the Markdown file in Downloads.")
+            ?: error(context.getString(R.string.loc_couldnt_create_markdown_downloads))
 
         try {
             resolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
@@ -1504,7 +1524,7 @@ suspend fun streamMarkdownToDownloadsFolder(
                     writer.write(markdown)
                 }
                 writer.flush()
-            } ?: error("Couldn't open the Markdown file for writing.")
+            } ?: error(context.getString(R.string.loc_couldnt_open_markdown_downloads))
         } catch (exception: Exception) {
             resolver.delete(uri, null, null)
             throw exception

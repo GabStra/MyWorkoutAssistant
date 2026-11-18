@@ -105,6 +105,7 @@ import com.gabstra.myworkoutassistant.screens.SettingsScreen
 import com.gabstra.myworkoutassistant.screens.SupersetForm
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
+import com.gabstra.myworkoutassistant.screens.formatScheduleConflictMessage
 import com.gabstra.myworkoutassistant.screens.recurringPrescriptionDisplayLabel
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
@@ -134,7 +135,12 @@ import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecond
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreRecurringMetadataIssue
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreRecurringMetadataIssueCode
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
+import com.gabstra.myworkoutassistant.shared.convertUnassignedPlansToUngroupedWorkouts
 import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import java.io.File
 import com.gabstra.myworkoutassistant.shared.detectBackupFileType
@@ -219,11 +225,116 @@ private fun Throwable.toMainActivityToastMessage(
     return "$intro $detail"
 }
 
+private fun WorkoutStoreValidationException.toUserFacingMessage(context: Context): String {
+    val sections = mutableListOf<String>()
+    if (duplicateSetIdIssues.isNotEmpty()) {
+        sections += buildString {
+            append(context.getString(R.string.loc_validation_duplicate_set_ids_intro))
+            append("\n\n")
+            append(
+                duplicateSetIdIssues.take(3).joinToString("\n\n") { issue ->
+                    context.getString(
+                        R.string.loc_validation_duplicate_set_id_block,
+                        issue.workoutName,
+                        issue.setId.toString(),
+                        issue.exerciseNames.joinToString(", "),
+                    )
+                }
+            )
+            val remaining = duplicateSetIdIssues.size - 3
+            if (remaining > 0) {
+                append("\n\n")
+                append(context.getString(R.string.loc_validation_duplicate_set_ids_more, remaining))
+            }
+        }
+    }
+    if (recurringMetadataIssues.isNotEmpty()) {
+        sections += buildString {
+            append(context.getString(R.string.loc_validation_recurring_intro))
+            append("\n")
+            append(
+                recurringMetadataIssues.take(5).joinToString("\n") { issue ->
+                    context.getString(
+                        R.string.loc_validation_recurring_issue_line,
+                        issue.toUserFacingText(context),
+                    )
+                }
+            )
+            val remaining = recurringMetadataIssues.size - 5
+            if (remaining > 0) {
+                append("\n")
+                append(context.getString(R.string.loc_validation_recurring_more, remaining))
+            }
+        }
+    }
+    return sections.joinToString("\n\n")
+}
+
+private fun WorkoutStoreRecurringMetadataIssue.toUserFacingText(context: Context): String =
+    when (code) {
+        WorkoutStoreRecurringMetadataIssueCode.FIXED_PRESCRIBED_LOAD_UNSUPPORTED_SETS ->
+            context.getString(
+                R.string.loc_validation_recurring_fixed_prescribed_load_unsupported,
+                workoutName,
+                exerciseName.orEmpty(),
+            )
+        WorkoutStoreRecurringMetadataIssueCode.MISSING_RECURRING_SESSION_ID ->
+            context.getString(
+                R.string.loc_validation_recurring_missing_session_id,
+                workoutName,
+            )
+        WorkoutStoreRecurringMetadataIssueCode.NON_POSITIVE_PRESCRIPTION_ORDINAL ->
+            context.getString(
+                R.string.loc_validation_recurring_non_positive_ordinal,
+                workoutName,
+            )
+        WorkoutStoreRecurringMetadataIssueCode.DUPLICATE_PRESCRIPTION_ORDINAL ->
+            context.getString(
+                R.string.loc_validation_recurring_duplicate_ordinal,
+                workoutName,
+                prescriptionOrdinal ?: 0,
+            )
+        WorkoutStoreRecurringMetadataIssueCode.DUPLICATE_RECURRING_EXERCISE_SLOT_IDS ->
+            context.getString(
+                R.string.loc_validation_recurring_duplicate_slot_ids,
+                workoutName,
+            )
+        WorkoutStoreRecurringMetadataIssueCode.LAST_WORKING_LOAD_MISSING_SLOT_ID ->
+            context.getString(
+                R.string.loc_validation_recurring_last_load_missing_slot_id,
+                workoutName,
+                exerciseName.orEmpty(),
+            )
+        WorkoutStoreRecurringMetadataIssueCode.LAST_WORKING_LOAD_UNSUPPORTED_SETS ->
+            context.getString(
+                R.string.loc_validation_recurring_last_load_unsupported_sets,
+                workoutName,
+                exerciseName.orEmpty(),
+            )
+        WorkoutStoreRecurringMetadataIssueCode.CONFLICTING_RECURRING_SLOT_IDENTITY ->
+            context.getString(
+                R.string.loc_validation_recurring_conflicting_slot_identity,
+                recurringExerciseSlotId?.toString().orEmpty(),
+            )
+    }
+
 private data class PendingWorkoutHistoryImport(
     val targetProfileId: String,
     val targetProfileName: String,
     val payload: WorkoutHistoryImportPackage,
 )
+
+/**
+ * Prepares the shared half of a full backup for restore without discarding legacy one-sided
+ * plan membership. The repository will apply the same conservative repair when it persists or
+ * loads the data, but the in-memory union is also used to build each profile's restore input, so
+ * it must be repaired here first. Authoritative conversion remains reserved for explicit user
+ * moves and deletes.
+ */
+internal fun FullBackup.sharedStoreForRestore(): WorkoutStore =
+    sharedStore.convertUnassignedPlansToUngroupedWorkouts(
+        repairPlanOnlyMembership = true,
+    )
 
 
 class MainActivity : ComponentActivity() {
@@ -1010,11 +1121,11 @@ fun MyWorkoutAssistantNavHost(
         )
     }
 
-    workoutStoreValidationError?.let { message ->
+    workoutStoreValidationError?.let { validationError ->
         StandardDialog(
             onDismissRequest = { appViewModel.clearWorkoutStoreValidationError() },
             title = context.getString(R.string.main_workout_data_error_title),
-            body = { Text(message) },
+            body = { Text(validationError.toUserFacingMessage(context)) },
             confirmText = context.getString(R.string.common_ok),
             onConfirm = { appViewModel.clearWorkoutStoreValidationError() },
             showDismiss = false
@@ -1029,7 +1140,8 @@ fun MyWorkoutAssistantNavHost(
      * Restores one profile's backup into [profileId].
      *
      * A full-backup restore calls this once per profile with [skipProfileIdentityCheck] and
-     * [applyToViewModels] false, so this single path keeps owning all the row validation.
+     * [applyToViewModels] false, and [persistSharedContent] false because the union shared store
+     * was already written once. This single path keeps owning all the row validation.
      */
     suspend fun restoreFromAppBackup(
         appBackup: AppBackup,
@@ -1040,6 +1152,7 @@ fun MyWorkoutAssistantNavHost(
         healthConnectClient: HealthConnectClient,
         skipProfileIdentityCheck: Boolean = false,
         applyToViewModels: Boolean = true,
+        persistSharedContent: Boolean = true,
         successToastMessage: String? = null
     ): Boolean {
         return withContext(Dispatchers.IO + NonCancellable) {
@@ -1105,20 +1218,23 @@ fun MyWorkoutAssistantNavHost(
                     }
                 }
 
-                val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
-                workout.isActive || (!workout.isActive && appBackup.WorkoutHistories.any { it.workoutId == workout.id })
-            }
+                // Keep every backup workout: an inactive template can still own schedules,
+                // records or a legacy "Unassigned" membership that must be converted, not dropped.
+                val newWorkoutStore = appBackup.restoredWorkoutStore()
+                val restoredWorkouts = newWorkoutStore.workouts
+                restoreExerciseMovementBackups(
+                    context = context,
+                    movementBackups = appBackup.ExerciseMovements.orEmpty()
+                )
+                requireExerciseMovementPayloads(context, newWorkoutStore)
 
-            val newWorkoutStore = appBackup.WorkoutStore.copy(
-                workouts = allowedWorkouts
-            )
-            restoreExerciseMovementBackups(
-                context = context,
-                movementBackups = appBackup.ExerciseMovements.orEmpty()
-            )
-            requireExerciseMovementPayloads(context, newWorkoutStore)
+                // Migrate and validate before deleting any rows: a rejected backup must leave the
+                // current histories in place instead of producing a partial restore.
+                val planMigratedWorkoutStore =
+                    workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
+                validateWorkoutStoreForRuntimeUse(planMigratedWorkoutStore)
 
-            val deleteAndInsertJob = coroutineScope {
+                val deleteAndInsertJob = coroutineScope {
                 async {
                     try {
                         val BATCH_SIZE = 80
@@ -1151,7 +1267,7 @@ fun MyWorkoutAssistantNavHost(
 
                         val validWorkoutHistories =
                             appBackup.WorkoutHistories.filter { workoutHistory ->
-                                allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
+                                restoredWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
                             }
 
                         validWorkoutHistories.chunked(BATCH_SIZE).forEach { chunk ->
@@ -1176,7 +1292,7 @@ fun MyWorkoutAssistantNavHost(
                             restHistoryDao.insertAll(*chunk.toTypedArray())
                         }
 
-                        val allExercises = allowedWorkouts.flatMap { workout ->
+                        val allExercises = restoredWorkouts.flatMap { workout ->
                             workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>()
                                 .flatMap { it.exercises }
                         }
@@ -1187,14 +1303,14 @@ fun MyWorkoutAssistantNavHost(
                             exerciseInfoDao.insertAll(*chunk.toTypedArray())
                         }
 
-                        val validWorkoutSchedules = appBackup.WorkoutSchedules.filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
+                        val validWorkoutSchedules = appBackup.WorkoutSchedules.filter { restoredWorkouts.any { workout -> workout.globalId == it.workoutId } }
 
                         validWorkoutSchedules.chunked(BATCH_SIZE).forEach { chunk ->
                             workoutScheduleDao.insertAll(*chunk.toTypedArray())
                         }
 
                         val validWorkoutRecords =
-                            appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
+                            appBackup.WorkoutRecords.filter { restoredWorkouts.any { workout -> workout.id == it.workoutId } }
 
                         validWorkoutRecords.chunked(BATCH_SIZE).forEach { chunk ->
                             workoutRecordDao.insertAll(*chunk.toTypedArray())
@@ -1255,17 +1371,22 @@ fun MyWorkoutAssistantNavHost(
                     db = db
                 )*/
 
-                // Migrate the workout store before updating view models to ensure
-                // "Unassigned" plan is created for workouts without a plan
+                // Persist the validated, migration-applied store. A full-backup restore has
+                // already written the union shared library, so it writes this profile's personal
+                // half only and cannot drop another profile's workouts.
                 try {
-                    val planMigratedWorkoutStore =
-                        workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
-                    validateWorkoutStoreForRuntimeUse(planMigratedWorkoutStore)
-                    workoutStoreRepository.saveWorkoutStore(planMigratedWorkoutStore)
+                    if (persistSharedContent) {
+                        workoutStoreRepository.saveWorkoutStore(planMigratedWorkoutStore)
+                    } else {
+                        workoutStoreRepository.savePersonalSettings(planMigratedWorkoutStore)
+                    }
 
                     if (applyToViewModels) {
                         withContext(Dispatchers.Main) {
-                            appViewModel.updateWorkoutStore(planMigratedWorkoutStore)
+                            appViewModel.updateWorkoutStore(
+                                planMigratedWorkoutStore,
+                                repairPlanOnlyMembership = true,
+                            )
                             workoutViewModel.updateWorkoutStore(planMigratedWorkoutStore)
                             appViewModel.triggerUpdate()
 
@@ -1349,13 +1470,19 @@ fun MyWorkoutAssistantNavHost(
         if (fullBackup.profiles.isEmpty()) return@withContext false
 
         // Shared content and payloads first: every profile below is restored on top of them.
-        writeSharedStore(context, fullBackup.sharedStore)
+        // This is the only write of the union shared library; each profile then saves just its
+        // personal half, so a profile has no way to overwrite another profile's workouts.
+        // Use the conservative repair because this is imported backup data: legacy one-sided
+        // plan membership must survive until the repository sees and reconciles it. The
+        // authoritative conversion is reserved for explicit user moves/deletes.
+        val restoredSharedStore = fullBackup.sharedStoreForRestore()
+        writeSharedStore(context, restoredSharedStore)
         restoreFullBackupPayloads(context, fullBackup)
 
         var allRestored = true
         fullBackup.profiles.forEach { profileBackup ->
             Profiles.ensureProfile(context, profileBackup.profileId, profileBackup.profileName)
-            val merged = fullBackup.sharedStore
+            val merged = restoredSharedStore
                 .mergedWithPersonalSettingsOf(profileBackup.backup.WorkoutStore)
             val restored = restoreFromAppBackup(
                 appBackup = profileBackup.backup.copy(WorkoutStore = merged),
@@ -1366,6 +1493,7 @@ fun MyWorkoutAssistantNavHost(
                 healthConnectClient = healthConnectClient,
                 skipProfileIdentityCheck = true,
                 applyToViewModels = false,
+                persistSharedContent = false,
                 successToastMessage = "",
             )
             if (!restored) allRestored = false
@@ -2009,7 +2137,10 @@ fun MyWorkoutAssistantNavHost(
                                     )
                                         .show()
 
-                                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                                    appViewModel.updateWorkoutStore(
+                                        workoutStoreRepository.getWorkoutStore(),
+                                        repairPlanOnlyMembership = true,
+                                    )
                                     appViewModel.triggerUpdate()
                                 }
                             },
@@ -2234,10 +2365,10 @@ fun MyWorkoutAssistantNavHost(
                                             )
 
                                         if (conflicts.isNotEmpty()) {
-                                            val errorMessage =
-                                                ScheduleConflictChecker.formatConflictMessage(
-                                                    conflicts
-                                                )
+                                            val errorMessage = formatScheduleConflictMessage(
+                                                context,
+                                                conflicts,
+                                            )
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(
                                                     context,
@@ -2333,10 +2464,10 @@ fun MyWorkoutAssistantNavHost(
                                             )
 
                                         if (conflicts.isNotEmpty()) {
-                                            val errorMessage =
-                                                ScheduleConflictChecker.formatConflictMessage(
-                                                    conflicts
-                                                )
+                                            val errorMessage = formatScheduleConflictMessage(
+                                                context,
+                                                conflicts,
+                                            )
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(
                                                     context,

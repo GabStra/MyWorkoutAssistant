@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
@@ -72,6 +73,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.TutorialPreferences
 import com.gabstra.myworkoutassistant.data.TutorialState
 import com.gabstra.myworkoutassistant.data.WhoopHeartRateViewModel
+import com.gabstra.myworkoutassistant.data.cancelSyncInProgressNotification
 import com.gabstra.myworkoutassistant.services.RunningTrackingService
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.findActivity
@@ -170,6 +172,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+
+        // The athlete is now looking at the app: the background sync notification has no purpose.
+        cancelSyncInProgressNotification(this)
 
         val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
         if (km.isKeyguardLocked) {
@@ -366,7 +371,7 @@ fun WearApp(
                 Log.e("MainActivity", "Failed to load workout repository", exception)
                 Toast.makeText(
                     localContext,
-                    "Couldn't load your workouts.",
+                    localContext.getString(R.string.wear_load_workouts_failed),
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -501,7 +506,7 @@ fun WearApp(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     localContext,
-                                    "Sent ${errorLogs.size} error log(s) to your phone.",
+                                    localContext.getString(R.string.wear_error_logs_sent, errorLogs.size),
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -562,8 +567,14 @@ fun WearApp(
                                             .zIndex(1f),
                                         visible = showWorkoutSelectionTutorial,
                                         steps = listOf(
-                                            TutorialStep("Choose a workout", "Tap a workout to open it, review the details, and start when you're ready."),
-                                            TutorialStep("Watch sync status", "The small indicator at the top shows whether the watch is syncing. If something looks outdated, let sync finish first.")
+                                            TutorialStep(
+                                                stringResource(R.string.wear_tutorial_choose_workout_title),
+                                                stringResource(R.string.wear_tutorial_choose_workout_desc),
+                                            ),
+                                            TutorialStep(
+                                                stringResource(R.string.wear_tutorial_watch_sync_title),
+                                                stringResource(R.string.wear_tutorial_watch_sync_desc),
+                                            )
                                         ),
                                         onDismiss = {
                                             showWorkoutSelectionTutorial = false
@@ -653,10 +664,10 @@ fun WearApp(
                                 )
 
                                 val syncStageText = when (syncPhase) {
-                                    SyncPhase.CONNECTING -> "Connecting"
-                                    SyncPhase.TRANSFERRING -> "Transferring data"
-                                    SyncPhase.PROCESSING -> "Processing data"
-                                    SyncPhase.COMPLETED -> "Sync complete"
+                                    SyncPhase.CONNECTING -> stringResource(R.string.wear_sync_stage_connecting)
+                                    SyncPhase.TRANSFERRING -> stringResource(R.string.wear_sync_stage_transferring)
+                                    SyncPhase.PROCESSING -> stringResource(R.string.wear_sync_stage_processing)
+                                    SyncPhase.COMPLETED -> stringResource(R.string.notif_sync_complete)
                                 }
                                 FullScreenLoadingIndicator(
                                     text = syncStageText,
@@ -778,7 +789,7 @@ fun WearApp(
 
             if (showRecoveryPermissionRationale) {
                 PermissionRequestDialog(
-                    title = "Workout permissions",
+                    title = stringResource(R.string.wear_workout_permissions),
                     message = workoutPermissionMessage(recoveryPermissionsToRequest),
                     onContinue = {
                         if (pendingRecoveryResume == null) return@PermissionRequestDialog

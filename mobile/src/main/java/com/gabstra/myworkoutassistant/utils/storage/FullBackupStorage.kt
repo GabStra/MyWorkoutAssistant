@@ -13,8 +13,6 @@ import com.gabstra.myworkoutassistant.shared.FullBackupSettings
 import com.gabstra.myworkoutassistant.shared.MotionCaptureFileBackup
 import com.gabstra.myworkoutassistant.shared.ProfileBackup
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
-import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.mergedWithPersonalSettingsOf
 import com.gabstra.myworkoutassistant.shared.motion.collectExerciseMovementBackups
 import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
@@ -91,19 +89,21 @@ suspend fun createFullBackup(context: Context): FullBackup? = withContext(Dispat
 fun readSharedStore(context: Context): com.gabstra.myworkoutassistant.shared.WorkoutStore? {
     val file = File(context.filesDir, SHARED_STORE_FILE)
     if (!file.exists()) return null
-    return runCatching { fromJSONToWorkoutStore(file.readText()).sharedContentOnly() }
+    // Read through the owning repository so a legacy "Unassigned" plan is converted and the
+    // converted file is persisted before the full-backup envelope is built.
+    return runCatching {
+        WorkoutStoreRepository(context.filesDir, context.filesDir)
+            .getWorkoutStore()
+            .sharedContentOnly()
+    }
         .onFailure { Log.w(TAG, "Could not read the shared store", it) }
         .getOrNull()
 }
 
 fun writeSharedStore(context: Context, sharedStore: com.gabstra.myworkoutassistant.shared.WorkoutStore) {
-    val file = File(context.filesDir, SHARED_STORE_FILE)
-    val temporary = File(file.parentFile, "${file.name}.tmp")
-    temporary.writeText(fromWorkoutStoreToJSON(sharedStore.sharedContentOnly()))
-    if (!temporary.renameTo(file)) {
-        file.delete()
-        temporary.renameTo(file)
-    }
+    // The repository owns migration plus the atomic temporary-file swap, so a full restore
+    // writes the union shared library through the same path as normal saves.
+    WorkoutStoreRepository(context.filesDir, context.filesDir).saveSharedContent(sharedStore)
 }
 
 fun restoreFullBackupPayloads(

@@ -41,12 +41,14 @@ interface ExerciseSessionProgressionDao {
 
     @Transaction
     suspend fun insertAllWithVersionCheck(vararg progressions: ExerciseSessionProgression) {
-        progressions.forEach { progression ->
-            val existingProgression = getExerciseSessionProgressionById(progression.id)
-            if (existingProgression == null || progression.version >= existingProgression.version) {
-                insert(progression)
-            }
+        if (progressions.isEmpty()) return
+        // One read + one bulk write instead of a SELECT/INSERT round-trip per row.
+        val existingById = getAllExerciseSessionProgressions().associateBy { it.id }
+        val toWrite = progressions.filter { progression ->
+            val existingProgression = existingById[progression.id]
+            existingProgression == null || progression.version >= existingProgression.version
         }
+        if (toWrite.isNotEmpty()) insertAll(*toWrite.toTypedArray())
     }
 }
 

@@ -12,7 +12,6 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
@@ -20,6 +19,9 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
+import com.gabstra.myworkoutassistant.shared.convertUnassignedPlansToUngroupedWorkouts
+import com.gabstra.myworkoutassistant.shared.isReservedWorkoutPlanName
+import com.gabstra.myworkoutassistant.shared.synchronizeWorkoutPlanMemberships
 import com.gabstra.myworkoutassistant.shared.WorkoutObjectiveVersionResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
 import com.gabstra.myworkoutassistant.shared.RecurringWorkoutAuthoring
@@ -64,7 +66,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
@@ -245,10 +246,120 @@ private fun emptyWorkoutStore(): WorkoutStore {
     )
 }
 
+/**
+ * Moves [workoutIds] to [targetPlanId], or detaches them from every plan when it is null.
+ * The denormalized plan member lists are synchronized so persistence sees one consistent state.
+ */
+internal fun WorkoutStore.withWorkoutsMovedToPlan(
+    workoutIds: kotlin.collections.Set<UUID>,
+    targetPlanId: UUID?,
+): WorkoutStore {
+    val updatedWorkouts = workouts.map { workout ->
+        if (workout.id in workoutIds) workout.copy(workoutPlanId = targetPlanId) else workout
+    }
+    return copy(workouts = updatedWorkouts).synchronizeWorkoutPlanMemberships()
+}
+
+/** Removes [planId] and detaches its workouts without deleting or reassigning any workout. */
+internal fun WorkoutStore.withWorkoutPlanDeleted(planId: UUID): WorkoutStore {
+    val updatedWorkouts = workouts.map { workout ->
+        if (workout.workoutPlanId == planId) workout.copy(workoutPlanId = null) else workout
+    }
+    val updatedPlans = workoutPlans.filterNot { it.id == planId }
+    return copy(workouts = updatedWorkouts, workoutPlans = updatedPlans)
+        .synchronizeWorkoutPlanMemberships()
+}
+
+/**
+ * Applies only the editable plan settings, leaving membership, order and any other fields on the
+ * latest stored plan untouched.
+ *
+ * @return the updated store, or null when [planId] no longer exists.
+ */
+internal fun WorkoutStore.withWorkoutPlanSettings(
+    planId: UUID,
+    name: String,
+    suggestNextPrescription: Boolean,
+): WorkoutStore? {
+    val currentPlan = workoutPlans.firstOrNull { it.id == planId } ?: return null
+    val updatedPlan = currentPlan.copy(
+        name = name,
+        suggestNextPrescription = suggestNextPrescription,
+    )
+    if (updatedPlan == currentPlan) {
+        return this
+    }
+    return copy(
+        workoutPlans = workoutPlans.map { plan ->
+            if (plan.id == planId) updatedPlan else plan
+        },
+    )
+}
+
 private data class AppState(
     val workoutStore: WorkoutStore = emptyWorkoutStore(),
-    val selectedWorkoutPlanId: UUID? = null
+    val selectedWorkoutPlanId: UUID? = null,
+    /**
+     * False until a plan filter has been chosen, either explicitly by the user or by the
+     * initial default resolution. This distinction is required because a null plan id is
+     * both the initial "nothing chosen yet" state and the user's explicit "No plan" filter.
+     */
+    val isWorkoutPlanSelectionResolved: Boolean = false,
 )
+
+internal data class WorkoutPlanSelection(
+    val planId: UUID?,
+    val isResolved: Boolean,
+)
+
+/**
+ * Keeps [requestedPlanId] only while it names a plan in [plans]; every other request becomes the
+ * explicit "No plan" filter instead of selecting a plan that the picker cannot display.
+ */
+internal fun resolveRequestedWorkoutPlanSelection(
+    plans: List<WorkoutPlan>,
+    requestedPlanId: UUID?,
+): UUID? = requestedPlanId?.takeIf { planId -> plans.any { it.id == planId } }
+
+/**
+ * Resolves the plan filter that should stay active after the workout store is normalized or
+ * reloaded.
+ *
+ * An unresolved selection defaults to the first plan once plans exist. Once resolved, the exact
+ * choice survives store mutations: an explicit "No plan" selection stays null, and a selected
+ * plan that has been deleted falls back to "No plan" so its detached workouts remain visible.
+ */
+internal fun resolveWorkoutPlanSelection(
+    plans: List<WorkoutPlan>,
+    workouts: List<Workout>,
+    currentSelection: UUID?,
+    isResolved: Boolean,
+): WorkoutPlanSelection {
+    val planIds = plans.mapTo(mutableSetOf()) { it.id }
+    if (isResolved) {
+        return WorkoutPlanSelection(
+            planId = currentSelection?.takeIf { it in planIds },
+            isResolved = true,
+        )
+    }
+
+    if (currentSelection != null && currentSelection in planIds) {
+        return WorkoutPlanSelection(currentSelection, isResolved = true)
+    }
+
+    val unassignedPlan = plans.firstOrNull { isReservedWorkoutPlanName(it.name) }
+    val defaultPlan = when {
+        unassignedPlan != null &&
+            (plans.size == 1 || workouts.any { it.workoutPlanId == unassignedPlan.id }) ->
+            unassignedPlan
+
+        else -> plans.minByOrNull { it.order }
+    }
+    return WorkoutPlanSelection(
+        planId = defaultPlan?.id,
+        isResolved = defaultPlan != null,
+    )
+}
 
 class AppViewModel(
     application: Application
@@ -267,7 +378,7 @@ class AppViewModel(
 
     private val _state = MutableStateFlow(AppState())
     private val _isInitialDataLoaded = MutableStateFlow(false)
-    private val _workoutStoreValidationError = MutableStateFlow<String?>(null)
+    private val _workoutStoreValidationError = MutableStateFlow<WorkoutStoreValidationException?>(null)
     private var _userAge = mutableIntStateOf(0)
     private var pendingExternalPage: String? = null
 
@@ -283,13 +394,17 @@ class AppViewModel(
                 val store = withContext(Dispatchers.IO) { repo.getWorkoutStore() }
                 validateWorkoutStoreForRuntimeUse(store)
                 _workoutStoreValidationError.value = null
-                setWorkoutStoreState(store, triggerSend = false)
+                setWorkoutStoreState(
+                    store,
+                    triggerSend = false,
+                    repairPlanOnlyMembership = true,
+                )
                 refreshWorkoutHistories(store.workouts)
                 _isInitialDataLoaded.value = true
                 openPendingExternalPage()
             } catch (e: WorkoutStoreValidationException) {
                 Log.e(TAG, "Workout store validation failed during startup load: ${e.userMessage}")
-                _workoutStoreValidationError.value = e.userMessage
+                _workoutStoreValidationError.value = e
                 _isInitialDataLoaded.value = true
                 openPendingExternalPage()
             } catch (e: Exception) {
@@ -419,14 +534,21 @@ class AppViewModel(
 
     private val _updateNotificationFlow = MutableStateFlow<String?>(null)
     val updateNotificationFlow = _updateNotificationFlow.asStateFlow()
-    val workoutStoreValidationError: StateFlow<String?> = _workoutStoreValidationError.asStateFlow()
+    val workoutStoreValidationError: StateFlow<WorkoutStoreValidationException?> =
+        _workoutStoreValidationError.asStateFlow()
 
     var selectedHomeTab by mutableIntStateOf(0)
         private set
 
     fun setSelectedWorkoutPlanId(planId: UUID?) {
         _state.update { current ->
-            current.copy(selectedWorkoutPlanId = planId)
+            current.copy(
+                selectedWorkoutPlanId = resolveRequestedWorkoutPlanSelection(
+                    plans = current.workoutStore.workoutPlans,
+                    requestedPlanId = planId,
+                ),
+                isWorkoutPlanSelectionResolved = true,
+            )
         }
     }
 
@@ -549,8 +671,9 @@ class AppViewModel(
 
     fun importExerciseLibrary(exerciseLibrary: ExerciseLibraryPackage): Int {
         require(exerciseLibrary.exerciseDefinitions.isNotEmpty()) {
-            "The exercise library does not contain any definitions."
+            getApplication<Application>().getString(R.string.loc_library_empty)
         }
+        val appContext = getApplication<Application>()
 
         fun <T> mergeReferencesById(
             existing: List<T>,
@@ -564,7 +687,13 @@ class AppViewModel(
                 val id = idOf(importedItem)
                 val existingItem = existingById[id] ?: return@forEach
                 require(kindOf(existingItem) == kindOf(importedItem)) {
-                    "$itemLabel $id changes type from ${kindOf(existingItem)} to ${kindOf(importedItem)}."
+                    appContext.getString(
+                        R.string.loc_library_type_conflict,
+                        itemLabel,
+                        id.toString(),
+                        kindOf(existingItem),
+                        kindOf(importedItem)
+                    )
                 }
             }
             return existing + imported.filterNot { idOf(it) in existingById }
@@ -575,10 +704,16 @@ class AppViewModel(
         val importedPrimaryIds = exerciseLibrary.equipments.mapTo(mutableSetOf()) { it.id }
         val importedAccessoryIds = exerciseLibrary.accessoryEquipments.mapTo(mutableSetOf()) { it.id }
         require((importedPrimaryIds intersect existingAccessoryIds).isEmpty()) {
-            "The library uses an existing accessory ID as primary equipment: ${importedPrimaryIds intersect existingAccessoryIds}."
+            appContext.getString(
+                R.string.loc_library_primary_id_conflict,
+                (importedPrimaryIds intersect existingAccessoryIds).toString()
+            )
         }
         require((importedAccessoryIds intersect existingPrimaryIds).isEmpty()) {
-            "The library uses an existing primary-equipment ID as an accessory: ${importedAccessoryIds intersect existingPrimaryIds}."
+            appContext.getString(
+                R.string.loc_library_accessory_id_conflict,
+                (importedAccessoryIds intersect existingPrimaryIds).toString()
+            )
         }
 
         val mergedEquipment = mergeReferencesById(
@@ -586,14 +721,14 @@ class AppViewModel(
             exerciseLibrary.equipments,
             { it.id },
             { it.type.name },
-            "Equipment",
+            appContext.getString(R.string.loc_equipment_label),
         )
         val mergedAccessories = mergeReferencesById(
             workoutStore.accessoryEquipments,
             exerciseLibrary.accessoryEquipments,
             { it.id },
             { EquipmentType.ACCESSORY.name },
-            "Accessory equipment",
+            appContext.getString(R.string.loc_accessory_equipment_label),
         )
         val importedDefinitions = exerciseLibrary.exerciseDefinitions.normalizedForImport()
         val importedDefinitionsById = importedDefinitions.associateBy { it.id }
@@ -605,7 +740,10 @@ class AppViewModel(
                 existingDefinition.copy(movementRef = importedDefinition.movementRef) ==
                     importedDefinition
             ) {
-                "Exercise definition ${importedDefinition.id} conflicts with an existing item."
+                appContext.getString(
+                    R.string.loc_definition_conflict,
+                    importedDefinition.id.toString()
+                )
             }
         }
         val mergedDefinitions = (
@@ -619,12 +757,20 @@ class AppViewModel(
         val accessoryIds = mergedAccessories.mapTo(mutableSetOf()) { it.id }
         importedDefinitions.forEach { definition ->
             require(definition.equipmentId == null || definition.equipmentId in equipmentIds) {
-                "${definition.name} references missing equipment ${definition.equipmentId}."
+                appContext.getString(
+                    R.string.loc_definition_missing_equipment,
+                    definition.name,
+                    definition.equipmentId?.toString().orEmpty()
+                )
             }
             val missingAccessories = definition.requiredAccessoryEquipmentIds.orEmpty()
                 .filterNot { it in accessoryIds || it in equipmentIds }
             require(missingAccessories.isEmpty()) {
-                "${definition.name} references missing accessory equipment $missingAccessories."
+                appContext.getString(
+                    R.string.loc_definition_missing_accessories,
+                    definition.name,
+                    missingAccessories.toString()
+                )
             }
         }
 
@@ -638,18 +784,13 @@ class AppViewModel(
         )
         return addedCount
     }
-    val effectiveSelectedWorkoutPlanIdFlow: StateFlow<UUID?> = combine(
-        selectedWorkoutPlanIdFlow,
-        workoutPlansFlow
-    ) { selectedPlanId, plans ->
-        selectedPlanId ?: plans.singleOrNull()
-            ?.takeIf { isUnassignedPlan(it) }
-            ?.id
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = _state.value.selectedWorkoutPlanId
-    )
+    /**
+     * The active plan filter, including the explicit "No plan" (null) selection.
+     *
+     * Default selection and stale-plan fallback are resolved by [setWorkoutStoreState], so this
+     * flow must not substitute another plan for a user-chosen null.
+     */
+    val effectiveSelectedWorkoutPlanIdFlow: StateFlow<UUID?> = selectedWorkoutPlanIdFlow
 
     val weeklyProgressOverridesFlow: StateFlow<List<WeeklyProgressOverride>> = workoutStoreFlow
         .map { it.weeklyProgressOverrides }
@@ -897,56 +1038,18 @@ class AppViewModel(
         return exercise.copy(sets = normalizedSets)
     }
 
-    private fun normalizeWorkoutStore(newWorkoutStore: WorkoutStore): WorkoutStore {
+    /**
+     * @param repairPlanOnlyMembership true for data loaded from storage, where legacy one-sided
+     * plan membership must be backfilled instead of erased. Imported stores are repaired before
+     * merging. Explicit user moves and deletes pass false so their synchronized state stays
+     * authoritative.
+     */
+    private fun normalizeWorkoutStore(
+        newWorkoutStore: WorkoutStore,
+        repairPlanOnlyMembership: Boolean = false,
+    ): WorkoutStore {
         val adjustedWorkouts = adjustWorkouts(newWorkoutStore.workouts)
-        val dedupedPlans = newWorkoutStore.workoutPlans.distinctBy { it.id }
-        val planIds = dedupedPlans.map { it.id }.toSet()
-        val workoutsWithoutPlan = adjustedWorkouts.filter { workout ->
-            workout.workoutPlanId == null || workout.workoutPlanId !in planIds
-        }
-        val existingUnassignedPlan = dedupedPlans.find { isUnassignedPlan(it) }
-        val shouldCreateUnassigned = workoutsWithoutPlan.isNotEmpty()
-        val unassignedPlanId = when {
-            existingUnassignedPlan != null -> existingUnassignedPlan.id
-            shouldCreateUnassigned -> UUID.randomUUID()
-            else -> null
-        }
-
-        val normalizedWorkouts = if (unassignedPlanId != null) {
-            adjustedWorkouts.map { workout ->
-                if (workout.workoutPlanId == null || workout.workoutPlanId !in planIds) {
-                    workout.copy(workoutPlanId = unassignedPlanId)
-                } else {
-                    workout
-                }
-            }
-        } else {
-            adjustedWorkouts
-        }
-
-        val basePlans = if (unassignedPlanId != null && existingUnassignedPlan == null) {
-            val nextOrder = (dedupedPlans.maxOfOrNull { it.order } ?: -1) + 1
-            dedupedPlans + WorkoutPlan(
-                id = unassignedPlanId,
-                name = UNASSIGNED_PLAN_NAME,
-                workoutIds = emptyList(),
-                order = nextOrder
-            )
-        } else {
-            dedupedPlans
-        }
-
-        val workoutsByPlanId = normalizedWorkouts.groupBy { it.workoutPlanId }
-        val updatedPlans = basePlans.map { plan ->
-            val workoutIds = workoutsByPlanId[plan.id]?.map { it.id } ?: emptyList()
-            plan.copy(workoutIds = workoutIds)
-        }
-
-        val cleanedPlans = updatedPlans.filter { plan ->
-            isUnassignedPlan(plan) || plan.workoutIds.isNotEmpty()
-        }
-
-        val validWorkoutGlobalIds = normalizedWorkouts.map { it.globalId }.toSet()
+        val validWorkoutGlobalIds = adjustedWorkouts.map { it.globalId }.toSet()
         val normalizedWeeklyProgressOverrides = newWorkoutStore.weeklyProgressOverrides
             .groupBy { it.weekStart }
             .values
@@ -964,25 +1067,34 @@ class AppViewModel(
             .sortedBy { it.weekStart }
 
         return newWorkoutStore.copy(
-            workouts = normalizedWorkouts,
-            workoutPlans = cleanedPlans,
+            workouts = adjustedWorkouts,
             weeklyProgressOverrides = normalizedWeeklyProgressOverrides
-        )
+        ).convertUnassignedPlansToUngroupedWorkouts(repairPlanOnlyMembership)
     }
 
-    private fun setWorkoutStoreState(newWorkoutStore: WorkoutStore, triggerSend: Boolean = true) {
-        val normalizedStore = normalizeWorkoutStore(newWorkoutStore)
+    private fun setWorkoutStoreState(
+        newWorkoutStore: WorkoutStore,
+        triggerSend: Boolean = true,
+        repairPlanOnlyMembership: Boolean = false,
+    ) {
+        val normalizedStore = normalizeWorkoutStore(
+            newWorkoutStore,
+            repairPlanOnlyMembership = repairPlanOnlyMembership,
+        )
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue = currentYear - normalizedStore.birthDateYear
-        val resolvedPlanId = resolveSelectedWorkoutPlanId(
+        val currentState = _state.value
+        val selection = resolveWorkoutPlanSelection(
             plans = normalizedStore.workoutPlans,
             workouts = normalizedStore.workouts,
-            currentSelection = _state.value.selectedWorkoutPlanId
+            currentSelection = currentState.selectedWorkoutPlanId,
+            isResolved = currentState.isWorkoutPlanSelectionResolved,
         )
         _state.update { current ->
             current.copy(
                 workoutStore = normalizedStore,
-                selectedWorkoutPlanId = resolvedPlanId
+                selectedWorkoutPlanId = selection.planId,
+                isWorkoutPlanSelectionResolved = selection.isResolved,
             )
         }
         if (triggerSend) {
@@ -990,30 +1102,17 @@ class AppViewModel(
         }
     }
 
-    private fun resolveSelectedWorkoutPlanId(
-        plans: List<WorkoutPlan>,
-        workouts: List<Workout>,
-        currentSelection: UUID?
-    ): UUID? {
-        val planIds = plans.map { it.id }.toSet()
-        if (currentSelection != null && currentSelection in planIds) {
-            return currentSelection
-        }
-
-        val unassignedPlan = plans.find { isUnassignedPlan(it) }
-        if (unassignedPlan != null) {
-            val hasWorkouts = workouts.any { it.workoutPlanId == unassignedPlan.id }
-            if (hasWorkouts || plans.size == 1) {
-                return unassignedPlan.id
-            }
-        }
-
-        return plans.minByOrNull { it.order }?.id
-    }
-
-    fun updateWorkoutStore(newWorkoutStore: WorkoutStore, triggerSend: Boolean = true) {
+    fun updateWorkoutStore(
+        newWorkoutStore: WorkoutStore,
+        triggerSend: Boolean = true,
+        repairPlanOnlyMembership: Boolean = false,
+    ) {
         val cleanedWorkoutStore = fixExercisesWithInvalidEquipmentIds(newWorkoutStore)
-        setWorkoutStoreState(cleanedWorkoutStore, triggerSend)
+        setWorkoutStoreState(
+            cleanedWorkoutStore,
+            triggerSend = triggerSend,
+            repairPlanOnlyMembership = repairPlanOnlyMembership,
+        )
     }
 
     fun getWeeklyProgressOverride(weekStart: LocalDate): WeeklyProgressOverride? {
@@ -1230,7 +1329,12 @@ class AppViewModel(
             }
             .mapIndexed { index, workout -> workout.copy(order = index) }
 
-        setWorkoutStoreState(workoutStore.copy(workouts = remainingWorkouts))
+        // An explicit delete is authoritative: remove the deleted IDs from every plan list now
+        // so a later conservative repair cannot treat those stale references as membership.
+        setWorkoutStoreState(
+            workoutStore.copy(workouts = remainingWorkouts)
+                .synchronizeWorkoutPlanMemberships()
+        )
     }
 
     private fun applyWorkoutUpdate(
@@ -1253,7 +1357,7 @@ class AppViewModel(
     suspend fun startRecurringSession(workoutId: UUID) {
         val currentWorkouts = workouts
         val workout = currentWorkouts.singleOrNull { it.id == workoutId }
-            ?: error("The selected workout is no longer available.")
+            ?: error(getApplication<Application>().getString(R.string.loc_selected_workout_unavailable))
         val updatedWorkout = RecurringWorkoutAuthoring.startFamily(
             workout = workout,
             defaultLoadPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD,
@@ -1264,7 +1368,7 @@ class AppViewModel(
                 .any { versionId -> dao.workoutHistoryExistsByWorkoutId(versionId) }
         }
         check(workouts == currentWorkouts) {
-            "The workout list changed while starting the recurring session. Try again."
+            getApplication<Application>().getString(R.string.loc_workout_list_changed)
         }
         val updatedWorkouts = if (hasHistory) {
             WorkoutManager.updateWorkout(currentWorkouts, workout, updatedWorkout)
@@ -1370,7 +1474,14 @@ class AppViewModel(
         importedWorkoutStore: WorkoutStore,
         conflictResolution: ConflictResolution = ConflictResolution.SKIP_DUPLICATES
     ) {
-        val merged = mergeWorkoutStore(workoutStore, importedWorkoutStore, conflictResolution)
+        // Repair the incoming data before merging it into the current, already-authoritative
+        // state. This backfills legacy plan-only membership for newly imported workouts while
+        // ensuring an imported stale plan list cannot reattach a workout the user detached here.
+        val repairedImportedStore =
+            importedWorkoutStore.convertUnassignedPlansToUngroupedWorkouts(
+                repairPlanOnlyMembership = true,
+            )
+        val merged = mergeWorkoutStore(workoutStore, repairedImportedStore, conflictResolution)
         validateWorkoutStoreForRuntimeUse(merged)
         updateWorkoutStore(merged)
     }
@@ -1378,11 +1489,14 @@ class AppViewModel(
     // Workout Plan Helper Methods
     
     /**
-     * Checks if a workout plan is the special "Unassigned" plan.
-     * "Unassigned" is a system-managed plan that users cannot move workouts to.
+     * Legacy sentinel name, kept only for display ordering of any stale in-memory entry.
+     *
+     * The name is reserved: [WorkoutStoreRepository.migrateWorkoutStore] and
+     * [normalizeWorkoutStore] dissolve every persisted plan with this exact name into ungrouped
+     * workouts, and the plan mutation methods below refuse to create or rename a plan to it.
      */
     fun isUnassignedPlan(plan: WorkoutPlan?): Boolean {
-        return plan?.name == UNASSIGNED_PLAN_NAME
+        return plan != null && isReservedWorkoutPlanName(plan.name)
     }
     
     fun getWorkoutPlanById(planId: UUID): WorkoutPlan? {
@@ -1405,20 +1519,34 @@ class AppViewModel(
 
     fun getSelectableWorkoutPlans(currentPlanId: UUID?): List<WorkoutPlan> {
         return getAllWorkoutPlans()
-            .filter { plan ->
-                plan.id != currentPlanId && !isUnassignedPlan(plan)
-            }
+            .filter { plan -> plan.id != currentPlanId }
     }
     
     fun getWorkoutsByPlan(planId: UUID?): List<Workout> {
         return if (planId == null) {
-            workouts.filter { it.workoutPlanId == null }
+            // Orphaned plan IDs stay attached to their workouts, but they belong in the no-plan
+            // bucket so they remain reachable instead of silently disappearing.
+            val knownPlanIds = workoutStore.workoutPlans.mapTo(mutableSetOf()) { it.id }
+            workouts.filter { workout ->
+                workout.workoutPlanId == null || workout.workoutPlanId !in knownPlanIds
+            }
         } else {
             workouts.filter { it.workoutPlanId == planId }
         }
     }
     
-    fun updateWorkoutPlanName(planId: UUID, newName: String) {
+    /**
+     * @return true when the rename was applied; false when the plan is missing or [newName] is
+     * the reserved name.
+     */
+    fun updateWorkoutPlanName(planId: UUID, newName: String): Boolean {
+        if (isReservedWorkoutPlanName(newName)) {
+            Log.w(TAG, "Refusing to rename plan $planId to reserved name '$newName'")
+            return false
+        }
+        if (workoutStore.workoutPlans.none { it.id == planId }) {
+            return false
+        }
         val updatedPlans = workoutStore.workoutPlans.map { plan ->
             if (plan.id == planId) {
                 plan.copy(name = newName)
@@ -1427,33 +1555,29 @@ class AppViewModel(
             }
         }
         setWorkoutStoreState(workoutStore.copy(workoutPlans = updatedPlans))
+        return true
     }
 
-    fun moveWorkoutToPlan(workoutId: UUID, targetPlanId: UUID?) {
+    fun moveWorkoutToPlan(workoutId: UUID, targetPlanId: UUID?): Boolean =
         moveWorkoutsToPlan(setOf(workoutId), targetPlanId)
-    }
 
-    fun moveWorkoutsToPlan(workoutIds: kotlin.collections.Set<UUID>, targetPlanId: UUID?) {
+    /**
+     * Moves [workoutIds] to [targetPlanId], or detaches them when it is null.
+     *
+     * @return false when there is nothing to move or [targetPlanId] no longer exists. Callers must
+     * not report success in that case because the workouts were left untouched.
+     */
+    fun moveWorkoutsToPlan(workoutIds: kotlin.collections.Set<UUID>, targetPlanId: UUID?): Boolean {
         if (workoutIds.isEmpty()) {
-            return
+            return false
         }
 
-        if (targetPlanId != null) {
-            val targetPlan = getWorkoutPlanById(targetPlanId) ?: return
-            if (isUnassignedPlan(targetPlan)) {
-                return
-            }
+        if (targetPlanId != null && getWorkoutPlanById(targetPlanId) == null) {
+            return false
         }
 
-        val updatedWorkouts = workouts.map { workout ->
-            if (workout.id in workoutIds) {
-                workout.copy(workoutPlanId = targetPlanId)
-            } else {
-                workout
-            }
-        }
-
-        setWorkoutStoreState(workoutStore.copy(workouts = updatedWorkouts))
+        setWorkoutStoreState(workoutStore.withWorkoutsMovedToPlan(workoutIds, targetPlanId))
+        return true
     }
     
     fun getEquipmentForPlan(planId: UUID): List<WeightLoadedEquipment> {
@@ -1512,17 +1636,39 @@ class AppViewModel(
         return workoutStore.accessoryEquipments.filter { it.id in accessoryIds }
     }
     
-    fun addWorkoutPlan(plan: WorkoutPlan) {
+    /**
+     * Adds [plan] unless its ID already exists or its name is the reserved "Unassigned" name.
+     *
+     * @return true when the plan was added.
+     */
+    fun addWorkoutPlan(plan: WorkoutPlan): Boolean {
+        if (isReservedWorkoutPlanName(plan.name)) {
+            Log.w(TAG, "Refusing to create plan ${plan.id} with reserved name '${plan.name}'")
+            return false
+        }
         // Check if plan with same ID already exists (idempotent behavior)
         if (workoutStore.workoutPlans.any { it.id == plan.id }) {
             // Plan already exists, skip adding to prevent duplicates
-            return
+            return false
         }
         val updatedPlans = workoutStore.workoutPlans + plan
         setWorkoutStoreState(workoutStore.copy(workoutPlans = updatedPlans))
+        return true
     }
     
-    fun updateWorkoutPlan(updatedPlan: WorkoutPlan) {
+    /**
+     * Replaces the plan with the same ID.
+     *
+     * @return false when the plan is missing or [updatedPlan] uses the reserved "Unassigned" name.
+     */
+    fun updateWorkoutPlan(updatedPlan: WorkoutPlan): Boolean {
+        if (isReservedWorkoutPlanName(updatedPlan.name)) {
+            Log.w(TAG, "Refusing to rename plan ${updatedPlan.id} to reserved name '${updatedPlan.name}'")
+            return false
+        }
+        if (workoutStore.workoutPlans.none { it.id == updatedPlan.id }) {
+            return false
+        }
         val updatedPlans = workoutStore.workoutPlans.map { plan ->
             if (plan.id == updatedPlan.id) {
                 updatedPlan
@@ -1531,29 +1677,38 @@ class AppViewModel(
             }
         }
         setWorkoutStoreState(workoutStore.copy(workoutPlans = updatedPlans))
+        return true
+    }
+
+    /**
+     * Updates only the editable settings of the currently stored plan, so a dialog opened before a
+     * concurrent membership change cannot overwrite that newer membership with a stale snapshot.
+     *
+     * @return false when the plan is missing or [newName] is the reserved name.
+     */
+    fun updateWorkoutPlanSettings(
+        planId: UUID,
+        newName: String,
+        suggestNextPrescription: Boolean,
+    ): Boolean {
+        if (isReservedWorkoutPlanName(newName)) {
+            Log.w(TAG, "Refusing to rename plan $planId to reserved name '$newName'")
+            return false
+        }
+        val updatedStore = workoutStore.withWorkoutPlanSettings(
+            planId = planId,
+            name = newName,
+            suggestNextPrescription = suggestNextPrescription,
+        ) ?: return false
+        setWorkoutStoreState(updatedStore)
+        return true
     }
 
     fun deleteWorkoutPlan(planId: UUID) {
-        val plan = getWorkoutPlanById(planId) ?: return
-        if (isUnassignedPlan(plan)) {
+        if (getWorkoutPlanById(planId) == null) {
             return
         }
-
-        val updatedWorkouts = workouts.map { workout ->
-            if (workout.workoutPlanId == planId) {
-                workout.copy(workoutPlanId = null)
-            } else {
-                workout
-            }
-        }
-
-        val updatedPlans = workoutStore.workoutPlans.filter { it.id != planId }
-        setWorkoutStoreState(
-            workoutStore.copy(
-                workouts = updatedWorkouts,
-                workoutPlans = updatedPlans
-            )
-        )
+        setWorkoutStoreState(workoutStore.withWorkoutPlanDeleted(planId))
     }
     
     /**

@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.coroutines.TestDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -99,6 +100,72 @@ class ApplyCalibrationRIRPersistedSetHistoryTest {
 
     @Test
     fun applyCalibrationRIR_persistsCalibrationSetHistoryWithSelectedRir() = runTest(testDispatcher) {
+        val scenario = createCalibrationScenario()
+        setSelectedWorkoutForTest(scenario.workout)
+        viewModel.initializeExercisesMaps(viewModel.selectedWorkout.value)
+        viewModel.stateMachine = WorkoutStateMachine.fromSequence(
+            scenario.sequence,
+            { LocalDateTime.now() },
+            scenario.rirSelectionIndex,
+        )
+        viewModel.updateStateFlowsFromMachine()
+
+        viewModel.applyCalibrationRIR(rir = scenario.selectedRir, formBreaks = false)
+        advanceUntilIdle()
+
+        val calibrationHistory = viewModel.executedSetsHistory.filter { it.setId == calibrationSetId }
+        assertEquals("Expected one persisted calibration set history", 1, calibrationHistory.size)
+        val sd = calibrationHistory.first().setData as WeightSetData
+        assertEquals(SetSubCategory.CalibrationSet, sd.subCategory)
+        assertNotNull(sd.calibrationRIR)
+        assertTrue("calibrationRIR should match selected RIR", abs(sd.calibrationRIR!! - scenario.selectedRir) < 1e-9)
+        assertTrue("actualWeight should match calibration load", abs(sd.actualWeight - scenario.calibrationWeight) < 1e-9)
+    }
+
+    @Test
+    fun applyCalibrationRIR_doesNotAdvanceWhenDefinitionEditIsRejected() = runTest(testDispatcher) {
+        val scenario = createCalibrationScenario()
+        setSelectedWorkoutForTest(scenario.workout)
+        // The persisted definition still has a pending calibration set that this session intent
+        // cannot resolve, so the local definition edit must be rejected.
+        val stillPendingSet = WeightSet(
+            UUID.randomUUID(),
+            reps = 8,
+            weight = 100.0,
+            subCategory = SetSubCategory.CalibrationPendingSet,
+        )
+        val persistedExercise = scenario.exercise.copy(
+            sets = scenario.exercise.sets + stillPendingSet,
+        )
+        val persistedWorkout = scenario.workout.copy(
+            workoutComponents = listOf(persistedExercise),
+        )
+        viewModel.workoutStore = WorkoutStore(
+            workouts = listOf(persistedWorkout),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.0,
+        )
+        viewModel.initializeExercisesMaps(viewModel.selectedWorkout.value)
+        viewModel.stateMachine = WorkoutStateMachine.fromSequence(
+            scenario.sequence,
+            { LocalDateTime.now() },
+            scenario.rirSelectionIndex,
+        )
+        viewModel.updateStateFlowsFromMachine()
+
+        viewModel.applyCalibrationRIR(rir = scenario.selectedRir, formBreaks = false)
+        advanceUntilIdle()
+
+        assertTrue(
+            "A rejected definition edit must leave the session in CalibrationRIRSelection",
+            viewModel.stateMachine?.currentState is WorkoutState.CalibrationRIRSelection,
+        )
+        assertEquals(scenario.workout, viewModel.selectedWorkout.value)
+        assertEquals(persistedWorkout, viewModel.workoutStore.workouts.single())
+    }
+
+    private fun createCalibrationScenario(): CalibrationScenario {
         val calibrationWeight = 60.0
         val selectedRir = 3.0
         val initialWorkWeight = 50.0
@@ -131,20 +198,17 @@ class ApplyCalibrationRIRPersistedSetHistoryTest {
             requiresLoadCalibration = true
         )
 
-        setSelectedWorkoutForTest(
-            Workout(
-                id = UUID.randomUUID(),
-                name = "Workout",
-                description = "",
-                workoutComponents = listOf(workoutExercise),
-                order = 0,
-                enabled = true,
-                creationDate = java.time.LocalDate.now(),
-                type = 0,
-                globalId = UUID.randomUUID()
-            )
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "Workout",
+            description = "",
+            workoutComponents = listOf(workoutExercise),
+            order = 0,
+            enabled = true,
+            creationDate = java.time.LocalDate.now(),
+            type = 0,
+            globalId = UUID.randomUUID()
         )
-        viewModel.initializeExercisesMaps(viewModel.selectedWorkout.value)
 
         val sharedCalibrationData = mutableStateOf<SetData>(
             WeightSetData(8, calibrationWeight, calibrationWeight * 8, subCategory = SetSubCategory.CalibrationSet)
@@ -236,21 +300,24 @@ class ApplyCalibrationRIRPersistedSetHistoryTest {
             )
         )
 
-        val rirSelectionIndex = 1
-        viewModel.stateMachine = WorkoutStateMachine.fromSequence(sequence, { LocalDateTime.now() }, rirSelectionIndex)
-        viewModel.updateStateFlowsFromMachine()
-
-        viewModel.applyCalibrationRIR(rir = selectedRir, formBreaks = false)
-        advanceUntilIdle()
-
-        val calibrationHistory = viewModel.executedSetsHistory.filter { it.setId == calibrationSetId }
-        assertEquals("Expected one persisted calibration set history", 1, calibrationHistory.size)
-        val sd = calibrationHistory.first().setData as WeightSetData
-        assertEquals(SetSubCategory.CalibrationSet, sd.subCategory)
-        assertNotNull(sd.calibrationRIR)
-        assertTrue("calibrationRIR should match selected RIR", abs(sd.calibrationRIR!! - selectedRir) < 1e-9)
-        assertTrue("actualWeight should match calibration load", abs(sd.actualWeight - calibrationWeight) < 1e-9)
+        return CalibrationScenario(
+            workout = workout,
+            exercise = workoutExercise,
+            sequence = sequence,
+            rirSelectionIndex = 1,
+            calibrationWeight = calibrationWeight,
+            selectedRir = selectedRir,
+        )
     }
+
+    private data class CalibrationScenario(
+        val workout: Workout,
+        val exercise: Exercise,
+        val sequence: List<WorkoutStateSequenceItem>,
+        val rirSelectionIndex: Int,
+        val calibrationWeight: Double,
+        val selectedRir: Double,
+    )
 
     private fun setSelectedWorkoutForTest(workout: Workout) {
         val selectedWorkoutField = WorkoutViewModel::class.java.getDeclaredField("_selectedWorkout")
@@ -258,5 +325,12 @@ class ApplyCalibrationRIRPersistedSetHistoryTest {
         @Suppress("UNCHECKED_CAST")
         val selectedWorkoutState = selectedWorkoutField.get(viewModel) as androidx.compose.runtime.MutableState<Workout>
         selectedWorkoutState.value = workout
+        // The watch always persists the workout definition it edits; the session copy is hydrated.
+        viewModel.workoutStore = WorkoutStore(
+            workouts = listOf(workout),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.0,
+        )
     }
 }

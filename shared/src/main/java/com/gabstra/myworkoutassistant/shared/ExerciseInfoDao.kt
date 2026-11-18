@@ -44,11 +44,13 @@ interface ExerciseInfoDao {
 
     @Transaction
     suspend fun insertAllWithVersionCheck(vararg exerciseInfos: ExerciseInfo) {
-        exerciseInfos.forEach { exerciseInfo ->
-            val existingExerciseInfo = getExerciseInfoById(exerciseInfo.id)
-            if (existingExerciseInfo == null || exerciseInfo.version >= existingExerciseInfo.version) {
-                insert(exerciseInfo)
-            }
+        if (exerciseInfos.isEmpty()) return
+        // One read + one bulk write; the per-row lookup cost ~260ms per row on Wear.
+        val existingById = getAllExerciseInfos().associateBy { it.id }
+        val toWrite = exerciseInfos.filter { exerciseInfo ->
+            val existingExerciseInfo = existingById[exerciseInfo.id]
+            existingExerciseInfo == null || exerciseInfo.version >= existingExerciseInfo.version
         }
+        if (toWrite.isNotEmpty()) insertAll(*toWrite.toTypedArray())
     }
 }

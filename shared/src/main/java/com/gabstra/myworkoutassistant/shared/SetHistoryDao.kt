@@ -102,12 +102,15 @@ interface SetHistoryDao {
 
     @Transaction
     suspend fun insertAllWithVersionCheck(vararg setHistories: SetHistory) {
-        setHistories.forEach { setHistory ->
-            val existingSetHistory = getSetHistoryById(setHistory.id)
-            if (existingSetHistory == null || setHistory.version >= existingSetHistory.version) {
-                insert(setHistory)
-            }
+        if (setHistories.isEmpty()) return
+        // One read + one bulk write: the per-row SELECT/INSERT loop cost ~24ms per row on Wear,
+        // i.e. a minute for a full-device history.
+        val existingById = getAllSetHistories().associateBy { it.id }
+        val toWrite = setHistories.filter { setHistory ->
+            val existingSetHistory = existingById[setHistory.id]
+            existingSetHistory == null || setHistory.version >= existingSetHistory.version
         }
+        if (toWrite.isNotEmpty()) insertAll(*toWrite.toTypedArray())
     }
 }
 

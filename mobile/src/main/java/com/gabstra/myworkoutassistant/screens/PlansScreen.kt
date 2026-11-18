@@ -33,22 +33,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
-import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlansScreen(appViewModel: AppViewModel) {
     val context = LocalContext.current
     val plans by appViewModel.workoutPlansFlow.collectAsState()
-    var planToEdit by remember { mutableStateOf<WorkoutPlan?>(null) }
+    var planToEditId by remember { mutableStateOf<UUID?>(null) }
+    var editPlanError by remember { mutableStateOf<String?>(null) }
+    val planSaveError = stringResource(R.string.loc_plan_error_save)
+    val planToEdit = planToEditId?.let { planId -> plans.firstOrNull { it.id == planId } }
 
     BreadcrumbScaffold(
         topBar = {
@@ -64,7 +69,7 @@ fun PlansScreen(appViewModel: AppViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
-                        text = "Plans",
+                        text = stringResource(R.string.loc_plans),
                         textAlign = TextAlign.Center,
                     )
                 },
@@ -74,7 +79,7 @@ fun PlansScreen(appViewModel: AppViewModel) {
                             appViewModel.setScreenData(com.gabstra.myworkoutassistant.ScreenData.Workouts(1))
                         }
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
                 actions = {
@@ -92,18 +97,19 @@ fun PlansScreen(appViewModel: AppViewModel) {
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
             Text(
-                text = "Choose a plan to edit its name and recurring-session guidance setting.",
+                text = stringResource(R.string.loc_scr_plans_hint),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (plans.isEmpty()) {
                 Text(
-                    text = "No workout plans are available yet.",
+                    text = stringResource(R.string.loc_scr_no_plans),
                     modifier = Modifier.padding(vertical = Spacing.md),
                     style = MaterialTheme.typography.bodyLarge,
                 )
             } else {
                 plans.forEach { plan ->
+                    val editPlanDescription = stringResource(R.string.loc_scr_edit_plan_cd, plan.name)
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
@@ -125,8 +131,11 @@ fun PlansScreen(appViewModel: AppViewModel) {
                             IconButton(
                                 modifier = Modifier
                                     .testTag("edit_plan_${plan.id}")
-                                    .semantics { contentDescription = "Edit plan: ${plan.name}" },
-                                onClick = { planToEdit = plan },
+                                    .semantics { contentDescription = editPlanDescription },
+                                onClick = {
+                                    editPlanError = null
+                                    planToEditId = plan.id
+                                },
                             ) {
                                 Icon(Icons.Default.Edit, contentDescription = null)
                             }
@@ -142,16 +151,24 @@ fun PlansScreen(appViewModel: AppViewModel) {
             show = true,
             currentName = plan.name,
             suggestNextPrescription = plan.suggestNextPrescription,
-            onDismiss = { planToEdit = null },
+            errorMessage = editPlanError,
+            onDismiss = {
+                planToEditId = null
+                editPlanError = null
+            },
             onConfirm = { newName, suggestNextPrescription ->
-                appViewModel.updateWorkoutPlan(
-                    plan.copy(
-                        name = newName,
-                        suggestNextPrescription = suggestNextPrescription,
-                    ),
+                val saved = appViewModel.updateWorkoutPlanSettings(
+                    planId = plan.id,
+                    newName = newName,
+                    suggestNextPrescription = suggestNextPrescription,
                 )
-                appViewModel.scheduleWorkoutSave(context)
-                planToEdit = null
+                if (saved) {
+                    appViewModel.scheduleWorkoutSave(context)
+                    planToEditId = null
+                    editPlanError = null
+                } else {
+                    editPlanError = planSaveError
+                }
             },
         )
     }

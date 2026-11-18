@@ -14,12 +14,58 @@ data class WorkoutStoreDuplicateSetIdIssue(
     val exerciseNames: List<String>
 )
 
-data class WorkoutStoreRecurringMetadataIssue(val workoutId: UUID, val details: String)
+enum class WorkoutStoreRecurringMetadataIssueCode {
+    FIXED_PRESCRIBED_LOAD_UNSUPPORTED_SETS,
+    MISSING_RECURRING_SESSION_ID,
+    NON_POSITIVE_PRESCRIPTION_ORDINAL,
+    DUPLICATE_PRESCRIPTION_ORDINAL,
+    DUPLICATE_RECURRING_EXERCISE_SLOT_IDS,
+    LAST_WORKING_LOAD_MISSING_SLOT_ID,
+    LAST_WORKING_LOAD_UNSUPPORTED_SETS,
+    CONFLICTING_RECURRING_SLOT_IDENTITY,
+}
+
+data class WorkoutStoreRecurringMetadataIssue(
+    val workoutId: UUID,
+    val code: WorkoutStoreRecurringMetadataIssueCode,
+    val workoutName: String,
+    val exerciseName: String? = null,
+    val prescriptionOrdinal: Int? = null,
+    val recurringExerciseSlotId: UUID? = null,
+) {
+    /**
+     * English developer diagnostic for logs and regression tests.
+     * User-facing text is resolved from [code] and its structured fields at the UI boundary.
+     */
+    val details: String
+        get() = when (code) {
+            WorkoutStoreRecurringMetadataIssueCode.FIXED_PRESCRIBED_LOAD_UNSUPPORTED_SETS ->
+                "$workoutName / ${exerciseName.orEmpty()}: fixed prescribed load only supports weight or bodyweight sets."
+            WorkoutStoreRecurringMetadataIssueCode.MISSING_RECURRING_SESSION_ID ->
+                "$workoutName: recurring slot or prescription metadata needs a recurring session ID."
+            WorkoutStoreRecurringMetadataIssueCode.NON_POSITIVE_PRESCRIPTION_ORDINAL ->
+                "$workoutName: recurring prescriptions need a positive ordinal."
+            WorkoutStoreRecurringMetadataIssueCode.DUPLICATE_PRESCRIPTION_ORDINAL ->
+                "$workoutName: prescription ordinal $prescriptionOrdinal is duplicated in its recurring session."
+            WorkoutStoreRecurringMetadataIssueCode.DUPLICATE_RECURRING_EXERCISE_SLOT_IDS ->
+                "$workoutName: recurring exercise slot IDs must be unique within the workout."
+            WorkoutStoreRecurringMetadataIssueCode.LAST_WORKING_LOAD_MISSING_SLOT_ID ->
+                "$workoutName / ${exerciseName.orEmpty()}: last-load carry needs a recurring exercise slot ID."
+            WorkoutStoreRecurringMetadataIssueCode.LAST_WORKING_LOAD_UNSUPPORTED_SETS ->
+                "$workoutName / ${exerciseName.orEmpty()}: last-load carry only supports loaded weight and bodyweight sets."
+            WorkoutStoreRecurringMetadataIssueCode.CONFLICTING_RECURRING_SLOT_IDENTITY ->
+                "Recurring exercise slot $recurringExerciseSlotId changes definition, exercise type, or equipment within one session."
+        }
+}
 
 class WorkoutStoreValidationException(
     val duplicateSetIdIssues: List<WorkoutStoreDuplicateSetIdIssue>,
     val recurringMetadataIssues: List<WorkoutStoreRecurringMetadataIssue> = emptyList()
 ) : IllegalStateException("Workout data contains invalid identities or duplicate set IDs.") {
+    /**
+     * English diagnostic text for logs and bug reports.
+     * User-facing dialogs resolve the structured issues through localized resources instead.
+     */
     val userMessage: String = buildUserMessage(duplicateSetIdIssues, recurringMetadataIssues)
 
     companion object {
@@ -84,8 +130,10 @@ fun WorkoutStore.findRecurringMetadataIssues(): List<WorkoutStoreRecurringMetada
             }
             if (!compatibleSets || (workingSets.isEmpty() && exercise.sets.isNotEmpty())) {
                 issues += WorkoutStoreRecurringMetadataIssue(
-                    workout.id,
-                    "${workout.name} / ${exercise.name}: fixed prescribed load only supports weight or bodyweight sets.",
+                    workoutId = workout.id,
+                    code = WorkoutStoreRecurringMetadataIssueCode.FIXED_PRESCRIBED_LOAD_UNSUPPORTED_SETS,
+                    workoutName = workout.name,
+                    exerciseName = exercise.name,
                 )
             }
         }
@@ -94,23 +142,45 @@ fun WorkoutStore.findRecurringMetadataIssues(): List<WorkoutStoreRecurringMetada
                     it.recurringExerciseId != null || it.loadHistoryPolicy == LoadHistoryPolicy.LAST_WORKING_LOAD
                 }
             ) {
-                issues += WorkoutStoreRecurringMetadataIssue(workout.id, "${workout.name}: recurring slot or prescription metadata needs a recurring session ID.")
+                issues += WorkoutStoreRecurringMetadataIssue(
+                    workoutId = workout.id,
+                    code = WorkoutStoreRecurringMetadataIssueCode.MISSING_RECURRING_SESSION_ID,
+                    workoutName = workout.name,
+                )
             }
             return@forEach
         }
         if (workout.prescriptionOrdinal == null || workout.prescriptionOrdinal <= 0) {
-            issues += WorkoutStoreRecurringMetadataIssue(workout.id, "${workout.name}: recurring prescriptions need a positive ordinal.")
+            issues += WorkoutStoreRecurringMetadataIssue(
+                workoutId = workout.id,
+                code = WorkoutStoreRecurringMetadataIssueCode.NON_POSITIVE_PRESCRIPTION_ORDINAL,
+                workoutName = workout.name,
+            )
         } else if (!ordinals.add(sessionId to workout.prescriptionOrdinal)) {
-            issues += WorkoutStoreRecurringMetadataIssue(workout.id, "${workout.name}: prescription ordinal ${workout.prescriptionOrdinal} is duplicated in its recurring session.")
+            issues += WorkoutStoreRecurringMetadataIssue(
+                workoutId = workout.id,
+                code = WorkoutStoreRecurringMetadataIssueCode.DUPLICATE_PRESCRIPTION_ORDINAL,
+                workoutName = workout.name,
+                prescriptionOrdinal = workout.prescriptionOrdinal,
+            )
         }
         val tracked = exercises.filter { it.recurringExerciseId != null }
         if (tracked.mapNotNull { it.recurringExerciseId }.distinct().size != tracked.size) {
-            issues += WorkoutStoreRecurringMetadataIssue(workout.id, "${workout.name}: recurring exercise slot IDs must be unique within the workout.")
+            issues += WorkoutStoreRecurringMetadataIssue(
+                workoutId = workout.id,
+                code = WorkoutStoreRecurringMetadataIssueCode.DUPLICATE_RECURRING_EXERCISE_SLOT_IDS,
+                workoutName = workout.name,
+            )
         }
         exercises.forEach { exercise ->
             if (exercise.loadHistoryPolicy == LoadHistoryPolicy.LAST_WORKING_LOAD) {
                 if (exercise.recurringExerciseId == null) {
-                    issues += WorkoutStoreRecurringMetadataIssue(workout.id, "${workout.name} / ${exercise.name}: last-load carry needs a recurring exercise slot ID.")
+                    issues += WorkoutStoreRecurringMetadataIssue(
+                        workoutId = workout.id,
+                        code = WorkoutStoreRecurringMetadataIssueCode.LAST_WORKING_LOAD_MISSING_SLOT_ID,
+                        workoutName = workout.name,
+                        exerciseName = exercise.name,
+                    )
                 }
             }
             if (exercise.loadHistoryPolicy == LoadHistoryPolicy.LAST_WORKING_LOAD) {
@@ -122,7 +192,12 @@ fun WorkoutStore.findRecurringMetadataIssues(): List<WorkoutStoreRecurringMetada
                 }
                 val supportedWorkingSets = compatibleSets && workingSets.isNotEmpty()
                 if (!supportedWorkingSets) {
-                    issues += WorkoutStoreRecurringMetadataIssue(workout.id, "${workout.name} / ${exercise.name}: last-load carry only supports loaded weight and bodyweight sets.")
+                    issues += WorkoutStoreRecurringMetadataIssue(
+                        workoutId = workout.id,
+                        code = WorkoutStoreRecurringMetadataIssueCode.LAST_WORKING_LOAD_UNSUPPORTED_SETS,
+                        workoutName = workout.name,
+                        exerciseName = exercise.name,
+                    )
                 }
             }
             exercise.recurringExerciseId?.let { trackId ->
@@ -134,7 +209,12 @@ fun WorkoutStore.findRecurringMetadataIssues(): List<WorkoutStoreRecurringMetada
         val signatures = exercises.map { Triple(it.exerciseDefinitionId, it.exerciseType, it.equipmentId) }.distinct()
         if (signatures.size > 1) {
             val workoutId = workouts.firstOrNull { it.recurringSessionId == key.first }?.id ?: UUID(0L, 0L)
-            issues += WorkoutStoreRecurringMetadataIssue(workoutId, "Recurring exercise slot ${key.second} changes definition, exercise type, or equipment within one session.")
+            issues += WorkoutStoreRecurringMetadataIssue(
+                workoutId = workoutId,
+                code = WorkoutStoreRecurringMetadataIssueCode.CONFLICTING_RECURRING_SLOT_IDENTITY,
+                workoutName = workouts.firstOrNull { it.recurringSessionId == key.first }?.name.orEmpty(),
+                recurringExerciseSlotId = key.second,
+            )
         }
     }
     return issues

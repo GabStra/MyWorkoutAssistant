@@ -60,6 +60,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,6 +69,7 @@ import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
@@ -136,7 +138,7 @@ fun WorkoutsScreen(
     syncPhase: SyncPhase? = null,
     syncProgress: Float? = null,
     isExportingWorkoutDataForLlm: Boolean = false,
-    workoutDataExportStatus: String = "Exporting workout data...",
+    workoutDataExportStatus: String = "",
     onSyncClick: () -> Unit,
     onCancelSync: () -> Unit,
     onBackupClick: () -> Unit,
@@ -213,16 +215,18 @@ fun WorkoutsScreen(
     val selectedPlanFilter by appViewModel.effectiveSelectedWorkoutPlanIdFlow.collectAsState()
 
     // Filter workouts by selected plan
-    val filteredWorkouts = remember(workouts, selectedPlanFilter, focusedRecurringSessionId) {
+    // getWorkoutsByPlan(null) also depends on which plan IDs currently exist, because orphaned
+    // plan IDs are shown in the "No plan" bucket.
+    val filteredWorkouts = remember(
+        workouts,
+        allPlans,
+        selectedPlanFilter,
+        focusedRecurringSessionId,
+    ) {
         if (focusedRecurringSessionId != null) {
             workouts.filter { it.isActive && it.recurringSessionId == focusedRecurringSessionId }
         } else {
-            val planId = selectedPlanFilter
-            if (planId != null) {
-                appViewModel.getWorkoutsByPlan(planId)
-            } else {
-                workouts.filter { it.workoutPlanId == null }
-            }
+            appViewModel.getWorkoutsByPlan(selectedPlanFilter)
         }
     }
 
@@ -311,7 +315,7 @@ fun WorkoutsScreen(
     val selectedRecurringSessionId = selectedWorkouts.firstOrNull()?.recurringSessionId
         ?.takeIf { sessionId -> selectedWorkouts.all { it.recurringSessionId == sessionId } }
 
-    fun selectWorkoutPlan(planId: UUID) {
+    fun selectWorkoutPlan(planId: UUID?) {
         selectedWorkouts = emptyList()
         isWorkoutSelectionModeActive = false
         appViewModel.setSelectedWorkoutPlanId(planId)
@@ -354,7 +358,11 @@ fun WorkoutsScreen(
     var isAccessorySelectionModeActive by remember { mutableStateOf(false) }
 
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
+    var moveWorkoutError by remember { mutableStateOf<String?>(null) }
     var showCreateNewPlanDialog by remember { mutableStateOf(false) }
+    var createPlanError by remember { mutableStateOf<String?>(null) }
+    val planSaveError = stringResource(R.string.loc_plan_error_save)
+    val movePlanUnavailableError = stringResource(R.string.loc_workout_plan_move_unavailable)
 
     var selectedWeekAnchorDate by remember {
         mutableStateOf<LocalDate>(LocalDate.now())
@@ -475,7 +483,13 @@ fun WorkoutsScreen(
         }
     }
 
-    val tabTitles = listOf("Status", "Workouts", "Exercise Library", "Alarms", "Gear")
+    val tabTitles = listOf(
+        stringResource(R.string.loc_scr_tab_status),
+        stringResource(R.string.loc_scr_tab_workouts),
+        stringResource(R.string.loc_scr_tab_exercise_library),
+        stringResource(R.string.loc_scr_tab_alarms),
+        stringResource(R.string.loc_scr_tab_gear),
+    )
 
     var selectedDate by remember {
         mutableStateOf<CalendarDay>(
@@ -635,7 +649,11 @@ fun WorkoutsScreen(
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         context,
-                        exception.message ?: "Could not save recurring workout changes.",
+                        recurringAuthoringErrorMessage(
+                            context,
+                            exception,
+                            R.string.loc_scr_save_recurring_error,
+                        ),
                         Toast.LENGTH_LONG,
                     ).show()
                 }
@@ -650,13 +668,25 @@ fun WorkoutsScreen(
             .onSuccess { replacements ->
                 commitRecurringWorkoutChanges(family.zip(replacements))
             }
-            .onFailure { exception -> Toast.makeText(context, exception.message, Toast.LENGTH_LONG).show() }
+            .onFailure { exception ->
+                Toast.makeText(
+                    context,
+                    recurringAuthoringErrorMessage(context, exception, R.string.loc_scr_save_recurring_error),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
     }
 
     fun updateRecurringPrescriptionLabel(workout: Workout, family: List<Workout>, label: String?) {
         runCatching { RecurringWorkoutAuthoring.updatePrescriptionLabel(workout, label, family) }
             .onSuccess { updated -> commitRecurringWorkoutChanges(listOf(workout to updated)) }
-            .onFailure { exception -> Toast.makeText(context, exception.message, Toast.LENGTH_LONG).show() }
+            .onFailure { exception ->
+                Toast.makeText(
+                    context,
+                    recurringAuthoringErrorMessage(context, exception, R.string.loc_scr_save_recurring_error),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
     }
 
     fun reorderRecurringSession(family: List<Workout>, orderedWorkoutIds: List<UUID>) {
@@ -670,14 +700,28 @@ fun WorkoutsScreen(
             }
             if (replacements.isNotEmpty()) commitRecurringWorkoutChanges(replacements)
         }.onFailure { exception ->
-            Toast.makeText(context, exception.message ?: "Could not reorder prescriptions.", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                context,
+                recurringAuthoringErrorMessage(
+                    context,
+                    exception,
+                    R.string.loc_scr_reorder_prescriptions_error,
+                ),
+                Toast.LENGTH_LONG,
+            ).show()
         }
     }
 
     fun attachRecurringWorkout(workout: Workout, family: List<Workout>) {
         runCatching { RecurringWorkoutAuthoring.attach(workout, family) }
             .onSuccess { updated -> commitRecurringWorkoutChanges(listOf(workout to updated)) }
-            .onFailure { exception -> Toast.makeText(context, exception.message, Toast.LENGTH_LONG).show() }
+            .onFailure { exception ->
+                Toast.makeText(
+                    context,
+                    recurringAuthoringErrorMessage(context, exception, R.string.loc_scr_save_recurring_error),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
     }
 
     fun detachRecurringWorkout(workout: Workout) {
@@ -688,7 +732,13 @@ fun WorkoutsScreen(
     fun addNextRecurringPrescription(source: Workout, family: List<Workout>) {
         runCatching { RecurringWorkoutAuthoring.cloneNext(source, family, label = null) }
             .onSuccess { clone -> commitRecurringWorkoutChanges(addedWorkout = clone) }
-            .onFailure { exception -> Toast.makeText(context, exception.message, Toast.LENGTH_LONG).show() }
+            .onFailure { exception ->
+                Toast.makeText(
+                    context,
+                    recurringAuthoringErrorMessage(context, exception, R.string.loc_scr_save_recurring_error),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
     }
 
     fun updateWorkoutsEnabledState(enabled: Boolean) {
@@ -823,15 +873,23 @@ fun WorkoutsScreen(
                 appViewModel = appViewModel,
                 hideDisabledWorkouts = if (focusedRecurringSessionId == null) hideDisabledWorkouts else false,
                 disabledWorkoutCount = if (focusedRecurringSessionId == null) disabledActiveWorkoutCount else 0,
-                emptyMessage = if (
+                emptyMessage = when {
                     focusedRecurringSessionId == null &&
-                    hideDisabledWorkouts &&
-                    disabledActiveWorkoutCount > 0 &&
-                    activeWorkouts.isNotEmpty()
-                ) {
-                    "No enabled workouts in this plan."
-                } else {
-                    "No workouts in this plan yet."
+                        hideDisabledWorkouts &&
+                        disabledActiveWorkoutCount > 0 &&
+                        activeWorkouts.isNotEmpty() ->
+                        if (selectedPlanFilter == null) {
+                            stringResource(R.string.loc_workout_plan_filter_no_enabled_workouts)
+                        } else {
+                            stringResource(R.string.loc_scr_no_enabled_workouts_plan)
+                        }
+
+                    else ->
+                        if (selectedPlanFilter == null) {
+                            stringResource(R.string.loc_workout_plan_filter_no_workouts)
+                        } else {
+                            stringResource(R.string.loc_scr_no_workouts_plan)
+                        }
                 },
                 onHideDisabledWorkoutsChange = { hideDisabledWorkouts = it },
                 onReorderRecurring = ::reorderRecurringSession,
@@ -902,7 +960,11 @@ fun WorkoutsScreen(
                                     .fillMaxWidth()
                                     .clipToBounds(),
                                 text = focusedSessionWorkout?.name
-                                    ?: if (focusedRecurringSessionId != null) "Prescriptions" else "My Workout Assistant",
+                                    ?: if (focusedRecurringSessionId != null) {
+                                        stringResource(R.string.loc_scr_prescriptions)
+                                    } else {
+                                        stringResource(R.string.app_name)
+                                    },
                                 textAlign = TextAlign.Center,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -920,7 +982,7 @@ fun WorkoutsScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "Back to workouts",
+                                        contentDescription = stringResource(R.string.loc_scr_back_to_workouts_cd),
                                     )
                                 }
                             } else {
@@ -933,7 +995,7 @@ fun WorkoutsScreen(
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Menu,
-                                        contentDescription = "Menu"
+                                        contentDescription = stringResource(R.string.loc_menu)
                                     )
                                 }
                             }
@@ -943,6 +1005,8 @@ fun WorkoutsScreen(
                                 // Every tab shows per-profile data, so the active profile is
                                 // named here and can be switched without leaving the screen.
                                 Box {
+                                    val switchProfileDescription =
+                                        stringResource(R.string.loc_scr_switch_profile_cd, profileName)
                                     Row(
                                         modifier = Modifier
                                             .padding(end = Spacing.xs)
@@ -950,7 +1014,7 @@ fun WorkoutsScreen(
                                             .background(MaterialTheme.colorScheme.surfaceVariant)
                                             .clickable { profileMenuExpanded = true }
                                             .padding(start = Spacing.sm, end = 4.dp, top = 4.dp, bottom = 4.dp)
-                                            .semantics { contentDescription = "Switch profile: $profileName" },
+                                            .semantics { contentDescription = switchProfileDescription },
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
@@ -973,6 +1037,10 @@ fun WorkoutsScreen(
                                         expanded = profileMenuExpanded,
                                         onDismissRequest = { profileMenuExpanded = false }
                                     ) {
+                                        // Hoisted: the item's onClick is not a composable context.
+                                        val switchBlockedMessage = stringResource(
+                                            R.string.profile_switch_blocked_workout_in_progress
+                                        )
                                         profilesForSwitcher.forEach { profile ->
                                             DropdownMenuItem(
                                                 text = {
@@ -991,7 +1059,7 @@ fun WorkoutsScreen(
                                                     if (workoutInProgress) {
                                                         Toast.makeText(
                                                             context,
-                                                            "Finish or discard the workout before switching profile.",
+                                                            switchBlockedMessage,
                                                             Toast.LENGTH_LONG
                                                         ).show()
                                                         return@DropdownMenuItem
@@ -1010,7 +1078,7 @@ fun WorkoutsScreen(
                                 IconButton(onClick = onSyncClick) {
                                     Icon(
                                         imageVector = Icons.Filled.Watch,
-                                        contentDescription = "Sync with watch"
+                                        contentDescription = stringResource(R.string.loc_sync_with_watch)
                                     )
                                 }
                             } else {
@@ -1018,7 +1086,7 @@ fun WorkoutsScreen(
                                 IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "Back"
+                                        contentDescription = stringResource(R.string.common_back)
                                     )
                                 }
                             }
@@ -1039,7 +1107,10 @@ fun WorkoutsScreen(
                             context = context,
                             onSelectionChange = { selectedWorkouts = it },
                             onSelectionModeChange = { isWorkoutSelectionModeActive = it },
-                            onShowMoveWorkoutDialogChange = { showMoveWorkoutDialog = it },
+                            onShowMoveWorkoutDialogChange = {
+                                moveWorkoutError = null
+                                showMoveWorkoutDialog = it
+                            },
                             onUpdateWorkoutsEnabledState = { enabled ->
                                 updateWorkoutsEnabledState(
                                     enabled
@@ -1233,13 +1304,13 @@ fun WorkoutsScreen(
                                                     }.onSuccess { addedDefinitions ->
                                                         Toast.makeText(
                                                             context,
-                                                            "Imported $addedDefinitions exercise definition(s).",
+                                                            context.getString(R.string.loc_scr_imported_definitions, addedDefinitions),
                                                             Toast.LENGTH_LONG,
                                                         ).show()
                                                     }.onFailure { error ->
                                                         Toast.makeText(
                                                             context,
-                                                            error.message ?: "Couldn't import that exercise library.",
+                                                            error.message ?: context.getString(R.string.loc_scr_import_library_error),
                                                             Toast.LENGTH_LONG,
                                                         ).show()
                                                     }
@@ -1305,21 +1376,31 @@ fun WorkoutsScreen(
             workoutName = selectedWorkouts.firstOrNull()?.name ?: "",
             workoutCount = selectedWorkouts.size,
             availablePlans = appViewModel.getSelectableWorkoutPlans(currentPlanId),
+            errorMessage = moveWorkoutError,
             onDismiss = {
                 showMoveWorkoutDialog = false
+                moveWorkoutError = null
             },
             onMoveToPlan = { targetPlanId ->
-                appViewModel.moveWorkoutsToPlan(
+                val moved = appViewModel.moveWorkoutsToPlan(
                     selectedWorkouts.map { it.id }.toSet(),
                     targetPlanId
                 )
-                appViewModel.scheduleWorkoutSave(context)
-                showMoveWorkoutDialog = false
-                selectedWorkouts = emptyList()
-                isWorkoutSelectionModeActive = false
+                if (moved) {
+                    appViewModel.scheduleWorkoutSave(context)
+                    showMoveWorkoutDialog = false
+                    moveWorkoutError = null
+                    selectedWorkouts = emptyList()
+                    isWorkoutSelectionModeActive = false
+                } else {
+                    // Keep the dialog and the selection so the user can choose another target.
+                    moveWorkoutError = movePlanUnavailableError
+                }
             },
             onCreateNewPlan = {
                 showMoveWorkoutDialog = false
+                moveWorkoutError = null
+                createPlanError = null
                 showCreateNewPlanDialog = true
             }
         )
@@ -1327,12 +1408,13 @@ fun WorkoutsScreen(
         // Create New Plan Dialog
         WorkoutPlanNameDialog(
             show = showCreateNewPlanDialog,
-            confirmButtonText = "Create",
+            confirmButtonText = stringResource(R.string.loc_scr_create),
+            errorMessage = createPlanError,
             onDismiss = {
                 showCreateNewPlanDialog = false
+                createPlanError = null
             },
             onConfirm = { planName ->
-                showCreateNewPlanDialog = false
                 val newPlanId = java.util.UUID.randomUUID()
                 val nextOrder =
                     (appViewModel.getAllWorkoutPlans().maxOfOrNull { it.order } ?: -1) + 1
@@ -1344,32 +1426,36 @@ fun WorkoutsScreen(
                 )
 
                 // Add the new plan
-                appViewModel.addWorkoutPlan(newPlan)
+                if (!appViewModel.addWorkoutPlan(newPlan)) {
+                    createPlanError = planSaveError
+                } else {
+                    // Move all selected workouts to the new plan
+                    appViewModel.moveWorkoutsToPlan(
+                        selectedWorkouts.map { it.id }.toSet(),
+                        newPlanId
+                    )
 
-                // Move all selected workouts to the new plan
-                appViewModel.moveWorkoutsToPlan(
-                    selectedWorkouts.map { it.id }.toSet(),
-                    newPlanId
-                )
+                    appViewModel.scheduleWorkoutSave(context)
 
-                appViewModel.scheduleWorkoutSave(context)
-
-                selectedWorkouts = emptyList()
-                isWorkoutSelectionModeActive = false
+                    selectedWorkouts = emptyList()
+                    isWorkoutSelectionModeActive = false
+                    showCreateNewPlanDialog = false
+                    createPlanError = null
+                }
             }
         )
 
-        LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+        LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = stringResource(R.string.common_saving))
         // Manual sync mirrors the watch's own sync screen: full-screen stage-based
         // loader, determinate only while chunks transfer, check mark when done.
         LoadingOverlay(
             isVisible = isSyncing,
             text = when (syncPhase) {
-                SyncPhase.CONNECTING -> "Connecting"
-                SyncPhase.TRANSFERRING -> "Transferring data"
-                SyncPhase.PROCESSING -> "Processing data"
-                SyncPhase.COMPLETED -> "Sync complete"
-                null -> "Connecting"
+                SyncPhase.CONNECTING -> stringResource(R.string.loc_scr_sync_connecting)
+                SyncPhase.TRANSFERRING -> stringResource(R.string.loc_scr_sync_transferring)
+                SyncPhase.PROCESSING -> stringResource(R.string.loc_scr_sync_processing)
+                SyncPhase.COMPLETED -> stringResource(R.string.loc_scr_sync_complete)
+                null -> stringResource(R.string.loc_scr_sync_connecting)
             },
             useOpaqueBackground = true,
             progress = animatedSyncProgress.takeIf { syncPhase == SyncPhase.TRANSFERRING },
@@ -1381,66 +1467,68 @@ fun WorkoutsScreen(
                 isLoading = isExportingWorkoutDataForLlm,
                 minVisibleMs = 1_000L,
             ),
-            text = workoutDataExportStatus,
+            text = workoutDataExportStatus.ifBlank {
+                stringResource(R.string.main_exporting_workout_data)
+            },
             useOpaqueBackground = true
         )
     }
 }
+
+/**
+ * Builds the plan filter choices as named plans followed by a filter-only "No plan" option.
+ * The null choice only filters to workouts that are not attached to a named plan; it never
+ * creates a plan or changes workout membership.
+ */
+internal fun workoutPlanFilterItems(
+    plans: List<WorkoutPlan>,
+    noPlanLabel: String,
+): List<StandardFilterDropdownItem<UUID?>> =
+    plans
+        .distinctBy { it.id }
+        .map { plan -> StandardFilterDropdownItem<UUID?>(value = plan.id, label = plan.name) } +
+        StandardFilterDropdownItem<UUID?>(value = null, label = noPlanLabel)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WorkoutPlanFilterPicker(
     allPlans: List<WorkoutPlan>,
     selectedPlanFilter: UUID?,
-    onPlanSelected: (UUID) -> Unit,
+    onPlanSelected: (UUID?) -> Unit,
 ) {
     if (allPlans.isEmpty()) {
         return
     }
 
-    val planItems = remember(allPlans) {
-        allPlans
-            .distinctBy { it.id }
-            .map { StandardFilterDropdownItem(value = it.id, label = it.name) }
+    val noPlanLabel = stringResource(R.string.loc_workout_plan_filter_no_plan)
+    val planItems = remember(allPlans, noPlanLabel) {
+        workoutPlanFilterItems(allPlans, noPlanLabel)
     }
-    val selectedPlanLabel = remember(planItems, selectedPlanFilter) {
+    val selectedPlanLabel = remember(planItems, selectedPlanFilter, noPlanLabel) {
         planItems
             .firstOrNull { it.value == selectedPlanFilter }
             ?.label
-            ?: "Select workout plan"
+            ?: noPlanLabel
     }
 
-    val selectedPlan = allPlans.firstOrNull { it.id == selectedPlanFilter }
-        ?: allPlans.singleOrNull()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 15.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (allPlans.size > 1) {
-            StandardFilterDropdown(
-                label = "Workout Plan:",
-                selectedText = selectedPlanLabel,
-                items = planItems,
-                onItemSelected = onPlanSelected,
-                selectedValue = selectedPlanFilter,
-                modifier = Modifier.weight(1f),
-                isItemSelected = { it == selectedPlanFilter },
-                marqueeSelectedText = false,
-                marqueeItems = false,
-                itemMaxLines = 3,
-            )
-        } else {
-            Text(
-                text = selectedPlan?.name ?: "Workout Plan",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        StandardFilterDropdown(
+            label = stringResource(R.string.loc_scr_workout_plan_label),
+            selectedText = selectedPlanLabel,
+            items = planItems,
+            onItemSelected = onPlanSelected,
+            selectedValue = selectedPlanFilter,
+            modifier = Modifier.weight(1f),
+            isItemSelected = { it == selectedPlanFilter },
+            marqueeSelectedText = false,
+            marqueeItems = false,
+            itemMaxLines = 3,
+        )
     }
 }
 

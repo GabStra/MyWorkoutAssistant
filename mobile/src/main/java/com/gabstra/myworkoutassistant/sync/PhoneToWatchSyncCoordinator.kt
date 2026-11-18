@@ -111,6 +111,12 @@ object PhoneToWatchSyncCoordinator {
         }
     }
 
+    /** Fingerprint of the persisted workout store that the watch last received successfully. */
+    internal fun lastSyncedWorkoutStoreFingerprint(context: Context): String? {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_LAST_COMPLETED_AUTO_FINGERPRINT, null)
+    }
+
     private fun restoreAutomaticFingerprintState(context: Context) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         automaticSyncState.lastRequestedFingerprint = prefs.getString(KEY_LAST_REQUESTED_AUTO_FINGERPRINT, null)
@@ -297,6 +303,9 @@ object PhoneToWatchSyncCoordinator {
             clearManualSyncState()
             return false
         }
+        // Show the overlay as soon as the user asks: the Wear endpoint probe and WorkManager
+        // start-up below take seconds, and a dead gap after the tap reads as a broken button.
+        setManualSyncState(SyncPhase.CONNECTING, 0f)
         if (!checkWearSyncEndpoint(appContext)) {
             Log.d(TAG, "manual sync: Wear endpoint unavailable; foreground sync not started")
             clearManualSyncState()

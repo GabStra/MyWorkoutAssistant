@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.data
 import android.content.Context
 import androidx.core.content.edit
 import android.widget.Toast
+import com.gabstra.myworkoutassistant.R
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
 import androidx.compose.runtime.getValue
@@ -44,6 +45,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.datalayer.DEFAULT_WORKOUT_SESSION_HEARTBEAT_INTERVAL_MS
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditIntent
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKeys
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
@@ -264,6 +266,14 @@ open class AppViewModel : WorkoutViewModel() {
 
     fun setMotionCaptureSampleRateForSession(rate: MotionCaptureSampleRate) {
         motionCaptureCoordinator?.setSessionSampleRate(rate)
+    }
+
+    fun startFreeformMotionCapture() {
+        motionCaptureCoordinator?.startFreeformCapture()
+    }
+
+    fun stopFreeformMotionCapture() {
+        motionCaptureCoordinator?.stopFreeformCapture()
     }
 
     suspend fun pauseMotionCaptureForBackground() {
@@ -1906,18 +1916,47 @@ open class AppViewModel : WorkoutViewModel() {
         }
     }
 
-    override suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) {
+    override suspend fun onWorkoutDefinitionChanged(
+        updatedWorkoutStore: WorkoutStore,
+        editIntent: WatchWorkoutDefinitionEditIntent?,
+    ) {
         Log.d(WORKOUT_SYNC_LOG_TAG, "Syncing workout definition change to phone")
         val client = dataClient ?: return
         val context = applicationContext ?: return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 WorkoutHistoryTransferCoordinator.sendMutex.withLock {
-                    sendWorkoutStore(client, updatedWorkoutStore, Profiles.activeProfileId(context))
+                    sendWorkoutStore(
+                        client,
+                        updatedWorkoutStore,
+                        Profiles.activeProfileId(context),
+                        editIntent,
+                    )
                 }
             }.onFailure { exception ->
-                Log.e(WORKOUT_SYNC_LOG_TAG, "Failed to sync updated workout store after equipment change", exception)
+                Log.e(WORKOUT_SYNC_LOG_TAG, "Failed to sync updated workout store after definition change", exception)
+                // Keep the local edit but tell the user it did not reach the phone. The phone stays
+                // authoritative; no destructive local rollback is attempted from here.
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.wear_sync_failed_try_again),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
             }
+        }
+    }
+
+    override suspend fun onWorkoutDefinitionPersistRejected(reason: String) {
+        Log.e(WORKOUT_SYNC_LOG_TAG, "Workout definition edit rejected locally: $reason")
+        val context = applicationContext ?: return
+        withContext(Dispatchers.Main) {
+            Toast.makeText(
+                context,
+                context.getString(R.string.wear_sync_failed_try_again),
+                Toast.LENGTH_LONG,
+            ).show()
         }
     }
 

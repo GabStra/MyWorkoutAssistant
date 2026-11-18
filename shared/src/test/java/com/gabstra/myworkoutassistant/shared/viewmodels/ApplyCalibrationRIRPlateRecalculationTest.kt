@@ -12,6 +12,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.coroutines.TestDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -489,6 +490,13 @@ class ApplyCalibrationRIRPlateRecalculationTest {
         @Suppress("UNCHECKED_CAST")
         val selectedWorkoutState = selectedWorkoutField.get(viewModel) as androidx.compose.runtime.MutableState<Workout>
         selectedWorkoutState.value = workout
+        // The watch always persists the workout definition it edits; the session copy is hydrated.
+        viewModel.workoutStore = WorkoutStore(
+            workouts = listOf(workout),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.0,
+        )
     }
 
     private fun totalWeightFromPlates(plateChangeResult: PlateCalculator.Companion.PlateChangeResult): Double {

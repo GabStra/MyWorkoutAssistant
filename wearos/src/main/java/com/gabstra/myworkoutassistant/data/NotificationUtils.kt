@@ -89,7 +89,8 @@ fun showWorkoutInProgressNotification(
             .setUsesChronometer(false)
         Status.Builder().addTemplate(context.getString(R.string.notif_workout_in_progress)).build()
     } else if (!timerUiState.isRunning) {
-        val pausedStatus = formatTimerNotificationStatus(timerUiState) ?: context.getString(R.string.notif_workout_in_progress)
+        val pausedStatus = formatTimerNotificationStatus(context, timerUiState)
+            ?: context.getString(R.string.notif_workout_in_progress)
         nowBarText = pausedStatus
         notificationBuilder
             .setContentText(pausedStatus)
@@ -253,31 +254,67 @@ fun showTimerCompletedNotification(
     }
 }
 
-@SuppressLint("MissingPermission")
-fun showSyncCompleteNotification(context: Context) {
-    val channelId = "sync_status_channel"
-    val notificationId = 2
+private const val SYNC_STATUS_CHANNEL_ID = "sync_status_channel"
+private const val SYNC_COMPLETE_NOTIFICATION_ID = 2
+private const val SYNC_IN_PROGRESS_NOTIFICATION_ID = 4
 
-    // Create an intent that will open the app when the notification is tapped
-    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-    val pendingIntent = PendingIntent.getActivity(
-        context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-
-    val channelName = context.getString(R.string.notif_channel_sync_status)
-    val channelDescription = context.getString(R.string.notif_channel_sync_status_desc)
-    // Use IMPORTANCE_HIGH to ensure sound and vibration
-    val channelImportance = NotificationManager.IMPORTANCE_HIGH
-    val channel = NotificationChannel(channelId, channelName, channelImportance).apply {
-        description = channelDescription
-        // Enable vibration and sound
+private fun ensureSyncStatusChannel(context: Context) {
+    val channel = NotificationChannel(
+        SYNC_STATUS_CHANNEL_ID,
+        context.getString(R.string.notif_channel_sync_status),
+        NotificationManager.IMPORTANCE_HIGH  // ensure sound and vibration
+    ).apply {
+        description = context.getString(R.string.notif_channel_sync_status_desc)
         enableVibration(true)
-        // Use default notification sound (or setSound(null, null) to use system default)
-        setSound(null, null) // This uses the system default notification sound
+        setSound(null, null) // system default notification sound
     }
     val notificationManager: NotificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     notificationManager.createNotificationChannel(channel)
+}
+
+private fun syncStatusPendingIntent(context: Context): PendingIntent {
+    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+    return PendingIntent.getActivity(
+        context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+}
+
+/**
+ * Shown while a phone sync is running and the app is not in the foreground, so the transfer is
+ * visible in the notification stream on Wear.
+ */
+@SuppressLint("MissingPermission")
+fun showSyncInProgressNotification(context: Context) {
+    ensureSyncStatusChannel(context)
+    val notification = NotificationCompat.Builder(context, SYNC_STATUS_CHANNEL_ID)
+        .setSmallIcon(R.drawable.ic_workout_icon)
+        .setContentTitle(context.getString(R.string.sync_notif_syncing_title))
+        .setContentText(context.getString(R.string.sync_notif_syncing_text))
+        .setContentIntent(syncStatusPendingIntent(context))
+        .setOngoing(true)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setColor(ContextCompat.getColor(context, R.color.ic_launcher_background))
+        .build()
+
+    with(NotificationManagerCompat.from(context)) {
+        notify(SYNC_IN_PROGRESS_NOTIFICATION_ID, notification)
+    }
+}
+
+fun cancelSyncInProgressNotification(context: Context) {
+    with(NotificationManagerCompat.from(context)) {
+        cancel(SYNC_IN_PROGRESS_NOTIFICATION_ID)
+    }
+}
+
+@SuppressLint("MissingPermission")
+fun showSyncCompleteNotification(context: Context) {
+    val channelId = SYNC_STATUS_CHANNEL_ID
+    val notificationId = SYNC_COMPLETE_NOTIFICATION_ID
+
+    val pendingIntent = syncStatusPendingIntent(context)
+    ensureSyncStatusChannel(context)
 
     val notification = NotificationCompat.Builder(context, channelId)
         .setSmallIcon(R.drawable.ic_workout_icon)

@@ -14,6 +14,7 @@ import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.sendAppBackup
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncHistoryRetention
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -110,7 +111,7 @@ class MobileSyncToWatchWorker(
                 filteredWorkoutHistories
                     .filter { it.id in ids }
                     .sortedByDescending { it.startTime }
-                    .take(15)
+                    .take(SyncHistoryRetention.SESSIONS_PER_EXERCISE)
                     .map { it.id }
             }
 
@@ -155,8 +156,29 @@ class MobileSyncToWatchWorker(
             val errorLogs = errorLogDao.getAllErrorLogs().first()
 
             val adjustedWorkoutStore = adjustedWorkoutStoreForPhoneSync(workoutStore)
+            // The store is ~1.2MB of the payload and changes rarely: ship it only when the watch
+            // has not received this exact fingerprint yet. Profile-claim pushes always include it
+            // because there the watch has nothing.
+            val lastSyncedStoreFingerprint =
+                PhoneToWatchSyncCoordinator.lastSyncedWorkoutStoreFingerprint(context)
+            val includeWorkoutStore = !isGlobalSync ||
+                capturedFingerprint == null ||
+                capturedFingerprint != lastSyncedStoreFingerprint
+            val sentWorkoutStore = if (includeWorkoutStore) {
+                adjustedWorkoutStore
+            } else {
+                adjustedWorkoutStore.copy(
+                    exerciseDefinitions = emptyList(),
+                    workouts = emptyList(),
+                    equipments = emptyList(),
+                    accessoryEquipments = emptyList(),
+                    workoutPlans = emptyList(),
+                    weeklyProgressOverrides = emptyList(),
+                    externalHeartRateConfigs = emptyList(),
+                )
+            }
             val appBackup = AppBackup(
-                adjustedWorkoutStore,
+                sentWorkoutStore,
                 validWorkoutHistories,
                 setHistories,
                 exerciseInfos,
@@ -165,9 +187,14 @@ class MobileSyncToWatchWorker(
                 exerciseSessionProgressions,
                 errorLogs.takeIf { it.isNotEmpty() },
                 restHistories,
-                ExerciseMovements = collectExerciseMovementBackups(context, adjustedWorkoutStore),
+                ExerciseMovements = if (includeWorkoutStore) {
+                    collectExerciseMovementBackups(context, adjustedWorkoutStore)
+                } else {
+                    null
+                },
                 ProfileId = targetProfileId,
                 ProfileName = targetProfile.name,
+                IncludeWorkoutStore = includeWorkoutStore,
             )
 
             workerSyncMutex.withLock {
@@ -196,6 +223,9 @@ class MobileSyncToWatchWorker(
                             PhoneToWatchSyncCoordinator.onTransactionStarted(startedTransactionId)
                         }
                     },
+                    // Later profiles follow as separate transactions; the watch must not
+                    // drop its sync overlay between them.
+                    hasFollowUp = !isFinalJob,
                 )
             }
             Log.d(

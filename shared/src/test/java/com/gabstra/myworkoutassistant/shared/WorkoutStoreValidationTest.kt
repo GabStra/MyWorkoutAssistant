@@ -37,8 +37,15 @@ class WorkoutStoreValidationTest {
 
         val issues = store.findRecurringMetadataIssues()
 
-        assertTrue(issues.any { it.details.contains("ordinal 1 is duplicated") })
-        assertTrue(issues.any { it.details.contains("changes definition, exercise type, or equipment") })
+        val duplicateOrdinal = issues.single {
+            it.code == WorkoutStoreRecurringMetadataIssueCode.DUPLICATE_PRESCRIPTION_ORDINAL
+        }
+        assertEquals(1, duplicateOrdinal.prescriptionOrdinal)
+        assertEquals("Test Workout", duplicateOrdinal.workoutName)
+        val conflictingSlot = issues.single {
+            it.code == WorkoutStoreRecurringMetadataIssueCode.CONFLICTING_RECURRING_SLOT_IDENTITY
+        }
+        assertEquals(trackId, conflictingSlot.recurringExerciseSlotId)
     }
 
     @Test
@@ -131,8 +138,40 @@ class WorkoutStoreValidationTest {
         }
 
         assertEquals(1, exception.duplicateSetIdIssues.size)
-        assertEquals("Bench Press", exception.duplicateSetIdIssues.single().exerciseNames[0])
+        val issue = exception.duplicateSetIdIssues.single()
+        assertEquals(duplicatedSetId, issue.setId)
+        assertEquals("Test Workout", issue.workoutName)
+        assertEquals("Bench Press", issue.exerciseNames[0])
         assertTrue(exception.userMessage.contains("Incline Press"))
+    }
+
+    @Test
+    fun `last working load without a recurring slot keeps workout and exercise names`() {
+        val exercise = createExercise(UUID.randomUUID(), "Row", listOf(UUID.randomUUID())).copy(
+            loadHistoryPolicy = LoadHistoryPolicy.LAST_WORKING_LOAD,
+        )
+        val workout = createWorkout(
+            workoutId = UUID.randomUUID(),
+            workoutGlobalId = UUID.randomUUID(),
+            exercise = exercise,
+        ).copy(
+            recurringSessionId = UUID.randomUUID(),
+            prescriptionOrdinal = 1,
+        )
+        val store = WorkoutStore(
+            workouts = listOf(workout),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.0,
+        )
+
+        val issue = store.findRecurringMetadataIssues().single {
+            it.code == WorkoutStoreRecurringMetadataIssueCode.LAST_WORKING_LOAD_MISSING_SLOT_ID
+        }
+
+        assertEquals(workout.id, issue.workoutId)
+        assertEquals("Test Workout", issue.workoutName)
+        assertEquals("Row", issue.exerciseName)
     }
 
     private fun createWorkout(

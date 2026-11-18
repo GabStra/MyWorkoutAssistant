@@ -122,9 +122,83 @@ class RecurringWorkoutAuthoringTest {
                 listOf(first, second),
             )
             throw AssertionError("Expected incompatible track to be rejected")
-        } catch (expected: IllegalArgumentException) {
+        } catch (expected: RecurringWorkoutAuthoringException) {
+            assertEquals(RecurringWorkoutAuthoringErrorCode.INCOMPATIBLE_TRACK, expected.code)
             assertTrue(expected.message.orEmpty().contains("incompatible"))
         }
+    }
+
+    @Test
+    fun `validation failures expose stable codes and keep english diagnostics`() {
+        val source = workout("Press", listOf(exercise("Bench")))
+        val first = RecurringWorkoutAuthoring.startFamily(source)
+        val clone = RecurringWorkoutAuthoring.cloneNext(first, listOf(first), "Week 2")
+        val otherFamily = RecurringWorkoutAuthoring.startFamily(workout("Other", listOf(exercise("Squat"))))
+
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.WORKOUT_ALREADY_IN_RECURRING_SESSION,
+            "Workout already belongs to a recurring session.",
+        ) { RecurringWorkoutAuthoring.startFamily(first) }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.DETACH_BEFORE_ATTACH,
+            "Detach this workout before attaching it to another recurring session.",
+        ) { RecurringWorkoutAuthoring.attach(first, listOf(first)) }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.SOURCE_NOT_IN_RECURRING_SESSION,
+            "Source workout is not in this recurring session.",
+        ) { RecurringWorkoutAuthoring.cloneNext(source, listOf(first), null) }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.EMPTY_SESSION_NAME,
+            "Recurring session name cannot be empty.",
+        ) { RecurringWorkoutAuthoring.renameFamily(listOf(first), "   ") }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.WORKOUT_NOT_IN_RECURRING_SESSION,
+            "Workout is not in this recurring session.",
+        ) { RecurringWorkoutAuthoring.updatePrescriptionLabel(source, null, listOf(first)) }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.REORDER_INCOMPLETE,
+            "Reordering must include each active prescription exactly once.",
+        ) { RecurringWorkoutAuthoring.reorderFamily(listOf(first, clone), listOf(first.id)) }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.WORKOUT_NOT_RECURRING_FOR_TRACK,
+            "Add this workout to a recurring session before creating a history track.",
+        ) {
+            RecurringWorkoutAuthoring.createExerciseTrack(
+                source,
+                (source.workoutComponents.single() as Exercise).id,
+                LoadHistoryPolicy.NONE,
+            )
+        }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.LOAD_POLICY_UNSUPPORTED,
+            "Load policies support loaded weight and bodyweight exercises.",
+        ) {
+            RecurringWorkoutAuthoring.createExerciseTrack(
+                exercise("Run").copy(exerciseType = ExerciseType.RUNNING),
+                LoadHistoryPolicy.LAST_WORKING_LOAD,
+                listOf(first),
+            )
+        }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.EXERCISE_NOT_IN_WORKOUT,
+            "Exercise is not part of this workout.",
+        ) {
+            RecurringWorkoutAuthoring.linkExerciseTrack(
+                first,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                LoadHistoryPolicy.NONE,
+                listOf(first),
+            )
+        }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.NO_ACTIVE_PRESCRIPTIONS,
+            "Recurring session has no active prescriptions.",
+        ) { RecurringWorkoutAuthoring.renameFamily(emptyList(), "Cycle") }
+        assertAuthoringFailure(
+            RecurringWorkoutAuthoringErrorCode.MIXED_RECURRING_SESSIONS,
+            "Selected workouts do not belong to one recurring session.",
+        ) { RecurringWorkoutAuthoring.renameFamily(listOf(first, otherFamily), "Cycle") }
     }
 
     @Test
@@ -175,6 +249,20 @@ class RecurringWorkoutAuthoringTest {
         weightKg = 80.0,
         progressionPercentageAmount = 0.0,
     )
+
+    private fun assertAuthoringFailure(
+        code: RecurringWorkoutAuthoringErrorCode,
+        message: String,
+        block: () -> Unit,
+    ) {
+        try {
+            block()
+            throw AssertionError("Expected $code to be raised")
+        } catch (expected: RecurringWorkoutAuthoringException) {
+            assertEquals(code, expected.code)
+            assertEquals(message, expected.message)
+        }
+    }
 
     private fun workout(name: String, exercises: List<Exercise>) = Workout(
         id = UUID.randomUUID(),

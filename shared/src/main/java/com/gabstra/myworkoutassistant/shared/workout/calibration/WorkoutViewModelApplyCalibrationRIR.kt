@@ -4,6 +4,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.initializeSetData
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditIntent
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditResult
+import com.gabstra.myworkoutassistant.shared.datalayer.findExercisePrescription
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -171,9 +174,6 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
     if (exercise.loadHistoryPolicy == LoadHistoryPolicy.PRESCRIBED_WEIGHT) return
     
     launchIO {
-        // Store RIR in calibration set's SetData
-        storeRIRInCalibrationSetData(currentState, rir)
-        
         // Get calibration weight
         val currentSetData = currentState.currentSetData
         val calibrationWeight = extractWorkWeight(currentSetData)
@@ -196,8 +196,33 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
             sets = updatedSets,
             requiresLoadCalibration = false
         )
+        // The session copy is hydrated (progression/history change set values). Baseline the
+        // edit against the persisted watch definition so the phone compares like with like, while
+        // the calibrated values below stay the session results.
+        val persistedWorkout = workoutStore.workouts.firstOrNull {
+            it.id == selectedWorkout.value.id
+        }
+        val persistedExercise = persistedWorkout?.findExercisePrescription(exercise.id)
+        if (persistedWorkout == null || persistedExercise == null) {
+            reportWorkoutDefinitionPersistRejected(
+                "The persisted workout definition no longer matches the session exercise",
+            )
+            return@launchIO
+        }
+        val calibrationEditIntent = WatchWorkoutDefinitionEditIntent.calibration(
+            persistedWorkout = persistedWorkout,
+            persistedExercise = persistedExercise,
+            calibratedSets = updatedSets,
+        )
+        val persistResult = persistSelectedWorkoutDefinition(editIntent = calibrationEditIntent)
+        if (persistResult is WatchWorkoutDefinitionEditResult.Rejected) {
+            // Do not mutate the selected workout or advance out of calibration when the definition
+            // edit was rejected: the session must not claim a calibration the store did not accept.
+            return@launchIO
+        }
+        // Only mutate the calibration execution data after the definition edit was accepted.
+        storeRIRInCalibrationSetData(currentState, rir)
         updateWorkout(exercise, updatedExercise)
-        persistSelectedWorkoutDefinition()
         
         // Update states in state machine to reflect new set weights and remove CalibrationRIRSelection
         withContext(dispatchers.main) {

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.DataLayerListenerService
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -52,6 +53,9 @@ import com.gabstra.myworkoutassistant.shared.adapters.WorkoutHistoryAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
+import com.gabstra.myworkoutassistant.shared.datalayer.WORKOUT_DEFINITION_EDIT_KEY
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditCodec
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditIntent
 import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
@@ -874,6 +878,7 @@ suspend fun sendWorkoutStore(
     dataClient: DataClient,
     workoutStore: WorkoutStore,
     profileId: String,
+    editIntent: WatchWorkoutDefinitionEditIntent? = null,
 ) {
     val transactionId = UUID.randomUUID().toString()
     Log.d("DataLayerSync", "Starting workout store sync, transactionId=$transactionId")
@@ -890,16 +895,27 @@ suspend fun sendWorkoutStore(
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
         val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
 
-        val jsonString = fromWorkoutStoreToJSON(workoutStore)
-        val compressedData = compressString(jsonString)
         val workoutStorePath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_STORE_PREFIX, transactionId)
         val request = PutDataMapRequest.create(workoutStorePath).apply {
-            dataMap.putByteArray("compressedJson", compressedData)
+            // A structured edit is self-contained. Omitting the session-hydrated snapshot makes an
+            // old phone fail the transaction instead of silently applying it as a legacy merge and
+            // acknowledging an edit it does not understand.
+            if (editIntent == null) {
+                val jsonString = fromWorkoutStoreToJSON(workoutStore)
+                dataMap.putByteArray("compressedJson", compressString(jsonString))
+            }
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
             dataMap.putString("transactionId", transactionId)
             // Which profile this store belongs to; the phone applies it there, not to whichever
             // profile happens to be open.
             dataMap.putString(PROFILE_ID_KEY, profileId)
+            // New clients name the exact fields they edited and send no snapshot at all.
+            editIntent?.let { intent ->
+                dataMap.putString(
+                    WORKOUT_DEFINITION_EDIT_KEY,
+                    WatchWorkoutDefinitionEditCodec.encode(intent),
+                )
+            }
         }.asPutDataRequest().setUrgent()
 
         Tasks.await(dataClient.putDataItem(request))
@@ -1430,7 +1446,11 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
             !pageRequestSucceeded
         ) {
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Couldn't open the app on your phone.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.wear_open_phone_app_failed),
+                    Toast.LENGTH_SHORT,
+                ).show()
             }
             return false
         }

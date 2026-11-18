@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -23,12 +24,14 @@ fun EditPlanNameDialog(
     show: Boolean,
     currentName: String,
     suggestNextPrescription: Boolean = true,
+    errorMessage: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (String, Boolean) -> Unit
 ) {
     if (show) {
         var planName by remember(currentName) { mutableStateOf(currentName) }
         var suggestNext by remember(currentName, suggestNextPrescription) { mutableStateOf(suggestNextPrescription) }
+        val isReservedName = isReservedPlanNameInput(planName)
         
         StandardDialog(
             onDismissRequest = onDismiss,
@@ -43,8 +46,21 @@ fun EditPlanNameDialog(
                         onValueChange = { planName = it },
                         label = { Text(stringResource(R.string.dialog_plan_name_label)) },
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
+                        singleLine = true,
+                        isError = isReservedName,
+                        supportingText = if (isReservedName) {
+                            { Text(stringResource(R.string.loc_plan_name_reserved)) }
+                        } else {
+                            null
+                        },
                     )
+                    if (errorMessage != null) {
+                        Text(
+                            text = errorMessage,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -63,13 +79,13 @@ fun EditPlanNameDialog(
             },
             confirmText = stringResource(R.string.common_save),
             onConfirm = {
-                if (planName.isNotBlank()) {
+                if (planName.isNotBlank() && !isReservedName) {
                     onConfirm(planName.trim(), suggestNext)
                 }
             },
             dismissText = stringResource(R.string.common_cancel),
             onDismissButton = onDismiss,
-            confirmEnabled = planName.isNotBlank()
+            confirmEnabled = planName.isNotBlank() && !isReservedName,
         )
     }
 }

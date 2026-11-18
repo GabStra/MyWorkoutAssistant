@@ -81,6 +81,15 @@ internal class WearDataLayerReceiver(
     private fun handleBackupEnd(intent: Intent) {
         val appBackupEndJson =
             intent.getStringExtra(DataLayerListenerService.APP_BACKUP_END_JSON) ?: return
+        // Another profile transaction follows in this sync: keep the loader and its stage
+        // sequence continuous instead of dropping back to the workout screen.
+        // shortcut: if the promised follow-up transaction never arrives the loader stays up
+        // (the next SYNC_REQUEST's start deadline recovers it only once a request exists);
+        // upgrade with a bounded wait for the follow-up when multi-profile syncs grow.
+        if (intent.getBooleanExtra(DataLayerListenerService.APP_BACKUP_MORE_COMING, false)) {
+            Log.d("DataLayerSync", "Backup end with follow-up transaction; keeping loading screen")
+            return
+        }
         Log.d("DataLayerSync", "Received APP_BACKUP_END_JSON - dismissing loading screen")
         appViewModel.setBackupSyncPhase(SyncPhase.COMPLETED)
         val currentRoute = navController.currentBackStackEntry?.destination?.route

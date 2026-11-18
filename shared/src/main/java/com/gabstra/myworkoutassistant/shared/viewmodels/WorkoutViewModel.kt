@@ -43,6 +43,9 @@ import com.gabstra.myworkoutassistant.shared.coroutines.DefaultDispatcherProvide
 import com.gabstra.myworkoutassistant.shared.coroutines.DispatcherProvider
 import com.gabstra.myworkoutassistant.shared.datalayer.StagedPhaseDisplay
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditResult
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditIntent
+import com.gabstra.myworkoutassistant.shared.datalayer.applyWatchWorkoutDefinitionEditLocally
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -113,6 +116,7 @@ import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutSessionOrche
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutTimerRestoreService
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
+import com.gabstra.myworkoutassistant.shared.workout.ui.resolveWorkoutResumeSetLabel
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
@@ -125,6 +129,7 @@ import com.gabstra.myworkoutassistant.shared.utils.HrvEstimation
 import com.gabstra.myworkoutassistant.shared.utils.HydrationEstimation
 import com.gabstra.myworkoutassistant.shared.utils.LiveCalorieAccumulator
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
+import com.gabstra.myworkoutassistant.shared.utils.PlateauReason
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
@@ -804,6 +809,7 @@ open class WorkoutViewModel(
         // Hold each phase on screen (measured from the last UI update) so fast syncs
         // don't skip visible steps or cut the 100% progress ring short.
         backupPhaseDisplay.show(phase, _backupSyncPhase.value) { shownPhase ->
+            Log.d("SyncUiPhase", "displayed $shownPhase (requested $phase)")
             _backupSyncPhase.value = shownPhase
         }
     }
@@ -1445,7 +1451,7 @@ open class WorkoutViewModel(
     val exerciseProgressionByExerciseId: MutableMap<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>> =
         mutableMapOf()
 
-    val plateauReasonByExerciseId: MutableMap<UUID, String?> =
+    val plateauReasonByExerciseId: MutableMap<UUID, PlateauReason?> =
         mutableMapOf()
 
     protected var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
@@ -1668,8 +1674,8 @@ open class WorkoutViewModel(
                     _workoutRecord = updatedRecord
                     _hasWorkoutRecord.value = true
                     _workoutResumeInfo.value = WorkoutResumeInfo(
-                        exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
-                        setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId], setIndex),
+                        exerciseName = exercisesById[exerciseId]?.name,
+                        setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId]?.sets, setIndex),
                         startedAt = currentWorkoutHistory?.knownStartTimeOrNull(),
                         sessionStatus = when (ownerDevice) {
                             SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
@@ -1718,8 +1724,8 @@ open class WorkoutViewModel(
             _workoutRecord = updatedRecord
             _hasWorkoutRecord.value = true
             _workoutResumeInfo.value = WorkoutResumeInfo(
-                exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
-                setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId], setIndex),
+                exerciseName = exercisesById[exerciseId]?.name,
+                setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId]?.sets, setIndex),
                 startedAt = currentWorkoutHistory?.knownStartTimeOrNull(),
                 sessionStatus = when (ownerDevice) {
                     SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
@@ -1793,53 +1799,18 @@ open class WorkoutViewModel(
                     }
                 }
                 .firstOrNull { it.id == workoutRecord.exerciseId }
-        val resumeExerciseName = resumeExercise?.name
-            ?: "Current exercise"
-
         val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutRecord.workoutHistoryId)
             ?: error("Workout history missing for active workout record")
         val sessionStatus = resolveWorkoutSessionStatus(workoutHistory, workoutRecord)
 
         return WorkoutResumeInfo(
-            exerciseName = resumeExerciseName,
-            setLabel = resolveWorkoutResumeSetLabel(resumeExercise, workoutRecord.setIndex),
+            exerciseName = resumeExercise?.name,
+            setLabel = resolveWorkoutResumeSetLabel(resumeExercise?.sets, workoutRecord.setIndex),
             startedAt = workoutHistory.knownStartTimeOrNull(),
             sessionStatus = sessionStatus,
             lastActiveSyncAt = workoutRecord.lastActiveSyncAt,
             motionCaptureEnabled = workoutRecord.motionCaptureEnabled,
         )
-    }
-
-    private fun resolveWorkoutResumeSetLabel(exercise: Exercise?, setIndex: UInt): String {
-        val sets = exercise?.sets ?: return "Work set 1"
-        val currentSetIndex = setIndex.toInt()
-        val set = sets.getOrNull(currentSetIndex) ?: return "Work set 1"
-        val baseLabel = workoutResumeSetTypeLabel(set)
-        if (set is RestSet) return baseLabel
-
-        val setNumberWithinType = sets
-            .take(currentSetIndex + 1)
-            .count { candidate -> workoutResumeSetTypeLabel(candidate) == baseLabel }
-            .coerceAtLeast(1)
-        return "$baseLabel $setNumberWithinType"
-    }
-
-    private fun workoutResumeSetTypeLabel(set: Set): String {
-        if (set is RestSet) return "Rest"
-
-        val subCategory = when (set) {
-            is WeightSet -> set.subCategory
-            is BodyWeightSet -> set.subCategory
-            else -> SetSubCategory.WorkSet
-        }
-        return when (subCategory) {
-            SetSubCategory.WarmupSet -> "Warm-up set"
-            SetSubCategory.BackOffSet -> "Back-off set"
-            SetSubCategory.RestPauseSet -> "Rest-pause set"
-            SetSubCategory.CalibrationPendingSet,
-            SetSubCategory.CalibrationSet -> "Calibration set"
-            SetSubCategory.WorkSet -> "Work set"
-        }
     }
 
     /**
@@ -2905,19 +2876,51 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
-    internal suspend fun persistSelectedWorkoutDefinition() {
-        val updatedWorkout = _selectedWorkout.value
-        val updatedWorkoutStore = workoutStore.copy(
-            workouts = workoutStore.workouts.map { workout ->
-                if (workout.id == updatedWorkout.id) updatedWorkout else workout
+    internal suspend fun persistSelectedWorkoutDefinition(
+        editIntent: WatchWorkoutDefinitionEditIntent? = null,
+    ): WatchWorkoutDefinitionEditResult? {
+        // _selectedWorkout is session-hydrated (progression/history change set values), so it must
+        // never replace the store definition wholesale. Persist only the fields named by the edit.
+        val intent = editIntent ?: return null
+        return when (val result = workoutStore.applyWatchWorkoutDefinitionEditLocally(intent)) {
+            is WatchWorkoutDefinitionEditResult.Applied -> {
+                updateWorkoutStore(result.workoutStore)
+                workoutStoreRepository.saveWorkoutStore(result.workoutStore)
+                onWorkoutDefinitionChanged(result.workoutStore, intent)
+                result
             }
-        )
-        updateWorkoutStore(updatedWorkoutStore)
-        workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
-        onWorkoutDefinitionChanged(updatedWorkoutStore)
+            is WatchWorkoutDefinitionEditResult.AlreadyApplied -> {
+                Log.d(TAG, "Workout definition edit was already present in the local store")
+                // The phone may still be missing an edit the watch already has (for example after
+                // a failed previous transfer), so retry the same idempotent intent there.
+                onWorkoutDefinitionChanged(result.workoutStore, intent)
+                result
+            }
+            is WatchWorkoutDefinitionEditResult.Rejected -> {
+                Log.e(
+                    TAG,
+                    "Rejected local workout definition edit: ${result.reason}",
+                )
+                onWorkoutDefinitionPersistRejected(result.reason)
+                result
+            }
+        }
     }
 
-    protected open suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) = Unit
+    /**
+     * Reports a definition-edit failure that was detected before it could be turned into an
+     * intent (for example a missing persisted definition). Callers must not advance the session.
+     */
+    internal suspend fun reportWorkoutDefinitionPersistRejected(reason: String) {
+        onWorkoutDefinitionPersistRejected(reason)
+    }
+
+    protected open suspend fun onWorkoutDefinitionPersistRejected(reason: String) = Unit
+
+    protected open suspend fun onWorkoutDefinitionChanged(
+        updatedWorkoutStore: WorkoutStore,
+        editIntent: WatchWorkoutDefinitionEditIntent?,
+    ) = Unit
 
     suspend fun updateExerciseEquipmentForCurrentWorkout(
         exerciseId: UUID,
@@ -3001,18 +3004,30 @@ open class WorkoutViewModel(
                 updatedExercise
             )
             val updatedWorkout = _selectedWorkout.value.copy(workoutComponents = updatedWorkoutComponents)
-            val updatedWorkoutStore = workoutStore.copy(
-                workouts = workoutStore.workouts.map { workout ->
-                    if (workout.id == updatedWorkout.id) updatedWorkout else workout
-                }
+            val editIntent = WatchWorkoutDefinitionEditIntent.equipment(
+                workout = updatedWorkout,
+                exercise = currentExercise,
+                newEquipmentId = equipmentId,
             )
+            val appliedEdit = workoutStore.applyWatchWorkoutDefinitionEditLocally(editIntent)
+            val updatedWorkoutStore = when (appliedEdit) {
+                is WatchWorkoutDefinitionEditResult.Applied -> appliedEdit.workoutStore
+                is WatchWorkoutDefinitionEditResult.AlreadyApplied -> appliedEdit.workoutStore
+                is WatchWorkoutDefinitionEditResult.Rejected -> {
+                    Log.e(
+                        TAG,
+                        "Rejected equipment definition edit: ${appliedEdit.reason}",
+                    )
+                    onWorkoutDefinitionPersistRejected(appliedEdit.reason)
+                    return false
+                }
+            }
 
             _selectedWorkout.value = updatedWorkout
             updateWorkoutStore(updatedWorkoutStore)
-            _selectedWorkout.value = updatedWorkout
             initializeExercisesMaps(updatedWorkout)
             workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
-            onWorkoutDefinitionChanged(updatedWorkoutStore)
+            onWorkoutDefinitionChanged(updatedWorkoutStore, editIntent)
 
             val workoutSequence = generateWorkoutStates()
             val initialMachine = initializeStateMachine(workoutSequence, 0)

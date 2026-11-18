@@ -297,7 +297,12 @@ suspend fun checkConnection(
     false
 }
 
-suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, context: android.content.Context? = null): Boolean {
+suspend fun sendSyncRequest(
+    dataClient: DataClient,
+    transactionId: String,
+    context: android.content.Context? = null,
+    hasFollowUp: Boolean = false,
+): Boolean {
     val maxRetries = 3
     var attempt = 0
     
@@ -329,6 +334,8 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, conte
             val request = PutDataMapRequest.create(requestPath).apply {
                 dataMap.putString("transactionId", transactionId)
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
+                // The watch keeps its sync overlay up while more profile transactions follow.
+                dataMap.putBoolean("hasFollowUp", hasFollowUp)
             }.asPutDataRequest().setUrgent()
             
             Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
@@ -670,7 +677,8 @@ suspend fun sendAppBackup(
     appBackup: AppBackup,
     context: android.content.Context? = null,
     onProgress: (SyncPhase, Float) -> Unit = { _, _ -> },
-    onTransactionStarted: (String) -> Unit = {}
+    onTransactionStarted: (String) -> Unit = {},
+    hasFollowUp: Boolean = false,
 ) {
     val transactionId = UUID.randomUUID().toString()
     Log.d("DataLayerSync", "Starting app backup, transactionId=$transactionId")
@@ -698,7 +706,7 @@ suspend fun sendAppBackup(
         cleanupAbandonedAppBackupPayloadDataItems(dataClient)
         
         // Send sync request and wait for acknowledgment
-        val handshakeSuccess = sendSyncRequest(dataClient, transactionId, context)
+        val handshakeSuccess = sendSyncRequest(dataClient, transactionId, context, hasFollowUp)
         if (!handshakeSuccess) {
             Log.e("DataLayerSync", "Failed to establish connection for app backup sync (transaction: $transactionId)")
             throw SyncError.HandshakeError(transactionId, 0)

@@ -26,6 +26,32 @@ data class RecurringTrackChoice(
     val exercisePosition: Int,
 )
 
+enum class RecurringWorkoutAuthoringErrorCode {
+    WORKOUT_ALREADY_IN_RECURRING_SESSION,
+    DETACH_BEFORE_ATTACH,
+    SOURCE_NOT_IN_RECURRING_SESSION,
+    EMPTY_SESSION_NAME,
+    WORKOUT_NOT_IN_RECURRING_SESSION,
+    REORDER_INCOMPLETE,
+    WORKOUT_NOT_RECURRING_FOR_TRACK,
+    LOAD_POLICY_UNSUPPORTED,
+    EXERCISE_NOT_IN_WORKOUT,
+    INCOMPATIBLE_TRACK,
+    NO_ACTIVE_PRESCRIPTIONS,
+    MIXED_RECURRING_SESSIONS,
+}
+
+/**
+ * Validation failure raised by [RecurringWorkoutAuthoring].
+ *
+ * [message] keeps the English developer diagnostic for logs and regression tests.
+ * User-facing text is resolved from [code] at the UI boundary.
+ */
+class RecurringWorkoutAuthoringException(
+    val code: RecurringWorkoutAuthoringErrorCode,
+    message: String,
+) : IllegalArgumentException(message)
+
 /** Copy-only authoring operations. Callers persist edited workouts through [WorkoutManager.updateWorkout]. */
 object RecurringWorkoutAuthoring {
     fun startFamily(
@@ -33,7 +59,11 @@ object RecurringWorkoutAuthoring {
         defaultLoadPolicy: LoadHistoryPolicy = LoadHistoryPolicy.NONE,
         label: String? = null,
     ): Workout {
-        require(workout.recurringSessionId == null) { "Workout already belongs to a recurring session." }
+        requireAuthoring(
+            workout.recurringSessionId == null,
+            RecurringWorkoutAuthoringErrorCode.WORKOUT_ALREADY_IN_RECURRING_SESSION,
+            "Workout already belongs to a recurring session.",
+        )
         return workout.copy(
             recurringSessionId = UUID.randomUUID(),
             prescriptionOrdinal = 1,
@@ -50,7 +80,11 @@ object RecurringWorkoutAuthoring {
     }
 
     fun attach(workout: Workout, family: List<Workout>): Workout {
-        require(workout.recurringSessionId == null) { "Detach this workout before attaching it to another recurring session." }
+        requireAuthoring(
+            workout.recurringSessionId == null,
+            RecurringWorkoutAuthoringErrorCode.DETACH_BEFORE_ATTACH,
+            "Detach this workout before attaching it to another recurring session.",
+        )
         val context = familyContext(family)
         return workout.copy(
             name = context.name,
@@ -70,7 +104,11 @@ object RecurringWorkoutAuthoring {
 
     fun cloneNext(source: Workout, family: List<Workout>, label: String?): Workout {
         val context = familyContext(family)
-        require(source.recurringSessionId == context.sessionId) { "Source workout is not in this recurring session." }
+        requireAuthoring(
+            source.recurringSessionId == context.sessionId,
+            RecurringWorkoutAuthoringErrorCode.SOURCE_NOT_IN_RECURRING_SESSION,
+            "Source workout is not in this recurring session.",
+        )
         val components = source.workoutComponents.map(::cloneComponent)
         return source.copy(
             id = UUID.randomUUID(),
@@ -103,7 +141,11 @@ object RecurringWorkoutAuthoring {
 
     fun renameFamily(family: List<Workout>, name: String): List<Workout> {
         val familyName = name.trim()
-        require(familyName.isNotEmpty()) { "Recurring session name cannot be empty." }
+        requireAuthoring(
+            familyName.isNotEmpty(),
+            RecurringWorkoutAuthoringErrorCode.EMPTY_SESSION_NAME,
+            "Recurring session name cannot be empty.",
+        )
         familyContext(family)
         return family.map { it.copy(name = familyName) }
     }
@@ -114,7 +156,11 @@ object RecurringWorkoutAuthoring {
         family: List<Workout>,
     ): Workout {
         val context = familyContext(family)
-        require(workout.recurringSessionId == context.sessionId) { "Workout is not in this recurring session." }
+        requireAuthoring(
+            workout.recurringSessionId == context.sessionId,
+            RecurringWorkoutAuthoringErrorCode.WORKOUT_NOT_IN_RECURRING_SESSION,
+            "Workout is not in this recurring session.",
+        )
         return workout.copy(
             prescriptionLabel = label?.trim()?.takeIf(String::isNotEmpty),
         )
@@ -123,9 +169,11 @@ object RecurringWorkoutAuthoring {
     fun reorderFamily(family: List<Workout>, orderedWorkoutIds: List<UUID>): List<Workout> {
         val context = familyContext(family)
         val active = family.filter { it.isActive && it.recurringSessionId == context.sessionId }
-        require(orderedWorkoutIds.size == active.size && orderedWorkoutIds.toSet() == active.map { it.id }.toSet()) {
-            "Reordering must include each active prescription exactly once."
-        }
+        requireAuthoring(
+            orderedWorkoutIds.size == active.size && orderedWorkoutIds.toSet() == active.map { it.id }.toSet(),
+            RecurringWorkoutAuthoringErrorCode.REORDER_INCOMPLETE,
+            "Reordering must include each active prescription exactly once.",
+        )
         val ordinalById = orderedWorkoutIds.withIndex().associate { it.value to it.index + 1 }
         return family.map { workout ->
             ordinalById[workout.id]?.let { workout.copy(prescriptionOrdinal = it) } ?: workout
@@ -133,9 +181,11 @@ object RecurringWorkoutAuthoring {
     }
 
     fun createExerciseTrack(workout: Workout, exerciseId: UUID, policy: LoadHistoryPolicy): Workout {
-        require(workout.recurringSessionId != null && workout.prescriptionOrdinal != null) {
-            "Add this workout to a recurring session before creating a history track."
-        }
+        requireAuthoring(
+            workout.recurringSessionId != null && workout.prescriptionOrdinal != null,
+            RecurringWorkoutAuthoringErrorCode.WORKOUT_NOT_RECURRING_FOR_TRACK,
+            "Add this workout to a recurring session before creating a history track.",
+        )
         return updateExercise(workout, exerciseId) { createExerciseTrack(it, policy, listOf(workout)) }
     }
 
@@ -145,9 +195,11 @@ object RecurringWorkoutAuthoring {
         family: List<Workout>,
     ): Exercise {
         familyContext(family)
-        require(isPolicyEligible(exercise, policy)) {
-            "Load policies support loaded weight and bodyweight exercises."
-        }
+        requireAuthoring(
+            isPolicyEligible(exercise, policy),
+            RecurringWorkoutAuthoringErrorCode.LOAD_POLICY_UNSUPPORTED,
+            "Load policies support loaded weight and bodyweight exercises.",
+        )
         return exercise.copy(recurringExerciseId = UUID.randomUUID(), loadHistoryPolicy = policy)
     }
 
@@ -159,9 +211,16 @@ object RecurringWorkoutAuthoring {
         family: List<Workout>,
     ): Workout {
         val context = familyContext(family)
-        require(workout.recurringSessionId == context.sessionId) { "Workout is not in this recurring session." }
+        requireAuthoring(
+            workout.recurringSessionId == context.sessionId,
+            RecurringWorkoutAuthoringErrorCode.WORKOUT_NOT_IN_RECURRING_SESSION,
+            "Workout is not in this recurring session.",
+        )
         val exercise = workoutExercises(workout).firstOrNull { it.id == exerciseId }
-            ?: throw IllegalArgumentException("Exercise is not part of this workout.")
+            ?: throw RecurringWorkoutAuthoringException(
+                RecurringWorkoutAuthoringErrorCode.EXERCISE_NOT_IN_WORKOUT,
+                "Exercise is not part of this workout.",
+            )
         return updateExercise(workout, exerciseId) { linkExerciseTrack(it, trackId, policy, family) }
     }
 
@@ -172,12 +231,16 @@ object RecurringWorkoutAuthoring {
         family: List<Workout>,
     ): Exercise {
         familyContext(family)
-        require(compatibleTrackChoices(exercise, family).any { it.trackId == trackId }) {
-            "Selected history track is incompatible with this exercise or recurring session."
-        }
-        require(isPolicyEligible(exercise, policy)) {
-            "Load policies support loaded weight and bodyweight exercises."
-        }
+        requireAuthoring(
+            compatibleTrackChoices(exercise, family).any { it.trackId == trackId },
+            RecurringWorkoutAuthoringErrorCode.INCOMPATIBLE_TRACK,
+            "Selected history track is incompatible with this exercise or recurring session.",
+        )
+        requireAuthoring(
+            isPolicyEligible(exercise, policy),
+            RecurringWorkoutAuthoringErrorCode.LOAD_POLICY_UNSUPPORTED,
+            "Load policies support loaded weight and bodyweight exercises.",
+        )
         return exercise.copy(recurringExerciseId = trackId, loadHistoryPolicy = policy)
     }
 
@@ -230,11 +293,18 @@ object RecurringWorkoutAuthoring {
 
     private fun familyContext(family: List<Workout>): FamilyContext {
         val active = family.filter { it.isActive }
-        require(active.isNotEmpty()) { "Recurring session has no active prescriptions." }
+        requireAuthoring(
+            active.isNotEmpty(),
+            RecurringWorkoutAuthoringErrorCode.NO_ACTIVE_PRESCRIPTIONS,
+            "Recurring session has no active prescriptions.",
+        )
         val sessionIds = active.mapNotNull { it.recurringSessionId }.distinct()
-        require(sessionIds.size == 1 && active.all { it.recurringSessionId == sessionIds.single() }) {
-            "Selected workouts do not belong to one recurring session."
-        }
+        val singleSession = sessionIds.size == 1 && active.all { it.recurringSessionId == sessionIds.single() }
+        requireAuthoring(
+            singleSession,
+            RecurringWorkoutAuthoringErrorCode.MIXED_RECURRING_SESSIONS,
+            "Selected workouts do not belong to one recurring session.",
+        )
         return FamilyContext(
             sessionId = sessionIds.single(),
             name = active.first().name,
@@ -282,8 +352,20 @@ object RecurringWorkoutAuthoring {
                 transform(exercise)
             } else exercise
         }
-        require(found) { "Exercise is not part of this workout." }
+        requireAuthoring(
+            found,
+            RecurringWorkoutAuthoringErrorCode.EXERCISE_NOT_IN_WORKOUT,
+            "Exercise is not part of this workout.",
+        )
         return workout.copy(workoutComponents = updated)
+    }
+
+    private fun requireAuthoring(
+        condition: Boolean,
+        code: RecurringWorkoutAuthoringErrorCode,
+        message: String,
+    ) {
+        if (!condition) throw RecurringWorkoutAuthoringException(code, message)
     }
 
     private fun mapExercises(components: List<WorkoutComponent>, transform: (Exercise) -> Exercise): List<WorkoutComponent> =

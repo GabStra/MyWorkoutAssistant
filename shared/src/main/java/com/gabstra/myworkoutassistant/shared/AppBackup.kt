@@ -34,6 +34,11 @@ data class AppBackup(
     val ProfileId: String? = null,
     /** Profile name at export time; lets a restore recognise its owner after a reinstall. */
     val ProfileName: String? = null,
+    /**
+     * False when [WorkoutStore] is only a placeholder because the receiving watch already holds
+     * the same store; receivers must keep their current store. Null means "include it" (legacy).
+     */
+    val IncludeWorkoutStore: Boolean? = null,
 )
 
 data class ExerciseMovementBackup(

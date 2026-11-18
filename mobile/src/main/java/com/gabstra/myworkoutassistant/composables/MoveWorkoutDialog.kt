@@ -12,7 +12,9 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import java.util.UUID
@@ -23,6 +25,7 @@ fun MoveWorkoutDialog(
     workoutName: String,
     workoutCount: Int = 1,
     availablePlans: List<WorkoutPlan>,
+    errorMessage: String? = null,
     onDismiss: () -> Unit,
     onMoveToPlan: (UUID?) -> Unit,
     onCreateNewPlan: () -> Unit
@@ -31,17 +34,26 @@ fun MoveWorkoutDialog(
         StandardDialog(
             onDismissRequest = onDismiss,
             title = if (workoutCount > 1) {
-                "Move $workoutCount workouts"
+                stringResource(R.string.loc_move_workouts, workoutCount)
             } else {
-                "Move \"$workoutName\""
+                stringResource(R.string.loc_move_named, workoutName)
             },
             body = {
                 Text(
-                    text = "Select a workout plan:",
+                    text = stringResource(R.string.loc_select_workout_plan),
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(bottom = Spacing.md)
                 )
-                
+
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = Spacing.sm)
+                    )
+                }
+
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -52,7 +64,6 @@ fun MoveWorkoutDialog(
                                 .fillMaxWidth()
                                 .clickable {
                                     onMoveToPlan(plan.id)
-                                    onDismiss()
                                 }
                         ) {
                             Text(
@@ -66,6 +77,20 @@ fun MoveWorkoutDialog(
                     OutlinedCard(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clickable {
+                                onMoveToPlan(null)
+                            }
+                    ) {
+                        Text(
+                            text = stringResource(R.string.loc_no_plan),
+                            modifier = Modifier.padding(Spacing.md),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+
+                    OutlinedCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
                             .background(MaterialTheme.colorScheme.primaryContainer)
                             .clickable {
                                 onCreateNewPlan()
@@ -73,7 +98,7 @@ fun MoveWorkoutDialog(
                         border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
                     ) {
                         Text(
-                            text = "+ Create New Plan",
+                            text = stringResource(R.string.loc_create_new_plan),
                             modifier = Modifier.padding(Spacing.md),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -82,7 +107,7 @@ fun MoveWorkoutDialog(
                 }
             },
             showConfirm = false,
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.common_cancel),
             onDismissButton = onDismiss
         )
     }

@@ -15,6 +15,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
@@ -84,11 +86,12 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.getVersionName
+import com.gabstra.myworkoutassistant.shared.isReservedWorkoutPlanName
 import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.workout.presentation.resolveRecurringPrescriptionProgress
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -101,6 +104,7 @@ import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitCancellation
 import java.util.Calendar
+import java.util.UUID
 
 private fun Workout.hasEnabledExerciseWithSet(): Boolean {
     // Workout must be active
@@ -114,6 +118,59 @@ private fun Workout.hasEnabledExerciseWithSet(): Boolean {
     return allExercises.any { exercise ->
         exercise.enabled && exercise.sets.any { it !is RestSet }
     }
+}
+
+internal data class WorkoutPlanSection(
+    val plan: WorkoutPlan?,
+    val workouts: List<Workout>,
+)
+
+/**
+ * Builds the workout-selection sections.
+ *
+ * Plans are optional groupings: workouts whose plan is missing or named like the legacy
+ * "Unassigned" sentinel are rendered as a single headerless section after the real plans. Reserved
+ * plan names are normalized before visibility filtering, so their workouts stay visible even if the
+ * legacy placeholder plan itself was hidden. Workouts owned by a hidden real plan stay hidden.
+ */
+internal fun buildWorkoutSelectionSections(
+    workouts: List<Workout>,
+    plans: List<WorkoutPlan>,
+    visiblePlanIds: Collection<UUID>?,
+): List<WorkoutPlanSection> {
+    val allPlanById = plans.associateBy { it.id }
+    val visiblePlans = plans.filter { plan ->
+        !isReservedWorkoutPlanName(plan.name) &&
+            (visiblePlanIds == null || plan.id in visiblePlanIds)
+    }
+    val grouped = linkedMapOf<WorkoutPlan?, MutableList<Workout>>()
+    visiblePlans.forEach { plan -> grouped[plan] = mutableListOf() }
+    grouped[null] = mutableListOf()
+
+    workouts.forEach { workout ->
+        val assignedPlanId = workout.workoutPlanId
+        val assignedPlan = assignedPlanId?.let(allPlanById::get)
+        val sectionPlan = assignedPlan?.takeUnless { isReservedWorkoutPlanName(it.name) }
+        if (sectionPlan != null && visiblePlanIds != null && sectionPlan.id !in visiblePlanIds) {
+            return@forEach
+        }
+        grouped.getOrPut(sectionPlan) { mutableListOf() }.add(workout)
+    }
+
+    return grouped
+        .filterValues { it.isNotEmpty() }
+        .map { (plan, sectionWorkouts) ->
+            WorkoutPlanSection(
+                plan = plan,
+                workouts = sectionWorkouts.sortedBy { it.order },
+            )
+        }
+        .sortedWith(
+            compareBy<WorkoutPlanSection>(
+                { it.plan == null },
+                { it.plan?.order ?: Int.MAX_VALUE },
+            )
+        )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -248,6 +305,7 @@ fun WorkoutSelectionScreen(
     }
     
     val workouts by viewModel.workouts.collectAsState()
+    val motionCaptureState by viewModel.motionCaptureUiState.collectAsState()
     var completedWorkoutHistories by remember(viewModel) { mutableStateOf<List<WorkoutHistory>?>(null) }
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(viewModel, lifecycleOwner, workouts) {
@@ -261,52 +319,13 @@ fun WorkoutSelectionScreen(
     // A profile can limit which plans this watch offers as workouts to do.
     val visiblePlanIds = viewModel.workoutStore.visibleWorkoutPlanIds
 
-    // Get workout plans from workoutStore - access directly since it's a mutableStateOf
-    val allPlans = remember(viewModel.workoutStore.workoutPlans, visiblePlanIds) {
-        viewModel.workoutStore.workoutPlans
-            .filter { visiblePlanIds == null || it.id in visiblePlanIds }
-            .sortedWith(
-                compareBy<WorkoutPlan>(
-                    { it.name == UNASSIGNED_PLAN_NAME },
-                    { it.order }
-                )
-            )
-    }
-    
-    // Group workouts by plan
-    val workoutsByPlan = remember(workouts, allPlans, visiblePlanIds) {
-        val grouped = mutableMapOf<WorkoutPlan?, MutableList<Workout>>()
-        
-        // Initialize with all plans
-        allPlans.forEach { plan ->
-            grouped[plan] = mutableListOf()
-        }
-        // Add unassigned group
-        grouped[null] = mutableListOf()
-        
-        // Group workouts - filter out workouts without enabled exercises with sets
-        workouts
-            // Workouts of a hidden plan would otherwise fall into the unassigned group.
-            .filter { visiblePlanIds == null || it.workoutPlanId in visiblePlanIds }
-            .filter { it.hasEnabledExerciseWithSet() }
-            .forEach { workout ->
-                val plan = workout.workoutPlanId?.let { planId ->
-                    allPlans.find { it.id == planId }
-                }
-                grouped[plan]?.add(workout)
-            }
-        
-        // Sort workouts within each plan by order
-        grouped.values.forEach { workoutList ->
-            workoutList.sortBy { it.order }
-        }
-        
-        // Return sorted by plan order, with unassigned at the end
-        grouped.toList().sortedWith(
-            compareBy<Pair<WorkoutPlan?, MutableList<Workout>>>(
-                { (plan, _) -> plan == null || plan.name == UNASSIGNED_PLAN_NAME },
-                { (plan, _) -> plan?.order ?: Int.MAX_VALUE }
-            )
+    // Plans are optional groupings; plan-less and legacy reserved-plan workouts form one
+    // trailing headerless section.
+    val workoutSections = remember(workouts, viewModel.workoutStore.workoutPlans, visiblePlanIds) {
+        buildWorkoutSelectionSections(
+            workouts = workouts.filter { it.hasEnabledExerciseWithSet() },
+            plans = viewModel.workoutStore.workoutPlans,
+            visiblePlanIds = visiblePlanIds,
         )
     }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
@@ -436,6 +455,65 @@ fun WorkoutSelectionScreen(
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
+                        }
+                    }
+                }
+
+                if (motionCaptureState.hasRequiredSensors &&
+                    (!motionCaptureState.isCapturing || motionCaptureState.isFreeformCapture)
+                ) {
+                    item {
+                        val freeformRecording = motionCaptureState.isFreeformCapture
+                        val toggleFreeformCapture: () -> Unit = {
+                            hapticsViewModel.doGentleVibration()
+                            if (freeformRecording) {
+                                viewModel.stopFreeformMotionCapture()
+                            } else {
+                                viewModel.startFreeformMotionCapture()
+                            }
+                        }
+                        WearTonalContentButton(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, spec),
+                            transformation = SurfaceTransformation(spec),
+                            onClick = { toggleFreeformCapture() }
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Text(
+                                    modifier = Modifier.weight(1f),
+                                    text = stringResource(
+                                        if (freeformRecording) {
+                                            R.string.freeform_capture_recording
+                                        } else {
+                                            R.string.freeform_capture_record
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Start,
+                                    color = if (freeformRecording) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onBackground
+                                    }
+                                )
+                                Switch(
+                                    checked = freeformRecording,
+                                    onCheckedChange = { toggleFreeformCapture() },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                        checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                        uncheckedThumbColor = MaterialTheme.colorScheme.onBackground,
+                                        uncheckedTrackColor = MediumLightGray,
+                                        uncheckedBorderColor = MaterialTheme.colorScheme.onBackground,
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
@@ -634,7 +712,7 @@ fun WorkoutSelectionScreen(
                         }
                     }
                 } else {
-                    if (workouts.isEmpty()) {
+                    if (workoutSections.isEmpty()) {
                         item {
                             Box(
                                 modifier = Modifier
@@ -654,11 +732,17 @@ fun WorkoutSelectionScreen(
                             }
                         }
                     } else {
-                        // Group workouts by plan and display with headers
-                        workoutsByPlan.forEach { (plan, planWorkouts) ->
+                        // Real plans get headers; the ungrouped section stays headerless.
+                        workoutSections.forEachIndexed { index, section ->
+                            val plan = section.plan
+                            val planWorkouts = section.workouts
                             if (planWorkouts.isNotEmpty()) {
-                                // Plan header (only show if there are multiple plans)
-                                if (allPlans.size > 1) {
+                                if (plan == null && workoutSections.getOrNull(index - 1)?.plan != null) {
+                                    item {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                    }
+                                }
+                                if (plan != null) {
                                     item {
                                         ListHeader(
                                             modifier = Modifier
@@ -666,7 +750,8 @@ fun WorkoutSelectionScreen(
                                             transformation = SurfaceTransformation(spec),
                                         ) {
                                             Text(
-                                                text = plan?.name ?: UNASSIGNED_PLAN_NAME,
+                                                // Plan names are user-authored content; never translate them.
+                                                text = plan.name,
                                                 textAlign = TextAlign.Center,
                                                 style = MaterialTheme.typography.titleMedium,
                                                 color = MaterialTheme.colorScheme.onBackground

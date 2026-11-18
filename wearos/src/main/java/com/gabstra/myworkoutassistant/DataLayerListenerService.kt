@@ -8,7 +8,9 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.data.combineChunks
+import com.gabstra.myworkoutassistant.data.cancelSyncInProgressNotification
 import com.gabstra.myworkoutassistant.data.showSyncCompleteNotification
+import com.gabstra.myworkoutassistant.data.showSyncInProgressNotification
 import com.gabstra.myworkoutassistant.llm.PhoneLlmOperationResultRegistry
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
@@ -23,6 +25,7 @@ import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
 import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_INDEX_JSON_KEY
 import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_NAME_KEY
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncHistoryRetention
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncProgressUpdate
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionCommand
@@ -448,6 +451,9 @@ class DataLayerListenerService : WearableListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        // Deadlines scheduled by a previous instance must reach this one: a re-bind replaces
+        // the instance while its pending timeout can still be in the queue.
+        activeService = this
         // Foreground before any onDataChanged: otherwise GMS can tear down the service before
         // SYNC_REQUEST / chunks are delivered (see WearableService "disconnected before delivering").
         DataLayerSyncForegroundHelper.startFromServiceCreated(this)
@@ -586,6 +592,7 @@ class DataLayerListenerService : WearableListenerService() {
         backupProcessingJob = null
         removeTimeout()
         removeRetryTimeout()
+        clearSyncInProgressNotification()
         clearBackupChunkState()
         expectedChunks = 0
         hasStartedSync = false
@@ -642,6 +649,7 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     private fun sendBackupFailedBroadcast() {
+        clearSyncInProgressNotification()
         sendBroadcast(Intent(INTENT_ID).apply {
             putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
             setPackage(packageName)
@@ -764,7 +772,22 @@ class DataLayerListenerService : WearableListenerService() {
         }
     }
 
-    private val handler = Handler(Looper.getMainLooper())
+    /**
+     * A running sync must be visible when the app is not in front of the athlete: the
+     * foreground-service notification is IMPORTANCE_LOW and never surfaces on Wear.
+     */
+    private fun notifySyncStarted() {
+        if (ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return
+        }
+        showSyncInProgressNotification(this)
+    }
+
+    private fun clearSyncInProgressNotification() {
+        cancelSyncInProgressNotification(this)
+    }
+
+    private val handler = syncHandler
     private val syncRequestStartDeadline = SyncRequestStartDeadline(
         handler = handler,
         timeoutMillis = SYNC_REQUEST_START_TIMEOUT_MS,
@@ -784,28 +807,22 @@ class DataLayerListenerService : WearableListenerService() {
         }
     }
 
-    @Volatile // Ensure visibility across threads
-    private var timeoutOperationCancelled = false
-
-    @Volatile
-    private var retryTimeoutOperationCancelled = false
-
-    private val timeoutRunnable = Runnable {
-        if (timeoutOperationCancelled) {
-            return@Runnable // Exit if cancelled
-        }
-        // Late retry chunks can re-arm this timeout after the sync already
-        // completed and cleaned up; without an active sync there is nothing to
-        // fail and the success screen must not be overwritten.
+    /**
+     * Runs on the process-wide timeout scheduler. Late retry chunks can re-arm this timeout
+     * after the sync already completed and cleaned up; without an active sync there is nothing
+     * to fail and the success screen must not be overwritten.
+     */
+    private fun handleCompletionTimeout() {
         if (!hasStartedSync || currentTransactionId == null) {
             Log.d(
                 "DataLayerListenerService",
                 "Timeout triggered after sync end; ignoring (no active sync)"
             )
-            return@Runnable
+            return
         }
         Log.d("DataLayerListenerService", "Timeout triggered")
 
+        clearSyncInProgressNotification()
         val intent = Intent(INTENT_ID).apply {
             putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
             setPackage(packageName)
@@ -820,16 +837,12 @@ class DataLayerListenerService : WearableListenerService() {
         ignoreUntilStartOrEnd = true
     }
 
-    private val retryTimeoutRunnable = Runnable {
-        if (retryTimeoutOperationCancelled) {
-            return@Runnable
-        }
+    private fun handleRetryTimeout() {
         Log.w("DataLayerSync", "Retry timeout triggered - aborting stuck backup sync")
         cleanupIncompleteSyncState()
     }
 
     private fun postTimeout(chunksCount: Int = expectedChunks) {
-        timeoutOperationCancelled = false // Reset flag before posting
         // Use dynamic timeout calculation based on chunk count
         val timeoutMs = if (chunksCount > 0) {
             calculateCompletionTimeout(chunksCount)
@@ -838,11 +851,23 @@ class DataLayerListenerService : WearableListenerService() {
             BASE_COMPLETION_TIMEOUT_MS + PER_CHUNK_TIMEOUT_MS
         }
         Log.d("DataLayerSync", "Posting timeout: ${timeoutMs}ms for $chunksCount chunks")
-        handler.postDelayed(timeoutRunnable, timeoutMs)
+        syncHandler.postDelayed(completionTimeoutRunnable, timeoutMs)
+    }
+
+    /**
+     * Receiving is done; the only remaining work is local. The transfer budget above only models
+     * chunk delivery, so it must be replaced by a deadline sized to the payload being parsed.
+     */
+    private fun postProcessingTimeout(jsonChars: Int) {
+        val timeoutMs = minOf(
+            PROCESSING_BASE_TIMEOUT_MS + PROCESSING_TIMEOUT_PER_MEGACHAR_MS * (jsonChars / 1_000_000),
+            MAX_COMPLETION_TIMEOUT_MS,
+        )
+        Log.d("DataLayerSync", "Posting processing timeout: ${timeoutMs}ms for $jsonChars chars")
+        syncHandler.postDelayed(completionTimeoutRunnable, timeoutMs)
     }
 
     private fun postRetryTimeout(chunksCount: Int = expectedChunks) {
-        retryTimeoutOperationCancelled = false
         val baseTimeout = if (chunksCount > 0) {
             calculateCompletionTimeout(chunksCount)
         } else {
@@ -850,18 +875,15 @@ class DataLayerListenerService : WearableListenerService() {
         }
         val retryTimeoutMs = minOf(baseTimeout * 2, MAX_COMPLETION_TIMEOUT_MS)
         Log.d("DataLayerSync", "Posting retry timeout: ${retryTimeoutMs}ms for $chunksCount chunks")
-        handler.postDelayed(retryTimeoutRunnable, retryTimeoutMs)
+        syncHandler.postDelayed(retryTimeoutRunnable, retryTimeoutMs)
     }
 
-    // Helper function to remove timeout
     private fun removeTimeout() {
-        timeoutOperationCancelled = true // Set flag to indicate cancellation intent
-        handler.removeCallbacks(timeoutRunnable)
+        syncHandler.removeCallbacks(completionTimeoutRunnable)
     }
 
     private fun removeRetryTimeout() {
-        retryTimeoutOperationCancelled = true
-        handler.removeCallbacks(retryTimeoutRunnable)
+        syncHandler.removeCallbacks(retryTimeoutRunnable)
     }
 
     private fun markTransactionCompleted(transactionId: String?) {
@@ -1434,8 +1456,13 @@ class DataLayerListenerService : WearableListenerService() {
 
                             val isEndpointProbe = dataMap.getBoolean("endpointProbe", false)
                             if (!isEndpointProbe) {
+                                // More profile transactions follow this one: the sync overlay must
+                                // stay up instead of dropping back to the watch UI between them.
+                                followUpTransactionId =
+                                    if (dataMap.getBoolean("hasFollowUp", false)) tid else null
                                 // Keep the service alive while a real backup is being received.
                                 DataLayerSyncForegroundHelper.startIfNeeded(this@DataLayerListenerService)
+                                notifySyncStarted()
                                 if (!hasStartedSync && currentTransactionId == null) {
                                     syncRequestStartDeadline.onRequest(tid)
                                 }
@@ -1763,6 +1790,7 @@ class DataLayerListenerService : WearableListenerService() {
 
                             if (isStart) {
                                 DataLayerSyncForegroundHelper.startIfNeeded(this@DataLayerListenerService)
+                                notifySyncStarted()
                                 if (dataMap.containsKey("chunksCount")) {
                                     expectedChunks = dataMap.getInt("chunksCount", 0)
                                 }
@@ -2057,6 +2085,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 "Decompressing backup data (size: ${backupData.size} bytes) for transaction: $transactionId"
                                             )
                                             val jsonBackup = decompressToString(backupData)
+                                            postProcessingTimeout(jsonBackup.length)
 
                                             processingStep = "parsing JSON backup"
                                             Log.d(
@@ -2106,22 +2135,42 @@ class DataLayerListenerService : WearableListenerService() {
                                             )
 
                                             processingStep = "saving workout store"
+                                            // The phone omits the store when this watch already has
+                                            // that exact fingerprint; then WorkoutStore is a placeholder.
+                                            val payloadHasWorkoutStore =
+                                                appBackup.IncludeWorkoutStore != false
                                             Log.d(
                                                 "DataLayerSync",
-                                                "Saving workout store for transaction: $transactionId"
+                                                "Saving workout store for transaction: $transactionId " +
+                                                    "(payload includes store: $payloadHasWorkoutStore)"
                                             )
-                                            restoreExerciseMovementBackups(
-                                                context = this@DataLayerListenerService,
-                                                movementBackups = appBackup.ExerciseMovements.orEmpty()
-                                            )
-                                            requireExerciseMovementPayloads(
-                                                this@DataLayerListenerService,
-                                                appBackup.WorkoutStore,
-                                            )
-                                            targetWorkoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
+                                            if (payloadHasWorkoutStore) {
+                                                restoreExerciseMovementBackups(
+                                                    context = this@DataLayerListenerService,
+                                                    movementBackups = appBackup.ExerciseMovements.orEmpty()
+                                                )
+                                                requireExerciseMovementPayloads(
+                                                    this@DataLayerListenerService,
+                                                    appBackup.WorkoutStore,
+                                                )
+                                                targetWorkoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
+                                            }
 
                                             processingStep = "database operations"
                                             runBlocking {
+                                                var applyLap = System.currentTimeMillis()
+                                                fun lap(name: String) {
+                                                    val now = System.currentTimeMillis()
+                                                    Log.d("DataLayerSync", "applyTiming $name ${now - applyLap}ms")
+                                                    applyLap = now
+                                                }
+                                                // Cleanup protection must reflect the store the watch
+                                                // actually holds when the payload omitted it.
+                                                val workoutsForCleanup = if (payloadHasWorkoutStore) {
+                                                    appBackup.WorkoutStore.workouts
+                                                } else {
+                                                    targetWorkoutStoreRepository.getWorkoutStore().workouts
+                                                }
                                                 val allSchedules =
                                                     targetWorkoutScheduleDao.getAllSchedules()
 
@@ -2129,6 +2178,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 for (schedule in allSchedules) {
                                                     scheduler.cancelSchedule(schedule)
                                                 }
+                                                lap("cancelSchedules")
 
                                                 // Single DB transaction: parallel scope jobs could leave readers
                                                 // (e.g. deleteOrphanedRecords) not seeing workout_history rows yet, which
@@ -2156,10 +2206,12 @@ class DataLayerListenerService : WearableListenerService() {
                                                                 *regularHistories.toTypedArray()
                                                             )
                                                         }
+                                                        lap("histories")
 
                                                         targetSetHistoryDao.insertAllWithVersionCheck(
                                                             *appBackup.SetHistories.toTypedArray()
                                                         )
+                                                        lap("sets")
 
                                                         val rests = appBackup.RestHistories.orEmpty()
                                                         if (rests.isNotEmpty()) {
@@ -2171,9 +2223,11 @@ class DataLayerListenerService : WearableListenerService() {
                                                         targetExerciseInfoDao.insertAllWithVersionCheck(
                                                             *appBackup.ExerciseInfos.toTypedArray()
                                                         )
+                                                        lap("exerciseInfos")
 
                                                         targetWorkoutScheduleDao.deleteAll()
                                                         targetWorkoutScheduleDao.insertAll(*appBackup.WorkoutSchedules.toTypedArray())
+                                                        lap("schedules")
 
                                                         val validExerciseSessionProgressions =
                                                             appBackup.ExerciseSessionProgressions.filter { progression ->
@@ -2183,29 +2237,35 @@ class DataLayerListenerService : WearableListenerService() {
                                                             *validExerciseSessionProgressions.toTypedArray()
                                                         )
 
+                                                        lap("progressions")
                                                         cleanupUnusedWorkoutHistories(
-                                                            appBackup.WorkoutStore.workouts,
+                                                            workoutsForCleanup,
                                                             appBackup.WorkoutHistories.map { it.id }.toSet(),
                                                             targetWorkoutHistoryDao,
                                                             targetSetHistoryDao,
                                                             targetExerciseSessionProgressionDao,
                                                         )
+                                                        lap("cleanupUnused")
                                                         mergeIncomingWorkoutRecords(
                                                             appBackup,
                                                             targetWorkoutHistoryDao,
                                                             targetWorkoutRecordDao,
                                                         )
+                                                        lap("mergeRecords")
                                                         targetWorkoutRecordDao.deleteOrphanedRecords()
+                                                        lap("deleteOrphaned")
                                                         reconcileActiveRecordsWithHistories(
                                                             targetWorkoutHistoryDao,
                                                             targetWorkoutRecordDao,
                                                         )
                                                     }
+                                                    lap("reconcile+commit")
                                                 }
 
                                                 // Re-register alarms here so sync completes reliably when MainActivity
                                                 // is not running (dynamic WearDataLayerReceiver would not receive APP_BACKUP_END).
                                                 WorkoutAlarmScheduler(applicationContext).rescheduleAllWorkouts()
+                                                lap("rescheduleAlarms")
 
                                                 val legacyAppInForeground = MyApplication.isAppInForeground()
                                                 val processLifecycleState =
@@ -2218,6 +2278,8 @@ class DataLayerListenerService : WearableListenerService() {
                                                         "legacyAppInForeground=$legacyAppInForeground " +
                                                         "processLifecycleState=$processLifecycleState tx=$transactionId"
                                                 )
+                                                removeTimeout()
+                                                clearSyncInProgressNotification()
                                                 if (shouldPostSyncCompleteNotification) {
                                                     showSyncCompleteNotification(this@DataLayerListenerService)
                                                 }
@@ -2286,8 +2348,14 @@ class DataLayerListenerService : WearableListenerService() {
                                                 // Dismiss the Wear sync screen only after the processed-data
                                                 // acknowledgment has been successfully published to the phone.
                                                 syncRequestStartDeadline.cancel(transactionId)
+                                                val moreTransactionsFollow =
+                                                    transactionId != null && transactionId == followUpTransactionId
+                                                if (moreTransactionsFollow) {
+                                                    followUpTransactionId = null
+                                                }
                                                 val intent = Intent(INTENT_ID).apply {
                                                     putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
+                                                    putExtra(APP_BACKUP_MORE_COMING, moreTransactionsFollow)
                                                     setPackage(packageName)
                                                 }
                                                 sendBroadcast(intent)
@@ -2641,18 +2709,20 @@ class DataLayerListenerService : WearableListenerService() {
 
             // For each exercise, get set histories and extract workout history IDs
             // Keep the most recent 15 workout histories per exercise (for plateau detection)
+            // Read set histories once: one query per exercise meant hundreds of full scans.
+            val setHistoriesByExerciseId = setHistoryDao.getAllSetHistories().groupBy { it.exerciseId }
             for (exercise in allExercises) {
-                val setHistoriesForExercise = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
-                val workoutHistoryIds = setHistoriesForExercise
+                val workoutHistoryIds = setHistoriesByExerciseId[exercise.id].orEmpty()
                     .mapNotNull { it.workoutHistoryId }
                     .distinct()
 
                 if (workoutHistoryIds.isNotEmpty()) {
-                    // Get workout histories for this exercise and keep the most recent 15
+                    // Same window the phone sends; anything older cannot be read by plateau
+                    // detection (3 non-deload sessions, 4 minimum, 30-day cutoff).
                     val workoutHistoriesForExercise = allWorkoutHistories
                         .filter { it.id in workoutHistoryIds }
                         .sortedByDescending { it.startTime }
-                        .take(15)
+                        .take(SyncHistoryRetention.SESSIONS_PER_EXERCISE)
 
                     workoutHistoryIdsToKeep.addAll(workoutHistoriesForExercise.map { it.id })
                 }
@@ -2717,6 +2787,11 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     override fun onDestroy() {
+        if (activeService === this) {
+            activeService = null
+            removeTimeout()
+            removeRetryTimeout()
+        }
         (syncRequestStartDeadline.cancel() as? SyncRequestStartDeadline.Cancellation.Cancelled)?.let {
             Log.w("DataLayerSync", "Service destroyed before backup start: ${it.transactionId}")
             sendBackupFailedBroadcast()
@@ -2746,6 +2821,33 @@ class DataLayerListenerService : WearableListenerService() {
         @Volatile
         var activeProcessingTransactionId: String? = null
 
+        // Transaction whose completion is followed by another profile transaction in the same
+        // phone sync; its end must not dismiss the watch sync overlay.
+        @Volatile
+        var followUpTransactionId: String? = null
+
+        // One deadline scheduler for the whole process. A re-bind creates a new service
+        // instance while the previous instance's callbacks are still queued on the (shared)
+        // main looper; per-instance Runnables could not be cancelled from the instance that
+        // took over, so stale deadlines fired and failed syncs that were completing.
+        private val syncHandler = Handler(Looper.getMainLooper())
+
+        @Volatile
+        private var activeService: DataLayerListenerService? = null
+
+        private val completionTimeoutRunnable = Runnable {
+            val service = activeService
+            if (service == null) {
+                Log.d(TAG, "Timeout fired with no active service; ignoring")
+            } else {
+                service.handleCompletionTimeout()
+            }
+        }
+
+        private val retryTimeoutRunnable = Runnable {
+            activeService?.handleRetryTimeout()
+        }
+
         // False until the first onCreate in this process; a later onCreate is a
         // re-bind of the same process, not a service restart.
         @Volatile
@@ -2758,6 +2860,7 @@ class DataLayerListenerService : WearableListenerService() {
         const val APP_BACKUP_START_JSON = "appBackupStartJson"
         const val APP_BACKUP_START_ACCEPTED = "appBackupStartAccepted"
         const val APP_BACKUP_END_JSON = "appBackupEndJson"
+        const val APP_BACKUP_MORE_COMING = "appBackupMoreComing"
         const val APP_BACKUP_FAILED = "appBackupFailed"
         const val APP_BACKUP_PROGRESS_UPDATE = "progress_update"
         const val APP_BACKUP_PHASE_UPDATE = "phase_update"
@@ -2770,6 +2873,11 @@ class DataLayerListenerService : WearableListenerService() {
         const val BASE_COMPLETION_TIMEOUT_MS = 10000L
         const val PER_CHUNK_TIMEOUT_MS = 2000L
         const val MAX_COMPLETION_TIMEOUT_MS = 300000L // 5 minutes
+
+        // Local processing (gunzip + JSON parse + DB apply) scales with payload size, not with
+        // chunk count: ~21s for a 4.5M-char backup on Wear-class hardware.
+        private const val PROCESSING_BASE_TIMEOUT_MS = 30000L
+        private const val PROCESSING_TIMEOUT_PER_MEGACHAR_MS = 30000L
         
         // SharedPreferences keys for configurable timeouts
         private const val PREF_HANDSHAKE_TIMEOUT = "handshake_timeout_ms"

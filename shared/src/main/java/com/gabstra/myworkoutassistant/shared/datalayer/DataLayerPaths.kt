@@ -4,6 +4,11 @@ package com.gabstra.myworkoutassistant.shared.datalayer
 const val PROFILE_ID_KEY = "profileId"
 /** Profile name paired with [PROFILE_ID_KEY] when a phone pushes a full backup. */
 const val PROFILE_NAME_KEY = "profileName"
+/**
+ * Watch -> phone: JSON [WatchWorkoutDefinitionEditIntent] for a definition edit.
+ * Payloads without it use the conservative legacy snapshot merge for older clients.
+ */
+const val WORKOUT_DEFINITION_EDIT_KEY = "workoutDefinitionEditJson"
 /** Current phone profile index sent with a backup start so the target is selectable after restore. */
 const val PROFILE_INDEX_JSON_KEY = "profileIndexJson"
 

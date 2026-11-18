@@ -57,12 +57,14 @@ interface RestHistoryDao {
 
     @Transaction
     suspend fun insertAllWithVersionCheck(vararg items: RestHistory) {
-        items.forEach { rest ->
-            val existing = getById(rest.id)
-            if (existing == null || rest.version >= existing.version) {
-                insert(rest)
-            }
+        if (items.isEmpty()) return
+        // One read + one bulk write instead of a SELECT/INSERT round-trip per row.
+        val existingById = getAll().associateBy { it.id }
+        val toWrite = items.filter { rest ->
+            val existing = existingById[rest.id]
+            existing == null || rest.version >= existing.version
         }
+        if (toWrite.isNotEmpty()) insertAll(*toWrite.toTypedArray())
     }
 
     @Query("SELECT * FROM rest_history WHERE id = :id")

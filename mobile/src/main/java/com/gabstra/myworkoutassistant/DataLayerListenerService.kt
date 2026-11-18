@@ -33,6 +33,11 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.datalayer.PROFILE_ID_KEY
+import com.gabstra.myworkoutassistant.shared.datalayer.WORKOUT_DEFINITION_EDIT_KEY
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditCodec
+import com.gabstra.myworkoutassistant.shared.datalayer.WatchWorkoutDefinitionEditResult
+import com.gabstra.myworkoutassistant.shared.datalayer.applyWatchWorkoutDefinitionEdit
+import com.gabstra.myworkoutassistant.shared.datalayer.mergeWatchWorkoutDefinitionUpdate
 import com.gabstra.myworkoutassistant.shared.profile.Profiles
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncProgressUpdate
@@ -289,6 +294,8 @@ class DataLayerListenerService : WearableListenerService() {
     private var inboundHistoryProfileId: String? = null
 
     private val historyProcessingMutex = Mutex()
+    /** Serializes watch-originated workout-store apply/save cycles in this process. */
+    private val workoutStoreReceiveMutex = Mutex()
 
     /**
      * Rebinds the DAOs to one profile's database. Inbound history is applied with these, so a
@@ -1302,14 +1309,14 @@ class DataLayerListenerService : WearableListenerService() {
                 PhoneLlmOperationResult.error(
                     requestId = requestId,
                     operation = DEFAULT_PHONE_LLM_OPERATION,
-                    errorMessage = "Missing LLM operation request payload."
+                    errorMessage = getString(R.string.loc_phone_llm_missing_payload)
                 )
             } else {
                 try {
                     val parsedRequest = gson.fromJson(
                         requestJson,
                         PhoneLlmOperationRequest::class.java
-                    ) ?: error("Invalid LLM operation request payload.")
+                    ) ?: error(getString(R.string.loc_phone_llm_invalid_payload))
                     phoneLlmOperationExecutor.execute(parsedRequest.copy(requestId = requestId))
                 } catch (exception: CancellationException) {
                     throw exception
@@ -1317,7 +1324,8 @@ class DataLayerListenerService : WearableListenerService() {
                     PhoneLlmOperationResult.error(
                         requestId = requestId,
                         operation = DEFAULT_PHONE_LLM_OPERATION,
-                        errorMessage = exception.message ?: "Failed to parse LLM operation request."
+                        errorMessage = exception.message
+                            ?: getString(R.string.loc_phone_llm_parse_failed)
                     )
                 }
             }
@@ -1621,7 +1629,7 @@ class DataLayerListenerService : WearableListenerService() {
                             scope.launch(Dispatchers.Main) {
                                 Toast.makeText(
                                     this@DataLayerListenerService,
-                                    "Watch sync complete.",
+                                    getString(R.string.loc_watch_sync_complete),
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -1730,12 +1738,7 @@ class DataLayerListenerService : WearableListenerService() {
 
                         scope.launch(Dispatchers.IO) {
                             runCatching {
-                                requireNotNull(compressedJson) {
-                                    "Workout store payload is missing compressedJson"
-                                }
-                                val workoutStoreJson = decompressToString(compressedJson)
-                                val incomingWorkoutStore = fromJSONToWorkoutStore(workoutStoreJson)
-                                validateWorkoutStoreForRuntimeUse(incomingWorkoutStore)
+                                val editIntentJson = dataMap.getString(WORKOUT_DEFINITION_EDIT_KEY)
                                 // Apply to the profile the watch named, not whichever one is open here.
                                 val targetProfileId = Profiles.resolvePayloadProfile(
                                     this@DataLayerListenerService,
@@ -1746,15 +1749,66 @@ class DataLayerListenerService : WearableListenerService() {
                                         "DataLayerSync",
                                         "Dropping workout store for a profile deleted on this phone"
                                     )
-                                } else if (targetProfileId !=
-                                    Profiles.activeProfileId(this@DataLayerListenerService)
-                                ) {
-                                    WorkoutStoreRepository(
-                                        Profiles.directory(this@DataLayerListenerService, targetProfileId),
-                                        this@DataLayerListenerService.filesDir,
-                                    ).saveWorkoutStore(incomingWorkoutStore)
+                                    if (editIntentJson != null) {
+                                        throw IllegalStateException(
+                                            "The profile targeted by the watch edit no longer exists on the phone",
+                                        )
+                                    }
                                 } else {
-                                    workoutStoreRepository.saveWorkoutStore(incomingWorkoutStore)
+                                    workoutStoreReceiveMutex.withLock {
+                                        val targetRepository = if (targetProfileId !=
+                                            Profiles.activeProfileId(this@DataLayerListenerService)
+                                        ) {
+                                            WorkoutStoreRepository(
+                                                Profiles.directory(
+                                                    this@DataLayerListenerService,
+                                                    targetProfileId,
+                                                ),
+                                                this@DataLayerListenerService.filesDir,
+                                            )
+                                        } else {
+                                            workoutStoreRepository
+                                        }
+                                        if (editIntentJson != null) {
+                                            // New watches name the exact edit. Do not read the
+                                            // session-hydrated snapshot at all: it is not the phone's
+                                            // definition and must not influence the merge.
+                                            val editIntent =
+                                                WatchWorkoutDefinitionEditCodec.decode(editIntentJson)
+                                            when (
+                                                val result = targetRepository.getWorkoutStore()
+                                                    .applyWatchWorkoutDefinitionEdit(editIntent)
+                                            ) {
+                                                is WatchWorkoutDefinitionEditResult.Applied ->
+                                                    targetRepository.saveWorkoutStore(result.workoutStore)
+                                                is WatchWorkoutDefinitionEditResult.AlreadyApplied ->
+                                                    Log.d(
+                                                        "DataLayerSync",
+                                                        "Watch definition edit was already applied",
+                                                    )
+                                                is WatchWorkoutDefinitionEditResult.Rejected ->
+                                                    throw IllegalStateException(result.reason)
+                                            }
+                                        } else {
+                                            // Older watch clients send only a full snapshot. Keep the
+                                            // conservative legacy merge: it may drop an edit it cannot
+                                            // disambiguate, but it never overwrites unrelated phone data.
+                                            requireNotNull(compressedJson) {
+                                                "Workout store payload is missing compressedJson"
+                                            }
+                                            val workoutStoreJson = decompressToString(compressedJson)
+                                            val incomingWorkoutStore =
+                                                fromJSONToWorkoutStore(workoutStoreJson)
+                                            validateWorkoutStoreForRuntimeUse(incomingWorkoutStore)
+                                            // Watches cannot author plan membership; their snapshot may
+                                            // predate a phone-side detach. Keep the phone's plan topology
+                                            // while applying the watch's workout-definition changes.
+                                            targetRepository.saveWorkoutStore(
+                                                targetRepository.getWorkoutStore()
+                                                    .mergeWatchWorkoutDefinitionUpdate(incomingWorkoutStore)
+                                            )
+                                        }
+                                    }
                                 }
 
                                 val intent = Intent(INTENT_ID).apply {

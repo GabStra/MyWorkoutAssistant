@@ -58,13 +58,24 @@ internal class MobileDataLayerReceiver(
                 activity.runOnUiThread {
                     Toast.makeText(
                         activity,
-                        "Ignored synced workout update: ${exception.message}",
+                        activity.getString(
+                            R.string.loc_ignored_synced_workout_update,
+                            exception.message.orEmpty()
+                        ),
                         Toast.LENGTH_LONG
                     ).show()
                 }
                 return@launch
             }
-            appViewModel.updateWorkoutStore(workoutStore, false)
+            // The repository applies the conservative plan-membership repair before this
+            // broadcast, keeping ambiguous and missing plan-side references as evidence.
+            // Do not pass that store through the default authoritative normalization, which
+            // would rewrite plan lists from the workouts and silently prune that evidence.
+            appViewModel.updateWorkoutStore(
+                workoutStore,
+                triggerSend = false,
+                repairPlanOnlyMembership = true,
+            )
             workoutViewModel.applyExternalSyncWorkoutStore(workoutStore)
             appViewModel.triggerUpdate()
 
@@ -101,7 +112,13 @@ internal class MobileDataLayerReceiver(
                 val updatedStore = refreshVo2MaxEstimate(latestWorkoutStore, age, runEstimate)
                 if (updatedStore != null) {
                     workoutStoreRepository.saveWorkoutStore(updatedStore)
-                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore(), false)
+                    // Keep the repository's conservative membership evidence in the UI state
+                    // instead of pruning it with the default authoritative rewrite.
+                    appViewModel.updateWorkoutStore(
+                        workoutStoreRepository.getWorkoutStore(),
+                        triggerSend = false,
+                        repairPlanOnlyMembership = true,
+                    )
                 }
             } catch (exception: Exception) {
                 Log.e(
@@ -121,7 +138,7 @@ internal class MobileDataLayerReceiver(
         }
         Toast.makeText(
             context,
-            "Imported $count error log(s) from your watch.",
+            context.getString(R.string.loc_error_logs_imported, count),
             Toast.LENGTH_SHORT
         ).show()
     }

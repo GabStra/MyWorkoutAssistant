@@ -143,23 +143,18 @@ interface WorkoutHistoryDao {
 
     @Transaction
     suspend fun insertAllWithVersionCheck(vararg workoutHistories: WorkoutHistory) {
-        workoutHistories.forEach { workoutHistory ->
-            val existingWorkoutHistory = getWorkoutHistoryById(workoutHistory.id)
-            if (existingWorkoutHistory == null) {
-                insert(workoutHistory)
-            } else {
-                // If incoming is complete and existing is incomplete, always update
-                if (!existingWorkoutHistory.isDone && workoutHistory.isDone) {
-                    update(workoutHistory)
-                    return@forEach
-                }
-                // Otherwise, use version check regardless of completion status.
-                // This allows newer incoming phone state (including reopen/resume)
-                // to replace stale completed snapshots on peers.
-                if (workoutHistory.version >= existingWorkoutHistory.version) {
-                    update(workoutHistory)
-                }
-            }
+        if (workoutHistories.isEmpty()) return
+        // One read + one bulk write; the per-row lookup cost ~230ms per row on Wear.
+        val existingById = getAllWorkoutHistories().associateBy { it.id }
+        val toWrite = workoutHistories.filter { workoutHistory ->
+            val existingWorkoutHistory = existingById[workoutHistory.id]
+            existingWorkoutHistory == null ||
+                // Incoming completion always wins over an incomplete local snapshot.
+                (!existingWorkoutHistory.isDone && workoutHistory.isDone) ||
+                // Otherwise the version decides, so newer phone state (including
+                // reopen/resume) replaces stale completed snapshots on peers.
+                workoutHistory.version >= existingWorkoutHistory.version
         }
+        if (toWrite.isNotEmpty()) insertAll(*toWrite.toTypedArray())
     }
 }
