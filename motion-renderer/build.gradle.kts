@@ -35,12 +35,12 @@ dependencies {
     implementation(project(":shared"))
     testImplementation("junit:junit:4.13.2")
 
-    val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
 
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("com.google.android.filament:filament-android:1.77.3")
+    implementation("com.google.android.filament:filament-android:1.80.1")
     implementation("com.google.code.gson:gson:2.15.0")
 }

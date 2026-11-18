@@ -130,7 +130,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics:1.12.1")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
-    val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     testImplementation(composeBom)
     androidTestImplementation(composeBom)
@@ -153,6 +153,9 @@ dependencies {
 
     // AndroidX / Google
     implementation("androidx.core:core-ktx:1.19.1")
+    // Installs the bundled library baseline profiles at startup; without it a fresh debug APK
+    // runs interpreted and cold start on older watches costs seconds.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.lifecycle:lifecycle-process:2.11.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
@@ -161,7 +164,7 @@ dependencies {
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")
-    implementation("androidx.wear.watchface:watchface-complications-data-source:1.3.0-alpha07")
+    implementation("androidx.wear.watchface:watchface-complications-data-source:1.3.0")
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
     //Horologist
     implementation("com.google.android.horologist:horologist-datalayer:0.8.2-alpha")
@@ -171,13 +174,15 @@ dependencies {
 
     // Data / utils
     implementation("androidx.room:room-ktx:2.8.5")
-    implementation("com.google.guava:guava:33.7.2-android")
+    implementation("com.google.guava:guava:33.8.0-android")
     implementation("com.google.code.gson:gson:2.15.0")
 
     // Polar SDK + Rx
-    implementation("com.github.polarofficial:polar-ble-sdk:6.8.0")
+    implementation("com.github.polarofficial:polar-ble-sdk:8.6.0-java17")
     implementation("io.reactivex.rxjava3:rxjava:3.1.12")
     implementation("io.reactivex.rxjava3:rxandroid:3.0.2")
+    // Bridges Polar SDK 8's coroutines Flow streaming into the existing RxJava pipeline.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-rx3:1.11.0")
 
     // Desugaring
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
@@ -189,15 +194,15 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.24.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("io.mockk:mockk:1.14.12")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
-    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("org.robolectric:robolectric:4.18")
     testImplementation("com.google.truth:truth:1.4.5")
     // Instrumented / E2E Android tests
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.1")
     androidTestImplementation(kotlin("stdlib"))
 }

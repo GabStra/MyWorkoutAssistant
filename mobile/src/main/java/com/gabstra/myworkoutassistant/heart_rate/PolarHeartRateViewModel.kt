@@ -3,6 +3,9 @@ package com.gabstra.myworkoutassistant.heart_rate
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.R
+import com.gabstra.myworkoutassistant.screens.localizedLabel
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
@@ -12,10 +15,11 @@ import com.polar.sdk.api.PolarBleApiCallback
 import com.polar.sdk.api.PolarBleApiDefaultImpl
 import com.polar.sdk.api.model.PolarDeviceInfo
 import com.polar.sdk.api.model.PolarHealthThermometerData
-import io.reactivex.rxjava3.disposables.Disposable
 import java.util.UUID
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 class PolarHeartRateViewModel : ViewModel(), ExternalHeartRateController {
     override val source = HeartRateSource.POLAR_BLE
@@ -30,7 +34,7 @@ class PolarHeartRateViewModel : ViewModel(), ExternalHeartRateController {
     private var applicationContext: Context? = null
     private var polarConfig: PolarHeartRateConfig? = null
     private var polarApi: PolarBleApi? = null
-    private var hrStreamDisposable: Disposable? = null
+    private var hrStreamJob: Job? = null
     private var connectedDeviceLabel: String? = null
     private var apiGeneration = 0
 
@@ -45,13 +49,19 @@ class PolarHeartRateViewModel : ViewModel(), ExternalHeartRateController {
         val config = polarConfig
         if (config == null || config.deviceId.isBlank()) {
             mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                "Configure ${source.displayName()} in Settings first.",
+                context.getString(
+                    R.string.loc_configure_source_first,
+                    source.localizedLabel(context),
+                ),
             )
             return
         }
         if (!hasBluetoothPermission(context)) {
             mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                "Bluetooth permission is required to connect to ${source.displayName()}.",
+                context.getString(
+                    R.string.loc_bluetooth_permission_required,
+                    source.localizedLabel(context),
+                ),
             )
             return
         }
@@ -59,7 +69,7 @@ class PolarHeartRateViewModel : ViewModel(), ExternalHeartRateController {
         releaseHrStream()
         mutableHeartRate.value = null
         mutableConnectionState.value = ExternalHeartRateConnectionState.Connecting(
-            "Connecting to your Polar device…",
+            context.getString(R.string.loc_connecting_polar),
         )
 
         try {
@@ -68,7 +78,7 @@ class PolarHeartRateViewModel : ViewModel(), ExternalHeartRateController {
         } catch (exception: Exception) {
             Log.e(Tag, "Unable to connect to Polar device ${config.deviceId}", exception)
             mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                "Couldn't connect to your Polar device.",
+                context.getString(R.string.loc_couldnt_connect_polar),
             )
         }
     }
@@ -104,35 +114,45 @@ class PolarHeartRateViewModel : ViewModel(), ExternalHeartRateController {
             setOf(PolarBleApi.PolarBleSdkFeature.FEATURE_HR),
         ).also { api ->
             api.setAutomaticReconnection(true)
-            api.setApiCallback(createPolarApiCallback(generation))
+            api.setApiCallback(createPolarApiCallback(generation, context))
             polarApi = api
         }
     }
 
-    private fun createPolarApiCallback(generation: Int) = object : PolarBleApiCallback() {
+    private fun createPolarApiCallback(
+        generation: Int,
+        context: Context,
+    ) = object : PolarBleApiCallback() {
         override fun blePowerStateChanged(powered: Boolean) {
             if (!isCurrentApi(generation) || powered) return
             releaseHrStream()
             mutableHeartRate.value = null
             mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                "Bluetooth is unavailable.",
+                context.getString(R.string.loc_bluetooth_unavailable),
             )
         }
 
         override fun deviceConnected(polarDeviceInfo: PolarDeviceInfo) {
             if (!isCurrentApi(generation)) return
-            connectedDeviceLabel = polarDeviceInfo.name.ifBlank { source.displayName() }
+            connectedDeviceLabel = polarDeviceInfo.name.ifBlank {
+                source.localizedLabel(context)
+            }
             mutableConnectionState.value = ExternalHeartRateConnectionState.Connecting(
-                "Starting heart-rate stream from ${connectedDeviceLabel}…",
+                context.getString(
+                    R.string.loc_starting_hr_stream,
+                    connectedDeviceLabel,
+                ),
             )
-            startHrStreaming(polarDeviceInfo.deviceId, generation)
+            startHrStreaming(polarDeviceInfo.deviceId, generation, context)
         }
 
         override fun deviceConnecting(polarDeviceInfo: PolarDeviceInfo) {
             if (!isCurrentApi(generation)) return
-            val deviceLabel = polarDeviceInfo.name.ifBlank { source.displayName() }
+            val deviceLabel = polarDeviceInfo.name.ifBlank {
+                source.localizedLabel(context)
+            }
             mutableConnectionState.value = ExternalHeartRateConnectionState.Connecting(
-                "Connecting to $deviceLabel…",
+                context.getString(R.string.loc_connecting_to_label, deviceLabel),
             )
         }
 
@@ -141,18 +161,20 @@ class PolarHeartRateViewModel : ViewModel(), ExternalHeartRateController {
             releaseHrStream()
             mutableHeartRate.value = null
             connectedDeviceLabel = null
-            val deviceLabel = polarDeviceInfo.name.ifBlank { source.displayName() }
+            val deviceLabel = polarDeviceInfo.name.ifBlank {
+                source.localizedLabel(context)
+            }
             mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                "Connection to $deviceLabel was lost.",
+                context.getString(R.string.loc_connection_lost_label, deviceLabel),
             )
         }
-
-        override fun disInformationReceived(identifier: String, disInfo: DisInfo) = Unit
 
         override fun bleSdkFeatureReady(
             identifier: String,
             feature: PolarBleApi.PolarBleSdkFeature,
         ) = Unit
+
+        override fun disInformationReceived(identifier: String, disInfo: DisInfo) = Unit
 
         override fun disInformationReceived(identifier: String, uuid: UUID, value: String) = Unit
 
@@ -162,39 +184,44 @@ class PolarHeartRateViewModel : ViewModel(), ExternalHeartRateController {
         ) = Unit
     }
 
-    private fun startHrStreaming(deviceId: String, generation: Int) {
+    private fun startHrStreaming(
+        deviceId: String,
+        generation: Int,
+        context: Context,
+    ) {
         releaseHrStream()
         val api = polarApi ?: return
-        hrStreamDisposable = api.startHrStreaming(deviceId)
-            .subscribe(
-                { hrData ->
-                    if (!isCurrentApi(generation)) return@subscribe
+        // Polar SDK 8 exposes startHrStreaming as a coroutines Flow instead of a Flowable.
+        hrStreamJob = viewModelScope.launch {
+            try {
+                api.startHrStreaming(deviceId).collect { hrData ->
+                    if (!isCurrentApi(generation)) return@collect
                     val validSamples = hrData.samples.mapNotNull { sample ->
                         val beatsPerMinute = if (sample.correctedHr > 0) sample.correctedHr else sample.hr
                         beatsPerMinute.takeIf { it > 0 }
                     }
-                    if (validSamples.isEmpty()) return@subscribe
+                    if (validSamples.isEmpty()) return@collect
 
                     mutableHeartRate.value = validSamples.average().toInt()
                     mutableConnectionState.value = ExternalHeartRateConnectionState.Streaming(
-                        connectedDeviceLabel ?: source.displayName(),
+                        connectedDeviceLabel ?: source.localizedLabel(context),
                     )
-                },
-                { exception ->
-                    if (!isCurrentApi(generation)) return@subscribe
-                    Log.e(Tag, "Polar heart-rate stream failed", exception)
-                    releaseHrStream()
-                    mutableHeartRate.value = null
-                    mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
-                        "Couldn't stream heart rate from your Polar device.",
-                    )
-                },
-            )
+                }
+            } catch (exception: Exception) {
+                if (!isCurrentApi(generation)) return@launch
+                Log.e(Tag, "Polar heart-rate stream failed", exception)
+                releaseHrStream()
+                mutableHeartRate.value = null
+                mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
+                    context.getString(R.string.loc_couldnt_stream_polar),
+                )
+            }
+        }
     }
 
     private fun releaseHrStream() {
-        hrStreamDisposable?.dispose()
-        hrStreamDisposable = null
+        hrStreamJob?.cancel()
+        hrStreamJob = null
     }
 
     private fun isCurrentApi(generation: Int): Boolean =

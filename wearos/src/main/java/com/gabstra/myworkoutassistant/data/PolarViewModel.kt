@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
@@ -21,13 +22,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.rx3.asFlowable
 import kotlinx.coroutines.withContext
 
 class PolarHrBpmSource(
     private val api: PolarBleApi,
     private val onRr: (List<Int>) -> Unit,
 ) : HrBpmSource {
+    // Polar SDK 8 exposes startHrStreaming as a coroutines Flow; bridge it so the
+    // existing RxJava consumption stays untouched.
     override fun bpmStream(deviceId: String): Flowable<Int> =
         api.startHrStreaming(deviceId)
             .map { hrData ->
@@ -40,6 +45,7 @@ class PolarHrBpmSource(
                     .average()
                     .toInt()
             }
+            .asFlowable()
 }
 
 class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE) {
@@ -72,7 +78,10 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
             publishConnectionState(
                 ExternalHeartRateConnectionState.MissingConfiguration(
                     source = source,
-                    message = "Configure ${source.displayName()} in Settings first."
+                    message = hrMessage(
+                        R.string.wear_hr_configure_source_first,
+                        source.displayName()
+                    )
                 )
             )
             return
@@ -84,7 +93,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
         publishConnectionState(
             ExternalHeartRateConnectionState.Connecting(
                 source = source,
-                message = "Connecting to your Polar device..."
+                message = hrMessage(R.string.wear_hr_connecting_polar)
             )
         )
 
@@ -96,7 +105,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
                 publishConnectionState(
                     ExternalHeartRateConnectionState.Error(
                         source = source,
-                        message = "Couldn't connect to your Polar device."
+                        message = hrMessage(R.string.wear_hr_couldnt_connect_polar)
                     )
                 )
             }
@@ -192,7 +201,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
                 publishConnectionState(
                     ExternalHeartRateConnectionState.Connected(
                         source = source,
-                        message = "Connected. Waiting for heart rate…",
+                        message = hrMessage(R.string.wear_hr_connected_waiting),
                         deviceLabel = deviceName
                     )
                 )
@@ -207,7 +216,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
                 publishConnectionState(
                     ExternalHeartRateConnectionState.Connecting(
                         source = source,
-                        message = "Connecting to $deviceName..."
+                        message = hrMessage(R.string.wear_hr_connecting_label, deviceName)
                     )
                 )
             }
@@ -224,17 +233,19 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
                     publishConnectionState(
                         ExternalHeartRateConnectionState.Error(
                             source = source,
-                            message = "Disconnected from $deviceName."
+                            message = hrMessage(R.string.wear_hr_disconnected_label, deviceName)
                         )
                     )
                 }
                 viewModelScope.launch(appCeh) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(
-                            applicationContext,
-                            "Polar device disconnected.",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        applicationContext?.let { context ->
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.wear_polar_disconnected),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
                 }
             }
@@ -264,11 +275,13 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
                 if (!isCurrent()) return
                 viewModelScope.launch(appCeh) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(
-                            applicationContext,
-                            "Polar connected. Battery: $level%",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        applicationContext?.let { context ->
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.wear_polar_connected_battery, level),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
                     _batteryLevelState.value = level
                 }
@@ -307,7 +320,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
                     publishConnectionState(
                         ExternalHeartRateConnectionState.Streaming(
                             source = source,
-                            message = "Streaming from your Polar device.",
+                            message = hrMessage(R.string.wear_hr_streaming_polar),
                             deviceLabel = deviceId
                         )
                     )
@@ -319,7 +332,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
                         publishConnectionState(
                             ExternalHeartRateConnectionState.Error(
                                 source = source,
-                                message = "Couldn't stream heart rate from your Polar device."
+                                message = hrMessage(R.string.wear_hr_couldnt_stream_polar)
                             )
                         )
                     }

@@ -129,8 +129,8 @@ dependencies {
     implementation(project(":motion-renderer"))
     implementation("androidx.documentfile:documentfile:1.1.0")
 
-    // Compose BOM (Dec 2025)
-    val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
+    // Compose BOM (Sep 2026)
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     testImplementation(composeBom)
     androidTestImplementation(composeBom)
@@ -152,6 +152,9 @@ dependencies {
 
     // AndroidX core
     implementation("androidx.core:core-ktx:1.19.1")
+    // Installs the bundled library baseline profiles at startup, so a fresh install is not
+    // interpreted on the first launches.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.activity:activity-compose:1.13.0")
     // Keep concurrent-futures aligned with the AndroidTest graph, which includes AndroidX Test 1.3.
     implementation("androidx.concurrent:concurrent-futures:1.3.0")
@@ -174,12 +177,12 @@ dependencies {
 
     implementation("androidx.room:room-runtime:2.8.5")
     ksp("androidx.room:room-compiler:2.8.5")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
-    implementation("com.openai:openai-java:4.94.0")
-    implementation("com.github.jeziellago:compose-markdown:0.5.8")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
+    implementation("com.openai:openai-java:4.106.0")
+    implementation("com.github.jeziellago:compose-markdown:0.7.3")
 
     // Polar SDK + Rx
-    implementation("com.github.polarofficial:polar-ble-sdk:6.8.0")
+    implementation("com.github.polarofficial:polar-ble-sdk:8.6.0-java17")
     implementation("io.reactivex.rxjava3:rxjava:3.1.12")
 
     // Misc
@@ -195,7 +198,7 @@ dependencies {
     testImplementation("org.json:json:20260814")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 
