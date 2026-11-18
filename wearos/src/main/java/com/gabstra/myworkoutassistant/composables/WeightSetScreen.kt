@@ -55,6 +55,7 @@ import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.PlateauReasonFormatter
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.Dispatchers
@@ -82,6 +83,7 @@ fun WeightSetScreen(
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    val weightSetScreenDescription = stringResource(R.string.components_semantics_weight_set_screen)
 
     val previousSetData = state.previousSetData as WeightSetData
     val historicalSetData = state.historicalSetData as? WeightSetData
@@ -96,6 +98,9 @@ fun WeightSetScreen(
         null
     }
     val isPlateauDetected = plateauReason != null
+    val plateauReasonText = remember(plateauReason) {
+        plateauReason?.let { PlateauReasonFormatter.format(context, it) }
+    }
 
     var showPlateauDialog by remember { mutableStateOf(false) }
 
@@ -302,6 +307,7 @@ fun WeightSetScreen(
     fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
         val repsText = "${currentSetData.actualReps}"
         val repsDeltaText = historicalSetDifference.repsText
+        val repsValueDescription = stringResource(R.string.components_semantics_reps_value)
         val focusRepsLabel = stringResource(R.string.set_action_focus_reps)
         val editRepsLabel = stringResource(R.string.set_action_edit_reps)
         fun toggleRepsEditMode() {
@@ -341,7 +347,7 @@ fun WeightSetScreen(
                 )
                 .semantics(mergeDescendants = true) {
                     contentDescription = buildString {
-                        append("${SetValueSemantics.RepsValueDescription}: $repsText")
+                        append("$repsValueDescription: $repsText")
                         if (repsDeltaText != null) {
                             append(context.getString(R.string.set_delta_suffix, repsDeltaText))
                         }
@@ -376,6 +382,7 @@ fun WeightSetScreen(
     fun WeightRow(modifier: Modifier = Modifier, style: TextStyle) {
         val weightText = equipment!!.formatWeight(currentSetData.getWeight())
         val weightDeltaText = historicalSetDifference.weightText
+        val weightValueDescription = stringResource(R.string.components_semantics_weight_value)
         val focusWeightLabel = stringResource(R.string.set_action_focus_weight)
         val editWeightLabel = stringResource(R.string.set_action_edit_weight)
         fun toggleWeightEditMode() {
@@ -409,7 +416,7 @@ fun WeightSetScreen(
                 )
                 .semantics(mergeDescendants = true) {
                     contentDescription = buildString {
-                        append("${SetValueSemantics.WeightValueDescription}: $weightText")
+                        append("$weightValueDescription: $weightText")
                         if (weightDeltaText != null) {
                             append(context.getString(R.string.set_delta_suffix, weightDeltaText))
                         }
@@ -477,7 +484,7 @@ fun WeightSetScreen(
             modifier = modifier
                 .fillMaxSize()
                 .semantics {
-                contentDescription = SetValueSemantics.WeightSetTypeDescription
+                contentDescription = weightSetScreenDescription
             }
         ) {
             Column(
@@ -607,7 +614,7 @@ fun WeightSetScreen(
 
     PlateauInfoDialog(
         show = showPlateauDialog,
-        reason = plateauReason ?: "",
+        reason = plateauReasonText ?: "",
         onDismiss = { showPlateauDialog = false },
         hapticsViewModel = hapticsViewModel,
         onVisibilityChange = { isVisible ->

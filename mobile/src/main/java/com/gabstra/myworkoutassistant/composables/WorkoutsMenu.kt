@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.export.WorkoutDataExportRange
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import java.time.Instant
@@ -103,10 +105,10 @@ fun WorkoutsMenu(
     ) {
         MinimalMenuHeader(
             title = when (currentPage) {
-                WorkoutsMenuPage.HOME -> "Menu"
-                WorkoutsMenuPage.CONNECTIONS -> "Connections"
-                WorkoutsMenuPage.DATA -> "Data"
-                WorkoutsMenuPage.ADVANCED -> "Advanced"
+                WorkoutsMenuPage.HOME -> stringResource(R.string.loc_menu)
+                WorkoutsMenuPage.CONNECTIONS -> stringResource(R.string.loc_connections)
+                WorkoutsMenuPage.DATA -> stringResource(R.string.loc_data)
+                WorkoutsMenuPage.ADVANCED -> stringResource(R.string.loc_advanced)
             },
             showBack = currentPage != WorkoutsMenuPage.HOME,
             onBack = { currentPage = WorkoutsMenuPage.HOME },
@@ -116,41 +118,45 @@ fun WorkoutsMenu(
             WorkoutsMenuPage.HOME -> {
                 MenuDestinationCard(
                     icon = Icons.Default.Settings,
-                    title = "Settings",
-                    subtitle = "App preferences",
+                    title = stringResource(R.string.loc_settings_cd),
+                    subtitle = stringResource(R.string.loc_app_preferences),
                     onClick = { handleMenuItemClick(onOpenSettingsClick) },
                 )
                 MenuDestinationCard(
                     icon = Icons.Default.Storage,
-                    title = "Plans",
-                    subtitle = "Edit workout plan settings",
+                    title = stringResource(R.string.loc_plans),
+                    subtitle = stringResource(R.string.loc_edit_workout_plan_settings),
                     modifier = Modifier.testTag("navigation_plans"),
                     onClick = { handleMenuItemClick(onOpenPlansClick) },
                 )
                 MenuDestinationCard(
                     icon = Icons.Default.Link,
-                    title = "Connections",
-                    subtitle = "Watch and Health Connect",
+                    title = stringResource(R.string.loc_connections),
+                    subtitle = stringResource(R.string.loc_watch_and_health_connect),
                     onClick = { currentPage = WorkoutsMenuPage.CONNECTIONS },
                 )
                 MenuDestinationCard(
                     icon = Icons.Default.Storage,
-                    title = "Data",
-                    subtitle = "Backup, restore and imports",
+                    title = stringResource(R.string.loc_data),
+                    subtitle = stringResource(R.string.loc_backup_restore_imports),
                     onClick = { currentPage = WorkoutsMenuPage.DATA },
                 )
                 MenuDestinationCard(
                     icon = Icons.Default.Build,
-                    title = "Advanced",
-                    subtitle = "Exports and diagnostics",
+                    title = stringResource(R.string.loc_advanced),
+                    subtitle = stringResource(R.string.loc_exports_and_diagnostics),
                     onClick = { currentPage = WorkoutsMenuPage.ADVANCED },
                 )
             }
 
             WorkoutsMenuPage.CONNECTIONS -> MenuActionGroup(
                 actions = listOf(
-                    "Sync with watch" to { handleMenuItemClick(onSyncClick) },
-                    "Sync with Health Connect" to { handleMenuItemClick(onSyncWithHealthConnectClick) },
+                    stringResource(R.string.loc_sync_with_watch) to {
+                        handleMenuItemClick(onSyncClick)
+                    },
+                    stringResource(R.string.loc_sync_with_health_connect) to {
+                        handleMenuItemClick(onSyncWithHealthConnectClick)
+                    },
                 )
             )
 
@@ -161,22 +167,22 @@ fun WorkoutsMenu(
                 ) {
                     Column {
                         MinimalMenuAction(
-                            label = "Save backup",
+                            label = stringResource(R.string.main_save_backup_title),
                             onClick = { handleMenuItemClick(onBackupClick) },
                         )
                         MinimalMenuDivider()
                         MinimalMenuAction(
-                            label = "Restore backup",
+                            label = stringResource(R.string.loc_restore_backup),
                             onClick = { handleMenuItemClick(onRestoreClick) },
                         )
                         MinimalMenuDivider()
                         MinimalMenuAction(
-                            label = "Import plan or history",
+                            label = stringResource(R.string.loc_import_plan_or_history),
                             onClick = { handleMenuItemClick(onImportWorkoutsClick) },
                         )
                         MinimalMenuDivider()
                         MinimalMenuAction(
-                            label = "Clear workout history",
+                            label = stringResource(R.string.loc_clear_workout_history),
                             isDestructive = true,
                             onClick = {
                                 handleMenuItemClick { showClearHistoryDialog = true }
@@ -188,14 +194,24 @@ fun WorkoutsMenu(
 
             WorkoutsMenuPage.ADVANCED -> MenuActionGroup(
                 actions = listOf(
-                    "Sensor sessions" to { handleMenuItemClick(onViewSensorSessions) },
-                    "Export workouts" to { handleMenuItemClick(onExportWorkouts) },
-                    "Export workout plan" to { handleMenuItemClick(onExportWorkoutPlan) },
-                    "Export data for AI" to {
+                    stringResource(R.string.loc_sensor_sessions) to {
+                        handleMenuItemClick(onViewSensorSessions)
+                    },
+                    stringResource(R.string.loc_export_workouts) to {
+                        handleMenuItemClick(onExportWorkouts)
+                    },
+                    stringResource(R.string.loc_export_workout_plan) to {
+                        handleMenuItemClick(onExportWorkoutPlan)
+                    },
+                    stringResource(R.string.loc_export_data_for_ai) to {
                         handleMenuItemClick { showWorkoutDataExportDialog = true }
                     },
-                    "Export equipment" to { handleMenuItemClick(onExportEquipment) },
-                    "View error logs" to { handleMenuItemClick(onViewErrorLogs) },
+                    stringResource(R.string.loc_export_equipment) to {
+                        handleMenuItemClick(onExportEquipment)
+                    },
+                    stringResource(R.string.loc_view_error_logs) to {
+                        handleMenuItemClick(onViewErrorLogs)
+                    },
                 )
             )
         }
@@ -215,9 +231,9 @@ fun WorkoutsMenu(
 
     ConfirmationDialog(
         show = showClearHistoryDialog,
-        title = "Clear Workout History",
-        message = "Are you sure you want to clear all workout history? This action cannot be undone.",
-        confirmText = "Clear",
+        title = stringResource(R.string.loc_clear_workout_history_title),
+        message = stringResource(R.string.loc_clear_workout_history_message),
+        confirmText = stringResource(R.string.loc_clear),
         isDestructive = true,
         onConfirm = {
             onClearAllHistories()
@@ -230,9 +246,9 @@ fun WorkoutsMenu(
 
     ConfirmationDialog(
         show = showClearExerciseInfoDialog,
-        title = "Clear Exercise Info",
-        message = "Are you sure you want to clear all exercise info? This action cannot be undone.",
-        confirmText = "Clear",
+        title = stringResource(R.string.loc_clear_exercise_info_title),
+        message = stringResource(R.string.loc_clear_exercise_info_message),
+        confirmText = stringResource(R.string.loc_clear),
         isDestructive = true,
         onConfirm = {
             onClearAllExerciseInfo()
@@ -278,7 +294,7 @@ private fun WorkoutDataExportRangeDialog(
 
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = "Export data for LLM",
+        title = stringResource(R.string.loc_export_data_for_llm_title),
         usePlatformDefaultWidth = false,
         body = {
             Column(
@@ -286,19 +302,19 @@ private fun WorkoutDataExportRangeDialog(
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 WorkoutDataExportRangeOptionRow(
-                    text = "All history",
+                    text = stringResource(R.string.loc_all_history),
                     selected = selection == WorkoutDataExportRangeSelection.ALL,
                     onClick = { selection = WorkoutDataExportRangeSelection.ALL }
                 )
                 WorkoutDataExportRangeOptionRow(
-                    text = "Custom date range",
+                    text = stringResource(R.string.loc_custom_date_range),
                     selected = selection == WorkoutDataExportRangeSelection.CUSTOM,
                     onClick = { selection = WorkoutDataExportRangeSelection.CUSTOM }
                 )
 
                 if (selection == WorkoutDataExportRangeSelection.CUSTOM) {
                     AppPrimaryOutlinedButton(
-                        text = "Select date range",
+                        text = stringResource(R.string.loc_select_date_range),
                         onClick = { showCustomRangePickerDialog = true },
                         modifier = Modifier.fillMaxWidth(),
                         minHeight = 44.dp,
@@ -312,7 +328,7 @@ private fun WorkoutDataExportRangeDialog(
                 }
             }
         },
-        confirmText = "Export",
+        confirmText = stringResource(R.string.loc_export),
         confirmEnabled = selection == WorkoutDataExportRangeSelection.ALL || hasCompleteCustomRange,
         onConfirm = {
             val exportRange = when (selection) {
@@ -324,7 +340,7 @@ private fun WorkoutDataExportRangeDialog(
             }
             onConfirm(exportRange)
         },
-        dismissText = "Cancel",
+        dismissText = stringResource(R.string.common_cancel),
         onDismissButton = onDismiss
     )
 
@@ -338,7 +354,7 @@ private fun WorkoutDataExportRangeDialog(
             onDismissRequest = { showCustomRangePickerDialog = false },
             confirmButton = {
                 DialogOutlinedButton(
-                    text = "OK",
+                    text = stringResource(R.string.workout_ok),
                     onClick = {
                         selectedCustomStartMillis = dateRangePickerState.selectedStartDateMillis
                         selectedCustomEndMillis = dateRangePickerState.selectedEndDateMillis
@@ -348,7 +364,7 @@ private fun WorkoutDataExportRangeDialog(
             },
             dismissButton = {
                 DialogDismissButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     onClick = { showCustomRangePickerDialog = false }
                 )
             }
@@ -391,6 +407,7 @@ private fun WorkoutDataExportRangeOptionRow(
     }
 }
 
+@Composable
 private fun formatSelectedExportRange(
     selectedStartMillis: Long?,
     selectedEndMillis: Long?,
@@ -398,9 +415,10 @@ private fun formatSelectedExportRange(
     val startDate = selectedStartMillis?.toLocalDate()
     val endDate = selectedEndMillis?.toLocalDate()
     return when {
-        startDate != null && endDate != null -> "Selected: $startDate to $endDate"
-        startDate != null -> "Selected start: $startDate"
-        else -> "Select a start and end date."
+        startDate != null && endDate != null ->
+            stringResource(R.string.loc_selected_range, startDate.toString(), endDate.toString())
+        startDate != null -> stringResource(R.string.loc_selected_start, startDate.toString())
+        else -> stringResource(R.string.loc_select_start_end_date)
     }
 }
 
@@ -425,7 +443,7 @@ private fun MinimalMenuHeader(
         if (showBack) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back to menu",
+                contentDescription = stringResource(R.string.loc_back_to_menu_cd),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .size(40.dp)

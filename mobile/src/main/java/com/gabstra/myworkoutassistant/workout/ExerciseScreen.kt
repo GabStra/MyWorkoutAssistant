@@ -30,11 +30,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.screens.ExerciseMovementPreviewPage
@@ -42,10 +44,12 @@ import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
-import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
+import com.gabstra.myworkoutassistant.shared.utils.PlateauReason
+import com.gabstra.myworkoutassistant.shared.utils.PlateauReasonFormatter
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
 import com.gabstra.myworkoutassistant.shared.workout.display.buildActiveExerciseContextLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
+import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import kotlinx.coroutines.Job
@@ -210,12 +214,26 @@ fun ExerciseScreen(
         val targetRepRange = remember(animatedExercise, state.set, state.isWarmupSet) {
             buildTargetRepRange(animatedExercise, state)
         }
+        val counterKind = displayCounterKindForSetState(state)
+        val hasWarmupSets = viewModel.hasWarmupSetsForExercise(state.exerciseId)
         val activeExerciseContext = buildActiveExerciseContextLabel(
             setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
-            setCounterKind = displayCounterKindForSetState(state),
-            hasWarmupSets = viewModel.hasWarmupSetsForExercise(state.exerciseId),
+            setCounterKind = counterKind,
+            hasWarmupSets = hasWarmupSets,
             unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
             intraSetTotal = state.intraSetTotal,
+            roundLabelFormat = stringResource(R.string.loc_ctx_round_format),
+            setCounterFormat = stringResource(R.string.loc_ctx_set_counter_format),
+            setCounterLabelOverride = stringResource(
+                when (counterKind) {
+                    SetDisplayCounterKind.Warmup -> R.string.loc_ctx_counter_warmup
+                    SetDisplayCounterKind.Calibration -> R.string.loc_ctx_counter_calibration
+                    SetDisplayCounterKind.Work ->
+                        if (hasWarmupSets) R.string.loc_ctx_counter_work_set else R.string.loc_col_set
+                    null -> R.string.loc_col_set
+                }
+            ),
+            sideLabelFormat = stringResource(R.string.loc_ctx_side_format),
         )
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
@@ -270,7 +288,7 @@ fun ExerciseScreen(
             pagerState = pagerState,
             userScrollEnabled = allowHorizontalScrolling,
             beyondViewportPageCount = 1,
-            pageLabel = { index -> pageTypes[index].mobileLabel() },
+            pageLabel = { index -> pageTypes[index].mobileLabel(context) },
         ) { pageIndex ->
             // Get the page type for the current index
             val pageType = pageTypes[pageIndex]
@@ -281,9 +299,7 @@ fun ExerciseScreen(
                     accessoryNames = accessoryNames,
                     notes = animatedExercise.notes,
                     targetRepRange = targetRepRange,
-                    progressionLabel = state.progressionState?.name
-                        ?.lowercase()
-                        ?.replaceFirstChar { it.uppercase() },
+                    progressionLabel = state.progressionState?.localizedLabel(context),
                     plateauReason = viewModel.plateauReasonByExerciseId[state.exerciseId]
                 )
 
@@ -329,7 +345,7 @@ fun ExerciseScreen(
                             })
 
                 PageType.NOTES -> ExerciseSessionInfoPage(
-                    exerciseName = "Notes",
+                    exerciseName = stringResource(R.string.loc_notes),
                     equipmentName = null,
                     accessoryNames = emptyList(),
                     notes = animatedExercise.notes,
@@ -356,7 +372,7 @@ fun ExerciseScreen(
         if (showEquipmentPicker) {
             StandardDialog(
                 onDismissRequest = { showEquipmentPicker = false },
-                title = "Change equipment",
+                title = stringResource(R.string.workout_change_equipment),
                 body = {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         equipmentOptions.forEach { equipmentOption ->
@@ -373,7 +389,7 @@ fun ExerciseScreen(
                                     onClick = { pendingEquipmentId = equipmentId }
                                 )
                                 Text(
-                                    text = equipmentOption?.name ?: "None",
+                                    text = equipmentOption?.name ?: stringResource(R.string.common_none),
                                     modifier = Modifier.padding(start = 8.dp),
                                     style = MaterialTheme.typography.bodyLarge
                                 )
@@ -381,7 +397,7 @@ fun ExerciseScreen(
                         }
                     }
                 },
-                confirmText = "Change",
+                confirmText = stringResource(R.string.loc_change),
                 onConfirm = {
                     showEquipmentPicker = false
                     scope.launch {
@@ -391,7 +407,7 @@ fun ExerciseScreen(
                         )
                     }
                 },
-                dismissText = "Cancel",
+                dismissText = stringResource(R.string.common_cancel),
                 onDismissButton = { showEquipmentPicker = false },
                 confirmEnabled = pendingEquipmentId != exercise.equipmentId
             )
@@ -400,15 +416,16 @@ fun ExerciseScreen(
         CustomDialogYesOnLongPress(
             show = showNextDialog,
             title = when {
-                state.isCalibrationSet -> CalibrationUiLabels.CompleteCalibrationSet
-                state.isAutoRegulationWorkSet -> "Complete Set"
-                state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!! -> "Switch side"
-                else -> "Complete Set"
+                state.isCalibrationSet -> stringResource(R.string.loc_calibration_complete_set)
+                state.isAutoRegulationWorkSet -> stringResource(R.string.loc_complete_set)
+                state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!! ->
+                    stringResource(R.string.loc_switch_side)
+                else -> stringResource(R.string.loc_complete_set)
             },
             message = when {
-                state.isCalibrationSet -> CalibrationUiLabels.RateRirAfterSet
-                state.isAutoRegulationWorkSet -> "Complete this set to auto-adjust the next load."
-                else -> "Do you want to proceed?"
+                state.isCalibrationSet -> stringResource(R.string.loc_calibration_rate_rir_after_set)
+                state.isAutoRegulationWorkSet -> stringResource(R.string.loc_complete_set_auto_adjust)
+                else -> stringResource(R.string.loc_do_you_want_to_proceed)
             },
             handleYesClick = {
 
@@ -504,16 +521,23 @@ private fun buildTargetRepRange(
     } else null
 }
 
-private fun PageType.mobileLabel(): String = when (this) {
-    PageType.BUTTONS -> "Workout controls"
-    PageType.INFO -> "Exercise info"
-    PageType.PLATES -> "Barbell guide"
-    PageType.EXERCISE_DETAIL -> "Current set"
-    PageType.MUSCLES -> "Muscle groups"
-    PageType.EXERCISES -> "Workout steps"
-    PageType.NOTES -> "Exercise notes"
-    PageType.MOVEMENT -> "Exercise movement"
-    PageType.REST_TIMER -> "Rest timer"
+private fun PageType.mobileLabel(context: android.content.Context): String = when (this) {
+    PageType.BUTTONS -> context.getString(R.string.loc_workout_controls)
+    PageType.INFO -> context.getString(R.string.loc_exercise_info)
+    PageType.PLATES -> context.getString(R.string.loc_barbell_guide)
+    PageType.EXERCISE_DETAIL -> context.getString(R.string.loc_current_set)
+    PageType.MUSCLES -> context.getString(R.string.loc_muscle_groups)
+    PageType.EXERCISES -> context.getString(R.string.loc_workout_steps)
+    PageType.NOTES -> context.getString(R.string.loc_exercise_notes)
+    PageType.MOVEMENT -> context.getString(R.string.loc_exercise_movement)
+    PageType.REST_TIMER -> context.getString(R.string.workout_rest_timer_cd)
+}
+
+private fun ProgressionState.localizedLabel(context: android.content.Context): String = when (this) {
+    ProgressionState.DELOAD -> context.getString(R.string.loc_progression_state_deload)
+    ProgressionState.RETRY -> context.getString(R.string.loc_progression_state_retry)
+    ProgressionState.PROGRESS -> context.getString(R.string.loc_progression_state_progress)
+    ProgressionState.FAILED -> context.getString(R.string.loc_progression_state_failed)
 }
 
 @Composable
@@ -524,8 +548,11 @@ private fun ExerciseSessionInfoPage(
     notes: String,
     targetRepRange: String?,
     progressionLabel: String?,
-    plateauReason: String?
+    plateauReason: PlateauReason?
 ) {
+    val plateauReasonText = plateauReason?.let {
+        PlateauReasonFormatter.format(LocalContext.current, it)
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -533,13 +560,15 @@ private fun ExerciseSessionInfoPage(
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp)
     ) {
-        ExerciseInfoSection("Exercise", listOf(exerciseName))
-        targetRepRange?.let { ExerciseInfoSection("Target reps", listOf(it)) }
-        progressionLabel?.let { ExerciseInfoSection("Progression", listOf(it)) }
-        plateauReason?.let { ExerciseInfoSection("Plateau", listOf(it)) }
-        equipmentName?.let { ExerciseInfoSection("Equipment", listOf(it)) }
-        if (accessoryNames.isNotEmpty()) ExerciseInfoSection("Accessories", accessoryNames)
-        if (notes.isNotBlank()) ExerciseInfoSection("Notes", listOf(notes))
+        ExerciseInfoSection(stringResource(R.string.loc_exercise), listOf(exerciseName))
+        targetRepRange?.let { ExerciseInfoSection(stringResource(R.string.loc_target_reps), listOf(it)) }
+        progressionLabel?.let { ExerciseInfoSection(stringResource(R.string.loc_progression), listOf(it)) }
+        plateauReasonText?.let { ExerciseInfoSection(stringResource(R.string.loc_plateau), listOf(it)) }
+        equipmentName?.let { ExerciseInfoSection(stringResource(R.string.loc_equipment), listOf(it)) }
+        if (accessoryNames.isNotEmpty()) {
+            ExerciseInfoSection(stringResource(R.string.loc_accessories), accessoryNames)
+        }
+        if (notes.isNotBlank()) ExerciseInfoSection(stringResource(R.string.loc_notes), listOf(notes))
     }
 }
 

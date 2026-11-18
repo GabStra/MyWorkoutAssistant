@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -102,13 +104,15 @@ fun CalibrationLoadPage(
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
+    val weightHeader = stringResource(R.string.set_label_weight_kg)
+    val bodyWeightAbbrev = stringResource(R.string.set_body_weight_abbrev)
     val itemStyle = remember(typography) { 
         typography.numeralSmall.copy(fontWeight = FontWeight.Medium)
     }
     
     val weightText = if (equipment != null) {
         if (isBodyWeightSet && selectedWeight == 0.0) {
-            "BW"
+            bodyWeightAbbrev
         } else {
             equipment.formatWeight(selectedWeight)
         }
@@ -244,7 +248,7 @@ fun CalibrationLoadPage(
                     verticalArrangement = Arrangement.spacedBy(SetValueHeaderToValueSpacing),
                 ) {
                     Text(
-                        text = "WEIGHT (KG)",
+                        text = weightHeader,
                         style = headerStyle,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
@@ -300,7 +304,7 @@ fun CalibrationLoadPage(
                         verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                     ) {
                         Text(
-                            text = "WEIGHT (KG)",
+                            text = weightHeader,
                             style = headerStyle,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onBackground,
@@ -310,7 +314,7 @@ fun CalibrationLoadPage(
                 }
 
                 CalibrationInstructionText(
-                    text = "Set load for $reps reps\nat 1-2 RIR",
+                    text = stringResource(R.string.components_calibration_load_instruction, reps),
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -329,8 +333,8 @@ fun CalibrationLoadPage(
 
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
-        title = "Confirm weight",
-        message = "Use this weight for the set?",
+        title = stringResource(R.string.components_confirm_weight_title),
+        message = stringResource(R.string.components_confirm_weight_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             onConfirmClick()

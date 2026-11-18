@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.RestHistory
@@ -75,6 +78,8 @@ fun SetHistoriesRenderer(
             setHistories = setHistories,
             intraExerciseRestHistories = restHistories,
             showRest = true,
+            resources = LocalContext.current.resources,
+            restRowFormat = stringResource(R.string.loc_scr_rest_row),
         )
 
         SetTable(

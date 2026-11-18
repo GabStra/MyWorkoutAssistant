@@ -17,16 +17,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
-import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
 import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
 import com.gabstra.myworkoutassistant.shared.workout.rir.applyAutoRegulationRIR
@@ -88,7 +89,7 @@ fun CalibrationLoadScreen(
     val weightText = if (equipment == null) {
         selectedWeight.toString()
     } else if (isBodyWeightSet && selectedWeight == 0.0) {
-        "BW"
+        stringResource(R.string.loc_body_weight_short)
     } else {
         equipment.formatWeight(selectedWeight)
     }
@@ -148,7 +149,7 @@ fun CalibrationLoadScreen(
         )
 
         Text(
-            text = "WEIGHT (KG)",
+            text = stringResource(R.string.loc_col_weight_kg),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
@@ -170,7 +171,7 @@ fun CalibrationLoadScreen(
         }
 
         Text(
-            text = CalibrationUiLabels.selectLoadInstruction(reps),
+            text = stringResource(R.string.loc_calibration_select_load_instruction, reps),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -178,7 +179,7 @@ fun CalibrationLoadScreen(
         )
 
         ButtonWithText(
-            text = CalibrationUiLabels.ConfirmLoad,
+            text = stringResource(R.string.loc_calibration_confirm_load),
             style = AppButtonStyle.Filled,
             onClick = {
                 touch()
@@ -189,8 +190,8 @@ fun CalibrationLoadScreen(
 
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
-        title = CalibrationUiLabels.ConfirmLoad,
-        message = CalibrationUiLabels.ConfirmLoadMessage,
+        title = stringResource(R.string.loc_calibration_confirm_load),
+        message = stringResource(R.string.loc_calibration_confirm_load_message),
         handleNoClick = {
             hapticsViewModel.doGentleVibration()
             showConfirmDialog = false
@@ -292,7 +293,7 @@ fun CalibrationRIRScreen(
         }
 
         Text(
-            text = CalibrationUiLabels.FormBreaksHint,
+            text = stringResource(R.string.loc_calibration_form_breaks_hint),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -300,7 +301,7 @@ fun CalibrationRIRScreen(
         )
 
         ButtonWithText(
-            text = CalibrationUiLabels.ConfirmRir,
+            text = stringResource(R.string.loc_calibration_confirm_rir),
             style = AppButtonStyle.Filled,
             onClick = { showConfirmDialog = true }
         )
@@ -308,8 +309,8 @@ fun CalibrationRIRScreen(
 
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
-        title = CalibrationUiLabels.ConfirmRir,
-        message = CalibrationUiLabels.ConfirmRirMessage,
+        title = stringResource(R.string.loc_calibration_confirm_rir),
+        message = stringResource(R.string.loc_calibration_confirm_rir_message),
         handleNoClick = {
             hapticsViewModel.doGentleVibration()
             showConfirmDialog = false
@@ -384,7 +385,7 @@ fun AutoRegulationRIRScreen(
         )
 
         Text(
-            text = "RIR (Auto-regulation)",
+            text = stringResource(R.string.loc_rir_auto_regulation),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
@@ -406,7 +407,7 @@ fun AutoRegulationRIRScreen(
         }
 
         Text(
-            text = CalibrationUiLabels.FormBreaksHint,
+            text = stringResource(R.string.loc_calibration_form_breaks_hint),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -414,7 +415,7 @@ fun AutoRegulationRIRScreen(
         )
 
         ButtonWithText(
-            text = CalibrationUiLabels.ConfirmRir,
+            text = stringResource(R.string.loc_calibration_confirm_rir),
             style = AppButtonStyle.Filled,
             onClick = { showConfirmDialog = true }
         )
@@ -422,8 +423,8 @@ fun AutoRegulationRIRScreen(
 
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
-        title = CalibrationUiLabels.ConfirmRir,
-        message = CalibrationUiLabels.ConfirmRirMessage,
+        title = stringResource(R.string.loc_calibration_confirm_rir),
+        message = stringResource(R.string.loc_calibration_confirm_rir_message),
         handleNoClick = {
             hapticsViewModel.doGentleVibration()
             showConfirmDialog = false

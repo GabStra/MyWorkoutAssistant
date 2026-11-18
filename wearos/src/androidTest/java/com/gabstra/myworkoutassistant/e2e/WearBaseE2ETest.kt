@@ -13,7 +13,7 @@ import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
+import com.gabstra.myworkoutassistant.shared.R as SharedR
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
@@ -282,7 +282,7 @@ abstract class WearBaseE2ETest {
             device.hasObject(By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)) ||
             device.hasObject(By.descContains(SetValueSemantics.TimedDurationSetTypeDescription)) ||
             device.hasObject(By.descContains(SetValueSemantics.EnduranceSetTypeDescription)) ||
-            device.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)) ||
+            device.hasObject(WearRestScreenSelector.byDescription()) ||
             device.hasObject(By.textContains("Set load for")) ||
             device.hasObject(By.text("0 = Form Breaks")) ||
             device.hasObject(By.text("Start")) ||
@@ -304,7 +304,7 @@ abstract class WearBaseE2ETest {
     private fun isRecoveryDialogVisible(): Boolean {
         return device.hasObject(By.desc("Recovery resume action")) ||
             device.hasObject(By.desc("Recovery discard action")) ||
-            device.hasObject(By.text(IncompleteWorkoutStrings.RECOVERY_RESUME_OR_DISCARD_BODY))
+            device.hasObject(By.text(context.getString(SharedR.string.recovery_resume_or_discard_body)))
     }
 
     protected fun createWorkoutDriver(): WearWorkoutDriver = interactionDriver

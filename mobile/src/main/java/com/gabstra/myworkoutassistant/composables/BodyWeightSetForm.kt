@@ -62,6 +62,7 @@ fun BodyWeightSetForm(
         SetSubCategory.CalibrationPendingSet,
         SetSubCategory.CalibrationSet
     )) || (isCalibrationExercise && (bodyWeightSet == null || bodyWeightSet.subCategory == SetSubCategory.WorkSet))
+    val bodyWeightLabel = stringResource(R.string.loc_body_weight_short)
     Column(modifier = Modifier.fillMaxWidth()) {
         if (equipment != null) {
             var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet()) }
@@ -71,7 +72,7 @@ fun BodyWeightSetForm(
                 withContext(Dispatchers.IO) {
                     val combinationsFromEquipment = equipment.getWeightsCombinationsWithLabels().toSet()
                     val nonZeroCombinations = combinationsFromEquipment.filter { it.first != 0.0 }.toSet()
-                    possibleCombinations = nonZeroCombinations + Pair(0.0, "BW")
+                    possibleCombinations = nonZeroCombinations + Pair(0.0, bodyWeightLabel)
                 }
                 isLoadingCombinations = false
             }
@@ -112,7 +113,7 @@ fun BodyWeightSetForm(
             Box {
                 OutlinedTextField(
                     value = if (selectedAdditionalWeight == 0.0) {
-                        "BW"
+                        bodyWeightLabel
                     } else {
                         equipment.formatWeight(selectedAdditionalWeight)
                     },

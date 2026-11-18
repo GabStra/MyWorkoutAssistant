@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.HapticsHelper
@@ -167,7 +169,11 @@ fun PageExercises(
                     },
                 )
                 Text(
-                    text = "Step: ${selectedStepIndex + 1}/${exerciseOrSupersetIds.size}",
+                    text = stringResource(
+                        R.string.loc_step_progress,
+                        selectedStepIndex + 1,
+                        exerciseOrSupersetIds.size
+                    ),
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontSize = 18.sp,
@@ -210,7 +216,9 @@ private fun StepNavigationButton(
             } else {
                 Icons.AutoMirrored.Filled.ArrowBack
             },
-            contentDescription = if (forward) "Next step" else "Previous step",
+            contentDescription = stringResource(
+                if (forward) R.string.loc_next_step_cd else R.string.loc_previous_step_cd
+            ),
             tint = MaterialTheme.colorScheme.onBackground,
         )
     }

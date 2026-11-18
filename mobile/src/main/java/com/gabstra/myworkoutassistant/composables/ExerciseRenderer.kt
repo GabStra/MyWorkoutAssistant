@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.content.res.Resources
 import androidx.compose.foundation.basicMarquee
 import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Arrangement
@@ -16,10 +17,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.RestHistory
@@ -40,7 +44,9 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
+import com.gabstra.myworkoutassistant.shared.workout.display.EnglishWorkoutRestRowFormat
 import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutRestRowLabel
 import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
 import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -59,17 +65,23 @@ fun buildExerciseTemplateRows(
     sets: List<Set>,
     exercise: Exercise,
     equipment: WeightLoadedEquipment?,
+    tbdText: String = CalibrationUiLabels.Tbd,
+    restRowFormat: String = EnglishWorkoutRestRowFormat,
 ): List<SetTableRowUiModel> =
     buildExerciseTemplatePreviewItems(
         sets = sets,
         exercise = exercise,
         equipment = equipment,
+        tbdText = tbdText,
+        restRowFormat = restRowFormat,
     ).flatMap { it.rows }
 
 fun buildExerciseTemplatePreviewItems(
     sets: List<Set>,
     exercise: Exercise,
     equipment: WeightLoadedEquipment?,
+    tbdText: String = CalibrationUiLabels.Tbd,
+    restRowFormat: String = EnglishWorkoutRestRowFormat,
 ): List<SetPreviewItemUiModel> {
     val previewItems = mutableListOf<SetPreviewItemUiModel>()
     val identifierCounter = SetRowIdentifierCounter()
@@ -80,7 +92,7 @@ fun buildExerciseTemplatePreviewItems(
                     setId = set.id,
                     rows = listOf(
                         SetTableRowUiModel.Rest(
-                            text = "REST ${formatTime(set.timeInSeconds)}",
+                            text = formatWorkoutRestRowLabel(set.timeInSeconds, restRowFormat),
                         )
                     ),
                 )
@@ -93,13 +105,14 @@ fun buildExerciseTemplatePreviewItems(
                     set = set
                 )
                 val weightText = if (isCalibrationManagedWorkSet) {
-                    CalibrationUiLabels.Tbd
+                    tbdText
                 } else {
                     equipment?.formatWeight(set.weight) ?: "${set.weight} kg"
                 }
                 previewItems += buildTemplatePreviewItem(
                     set = set,
                     exercise = exercise,
+                    restRowFormat = restRowFormat,
                     row = SetTableRowUiModel.Data(
                         identifier = identifierCounter.nextIdentifier(subCategory),
                         primaryValue = weightText,
@@ -115,7 +128,7 @@ fun buildExerciseTemplatePreviewItems(
                     set = set
                 )
                 val weightText = when {
-                    isCalibrationManagedWorkSet -> CalibrationUiLabels.Tbd
+                    isCalibrationManagedWorkSet -> tbdText
                     set.additionalWeight > 0 -> equipment?.formatWeight(set.additionalWeight)
                         ?: "${set.additionalWeight} kg"
                     else -> "BW"
@@ -123,6 +136,7 @@ fun buildExerciseTemplatePreviewItems(
                 previewItems += buildTemplatePreviewItem(
                     set = set,
                     exercise = exercise,
+                    restRowFormat = restRowFormat,
                     row = SetTableRowUiModel.Data(
                         identifier = identifierCounter.nextIdentifier(subCategory),
                         primaryValue = weightText,
@@ -207,6 +221,7 @@ fun buildExerciseTemplatePreviewItems(
 private fun buildTemplatePreviewItem(
     set: Set,
     exercise: Exercise,
+    restRowFormat: String,
     row: SetTableRowUiModel.Data,
 ): SetPreviewItemUiModel {
     if (!shouldDuplicateUnilateralTemplateRow(exercise, set)) {
@@ -222,7 +237,9 @@ private fun buildTemplatePreviewItem(
     val groupedRows = mutableListOf<SetTableRowUiModel>()
     groupedRows += row.copy(identifier = row.identifier + leftBadge)
     if (intraSetRestSeconds > 0) {
-        groupedRows += SetTableRowUiModel.Rest("REST ${formatTime(intraSetRestSeconds)}")
+        groupedRows += SetTableRowUiModel.Rest(
+            formatWorkoutRestRowLabel(intraSetRestSeconds, restRowFormat)
+        )
     }
     groupedRows += row.copy(identifier = row.identifier + rightBadge)
     return SetPreviewItemUiModel(
@@ -239,6 +256,8 @@ internal fun buildExerciseHistoryRows(
     setHistories: List<SetHistory>,
     intraExerciseRestHistories: List<RestHistory>,
     showRest: Boolean,
+    resources: Resources? = null,
+    restRowFormat: String = EnglishWorkoutRestRowFormat,
 ): List<SetTableRowUiModel> {
     val rows = mutableListOf<SetTableRowUiModel>()
     val mergedTimeline = mergeSessionTimeline(
@@ -258,7 +277,7 @@ internal fun buildExerciseHistoryRows(
             is SessionTimelineItem.RestStep -> {
                 if (showRest) {
                     rows += SetTableRowUiModel.Rest(
-                        text = formatRestHistoryDisplayLine(item.history)
+                        text = formatRestHistoryDisplayLine(item.history, resources)
                     )
                 }
                 index += 1
@@ -270,7 +289,7 @@ internal fun buildExerciseHistoryRows(
                 if (setData is RestSetData) {
                     if (showRest) {
                         rows += SetTableRowUiModel.Rest(
-                            text = formatHistoricalRestValue(history)
+                            text = formatHistoricalRestValue(history, resources)
                         )
                     }
                     index += 1
@@ -281,7 +300,7 @@ internal fun buildExerciseHistoryRows(
                     ?.let { nextItem ->
                         val restStep = nextItem as? SessionTimelineItem.RestStep ?: return@let null
                         if (!showRest) return@let null
-                        formatRestHistoryDisplayLine(restStep.history)
+                        formatRestHistoryDisplayLine(restStep.history, resources)
                     }
 
                 val identifier = identifierResolver.resolve(history)
@@ -302,6 +321,7 @@ internal fun buildExerciseHistoryRows(
                             exercise = exercise,
                             setData = setData,
                             followingRestText = followingRestText,
+                            restRowFormat = restRowFormat,
                             row = SetTableRowUiModel.Data(
                                 identifier = identifier,
                                 primaryValue = weightText,
@@ -327,6 +347,7 @@ internal fun buildExerciseHistoryRows(
                             exercise = exercise,
                             setData = setData,
                             followingRestText = followingRestText,
+                            restRowFormat = restRowFormat,
                             row = SetTableRowUiModel.Data(
                                 identifier = identifier,
                                 primaryValue = weightText,
@@ -342,6 +363,7 @@ internal fun buildExerciseHistoryRows(
                             exercise = exercise,
                             setData = null,
                             followingRestText = followingRestText,
+                            restRowFormat = restRowFormat,
                             row = SetTableRowUiModel.Data(
                                 identifier = identifier,
                                 primaryValue = actualWeightText ?: formatHistoricalTimedSetValue(
@@ -362,6 +384,7 @@ internal fun buildExerciseHistoryRows(
                             exercise = exercise,
                             setData = null,
                             followingRestText = followingRestText,
+                            restRowFormat = restRowFormat,
                             row = SetTableRowUiModel.Data(
                                 identifier = identifier,
                                 primaryValue = actualWeightText ?: formatHistoricalTimedSetValue(
@@ -381,6 +404,7 @@ internal fun buildExerciseHistoryRows(
                             exercise = exercise,
                             setData = null,
                             followingRestText = followingRestText,
+                            restRowFormat = restRowFormat,
                             row = SetTableRowUiModel.Data(
                                 identifier = identifier,
                                 primaryValue = "RUN",
@@ -419,6 +443,7 @@ internal fun appendHistoricalDataRows(
     exercise: Exercise,
     setData: Any?,
     followingRestText: String?,
+    restRowFormat: String = EnglishWorkoutRestRowFormat,
     row: SetTableRowUiModel.Data,
 ) {
     if (!shouldDuplicateUnilateralHistoryRow(exercise, setData)) {
@@ -430,7 +455,7 @@ internal fun appendHistoricalDataRows(
     val rightBadge = buildUnilateralSideLabel(sideIndex = 2u, intraSetTotal = 2u).orEmpty()
     val betweenSidesRestText = followingRestText ?: exercise.intraSetRestInSeconds
         ?.takeIf { it > 0 }
-        ?.let { "REST ${formatTime(it)}" }
+        ?.let { formatWorkoutRestRowLabel(it, restRowFormat) }
 
     rows += row.copy(identifier = row.identifier + leftBadge)
     if (betweenSidesRestText != null) {
@@ -559,7 +584,7 @@ private fun ExerciseExpandableSetTableBody(
 
                 if (showHistorySections) {
                     contentBeforeMetadata?.let { targetContent ->
-                        ExerciseRendererHistorySection("Targets") {
+                        ExerciseRendererHistorySection(stringResource(R.string.loc_targets)) {
                             targetContent()
                         }
                     }
@@ -620,8 +645,16 @@ fun ExerciseTemplateRenderer(
     }
 
     val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
-    val rows = remember(exercise.id, showRest, sets, equipment?.id) {
-        buildExerciseTemplateRows(sets, exercise, equipment)
+    val tbdText = stringResource(R.string.loc_calibration_tbd)
+    val restRowFormat = stringResource(R.string.loc_scr_rest_row)
+    val rows = remember(exercise.id, showRest, sets, equipment?.id, tbdText, restRowFormat) {
+        buildExerciseTemplateRows(
+            sets = sets,
+            exercise = exercise,
+            equipment = equipment,
+            tbdText = tbdText,
+            restRowFormat = restRowFormat,
+        )
     }
 
     ExerciseExpandableSetTableBody(
@@ -663,12 +696,16 @@ fun ExerciseHistoryRenderer(
         ?.let { appViewModel.getEquipmentById(it) }
         ?: exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
     val historicalEquipmentName = firstHistory?.equipmentNameSnapshot?.takeIf { it.isNotBlank() }
+    val resources = LocalContext.current.resources
+    val restRowFormat = stringResource(R.string.loc_scr_rest_row)
     val rows = remember(
         exercise.id,
         showRest,
         equipment?.id,
         setHistories,
         intraExerciseRestHistories,
+        resources,
+        restRowFormat,
     ) {
         buildExerciseHistoryRows(
             exercise = exercise,
@@ -676,6 +713,8 @@ fun ExerciseHistoryRenderer(
             setHistories = setHistories,
             intraExerciseRestHistories = intraExerciseRestHistories,
             showRest = showRest,
+            resources = resources,
+            restRowFormat = restRowFormat,
         )
     }
     if (rows.isEmpty()) {

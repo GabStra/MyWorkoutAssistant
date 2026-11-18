@@ -2,6 +2,7 @@
 
 package com.gabstra.myworkoutassistant.screens
 
+import android.content.Context
 import androidx.compose.foundation.background
 import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -58,6 +60,7 @@ import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -83,9 +86,12 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.PlateauReason
+import com.gabstra.myworkoutassistant.shared.utils.PlateauReasonFormatter
+import com.gabstra.myworkoutassistant.shared.utils.PlateauSessionReason
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
-import com.gabstra.myworkoutassistant.shared.workout.display.buildActiveExerciseContextLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -135,6 +141,8 @@ fun ExerciseScreen(
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isPaused by viewModel.isPaused
     val coroutineScope = rememberWearCoroutineScope()
+    val context = LocalContext.current
+    val noneEquipmentLabel = stringResource(R.string.wear_equipment_none)
 
     val exercise = viewModel.exercisesById[state.exerciseId]!!
     val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
@@ -145,7 +153,12 @@ fun ExerciseScreen(
     }
     val isEquipmentChangeSupported =
         exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT
-    val equipmentPickerOptions = remember(exercise.exerciseType, exercise.equipmentId, viewModel.workoutStore.equipments) {
+    val equipmentPickerOptions = remember(
+        exercise.exerciseType,
+        exercise.equipmentId,
+        viewModel.workoutStore.equipments,
+        noneEquipmentLabel,
+    ) {
         val equipmentOptions = viewModel.workoutStore.equipments
             .filter { it.isCompatibleWith(exercise.exerciseType) }
             .sortedBy { it.name.lowercase() }
@@ -161,7 +174,7 @@ fun ExerciseScreen(
             listOf(
                 ExerciseEquipmentPickerOption(
                     equipmentId = null,
-                    label = "None",
+                    label = noneEquipmentLabel,
                     isCurrent = exercise.equipmentId == null
                 )
             ) + equipmentOptions
@@ -289,8 +302,6 @@ fun ExerciseScreen(
     }
     var selectedExercise by remember(state.exerciseId) { mutableStateOf(exercise) }
     var selectedRestPageId by remember(state.exerciseId, state.set.id) { mutableStateOf<UUID?>(null) }
-    val context = LocalContext.current
-
     LaunchedEffect(exercise) {
         if (selectedExercise.id == exercise.id) {
             selectedExercise = exercise
@@ -335,7 +346,8 @@ fun ExerciseScreen(
     }
 
     key(state.exerciseId to state.set.id) {
-        val activeExerciseContext = buildActiveExerciseContextLabel(
+        val activeExerciseContext = buildLocalizedActiveExerciseContextLabel(
+            context = context,
             setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
             setCounterKind = displayCounterKindForSetState(state),
             hasWarmupSets = viewModel.hasWarmupSetsForExercise(state.exerciseId),
@@ -510,8 +522,10 @@ fun ExerciseScreen(
                             isSuperset,
                             exerciseOrSupersetId,
                             plateauReason,
+                            context,
                         ) {
                             buildExerciseInfoSections(
+                                context = context,
                                 exercise = exercise,
                                 state = state,
                                 equipmentName = equipment?.name,
@@ -592,8 +606,8 @@ fun ExerciseScreen(
 
         CustomDialogYesOnLongPress(
             show = showEquipmentConfirmation,
-            title = "Update Equipment",
-            message = "Update equipment for this exercise? Remaining sets will use the new equipment.",
+            title = stringResource(R.string.wear_update_equipment_title),
+            message = stringResource(R.string.wear_update_equipment_message),
             handleYesClick = {
                 val selectedEquipmentId = pendingEquipmentId
                 showEquipmentConfirmation = false
@@ -626,14 +640,15 @@ fun ExerciseScreen(
         CustomDialogYesOnLongPress(
             show = showNextDialog,
             title = when {
-                state.isCalibrationSet -> "Complete Calibration Set"
-                state.isAutoRegulationWorkSet -> "Complete Set"
-                state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!! -> "Switch side"
-                else -> "Complete Set"
+                state.isCalibrationSet -> stringResource(R.string.wear_complete_calibration_set)
+                state.isAutoRegulationWorkSet -> stringResource(R.string.wear_complete_set)
+                state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!! ->
+                    stringResource(R.string.wear_switch_side)
+                else -> stringResource(R.string.wear_complete_set)
             },
             message = when {
-                state.isCalibrationSet -> "Rate your RIR after completing this set."
-                else -> "Do you want to proceed?"
+                state.isCalibrationSet -> stringResource(R.string.wear_rate_rir_after_set)
+                else -> stringResource(R.string.wear_proceed_prompt)
             },
             handleYesClick = {
                 shouldResumeTimerAfterDialog = false
@@ -1044,7 +1059,14 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
         emptyMap()
     }
     if (scenario.includePlateauWarning) {
-        viewModel.plateauReasonByExerciseId[mainExercise.id] = "Preview plateau warning"
+        viewModel.plateauReasonByExerciseId[mainExercise.id] = PlateauReason(
+            windowSessionCount = 3,
+            sessions = listOf(
+                PlateauSessionReason(1, 100.0, 8),
+                PlateauSessionReason(2, 100.0, 8),
+                PlateauSessionReason(3, 100.0, 8)
+            )
+        )
     }
 
     val equipments = mutableListOf<com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment>()
@@ -1512,7 +1534,46 @@ private fun ExerciseDetailContent(
     }
 }
 
+private fun buildLocalizedActiveExerciseContextLabel(
+    context: Context,
+    setCounter: Pair<Int, Int>?,
+    setCounterKind: SetDisplayCounterKind?,
+    hasWarmupSets: Boolean,
+    unilateralSideIndex: UInt?,
+    intraSetTotal: UInt?,
+    supersetRound: String? = null,
+): String? = listOfNotNull(
+    supersetRound?.let { context.getString(R.string.wear_exercise_context_round, it) },
+    setCounter
+        ?.takeIf { (_, total) -> total > 1 }
+        ?.let { (current, total) ->
+            context.getString(
+                activeSetCounterLabelRes(setCounterKind, hasWarmupSets),
+                current,
+                total,
+            )
+        },
+    buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
+        ?.removePrefix("-")
+        ?.let { side -> context.getString(R.string.wear_exercise_context_side, side) }
+).takeIf { it.isNotEmpty() }?.joinToString(" · ")
+
+private fun activeSetCounterLabelRes(
+    setCounterKind: SetDisplayCounterKind?,
+    hasWarmupSets: Boolean,
+): Int = when (setCounterKind) {
+    SetDisplayCounterKind.Warmup -> R.string.wear_exercise_context_warmup_counter
+    SetDisplayCounterKind.Work -> if (hasWarmupSets) {
+        R.string.wear_exercise_context_work_set_counter
+    } else {
+        R.string.wear_exercise_context_set_counter
+    }
+    SetDisplayCounterKind.Calibration -> R.string.wear_exercise_context_calibration_counter
+    null -> R.string.wear_exercise_context_set_counter
+}
+
 private fun buildExerciseInfoSections(
+    context: Context,
     exercise: Exercise,
     state: WorkoutState.Set,
     equipmentName: String?,
@@ -1521,46 +1582,87 @@ private fun buildExerciseInfoSections(
     setCounter: Pair<Int, Int>?,
     hasWarmupSets: Boolean,
     unilateralSideIndex: UInt?,
-    plateauReason: String?,
+    plateauReason: PlateauReason?,
 ): List<TitledLinesSection> {
     val setLabel = when (displayCounterKindForSetState(state)) {
-        SetDisplayCounterKind.Warmup -> "Warm-up"
-        SetDisplayCounterKind.Work -> if (hasWarmupSets) "Work set" else "Set"
-        else -> "Set"
+        SetDisplayCounterKind.Warmup -> context.getString(R.string.wear_set_warmup)
+        SetDisplayCounterKind.Work -> context.getString(
+            if (hasWarmupSets) R.string.wear_set_work_set else R.string.wear_set_label
+        )
+        else -> context.getString(R.string.wear_set_label)
     }
     val sessionLines = buildList {
         setCounter?.let { (current, total) ->
-            add(if (total > 1) "$setLabel $current of $total" else setLabel)
+            add(
+                if (total > 1) {
+                    context.getString(R.string.wear_session_set_progress, setLabel, current, total)
+                } else {
+                    setLabel
+                }
+            )
         }
         if (supersetExercises.isNotEmpty()) {
             val position = supersetExercises.indexOf(exercise)
             if (position >= 0) {
-                add("Superset ${('A'.code + position).toChar()} of ${supersetExercises.size}")
+                add(
+                    context.getString(
+                        R.string.wear_session_superset_of,
+                        ('A'.code + position).toChar().toString(),
+                        supersetExercises.size,
+                    )
+                )
             }
         }
-        if (state.intraSetTotal != null && unilateralSideIndex != null) {
-            add("Side $unilateralSideIndex of ${state.intraSetTotal}")
+        val intraSetTotal = state.intraSetTotal
+        if (intraSetTotal != null && unilateralSideIndex != null) {
+            add(
+                context.getString(
+                    R.string.wear_session_side_of,
+                    unilateralSideIndex.toInt(),
+                    intraSetTotal.toInt(),
+                )
+            )
         }
     }
     val statusLines = buildList {
-        if (state.isCalibrationSet) add("Calibration")
-        if (state.isAutoRegulationWorkSet) add("Auto-regulation")
+        if (state.isCalibrationSet) add(context.getString(R.string.wear_status_calibration))
+        if (state.isAutoRegulationWorkSet) add(context.getString(R.string.wear_status_auto_regulation))
         when (state.progressionState) {
-            ProgressionState.RETRY -> add("Retry")
-            ProgressionState.DELOAD -> add("Deload")
+            ProgressionState.RETRY -> add(context.getString(R.string.wear_status_retry))
+            ProgressionState.DELOAD -> add(context.getString(R.string.wear_status_deload))
             else -> Unit
         }
     }
     return buildList {
-        add(TitledLinesSection("Exercise", listOf(exercise.name)))
-        if (sessionLines.isNotEmpty()) add(TitledLinesSection("Session", sessionLines))
-        if (statusLines.isNotEmpty()) add(TitledLinesSection("Status", statusLines))
-        plateauReason?.let { add(TitledLinesSection("Plateau", listOf(it))) }
-        equipmentName?.let { add(TitledLinesSection("Equipment", listOf(it))) }
-        if (accessoryEquipmentNames.isNotEmpty()) {
-            add(TitledLinesSection("Accessories", accessoryEquipmentNames))
+        add(TitledLinesSection(context.getString(R.string.wear_info_exercise), listOf(exercise.name)))
+        if (sessionLines.isNotEmpty()) {
+            add(TitledLinesSection(context.getString(R.string.wear_info_session), sessionLines))
         }
-        if (exercise.notes.isNotEmpty()) add(TitledLinesSection("Notes", listOf(exercise.notes)))
+        if (statusLines.isNotEmpty()) {
+            add(TitledLinesSection(context.getString(R.string.wear_info_status), statusLines))
+        }
+        plateauReason?.let {
+            add(
+                TitledLinesSection(
+                    context.getString(R.string.wear_info_plateau),
+                    listOf(PlateauReasonFormatter.format(context, it))
+                )
+            )
+        }
+        equipmentName?.let {
+            add(TitledLinesSection(context.getString(R.string.wear_info_equipment), listOf(it)))
+        }
+        if (accessoryEquipmentNames.isNotEmpty()) {
+            add(
+                TitledLinesSection(
+                    context.getString(R.string.wear_info_accessories),
+                    accessoryEquipmentNames,
+                )
+            )
+        }
+        if (exercise.notes.isNotEmpty()) {
+            add(TitledLinesSection(context.getString(R.string.wear_info_notes), listOf(exercise.notes)))
+        }
     }
 }
 

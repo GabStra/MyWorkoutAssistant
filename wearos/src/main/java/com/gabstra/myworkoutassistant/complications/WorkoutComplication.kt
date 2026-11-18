@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import java.util.Locale
 
@@ -35,10 +36,10 @@ object WorkoutComplication {
         if (state == null) {
             editor.putBoolean(KEY_ACTIVE, true)
                 .putBoolean(KEY_RUNNING, false)
-                .putString(KEY_FIXED_VALUE, "Active")
-                .putString(KEY_LABEL, "Workout")
+                .putString(KEY_FIXED_VALUE, context.getString(R.string.wear_complication_active))
+                .putString(KEY_LABEL, context.getString(R.string.wear_complication_workout))
         } else {
-            val label = labelFor(state.timerType)
+            val label = labelFor(context, state.timerType)
             if (state.isRunning) {
                 val countdown = state.timerType != WorkoutTimerService.TimerType.ENDURANCE_SET
                 val now = System.currentTimeMillis()
@@ -85,7 +86,8 @@ object WorkoutComplication {
     }
 
     fun currentLabel(context: Context): String =
-        prefs(context).getString(KEY_LABEL, null) ?: "Workout"
+        prefs(context).getString(KEY_LABEL, null)
+            ?: context.getString(R.string.wear_complication_workout)
 
     private fun requestUpdate(context: Context) {
         ComplicationDataSourceUpdateRequester.create(
@@ -94,12 +96,16 @@ object WorkoutComplication {
         ).requestUpdateAll()
     }
 
-    private fun labelFor(type: WorkoutTimerService.TimerType): String = when (type) {
-        WorkoutTimerService.TimerType.REST -> "Rest"
-        WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set"
-        WorkoutTimerService.TimerType.ENDURANCE_SET -> "Elapsed"
-        WorkoutTimerService.TimerType.SUPERSET_CAP -> "Time left"
-        WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> "Round"
+    private fun labelFor(context: Context, type: WorkoutTimerService.TimerType): String = when (type) {
+        WorkoutTimerService.TimerType.REST -> context.getString(R.string.wear_complication_rest)
+        WorkoutTimerService.TimerType.TIMED_DURATION_SET ->
+            context.getString(R.string.wear_complication_set)
+        WorkoutTimerService.TimerType.ENDURANCE_SET ->
+            context.getString(R.string.wear_complication_elapsed)
+        WorkoutTimerService.TimerType.SUPERSET_CAP ->
+            context.getString(R.string.wear_complication_time_left)
+        WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE ->
+            context.getString(R.string.wear_complication_round)
     }
 
     private fun format(millis: Int): String = format(millis.toLong())

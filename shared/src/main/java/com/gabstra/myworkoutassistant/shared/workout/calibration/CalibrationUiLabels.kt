@@ -1,5 +1,14 @@
 package com.gabstra.myworkoutassistant.shared.workout.calibration
 
+/**
+ * Canonical English calibration copy.
+ *
+ * App-visible UI must resolve the matching string resources in the owning
+ * module (for example `loc_calibration_tbd` on mobile and
+ * `components_value_tbd` on Wear) so translated builds stay localized. These
+ * constants remain as stable, non-localized fallbacks for tests and for
+ * non-UI producers that need the canonical English wording.
+ */
 object CalibrationUiLabels {
     const val Calibration = "Calibration"
     const val Tbd = "TBD"

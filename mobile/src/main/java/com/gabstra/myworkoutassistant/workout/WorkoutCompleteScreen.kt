@@ -21,9 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.HapticsViewModel
@@ -84,7 +86,7 @@ fun WorkoutCompleteScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Completed",
+                text = stringResource(R.string.loc_completed),
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
@@ -96,7 +98,11 @@ fun WorkoutCompleteScreen(
 
         Text(
             modifier = Modifier.padding(top = 5.dp),
-            text = if (completionSaved) "Workout saved" else "Saving workout…",
+            text = if (completionSaved) {
+                stringResource(R.string.loc_workout_saved)
+            } else {
+                stringResource(R.string.loc_saving_workout)
+            },
             style = headerStyle,
             textAlign = TextAlign.Center,
         )
@@ -114,7 +120,7 @@ fun WorkoutCompleteScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 24.dp),
-            text = "Done",
+            text = stringResource(R.string.loc_done),
             enabled = completionSaved,
             textAlign = TextAlign.Center,
             onClick = {
@@ -126,8 +132,8 @@ fun WorkoutCompleteScreen(
 
     CustomDialogYesOnLongPress(
         show = showNextDialog,
-        title =  "Workout completed",
-        message = "Return to the main menu?",
+        title = stringResource(R.string.loc_workout_completed_title),
+        message = stringResource(R.string.loc_return_to_main_menu),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             appViewModel.initScreenData(ScreenData.Workouts(0))

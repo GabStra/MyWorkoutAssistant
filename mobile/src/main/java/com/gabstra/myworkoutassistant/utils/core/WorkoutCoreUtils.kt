@@ -247,7 +247,9 @@ suspend fun sendWorkoutsToHealthConnect(
     val missingPermissions = requiredPermissions - grantedPermissions
 
     if (missingPermissions.isNotEmpty()) {
-        throw IllegalStateException("Missing required permissions: $missingPermissions")
+        throw IllegalStateException(
+            context.getString(R.string.loc_missing_permissions, missingPermissions.toString())
+        )
     }
 
     val workoutsById = workouts.associateBy { it.id }
@@ -429,7 +431,9 @@ suspend fun deleteWorkoutHistoriesFromHealthConnect(
     val missingPermissions = requiredPermissions - grantedPermissions
 
     if (missingPermissions.isNotEmpty()) {
-        throw IllegalStateException("Missing required permissions: $missingPermissions")
+        throw IllegalStateException(
+            context.getString(R.string.loc_missing_permissions, missingPermissions.toString())
+        )
     }
 
     healthConnectClient.deleteRecords(

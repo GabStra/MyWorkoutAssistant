@@ -42,6 +42,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -104,10 +106,12 @@ fun ExerciseDefinitionForm(
     var musclesExpanded by rememberSaveable { mutableStateOf(false) }
     var movementExpanded by rememberSaveable { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val currentLocales = LocalConfiguration.current.locales
     val noneLabel = stringResource(R.string.common_none)
-    val typeItems = remember {
-        ExerciseType.entries.map {
-            StandardFilterDropdownItem(it, it.name.replace('_', ' ').lowercase())
+    val typeItems = remember(currentLocales, context) {
+        ExerciseType.entries.map { type ->
+            StandardFilterDropdownItem(type, type.localizedLabel(context))
         }
     }
     val equipmentItems = remember(equipments, exerciseType) {
@@ -183,7 +187,7 @@ fun ExerciseDefinitionForm(
                     )
                     StandardFilterDropdown<ExerciseType>(
                         label = stringResource(R.string.exercise_type_label),
-                        selectedText = exerciseType.name.replace('_', ' ').lowercase(),
+                        selectedText = typeItems.first { it.value == exerciseType }.label,
                         items = typeItems,
                         onItemSelected = {
                             exerciseType = it

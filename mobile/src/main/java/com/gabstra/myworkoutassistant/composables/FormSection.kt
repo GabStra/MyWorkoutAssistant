@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -138,7 +140,9 @@ fun CollapsibleSection(
                 }
                 Icon(
                     imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (expanded) "Collapse" else "Expand"
+                    contentDescription = stringResource(
+                        if (expanded) R.string.loc_collapse else R.string.loc_expand
+                    )
                 )
             }
             if (expanded) {

@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -42,6 +43,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -66,7 +68,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp),
-            text = "Barbell guide",
+            text = stringResource(R.string.loc_barbell_guide),
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
             textAlign = TextAlign.Center
         )
@@ -74,7 +76,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
-                text = "Not available",
+                text = stringResource(R.string.loc_not_available),
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center
             )
@@ -87,7 +89,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 equipment.barWeight + targetSideWeight * 2
             }
             Text(
-                text = "Target ${formatWeight(targetWeight)}",
+                text = stringResource(R.string.loc_target_weight, formatWeight(targetWeight)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(28.dp),
@@ -167,7 +169,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = "Barbell already loaded",
+                        text = stringResource(R.string.loc_barbell_already_loaded),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -197,11 +199,15 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                 Icon(
                                     modifier = Modifier.size(32.dp),
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Previous plate step",
+                                    contentDescription = stringResource(R.string.loc_previous_plate_step_cd),
                                 )
                             }
                             Text(
-                                text = "STEP ${selectedStepIndex + 1}/${steps.size}",
+                                text = stringResource(
+                                    R.string.loc_step_progress_upper,
+                                    selectedStepIndex + 1,
+                                    steps.size
+                                ),
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontSize = 18.sp,
                                     lineHeight = 22.sp,
@@ -217,7 +223,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                 Icon(
                                     modifier = Modifier.size(32.dp),
                                     imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = "Next plate step",
+                                    contentDescription = stringResource(R.string.loc_next_plate_step_cd),
                                 )
                             }
                         }

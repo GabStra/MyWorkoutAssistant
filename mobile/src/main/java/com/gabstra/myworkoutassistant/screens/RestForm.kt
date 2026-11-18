@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
@@ -42,6 +43,7 @@ import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.SectionDivider
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.TimeConverter
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.Spacing
@@ -61,9 +63,9 @@ fun RestForm(
     val (hours, minutes, seconds) = hms.value
 
     val titleText = when {
-        rest != null -> "Edit Rest"
-        appliesSameRestBetweenAllExercises -> "Rest between all exercises"
-        else -> "Insert Rest"
+        rest != null -> stringResource(R.string.loc_scr_edit_rest)
+        appliesSameRestBetweenAllExercises -> stringResource(R.string.loc_scr_rest_between_all_exercises)
+        else -> stringResource(R.string.loc_scr_insert_rest)
     }
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
@@ -89,7 +91,7 @@ fun RestForm(
                     IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
@@ -97,7 +99,7 @@ fun RestForm(
                     IconButton(modifier = Modifier.alpha(0f), onClick = { onCancel() }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 }
@@ -122,12 +124,12 @@ fun RestForm(
                 verticalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
                 ContentTitle(
-                    text = "Rest between exercises",
+                    text = stringResource(R.string.loc_scr_rest_between_exercises),
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (appliesSameRestBetweenAllExercises && rest == null) {
                     Text(
-                        text = "Same time between each pair of exercises; existing rests are replaced.",
+                        text = stringResource(R.string.loc_scr_rest_between_all_exercises_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.tertiaryContent,
                         modifier = Modifier.fillMaxWidth()
@@ -153,7 +155,7 @@ fun RestForm(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     onClick = {
                         onCancel()
                     },
@@ -161,7 +163,7 @@ fun RestForm(
                 )
 
                 AppPrimaryButton(
-                    text = "Save",
+                    text = stringResource(R.string.common_save),
                     onClick = {
                         val newRest = Rest(
                             id = rest?.id ?: java.util.UUID.randomUUID(),
@@ -176,7 +178,7 @@ fun RestForm(
             }
         }
     }
-    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = stringResource(R.string.common_saving))
     }
 }
 

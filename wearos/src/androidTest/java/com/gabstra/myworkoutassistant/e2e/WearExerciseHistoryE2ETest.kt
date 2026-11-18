@@ -166,7 +166,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             ) != null -> UiSetType.ENDURANCE
 
             device.findObject(
-                By.descContains(SetValueSemantics.RestSetTypeDescription)
+                WearRestScreenSelector.byDescription()
             ) != null -> UiSetType.REST
 
             else -> UiSetType.UNKNOWN

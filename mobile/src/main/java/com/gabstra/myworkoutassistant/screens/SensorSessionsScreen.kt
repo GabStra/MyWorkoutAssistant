@@ -49,6 +49,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.gabstra.myworkoutassistant.R
+import com.gabstra.myworkoutassistant.labelRes
+import com.gabstra.myworkoutassistant.localizedSensorStateName
+import com.gabstra.myworkoutassistant.localizedSessionStatus
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 import com.gabstra.myworkoutassistant.composables.DialogOutlinedButton
 import com.gabstra.myworkoutassistant.composables.StandardDialog
@@ -246,7 +249,7 @@ private fun SensorSessionCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = session.status,
+                    text = localizedSessionStatus(context, session.status),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiaryContent
                 )
@@ -305,7 +308,12 @@ fun SensorSessionDetailScreen(
         onCopyExportPath = {
             val clipboard =
                 context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Sensor session zip", exportedZipPath))
+            clipboard.setPrimaryClip(
+                ClipData.newPlainText(
+                    context.getString(R.string.loc_scr_sensor_session_zip_clip),
+                    exportedZipPath,
+                )
+            )
             Toast.makeText(context, context.getString(R.string.sensor_path_copied), Toast.LENGTH_SHORT).show()
         },
         onShareExportPath = { path ->
@@ -438,7 +446,10 @@ private fun SensorSessionDetailScreenContent(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = stringResource(R.string.sensor_status_line, currentSession.status),
+                                text = stringResource(
+                                    R.string.sensor_status_line,
+                                    localizedSessionStatus(context, currentSession.status)
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -506,12 +517,12 @@ private fun SensorSegmentCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "#${record.sequenceIndex} ${record.stateName}",
+                    text = "#${record.sequenceIndex} ${localizedSensorStateName(context, record.stateName)}",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = record.reviewStatus.name,
+                    text = stringResource(record.reviewStatus.labelRes()),
                     style = MaterialTheme.typography.bodySmall,
                     color = when (record.reviewStatus) {
                         com.gabstra.myworkoutassistant.shared.motion.MotionCaptureReviewStatus.CONFIRMED,
@@ -525,7 +536,7 @@ private fun SensorSegmentCard(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = stringResource(R.string.sensor_kind_line, label.kind.name) +
+                text = stringResource(R.string.sensor_kind_line, stringResource(label.kind.labelRes())) +
                     (label.exerciseName?.let { " | $it" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

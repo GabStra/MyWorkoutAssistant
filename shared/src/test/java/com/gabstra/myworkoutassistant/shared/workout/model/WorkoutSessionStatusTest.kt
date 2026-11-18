@@ -106,7 +106,7 @@ class WorkoutSessionStatusTest {
     @Test
     fun `stale compact label says watch disconnected`() {
         assertEquals(
-            "Watch disconnected",
+            WorkoutSessionDisplayLabel.STALE_ON_WATCH,
             workoutSessionDisplayLabel(WorkoutSessionStatus.STALE_ON_WEAR)
         )
     }
@@ -117,7 +117,10 @@ class WorkoutSessionStatusTest {
             endReason = WorkoutSessionEndReason.FINISHED_EARLY
         )
 
-        assertEquals("Finished early", completedWorkoutEndDisplayLabel(history))
+        assertEquals(
+            WorkoutSessionDisplayLabel.FINISHED_EARLY,
+            completedWorkoutEndDisplayLabel(history)
+        )
     }
 
     @Test

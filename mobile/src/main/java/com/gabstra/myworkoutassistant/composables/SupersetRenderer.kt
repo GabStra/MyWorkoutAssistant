@@ -10,9 +10,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -22,6 +24,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutRestRowLabel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 
 private data class SupersetExecutionStep(
@@ -63,7 +66,7 @@ fun SupersetRenderer(
                     modifier = m
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 10.dp),
-                    text = "Superset",
+                    text = stringResource(R.string.loc_superset),
                     style = MaterialTheme.typography.bodyLarge,
                     color = textColor,
                 )
@@ -147,10 +150,12 @@ fun SupersetRenderer(
                     }
 
                     val rows = mutableListOf<SetTableRowUiModel>()
+                    val restRowFormat = stringResource(R.string.loc_scr_rest_row)
                     executionSteps.forEach { step ->
-                        if (step.restSeconds != null) {
+                        val restSeconds = step.restSeconds
+                        if (restSeconds != null) {
                             rows += SetTableRowUiModel.Rest(
-                                text = "REST ${formatTime(step.restSeconds)}",
+                                text = formatWorkoutRestRowLabel(restSeconds, restRowFormat),
                             )
                         } else if (step.set != null && step.exerciseIndex != null) {
                             val exercise = superset.exercises[step.exerciseIndex]

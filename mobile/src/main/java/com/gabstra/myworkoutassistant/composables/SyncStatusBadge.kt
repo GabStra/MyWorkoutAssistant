@@ -11,15 +11,18 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 
 @Composable
 fun SyncStatusBadge(
     visible: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val syncingDescription = stringResource(R.string.loc_syncing_with_watch)
     AnimatedVisibility(
         visible = visible,
         modifier = modifier.statusBarsPadding(),
@@ -30,7 +33,7 @@ fun SyncStatusBadge(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(3.dp)
-                .semantics { contentDescription = "Syncing with watch" },
+                .semantics { contentDescription = syncingDescription },
             color = MaterialTheme.colorScheme.primary,
             trackColor = androidx.compose.ui.graphics.Color.Transparent,
         )

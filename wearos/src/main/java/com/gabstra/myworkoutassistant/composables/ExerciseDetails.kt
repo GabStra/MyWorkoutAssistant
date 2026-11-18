@@ -5,7 +5,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import com.gabstra.myworkoutassistant.MyApplication
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
@@ -35,6 +37,9 @@ fun ExerciseDetail(
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    val setTimerFinishedTitle = stringResource(R.string.components_notif_set_timer_finished)
+    val runFinishedTitle = stringResource(R.string.components_notif_run_finished)
+    val nextSetMessage = stringResource(R.string.notif_time_for_next_set)
 
     when (updatedState.set) {
         is WeightSet -> {
@@ -94,8 +99,8 @@ fun ExerciseDetail(
                         showTimerCompletedNotification(
                             context = context,
                             workoutGlobalId = viewModel.selectedWorkout.value.globalId,
-                            title = "Set timer finished",
-                            message = "Time for your next set"
+                            title = setTimerFinishedTitle,
+                            message = nextSetMessage
                         )
                     }
                     viewModel.storeSetData()
@@ -138,8 +143,8 @@ fun ExerciseDetail(
                     showTimerCompletedNotification(
                         context = context,
                         workoutGlobalId = viewModel.selectedWorkout.value.globalId,
-                        title = "Set timer finished",
-                        message = "Time for your next set"
+                        title = setTimerFinishedTitle,
+                        message = nextSetMessage
                     )
                 }
                 viewModel.storeSetData()
@@ -166,8 +171,8 @@ fun ExerciseDetail(
                     showTimerCompletedNotification(
                         context = context,
                         workoutGlobalId = viewModel.selectedWorkout.value.globalId,
-                        title = "Set timer finished",
-                        message = "Time for your next set"
+                        title = setTimerFinishedTitle,
+                        message = nextSetMessage
                     )
                 }
                 viewModel.storeSetData()
@@ -214,8 +219,8 @@ fun ExerciseDetail(
                         showTimerCompletedNotification(
                             context = context,
                             workoutGlobalId = viewModel.selectedWorkout.value.globalId,
-                            title = "Run finished",
-                            message = "Time for your next set"
+                            title = runFinishedTitle,
+                            message = nextSetMessage
                         )
                     }
                     viewModel.storeSetData()

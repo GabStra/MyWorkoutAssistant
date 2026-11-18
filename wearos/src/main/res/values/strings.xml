@@ -184,6 +184,8 @@
 <string name="page_controls_samsung_hr_on">Raw sensor via Samsung Health</string>
 <string name="page_controls_samsung_hr_off">Standard watch sensor</string>
 <string name="page_controls_record_motion">Record motion</string>
+<string name="freeform_capture_record">Record freeform session</string>
+<string name="freeform_capture_recording">Recording sensor data — tap to stop</string>
 <string name="page_controls_motion_on">On for this workout</string>
 <string name="page_controls_motion_off">Off for this workout</string>
 <string name="page_controls_motion_detail">Motion detail</string>

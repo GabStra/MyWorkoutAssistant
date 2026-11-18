@@ -540,6 +540,9 @@ private fun SupersetExecutionPreview(
     superset: Superset,
     viewModel: AppViewModel,
 ) {
+    val weightUnit = stringResource(R.string.loc_scr_unit_kg)
+    val emptyValue = stringResource(R.string.loc_scr_none_dash)
+    val restRowLabelFormat = stringResource(R.string.loc_scr_rest_row)
     val previewStates = remember(superset, viewModel.workoutStore) {
         WorkoutSupersetAssemblyService().assemblePreparedPreviewChildStates(
             superset = superset,
@@ -551,11 +554,16 @@ private fun SupersetExecutionPreview(
     val exerciseIndexById = remember(superset.exercises) {
         superset.exercises.mapIndexed { index, exercise -> exercise.id to index }.toMap()
     }
-    val rows = remember(previewStates, exerciseIndexById) {
+    val rows = remember(previewStates, exerciseIndexById, restRowLabelFormat) {
         val counters = mutableMapOf<Pair<UUID, SetDisplayCounterKind>, Int>()
         previewStates.mapNotNull { state ->
             when (state) {
-                is WorkoutState.Rest -> SetTableRowUiModel.Rest(buildWorkoutRestRowLabel(state))
+                is WorkoutState.Rest -> SetTableRowUiModel.Rest(
+                    buildWorkoutRestRowLabel(
+                        restState = state,
+                        labelFormat = restRowLabelFormat,
+                    )
+                )
                 is WorkoutState.Set -> {
                     val exerciseIndex = exerciseIndexById[state.exerciseId] ?: return@mapNotNull null
                     val counterKind = displayCounterKindForSetState(state) ?: return@mapNotNull null
@@ -578,12 +586,12 @@ private fun SupersetExecutionPreview(
                     when (val set = state.set) {
                         is WeightSet -> SetTableRowUiModel.Data(
                             identifier = identifier,
-                            primaryValue = "${set.weight} kg",
+                            primaryValue = "${set.weight} $weightUnit",
                             secondaryValue = set.reps.toString()
                         )
                         is BodyWeightSet -> SetTableRowUiModel.Data(
                             identifier = identifier,
-                            primaryValue = if (set.additionalWeight > 0) "${set.additionalWeight} kg" else "-",
+                            primaryValue = if (set.additionalWeight > 0) "${set.additionalWeight} $weightUnit" else emptyValue,
                             secondaryValue = set.reps.toString()
                         )
                         is TimedDurationSet -> SetTableRowUiModel.Data(

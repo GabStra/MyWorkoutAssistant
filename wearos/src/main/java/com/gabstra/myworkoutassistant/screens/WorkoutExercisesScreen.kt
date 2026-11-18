@@ -16,10 +16,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.wear.compose.material3.CircularProgressIndicator
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
@@ -74,7 +76,7 @@ fun WorkoutExercisesScreen(
 
     val exercise = selectedExercise
     if (isHydrating || exercise == null || pageItems.isEmpty()) {
-        FullScreenLoadingIndicator(text = "Loading exercises")
+        FullScreenLoadingIndicator(text = stringResource(R.string.wear_loading_exercises))
         return
     }
 

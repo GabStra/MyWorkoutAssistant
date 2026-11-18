@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -48,13 +49,13 @@ import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.R as SharedR
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.workout.model.IncompleteWorkout
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOptions
 import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
-import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
 import java.time.Duration
 import java.time.LocalDate
@@ -82,8 +83,10 @@ internal fun RecoveryDialog(
     val startedText = uiState.workoutStartTime?.format(
         DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm")
     ).orEmpty()
+    val context = LocalContext.current
     val elapsedText = formatElapsedDuration(
-        workout.workoutHistory.knownDurationSecondsOrNull() ?: 0
+        seconds = workout.workoutHistory.knownDurationSecondsOrNull() ?: 0,
+        context = context,
     )
     var timerChoice by remember(workout.workoutHistory.id) { mutableStateOf(TimerRecoveryChoice.CONTINUE) }
     var calibrationChoice by remember(workout.workoutHistory.id) { mutableStateOf(CalibrationRecoveryChoice.CONTINUE) }
@@ -148,7 +151,7 @@ internal fun RecoveryDialog(
                             transformation = SurfaceTransformation(spec)
                         ) {
                             Text(
-                                text = IncompleteWorkoutStrings.SINGULAR,
+                                text = stringResource(SharedR.string.incomplete_workout_singular),
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -158,7 +161,7 @@ internal fun RecoveryDialog(
 
                     item {
                         RecoveryBodyText(
-                            text = IncompleteWorkoutStrings.RECOVERY_RESUME_OR_DISCARD_BODY,
+                            text = stringResource(SharedR.string.recovery_resume_or_discard_body),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec)
@@ -202,7 +205,7 @@ internal fun RecoveryDialog(
                         }
                         item {
                             RecoverySectionHeader(
-                                text = IncompleteWorkoutStrings.RECOVERY_SECTION_TIMER,
+                                text = stringResource(SharedR.string.recovery_section_timer),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec)
@@ -246,7 +249,7 @@ internal fun RecoveryDialog(
                         }
                         item {
                             RecoverySectionHeader(
-                                text = IncompleteWorkoutStrings.RECOVERY_SECTION_CALIBRATION,
+                                text = stringResource(SharedR.string.recovery_section_calibration),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec)
@@ -302,7 +305,7 @@ internal fun RecoveryDialog(
                             modifier = Modifier.transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                             contentDescription = stringResource(R.string.page_recovery_cd_discard),
-                            text = IncompleteWorkoutStrings.DISCARD_BUTTON,
+                            text = stringResource(SharedR.string.incomplete_workout_discard),
                             colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error,
                                 contentColor = MaterialTheme.colorScheme.onError
@@ -316,7 +319,7 @@ internal fun RecoveryDialog(
                             modifier = Modifier.transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                             contentDescription = stringResource(R.string.page_recovery_cd_dismiss),
-                            text = IncompleteWorkoutStrings.DISMISS_BUTTON,
+                            text = stringResource(SharedR.string.incomplete_workout_dismiss),
                             onClick = onDismiss
                         )
                     }
@@ -440,16 +443,16 @@ private fun OutlinedRecoveryChoiceButton(
 }
 
 @SuppressLint("DefaultLocale")
-private fun formatElapsedDuration(durationSeconds: Int): String {
-    if (durationSeconds <= 0) return ""
-    val duration = Duration.ofSeconds(durationSeconds.toLong())
+private fun formatElapsedDuration(seconds: Int, context: android.content.Context): String {
+    if (seconds <= 0) return ""
+    val duration = Duration.ofSeconds(seconds.toLong())
     val totalHours = duration.toHours()
     val minutes = duration.toMinutesPart()
-    val seconds = duration.toSecondsPart()
+    val remainingSeconds = duration.toSecondsPart()
     return if (totalHours > 0) {
-        String.format("%dh %02dm", totalHours, minutes)
+        context.getString(R.string.components_duration_hours_minutes, totalHours, minutes)
     } else {
-        String.format("%dm %02ds", minutes, seconds)
+        context.getString(R.string.components_duration_minutes_seconds, minutes, remainingSeconds)
     }
 }
 

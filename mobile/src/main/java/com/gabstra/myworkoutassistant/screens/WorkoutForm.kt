@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -101,6 +102,9 @@ fun WorkoutForm(
     workoutPlanId: UUID? = null,
     availableExternalHeartRateSources: Set<HeartRateSource> = emptySet(),
 ) {
+    val context = LocalContext.current
+    val currentLocales = LocalConfiguration.current.locales
+
     // ---- state ----
     val workoutNameState = rememberSaveable { mutableStateOf(workout?.name ?: "") }
     val workoutDescriptionState = rememberSaveable { mutableStateOf(workout?.description ?: "") }
@@ -116,20 +120,22 @@ fun WorkoutForm(
     val selectedWorkoutType = rememberSaveable {
         mutableIntStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING)
     }
-    val workoutTypeItems = remember {
+    val workoutTypeItems = remember(currentLocales, context) {
         WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.entries.map { entry ->
             StandardFilterDropdownItem(
                 value = entry.value,
-                label = entry.key.replace('_', ' ').lowercase(Locale.ROOT)
-                    .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                label = WorkoutTypes.GetStringResourceFromInt(entry.value)
+                    ?.let { context.getString(it) }
+                    ?: entry.key.replace('_', ' ').lowercase(Locale.ROOT)
+                        .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
             )
         }
     }
-    val heartRateSourceItems = remember {
+    val heartRateSourceItems = remember(currentLocales, context) {
         HeartRateSource.entries.map { source ->
             StandardFilterDropdownItem(
                 value = source,
-                label = source.displayName()
+                label = source.localizedLabel(context)
             )
         }
     }
@@ -149,8 +155,6 @@ fun WorkoutForm(
     val newGlobalId = remember { workout?.globalId ?: UUID.randomUUID() }
 
     val scrollState = rememberScrollState()
-    val context = LocalContext.current
-
     Box(modifier = Modifier.fillMaxSize()) {
         BreadcrumbScaffold(
             showTopBarDivider = false,
@@ -284,7 +288,7 @@ fun WorkoutForm(
                                         }
                                     },
                                     enabled = configured || enabled,
-                                    label = { Text(source.displayName()) },
+                                    label = { Text(source.localizedLabel(context)) },
                                 )
                             }
                         }
@@ -297,9 +301,13 @@ fun WorkoutForm(
                                 it.value in enabledHeartRateSourcesState.value
                             }
                         }
-                        val heartRateSourceLabel = remember(enabledItems, heartRateSourceState.value) {
+                        val heartRateSourceLabel = remember(
+                            enabledItems,
+                            heartRateSourceState.value,
+                            context,
+                        ) {
                             enabledItems.firstOrNull { it.value == heartRateSourceState.value }?.label
-                                ?: HeartRateSource.WATCH_SENSOR.displayName()
+                                ?: HeartRateSource.WATCH_SENSOR.localizedLabel(context)
                         }
                         StandardFilterDropdown(
                             label = stringResource(R.string.workout_form_live_source_label),
@@ -403,7 +411,7 @@ fun WorkoutForm(
                                     context,
                                     context.getString(
                                         R.string.workout_form_configure_source_first,
-                                        unconfigured.displayName()
+                                        unconfigured.localizedLabel(context)
                                     ),
                                     Toast.LENGTH_SHORT
                                 ).show()
@@ -658,7 +666,7 @@ fun ScheduleDialog(
                 )
 
                 if (conflicts.isNotEmpty()) {
-                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                    val errorMessage = formatScheduleConflictMessage(context, conflicts)
                     Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                 } else {
                     onSave(newSchedule)
@@ -885,7 +893,8 @@ fun BatchScheduleDialog(
     val context = LocalContext.current
     val selectedTabIndex = rememberSaveable { mutableIntStateOf(0) }
 
-    val labelPrefixState = rememberSaveable { mutableStateOf("Schedule") }
+    val defaultLabelPrefix = stringResource(R.string.workout_form_section_schedule)
+    val labelPrefixState = rememberSaveable { mutableStateOf(defaultLabelPrefix) }
     val isEnabledState = rememberSaveable { mutableStateOf(true) }
 
     val startHourState = rememberSaveable { mutableIntStateOf(8) }
@@ -1117,7 +1126,7 @@ fun BatchScheduleDialog(
                 )
 
                 if (conflicts.isNotEmpty()) {
-                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                    val errorMessage = formatScheduleConflictMessage(context, conflicts)
                     Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                 } else {
                     onSave(list)

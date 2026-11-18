@@ -36,12 +36,14 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -56,8 +58,8 @@ private val MobileConfirmationButtonSize = 72.dp
 @Composable
 fun CustomDialogYesOnLongPress(
     show: Boolean = false,
-    title: String = "Exit workout",
-    message: String = "Do you want to leave this workout?",
+    title: String = stringResource(R.string.loc_exit_workout_title),
+    message: String = stringResource(R.string.loc_exit_workout_message),
     handleNoClick: () -> Unit,
     handleYesClick: () -> Unit,
     closeTimerInMillis: Long = 0,
@@ -218,7 +220,7 @@ fun CustomDialogYesOnLongPress(
 
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Hold check to confirm",
+                        text = stringResource(R.string.loc_hold_check_confirm),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                         style = MaterialTheme.typography.bodyLarge,
@@ -243,7 +245,7 @@ fun CustomDialogYesOnLongPress(
                             Icon(
                                 modifier = Modifier.size(36.dp),
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Close",
+                                contentDescription = stringResource(R.string.common_close),
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -284,7 +286,7 @@ fun CustomDialogYesOnLongPress(
                                 Icon(
                                     modifier = Modifier.size(36.dp),
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = "Done",
+                                    contentDescription = stringResource(R.string.loc_done_cd),
                                     tint = MaterialTheme.colorScheme.onPrimary
                                 )
                             }

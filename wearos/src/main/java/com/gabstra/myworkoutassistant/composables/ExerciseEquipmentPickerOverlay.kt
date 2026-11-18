@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -17,6 +18,7 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import java.util.UUID
 
@@ -76,7 +78,7 @@ fun ExerciseEquipmentPickerOverlay(
                 }
                 item {
                     Text(
-                        text = "Choose equipment",
+                        text = stringResource(R.string.components_choose_equipment),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -91,7 +93,11 @@ fun ExerciseEquipmentPickerOverlay(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp),
-                        text = if (option.isCurrent) "${option.label} (Current)" else option.label,
+                        text = if (option.isCurrent) {
+                            stringResource(R.string.components_current_suffix, option.label)
+                        } else {
+                            option.label
+                        },
                         enabled = !option.isCurrent,
                         onClick = { onSelect(option.equipmentId) }
                     )
@@ -101,7 +107,7 @@ fun ExerciseEquipmentPickerOverlay(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp),
-                        text = "Cancel",
+                        text = stringResource(R.string.components_action_cancel),
                         onClick = onDismiss
                     )
                 }

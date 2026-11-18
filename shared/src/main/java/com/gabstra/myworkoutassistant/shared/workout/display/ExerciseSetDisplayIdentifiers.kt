@@ -14,6 +14,9 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.util.Locale
 import java.util.UUID
 
+/** Canonical English rest-row wording, used by non-localized callers. */
+const val EnglishWorkoutRestRowFormat = "REST %1\$s"
+
 /**
  * Maps a zero-based exercise index within a superset to a letter label (A, B, …, Z, AA, …).
  */
@@ -149,6 +152,10 @@ fun buildUnilateralSideLabel(
  * "ROUND A · SET 2/3 · SIDE L" context line for the active-set header.
  * The counter part is omitted when the exercise's flow has a single set of
  * its kind: "SET 1/1" carries no information.
+ *
+ * Callers that display the label in a localized UI can override the English
+ * wording through the format/label parameters (for example, a localized
+ * "SERIE 1/2" counter label), while other callers keep the English defaults.
  */
 fun buildActiveExerciseContextLabel(
     setCounter: Pair<Int, Int>?,
@@ -157,16 +164,27 @@ fun buildActiveExerciseContextLabel(
     unilateralSideIndex: UInt?,
     intraSetTotal: UInt?,
     supersetRound: String? = null,
+    roundLabelFormat: String = "ROUND %1\$s",
+    setCounterFormat: String = "%1\$s %2\$d/%3\$d",
+    setCounterLabelOverride: String? = null,
+    sideLabelFormat: String = "SIDE %1\$s",
 ): String? = listOfNotNull(
-    supersetRound?.let { "ROUND $it" },
+    supersetRound?.let { String.format(Locale.US, roundLabelFormat, it) },
     setCounter
         ?.takeIf { (_, total) -> total > 1 }
         ?.let { (current, total) ->
-            "${buildActiveSetCounterLabel(setCounterKind, hasWarmupSets)} $current/$total"
+            String.format(
+                Locale.US,
+                setCounterFormat,
+                setCounterLabelOverride
+                    ?: buildActiveSetCounterLabel(setCounterKind, hasWarmupSets),
+                current,
+                total,
+            )
         },
     buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
         ?.removePrefix("-")
-        ?.let { side -> "SIDE $side" }
+        ?.let { side -> String.format(Locale.US, sideLabelFormat, side) }
 ).takeIf { it.isNotEmpty() }?.joinToString(" · ")
 
 /** Same formatting as phone/wear workout timers: MM:SS, or HH:MM:SS if hours > 0. */
@@ -182,6 +200,36 @@ fun formatWorkoutDurationSecondsForDisplay(seconds: Int): String {
 }
 
 fun buildWorkoutRestRowLabel(restState: WorkoutState.Rest): String {
+    return buildWorkoutRestRowLabel(
+        restState = restState,
+        labelFormat = EnglishWorkoutRestRowFormat,
+    )
+}
+
+/**
+ * Rest row label using a caller-supplied format (e.g. a localized
+ * "RECUPERO %1$s" resource). The default overload above keeps the English
+ * wording for non-localized callers.
+ */
+fun buildWorkoutRestRowLabel(
+    restState: WorkoutState.Rest,
+    labelFormat: String,
+): String {
     val seconds = (restState.set as? RestSet)?.timeInSeconds ?: 0
-    return "REST ${formatWorkoutDurationSecondsForDisplay(seconds)}"
+    return formatWorkoutRestRowLabel(seconds, labelFormat)
+}
+
+/**
+ * Rest row label for a planned duration that is not attached to a workout
+ * state (for example, a superset preview or an intra-set rest).
+ */
+fun formatWorkoutRestRowLabel(
+    seconds: Int,
+    labelFormat: String = EnglishWorkoutRestRowFormat,
+): String {
+    return String.format(
+        Locale.US,
+        labelFormat,
+        formatWorkoutDurationSecondsForDisplay(seconds),
+    )
 }

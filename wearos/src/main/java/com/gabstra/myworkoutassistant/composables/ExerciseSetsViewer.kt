@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -44,6 +45,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -55,15 +57,16 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.display.ExerciseSetDisplayRow
 import com.gabstra.myworkoutassistant.shared.workout.display.buildExerciseSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
-import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutRestRowLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutSetDisplayIdentifier
 import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetAwareRowLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutRestRowLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.resolveSupersetExercisePrefix
 import com.gabstra.myworkoutassistant.shared.workout.display.findDisplayRowIndex
 import com.gabstra.myworkoutassistant.shared.workout.display.setLikeIdOrNull
@@ -277,6 +280,10 @@ internal fun ExerciseSetsTableHeader(
     useWeightHeader: Boolean,
 ) {
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
+    val setHeader = stringResource(R.string.components_table_set)
+    val weightHeader = stringResource(R.string.set_label_weight_kg)
+    val repsHeader = stringResource(R.string.set_label_reps)
+    val timeHeader = stringResource(R.string.components_table_time)
 
     if (useWeightHeader) {
         Row(
@@ -287,19 +294,19 @@ internal fun ExerciseSetsTableHeader(
         ) {
             Text(
                 modifier = Modifier.weight(1f),
-                text = "SET",
+                text = setHeader,
                 style = headerStyle,
                 textAlign = TextAlign.Center
             )
             Text(
                 modifier = Modifier.weight(2f),
-                text = "WEIGHT (KG)",
+                text = weightHeader,
                 style = headerStyle,
                 textAlign = TextAlign.Center
             )
             Text(
                 modifier = Modifier.weight(1f),
-                text = "REPS",
+                text = repsHeader,
                 style = headerStyle,
                 textAlign = TextAlign.Center
             )
@@ -313,13 +320,13 @@ internal fun ExerciseSetsTableHeader(
         ) {
             Text(
                 modifier = Modifier.weight(1f),
-                text = "SET",
+                text = setHeader,
                 style = headerStyle,
                 textAlign = TextAlign.Center
             )
             Text(
                 modifier = Modifier.weight(3f),
-                text = "TIME (HH:MM:SS)",
+                text = timeHeader,
                 style = headerStyle,
                 textAlign = TextAlign.Center
             )
@@ -344,6 +351,8 @@ fun SetTableRow(
     itemStyle: TextStyle = MaterialTheme.typography.numeralSmall,
 ) {
     val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
+    val tbdText = stringResource(R.string.components_value_tbd)
+    val bodyWeightAbbrev = stringResource(R.string.set_body_weight_abbrev)
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
     val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
         setState = setState,
@@ -402,9 +411,9 @@ fun SetTableRow(
 
                     val weightText = equipment?.formatWeight(weightSetData.actualWeight) ?: "-"
                     val displayWeightText = when {
-                        shouldHideCalibrationExecutionWeight -> "TBD"
+                        shouldHideCalibrationExecutionWeight -> tbdText
                         isCalibrationSet && setState.isCalibrationSet -> weightText
-                        isPendingCalibration -> "TBD"
+                        isPendingCalibration -> tbdText
                         else -> weightText
                     }
 
@@ -440,12 +449,12 @@ fun SetTableRow(
                     val baseWeightText = if(equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         equipment.formatWeight(bodyWeightSetData.additionalWeight)
                     }else {
-                        "BW"
+                        bodyWeightAbbrev
                     }
                     val displayWeightText = when {
-                        shouldHideCalibrationExecutionWeight -> "TBD"
+                        shouldHideCalibrationExecutionWeight -> tbdText
                         isCalibrationSet && setState.isCalibrationSet && equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> baseWeightText
-                        isPendingCalibration -> "TBD"
+                        isPendingCalibration -> tbdText
                         else -> baseWeightText
                     }
 
@@ -706,6 +715,7 @@ internal fun rememberExercisesPageFittedRows(
     val baseStyle = remember(itemStyle) { pageExercisesBaseTextStyle(itemStyle) }
     val densityValue = density.density
     val fontScale = density.fontScale
+    val restRowFormat = stringResource(R.string.components_rest_row)
     val textFitCache = remember(baseStyle, densityValue, fontScale) {
         mutableMapOf<ExercisesPageTextFitKey, ExercisesPageFittedTextCell>()
     }
@@ -717,6 +727,7 @@ internal fun rememberExercisesPageFittedRows(
         baseStyle,
         densityValue,
         fontScale,
+        restRowFormat,
     ) {
         buildExercisesPageFittedRows(
             preparedRows = preparedRows,
@@ -726,6 +737,7 @@ internal fun rememberExercisesPageFittedRows(
             textMeasurer = textMeasurer,
             density = density,
             cache = textFitCache,
+            restRowFormat = restRowFormat,
         )
     }
 }
@@ -738,6 +750,7 @@ private fun buildExercisesPageFittedRows(
     textMeasurer: TextMeasurer,
     density: Density,
     cache: MutableMap<ExercisesPageTextFitKey, ExercisesPageFittedTextCell>,
+    restRowFormat: String,
 ): ExercisesPageFittedRows {
     val setInnerWidth =
         (rowMaxWidth - ExercisesPageSetRowHorizontalPadding * 2).coerceAtLeast(0.dp)
@@ -794,7 +807,7 @@ private fun buildExercisesPageFittedRows(
             ExercisesPageRowContentType.CalibrationRir -> ExercisesPageFittedRow(
                 key = rowModel.key,
                 centeredText = fitExercisesPageTextCell(
-                    text = rowModel.centeredText.orEmpty(),
+                    text = buildCenteredRowText(rowModel, restRowFormat),
                     containerWidth = centeredWidth,
                     containerHeight = centeredHeight,
                     baseStyle = baseStyle,
@@ -812,6 +825,18 @@ private fun buildExercisesPageFittedRows(
         preparedRows = preparedRows,
         rowsByKey = rows,
     )
+}
+
+private fun buildCenteredRowText(
+    rowModel: ExercisesPageRowModel,
+    restRowFormat: String,
+): String {
+    val restSeconds = rowModel.restSeconds
+    return if (rowModel.contentType == ExercisesPageRowContentType.Rest && restSeconds != null) {
+        formatWorkoutRestRowLabel(restSeconds, restRowFormat)
+    } else {
+        rowModel.centeredText.orEmpty()
+    }
 }
 
 private fun fitExercisesPageTextCell(
@@ -1016,7 +1041,18 @@ internal data class ExercisesPageRowModel(
     val valueText: String? = null,
     val repsText: String? = null,
     val valueWeight: Float = 3f,
-    val centeredText: String? = null
+    val centeredText: String? = null,
+    val restSeconds: Int? = null,
+)
+
+/** Localized labels used by the set-row builders, which are not composable. */
+internal data class ExercisesPageRowLabels(
+    val tbd: String,
+    val bodyWeightAbbrev: String,
+    val calibrationWarmupLabel: String,
+    val pendingCalibrationLoad: String,
+    val selectLoad: String,
+    val setRir: String,
 )
 
 private data class ExercisesPageSetRowTexts(
@@ -1030,6 +1066,7 @@ internal fun buildExercisesPagePreparedRows(
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
     stateToMatch: WorkoutState?,
+    labels: ExercisesPageRowLabels,
 ): ExercisesPagePreparedRows {
     val supersetId = viewModel.supersetIdByExerciseId[exercise.id]
     val displayRows = if (supersetId != null) {
@@ -1057,6 +1094,7 @@ internal fun buildExercisesPagePreparedRows(
                 viewModel = viewModel,
                 loadSelectionState = loadSelectionRow.state,
                 rowIndex = expandedRowIndex,
+                labels = labels,
             )
         } else {
             val displayRow = slot.displayRow
@@ -1069,7 +1107,8 @@ internal fun buildExercisesPagePreparedRows(
                     ?.state
                     ?.exerciseId
                     ?.let { hasUnconfirmedLoadByExerciseId[it] }
-                    ?: false
+                    ?: false,
+                labels = labels,
             )
         }
     }
@@ -1113,18 +1152,22 @@ private fun buildCalibrationWarmupPlaceholderRowModel(
     viewModel: AppViewModel,
     loadSelectionState: WorkoutState.CalibrationLoadSelection,
     rowIndex: Int,
+    labels: ExercisesPageRowLabels,
 ): ExercisesPageRowModel {
     val supersetPrefix = resolveSupersetExercisePrefix(
         viewModel = viewModel,
         exerciseId = loadSelectionState.exerciseId,
     )
-    val setIdentifier = buildCalibrationWarmupPlaceholderSetIdentifier(supersetPrefix)
+    val setIdentifier = buildCalibrationWarmupPlaceholderSetIdentifier(
+        supersetPrefix = supersetPrefix,
+        warmupLabel = labels.calibrationWarmupLabel,
+    )
     return ExercisesPageRowModel(
         rowIndex = rowIndex,
         key = "calibration-warmup-placeholder-${loadSelectionState.exerciseId}-${loadSelectionState.calibrationSet.id}",
         contentType = ExercisesPageRowContentType.Set,
         setIdentifier = setIdentifier,
-        semanticsLabel = "$setIdentifier, pending calibration load",
+        semanticsLabel = "$setIdentifier, ${labels.pendingCalibrationLoad}",
         setText = setIdentifier,
         valueText = "—",
         repsText = "—",
@@ -1133,9 +1176,10 @@ private fun buildCalibrationWarmupPlaceholderRowModel(
 
 internal fun buildCalibrationWarmupPlaceholderSetIdentifier(
     supersetPrefix: String?,
+    warmupLabel: String = "W?",
 ): String = buildSupersetAwareRowLabel(
     supersetPrefix = supersetPrefix,
-    label = "W?",
+    label = warmupLabel,
 )
 
 private fun buildUnilateralSideBadgeByRowIndex(
@@ -1184,6 +1228,7 @@ private fun buildExercisesPageRowModel(
     rowIndex: Int,
     sideBadge: String?,
     hasUnconfirmedLoadSelectionForExercise: Boolean,
+    labels: ExercisesPageRowLabels,
 ): ExercisesPageRowModel {
     return when (displayRow) {
         is ExerciseSetDisplayRow.SetRow -> {
@@ -1202,7 +1247,8 @@ private fun buildExercisesPageRowModel(
             val rowTexts = buildExercisesPageSetRowTexts(
                 viewModel = viewModel,
                 setState = setState,
-                hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
+                hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise,
+                labels = labels,
             )
 
             ExercisesPageRowModel(
@@ -1222,7 +1268,7 @@ private fun buildExercisesPageRowModel(
             rowIndex = rowIndex,
             key = buildExercisesPageRowKey(displayRow, rowIndex),
             contentType = ExercisesPageRowContentType.Rest,
-            centeredText = buildWorkoutRestRowLabel(displayRow.state)
+            restSeconds = (displayRow.state.set as? RestSet)?.timeInSeconds,
         )
 
         is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> ExercisesPageRowModel(
@@ -1234,7 +1280,7 @@ private fun buildExercisesPageRowModel(
                     viewModel = viewModel,
                     exerciseId = displayRow.state.exerciseId
                 ),
-                label = "SELECT LOAD"
+                label = labels.selectLoad
             )
         )
 
@@ -1247,7 +1293,7 @@ private fun buildExercisesPageRowModel(
                     viewModel = viewModel,
                     exerciseId = displayRow.state.exerciseId
                 ),
-                label = "SET RIR"
+                label = labels.setRir
             )
         )
     }
@@ -1257,6 +1303,7 @@ private fun buildExercisesPageSetRowTexts(
     viewModel: AppViewModel,
     setState: WorkoutState.Set,
     hasUnconfirmedLoadSelectionForExercise: Boolean,
+    labels: ExercisesPageRowLabels,
 ): ExercisesPageSetRowTexts {
     val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
@@ -1273,9 +1320,9 @@ private fun buildExercisesPageSetRowTexts(
         is WeightSetData -> {
             val weightText = equipment?.formatWeight(currentSetData.actualWeight) ?: "-"
             val displayWeightText = when {
-                shouldHideCalibrationExecutionWeight -> "TBD"
+                shouldHideCalibrationExecutionWeight -> labels.tbd
                 isCalibrationSet && setState.isCalibrationSet -> weightText
-                isPendingCalibration -> "TBD"
+                isPendingCalibration -> labels.tbd
                 else -> weightText
             }
             ExercisesPageSetRowTexts(
@@ -1289,12 +1336,12 @@ private fun buildExercisesPageSetRowTexts(
             val baseWeightText = if (equipment != null && currentSetData.additionalWeight != 0.0) {
                 equipment.formatWeight(currentSetData.additionalWeight)
             } else {
-                "BW"
+                labels.bodyWeightAbbrev
             }
             val displayWeightText = when {
-                shouldHideCalibrationExecutionWeight -> "TBD"
+                shouldHideCalibrationExecutionWeight -> labels.tbd
                 isCalibrationSet && setState.isCalibrationSet && equipment != null && currentSetData.additionalWeight != 0.0 -> baseWeightText
-                isPendingCalibration -> "TBD"
+                isPendingCalibration -> labels.tbd
                 else -> baseWeightText
             }
             ExercisesPageSetRowTexts(
@@ -1336,6 +1383,7 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
     transformationSpec: TransformationSpec,
     stateToMatch: WorkoutState?,
+    labels: ExercisesPageRowLabels,
     progressState: ProgressState = ProgressState.CURRENT,
     preparedRows: ExercisesPagePreparedRows? = null,
     fittedRows: ExercisesPageFittedRows? = null,
@@ -1346,7 +1394,8 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         viewModel = viewModel,
         exercise = exercise,
         currentSet = currentSet,
-        stateToMatch = stateToMatch
+        stateToMatch = stateToMatch,
+        labels = labels,
     )
     val setIndex = rows.setIndex
 
@@ -1384,7 +1433,10 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
             )
             ExercisesPageRowContentType.Rest -> CenteredLabelRow(
                 modifier = rowModifier,
-                text = rowModel.centeredText.orEmpty(),
+                text = buildCenteredRowText(
+                    rowModel = rowModel,
+                    restRowFormat = stringResource(R.string.components_rest_row),
+                ),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
                 textColor = rowAccentColor,
                 hideSetListRowText = hideSetListRowText,

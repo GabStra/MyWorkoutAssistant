@@ -32,12 +32,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -245,7 +248,7 @@ private fun RestTimerBlock(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
-                        text = "REST",
+                        text = stringResource(R.string.loc_rest_label),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
@@ -255,7 +258,7 @@ private fun RestTimerBlock(
                     )
                     androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(20.dp))
                     Text(
-                        text = "UP NEXT",
+                        text = stringResource(R.string.loc_up_next),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -283,7 +286,7 @@ private fun RestTimerBlock(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         AppPrimaryButton(
-                            text = "Skip",
+                            text = stringResource(R.string.workout_skip),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 viewModel.openCustomDialog()
@@ -343,6 +346,7 @@ fun RestScreen(
     onLeaveWorkout: () -> Unit = {},
     onRestTimerPageVisibilityChanged: (Boolean) -> Unit = {},
 ) {
+    val context = LocalContext.current
     val set = state.set as RestSet
     val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
 
@@ -410,7 +414,7 @@ fun RestScreen(
     CustomHorizontalPager(
         modifier = Modifier.fillMaxSize(),
         pagerState = pagerState,
-        pageLabel = { index -> pageTypes[index].restPageLabel() },
+        pageLabel = { index -> pageTypes[index].restPageLabel(context) },
     ) { pageIndex ->
             val pageType = pageTypes[pageIndex]
 
@@ -471,8 +475,8 @@ fun RestScreen(
 
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
-        title = "Skip rest",
-        message = "Move on to the next set now?",
+        title = stringResource(R.string.loc_skip_rest_title),
+        message = stringResource(R.string.loc_skip_rest_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             skipConfirmAction.value?.invoke()
@@ -498,11 +502,11 @@ fun RestScreen(
     )
 }
 
-private fun PageType.restPageLabel(): String = when (this) {
-    PageType.BUTTONS -> "Workout controls"
-    PageType.PLATES -> "Next barbell setup"
-    PageType.REST_TIMER -> "Rest timer"
-    PageType.EXERCISES -> "Workout steps"
+private fun PageType.restPageLabel(context: android.content.Context): String = when (this) {
+    PageType.BUTTONS -> context.getString(R.string.loc_workout_controls)
+    PageType.PLATES -> context.getString(R.string.loc_next_barbell_setup)
+    PageType.REST_TIMER -> context.getString(R.string.workout_rest_timer_cd)
+    PageType.EXERCISES -> context.getString(R.string.loc_workout_steps)
     else -> name.lowercase().replaceFirstChar { it.uppercase() }
 }
 

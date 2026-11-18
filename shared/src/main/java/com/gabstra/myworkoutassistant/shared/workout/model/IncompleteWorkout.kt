@@ -5,7 +5,7 @@ import java.util.UUID
 
 /**
  * Snapshot of a started-but-not-finished workout (open history + ids) used for Wear recovery
- * and sync. Aligns with [com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings].
+ * and sync. User-visible copy for this flow lives in `strings_recovery.xml`.
  */
 data class IncompleteWorkout(
     val workoutHistory: WorkoutHistory,

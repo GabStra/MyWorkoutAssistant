@@ -19,9 +19,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -40,7 +42,7 @@ fun MoveExercisesToWorkoutDialog(
     if (show) {
         StandardDialog(
             onDismissRequest = onDismiss,
-            title = "Move exercises",
+            title = stringResource(R.string.loc_move_exercises_title),
             body = {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -53,7 +55,7 @@ fun MoveExercisesToWorkoutDialog(
                         MoveTargetEmptyState()
                     } else {
                         Text(
-                            text = "Tap a workout below to move your selected exercises into it.",
+                            text = stringResource(R.string.loc_move_exercises_hint),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxWidth()
@@ -86,7 +88,7 @@ fun MoveExercisesToWorkoutDialog(
                             val orphanTitle = when {
                                 remaining.all { it.workoutPlanId == null } ->
                                     UNASSIGNED_PLAN_NAME
-                                else -> "Other workouts"
+                                else -> stringResource(R.string.loc_other_workouts)
                             }
                             if (!isFirstSection) {
                                 HorizontalDivider(
@@ -106,7 +108,7 @@ fun MoveExercisesToWorkoutDialog(
                 }
             },
             showConfirm = false,
-            dismissText = "Close",
+            dismissText = stringResource(R.string.common_close),
             onDismissButton = onDismiss
         )
     }
@@ -128,13 +130,13 @@ private fun MoveTargetEmptyState() {
             tint = MaterialTheme.colorScheme.tertiaryContent
         )
         Text(
-            text = "No destination yet",
+            text = stringResource(R.string.loc_no_destination_yet),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface
         )
         Text(
-            text = "Add another workout or turn one on, then open this again.",
+            text = stringResource(R.string.loc_add_another_workout_hint),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = Spacing.sm)
@@ -194,7 +196,7 @@ private fun MoveTargetWorkoutRow(
     onMove: (Workout) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val moveLabel = "Move to ${workout.name}"
+    val moveLabel = stringResource(R.string.loc_move_to_workout, workout.name)
     OutlinedCard(
         modifier = Modifier
             .fillMaxWidth()

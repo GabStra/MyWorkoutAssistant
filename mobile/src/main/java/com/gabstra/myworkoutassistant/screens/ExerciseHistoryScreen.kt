@@ -44,12 +44,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.HistoryGraphEmptyState
@@ -176,7 +178,7 @@ fun ExerciseHistoryScreen(
         formatTime(value.toInt()/1000)
     }
 
-    val horizontalAxisValueFormatter = remember(chartWorkoutHistories) {
+    val horizontalAxisValueFormatter = remember(chartWorkoutHistories, dateFormatter) {
         CartesianValueFormatter { _, value, _->
             if(value.toInt() < 0 || value.toInt() >= chartWorkoutHistories.size) return@CartesianValueFormatter "-"
             val currentWorkoutHistory = chartWorkoutHistories[value.toInt()]
@@ -547,7 +549,7 @@ fun ExerciseHistoryScreen(
                     PrimarySurface(modifier = Modifier.padding(Spacing.md)) {
                         Text(
                             modifier = Modifier.padding(Spacing.md),
-                            text = "No history found",
+                            text = stringResource(R.string.loc_ex_no_history_found),
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -563,12 +565,12 @@ fun ExerciseHistoryScreen(
                             isScrollEnabled = !isChartInteractionActive,
                         ) {
                             if (setHistoriesByWorkoutHistoryId.isEmpty()) {
-                                HistoryGraphEmptyState(text = "No history in selected range.")
+                                HistoryGraphEmptyState(text = stringResource(R.string.loc_ex_no_history_in_selected_range))
                             }
                             if (volumeEntryModel != null) {
                                 StandardChart(
                                     cartesianChartModel = volumeEntryModel!!,
-                                    title = "Volume (kg)",
+                                    title = stringResource(R.string.loc_ex_volume_kg),
                                     markerTextFormatter = { formatNumber(it) },
                                     startAxisValueFormatter = volumeAxisValueFormatter,
                                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -581,7 +583,7 @@ fun ExerciseHistoryScreen(
                             if (oneRepMaxEntryModel != null) {
                                 StandardChart(
                                     cartesianChartModel = oneRepMaxEntryModel!!,
-                                    title = "Estimated 1RM / session (kg)",
+                                    title = stringResource(R.string.loc_ex_estimated_1rm_session_kg),
                                     startAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
                                         value.round(2).toString()
                                     },
@@ -595,7 +597,7 @@ fun ExerciseHistoryScreen(
                             if (durationEntryModel != null) {
                                 StandardChart(
                                     cartesianChartModel = durationEntryModel!!,
-                                    title = "Total duration",
+                                    title = stringResource(R.string.history_total_duration),
                                     markerTextFormatter = { value ->
                                         formatTime(value.toInt() / 1000)
                                     },
@@ -610,7 +612,7 @@ fun ExerciseHistoryScreen(
                     }
                     1 -> {
                         if (setHistoriesByWorkoutHistoryId.isEmpty() || selectedWorkoutHistory == null) {
-                            HistoryGraphEmptyState(text = "No history in selected range.")
+                            HistoryGraphEmptyState(text = stringResource(R.string.loc_ex_no_history_in_selected_range))
                             return@Column
                         }
 
@@ -712,7 +714,7 @@ fun ExerciseHistoryScreen(
                                                     superset?.let { buildSupersetDisplayTitle(it.exercises) }
                                                         ?: exercise.name
                                                 } else {
-                                                    "Session performance"
+                                                    stringResource(R.string.loc_ex_session_performance)
                                                 },
                                                 modifier = Modifier.weight(1f),
                                                 maxLines = 2,
@@ -723,14 +725,14 @@ fun ExerciseHistoryScreen(
                                         }
                                         if (performedExerciseName != exercise.name) {
                                             Text(
-                                                text = "Performed: $performedExerciseName",
+                                                text = stringResource(R.string.loc_ex_performed_named, performedExerciseName),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                         }
 
                                         if (hasTarget) {
-                                            ExerciseHistorySection(title = "Targets") {
+                                            ExerciseHistorySection(title = stringResource(R.string.loc_targets)) {
                                                 val lowHr = getHeartRateFromPercentage(
                                                     exercise.lowerBoundMaxHRPercent!!,
                                                     userAge,

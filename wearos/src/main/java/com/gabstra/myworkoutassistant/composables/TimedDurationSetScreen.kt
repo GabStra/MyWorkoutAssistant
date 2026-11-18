@@ -72,6 +72,8 @@ fun TimedDurationSetScreen(
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    val timedDurationValueDescription = stringResource(R.string.components_semantics_timed_duration_value)
+    val timedDurationScreenDescription = stringResource(R.string.components_semantics_timed_duration_set_screen)
     val scope = rememberWearCoroutineScope()
     val equipment = remember(state.equipmentId) { state.equipmentId?.let(viewModel::getEquipmentById) }
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
@@ -482,7 +484,7 @@ fun TimedDurationSetScreen(
                             },
                             onDoubleClick = {}
                         )
-                        .semantics { contentDescription = SetValueSemantics.TimedDurationValueDescription },
+                        .semantics { contentDescription = timedDurationValueDescription },
                     seconds = displayMillis / 1000,
                     style = itemStyle,
                     color = MaterialTheme.colorScheme.onBackground
@@ -533,7 +535,7 @@ fun TimedDurationSetScreen(
                             }
                         }
                     )
-                    .semantics { contentDescription = SetValueSemantics.TimedDurationValueDescription },
+                    .semantics { contentDescription = timedDurationValueDescription },
                 seconds = currentMillis / 1000,
                 style = itemStyle,
                 color = if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
@@ -650,7 +652,7 @@ fun TimedDurationSetScreen(
             modifier = modifier
                 .fillMaxSize()
                 .semantics {
-                contentDescription = SetValueSemantics.TimedDurationSetTypeDescription
+                contentDescription = timedDurationScreenDescription
             }
         ) {
             if (isWeightInEditMode) {
@@ -675,7 +677,10 @@ fun TimedDurationSetScreen(
                     content = {
                         SetValueSection(label = stringResource(R.string.set_label_load), headerStyle = headerStyle) {
                             TightNumericText(
-                                text = currentSet.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" } ?: "-",
+                                text = currentSet.actualWeight?.let {
+                                    equipment?.formatWeight(it)
+                                        ?: stringResource(R.string.components_weight_kg, it)
+                                } ?: "-",
                                 style = itemStyle,
                             )
                         }
@@ -728,7 +733,8 @@ fun TimedDurationSetScreen(
                         currentSet.actualWeight?.let { weight ->
                             LabeledNumericValue(
                                 label = stringResource(R.string.set_load_label),
-                                value = equipment?.formatWeight(weight) ?: "${weight} kg",
+                                value = equipment?.formatWeight(weight)
+                                    ?: stringResource(R.string.components_weight_kg, weight),
                                 style = MaterialTheme.typography.labelMedium,
                                 modifier = Modifier.combinedClickable(
                                     onClick = {},

@@ -21,9 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 
 /**
@@ -50,9 +52,13 @@ fun MinMaxStepperRow(
     maxBound: Int,
     modifier: Modifier = Modifier,
     step: Int = 1,
-    minLabel: String = "Min",
-    maxLabel: String = "Max",
+    minLabel: String = stringResource(R.string.loc_min),
+    maxLabel: String = stringResource(R.string.loc_max),
 ) {
+    val decreaseMinLabel = stringResource(R.string.loc_decrease_label, minLabel)
+    val increaseMinLabel = stringResource(R.string.loc_increase_label, minLabel)
+    val decreaseMaxLabel = stringResource(R.string.loc_decrease_label, maxLabel)
+    val increaseMaxLabel = stringResource(R.string.loc_increase_label, maxLabel)
     fun clampAndOrder(newMin: Int, newMax: Int): Pair<Int, Int> {
         val cMin = newMin.coerceIn(minBound, maxBound)
         val cMax = newMax.coerceIn(minBound, maxBound)
@@ -97,7 +103,7 @@ fun MinMaxStepperRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Decrease $minLabel"
+                    contentDescription = decreaseMinLabel
                 )
             }
             OutlinedTextField(
@@ -131,7 +137,7 @@ fun MinMaxStepperRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowUp,
-                    contentDescription = "Increase $minLabel"
+                    contentDescription = increaseMinLabel
                 )
             }
         }
@@ -159,7 +165,7 @@ fun MinMaxStepperRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Decrease $maxLabel"
+                    contentDescription = decreaseMaxLabel
                 )
             }
             OutlinedTextField(
@@ -193,7 +199,7 @@ fun MinMaxStepperRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowUp,
-                    contentDescription = "Increase $maxLabel"
+                    contentDescription = increaseMaxLabel
                 )
             }
         }
@@ -213,6 +219,8 @@ fun SingleValueStepperRow(
     modifier: Modifier = Modifier,
     step: Int = 1,
 ) {
+    val decreaseValueLabel = stringResource(R.string.loc_decrease_value)
+    val increaseValueLabel = stringResource(R.string.loc_increase_value)
     fun clamp(newValue: Int): Int = newValue.coerceIn(minBound, maxBound)
 
     var valueText by remember { mutableStateOf(value.toString()) }
@@ -235,7 +243,7 @@ fun SingleValueStepperRow(
         ) {
             Icon(
                 imageVector = Icons.Default.KeyboardArrowDown,
-                contentDescription = "Decrease value"
+                contentDescription = decreaseValueLabel
             )
         }
         OutlinedTextField(
@@ -265,7 +273,7 @@ fun SingleValueStepperRow(
         ) {
             Icon(
                 imageVector = Icons.Default.KeyboardArrowUp,
-                contentDescription = "Increase value"
+                contentDescription = increaseValueLabel
             )
         }
     }

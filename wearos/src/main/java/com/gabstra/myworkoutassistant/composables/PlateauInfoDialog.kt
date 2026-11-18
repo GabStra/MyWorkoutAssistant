@@ -14,6 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -23,6 +24,7 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
@@ -32,9 +34,10 @@ fun PlateauInfoDialog(
     reason: String,
     onDismiss: () -> Unit,
     hapticsViewModel: HapticsViewModel? = null,
-    buttonText: String = "Got it",
+    buttonText: String? = null,
     onVisibilityChange: (Boolean) -> Unit = {}
 ) {
+    val resolvedButtonText = buttonText ?: stringResource(R.string.components_action_got_it)
     LaunchedEffect(show) {
         onVisibilityChange(show)
     }
@@ -79,7 +82,7 @@ fun PlateauInfoDialog(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Plateau Detection Details",
+                            text = stringResource(R.string.components_plateau_details_title),
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
@@ -95,7 +98,7 @@ fun PlateauInfoDialog(
                         )
 
                         WearPrimaryButton(
-                            text = buttonText,
+                            text = resolvedButtonText,
                             onClick = {
                                 hapticsViewModel?.doGentleVibration()
                                 onDismiss()

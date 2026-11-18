@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -18,6 +19,7 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
 data class SupersetStartMemberOption(
@@ -80,7 +82,7 @@ fun SupersetStartMemberPickerOverlay(
                 }
                 item {
                     Text(
-                        text = "One movement per slot, rotating in this order",
+                        text = stringResource(R.string.components_superset_rotation_description),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -95,7 +97,11 @@ fun SupersetStartMemberPickerOverlay(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp),
-                        text = if (option.isCurrent) "${option.name} (Current)" else option.name,
+                        text = if (option.isCurrent) {
+                            stringResource(R.string.components_current_suffix, option.name)
+                        } else {
+                            option.name
+                        },
                         enabled = !option.isCurrent,
                         onClick = { onSelect(option.memberIndex) }
                     )
@@ -105,7 +111,7 @@ fun SupersetStartMemberPickerOverlay(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp),
-                        text = "Cancel",
+                        text = stringResource(R.string.components_action_cancel),
                         onClick = onDismiss
                     )
                 }

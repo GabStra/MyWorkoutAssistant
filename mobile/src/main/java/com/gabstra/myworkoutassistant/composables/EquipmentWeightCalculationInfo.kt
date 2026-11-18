@@ -10,9 +10,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -30,9 +31,7 @@ fun EquipmentWeightCalculationInfo(
 ) {
     if (totalWeight <= 0.0) return
 
-    val lines = remember(equipment, totalWeight) {
-        getCalculationLines(equipment, totalWeight)
-    }
+    val lines = getCalculationLines(equipment, totalWeight)
 
     Surface(
         modifier = modifier
@@ -48,7 +47,7 @@ fun EquipmentWeightCalculationInfo(
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
-                text = "How total is calculated",
+                text = stringResource(R.string.loc_how_total_calculated),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -63,6 +62,7 @@ fun EquipmentWeightCalculationInfo(
     }
 }
 
+@Composable
 private fun getCalculationLines(
     equipment: WeightLoadedEquipment,
     totalWeight: Double
@@ -72,49 +72,49 @@ private fun getCalculationLines(
             val plateTotal = (totalWeight - equipment.barWeight).coerceAtLeast(0.0)
             val platePerSide = plateTotal / 2
             listOf(
-                "Formula: total = bar + (plates per side x 2)",
-                "Bar: ${formatWeight(equipment.barWeight)} kg",
-                "Plates per side: ${formatWeight(platePerSide)} kg",
-                "Plates total: ${formatWeight(plateTotal)} kg"
+                stringResource(R.string.loc_formula_barbell),
+                stringResource(R.string.loc_bar_value, formatWeight(equipment.barWeight)),
+                stringResource(R.string.loc_plates_per_side_value, formatWeight(platePerSide)),
+                stringResource(R.string.loc_plates_total_value, formatWeight(plateTotal)),
             )
         }
         is Dumbbells -> {
             val each = totalWeight / 2
             listOf(
-                "Formula: total = one dumbbell x 2",
-                "One dumbbell: ${formatWeight(each)} kg"
+                stringResource(R.string.loc_formula_dumbbells),
+                stringResource(R.string.loc_one_dumbbell_value, formatWeight(each)),
             )
         }
         is PlateLoadedCable -> listOf(
-            "Formula: total = selected plate load",
-            "Selected load: ${formatWeight(totalWeight)} kg"
+            stringResource(R.string.loc_formula_selected_plate_load),
+            stringResource(R.string.loc_selected_load_value, formatWeight(totalWeight)),
         )
         is WeightVest -> listOf(
-            "Formula: total = selected vest load",
-            "Selected load: ${formatWeight(totalWeight)} kg"
+            stringResource(R.string.loc_formula_selected_vest_load),
+            stringResource(R.string.loc_selected_load_value, formatWeight(totalWeight)),
         )
         is Machine -> {
             val includesAddOns = equipment.extraWeights.isNotEmpty()
             listOf(
                 if (includesAddOns) {
-                    "Formula: total = selected stack/load + selected add-on weights"
+                    stringResource(R.string.loc_formula_machine_addons)
                 } else {
-                    "Formula: total = selected stack/load"
+                    stringResource(R.string.loc_formula_machine)
                 },
-                "Selected load: ${formatWeight(totalWeight)} kg"
+                stringResource(R.string.loc_selected_load_value, formatWeight(totalWeight)),
             )
         }
         is Dumbbell -> {
             val includesAddOns = equipment.extraWeights.isNotEmpty()
             listOf(
                 if (includesAddOns) {
-                    "Formula: total = selected dumbbell + selected add-on weights"
+                    stringResource(R.string.loc_formula_dumbbell_addons)
                 } else {
-                    "Formula: total = selected dumbbell"
+                    stringResource(R.string.loc_formula_dumbbell)
                 },
-                "Selected load: ${formatWeight(totalWeight)} kg"
+                stringResource(R.string.loc_selected_load_value, formatWeight(totalWeight)),
             )
         }
-        else -> listOf("Selected load: ${formatWeight(totalWeight)} kg")
+        else -> listOf(stringResource(R.string.loc_selected_load_value, formatWeight(totalWeight)))
     }
 }

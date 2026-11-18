@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -23,16 +24,18 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 
 @Composable
 internal fun PermissionRequestDialog(
     title: String,
     message: String,
-    continueLabel: String = "Continue",
+    continueLabel: String? = null,
     onContinue: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val resolvedContinueLabel = continueLabel ?: stringResource(R.string.page_recovery_continue)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -64,11 +67,11 @@ internal fun PermissionRequestDialog(
                 // Natural button size (like other dialogs) — fillMaxWidth clips
                 // at the round bezel edges.
                 WearPrimaryButton(
-                    text = continueLabel,
+                    text = resolvedContinueLabel,
                     onClick = onContinue,
                 )
                 ButtonWithText(
-                    text = "Not now",
+                    text = stringResource(R.string.components_action_not_now),
                     onClick = onDismiss,
                 )
             }
@@ -114,23 +117,31 @@ internal fun missingWorkoutPermissions(
     ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
 }
 
-internal fun workoutPermissionMessage(permissions: List<String>): String = buildList {
-    if (permissions.any {
-            it == Manifest.permission.BODY_SENSORS ||
-                it == "android.permission.health.READ_HEART_RATE" ||
-                it == "com.samsung.android.hardware.sensormanager.permission.READ_ADDITIONAL_HEALTH_DATA"
+@Composable
+internal fun workoutPermissionMessage(permissions: List<String>): String {
+    val heartRateMessage = stringResource(R.string.components_permission_heart_rate)
+    val bluetoothMessage = stringResource(R.string.components_permission_bluetooth)
+    val locationMessage = stringResource(R.string.components_permission_location)
+    val notificationMessage = stringResource(R.string.components_permission_notifications)
+    val optionalFooter = stringResource(R.string.components_permission_optional_footer)
+    return buildList {
+        if (permissions.any {
+                it == Manifest.permission.BODY_SENSORS ||
+                    it == "android.permission.health.READ_HEART_RATE" ||
+                    it == "com.samsung.android.hardware.sensormanager.permission.READ_ADDITIONAL_HEALTH_DATA"
+            }
+        ) add(heartRateMessage)
+        if (permissions.any {
+                it == Manifest.permission.BLUETOOTH_SCAN ||
+                    it == Manifest.permission.BLUETOOTH_CONNECT
+            }
+        ) add(bluetoothMessage)
+        if (Manifest.permission.ACCESS_FINE_LOCATION in permissions) {
+            add(locationMessage)
         }
-    ) add("Heart-rate access lets the workout record your pulse.")
-    if (permissions.any {
-            it == Manifest.permission.BLUETOOTH_SCAN ||
-                it == Manifest.permission.BLUETOOTH_CONNECT
+        if (Manifest.permission.POST_NOTIFICATIONS in permissions) {
+            add(notificationMessage)
         }
-    ) add("Bluetooth access lets the workout connect to your external heart-rate device.")
-    if (Manifest.permission.ACCESS_FINE_LOCATION in permissions) {
-        add("Location access lets the workout record your route.")
-    }
-    if (Manifest.permission.POST_NOTIFICATIONS in permissions) {
-        add("Notification access lets the workout show its ongoing status.")
-    }
-    add("You can continue without optional access; the related feature may be unavailable.")
-}.joinToString(" ")
+        add(optionalFooter)
+    }.joinToString(" ")
+}

@@ -67,7 +67,7 @@ fun showActiveWorkoutNotification(
     if (timerUiState == null || !timerUiState.isRunning) {
         notificationBuilder
             .setContentText(
-                formatTimerNotificationStatus(timerUiState)
+                formatTimerNotificationStatus(context, timerUiState)
                     ?: context.getString(R.string.notif_tap_to_return),
             )
             .setShowWhen(false)

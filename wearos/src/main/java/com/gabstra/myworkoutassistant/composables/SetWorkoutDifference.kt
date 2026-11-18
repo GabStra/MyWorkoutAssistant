@@ -38,7 +38,7 @@ data class SetDifference(
     val displayText: String
         get() {
             val parts = listOfNotNull(weightText, repsText, durationText)
-            return if (parts.isEmpty()) "No change" else parts.joinToString(" ")
+            return parts.joinToString(" ")
         }
 
     /** Non-empty weight / reps / duration lines with their segment trends (for split rendering). */

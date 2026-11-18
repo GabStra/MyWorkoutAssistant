@@ -119,7 +119,14 @@ fun FadingText(
         Modifier
     }
 
-    Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
+    // Fitting text wraps to its content, so textAlign cannot place it: the Box alignment must.
+    val contentAlignment = when (textAlign) {
+        TextAlign.Start, TextAlign.Left -> Alignment.CenterStart
+        TextAlign.End, TextAlign.Right -> Alignment.CenterEnd
+        else -> Alignment.Center
+    }
+
+    Box(modifier = boxModifier, contentAlignment = contentAlignment) {
         Text(
             text = text,
             style = style,

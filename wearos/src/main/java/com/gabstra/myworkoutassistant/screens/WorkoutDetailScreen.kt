@@ -60,8 +60,8 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.R as SharedR
 import com.gabstra.myworkoutassistant.shared.Workout
-import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import com.gabstra.myworkoutassistant.shared.workout.presentation.orderWorkoutsForPresentation
 import kotlinx.coroutines.delay
 
@@ -225,7 +225,7 @@ fun WorkoutDetailScreen(
     // Show loading screen while checking workout record (with minimum display time to prevent flashing)
     if (showLoading || isCheckingWorkoutRecord) {
         FullScreenLoadingIndicator(
-            text = IncompleteWorkoutStrings.CHECKING_SESSION_PROGRESS,
+            text = stringResource(SharedR.string.incomplete_workout_checking_session_progress),
         )
         return
     }
@@ -323,7 +323,7 @@ fun WorkoutDetailScreen(
                     if (hasWorkoutRecord) {
                         item {
                             Text(
-                                text = IncompleteWorkoutStrings.SINGULAR,
+                                text = stringResource(SharedR.string.incomplete_workout_singular),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec),
@@ -419,7 +419,7 @@ fun WorkoutDetailScreen(
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                text = IncompleteWorkoutStrings.DISCARD_BUTTON,
+                                text = stringResource(SharedR.string.incomplete_workout_discard),
                                 onClick = {
                                     showDeleteDialog = true
                                 }
@@ -446,8 +446,8 @@ fun WorkoutDetailScreen(
 
     CustomDialogYesOnLongPress(
         show = showDeleteDialog,
-        title = IncompleteWorkoutStrings.DELETE_TITLE,
-        message = IncompleteWorkoutStrings.DELETE_MESSAGE,
+        title = stringResource(SharedR.string.incomplete_workout_delete_title),
+        message = stringResource(SharedR.string.incomplete_workout_delete_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.discardCurrentIncompleteWorkout()
@@ -472,8 +472,8 @@ fun WorkoutDetailScreen(
 
     CustomDialogYesOnLongPress(
         show = showStartConfirmationDialog,
-        title = IncompleteWorkoutStrings.START_NEW_WORKOUT_TITLE,
-        message = IncompleteWorkoutStrings.START_NEW_WORKOUT_MESSAGE,
+        title = stringResource(SharedR.string.incomplete_workout_start_new_title),
+        message = stringResource(SharedR.string.incomplete_workout_start_new_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             showStartConfirmationDialog = false

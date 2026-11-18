@@ -22,7 +22,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 
 @Composable
 fun ExpandableContainer(
@@ -69,7 +71,9 @@ fun ExpandableContainer(
                 Icon(
                     modifier = Modifier.padding(horizontal = 14.dp),
                     imageVector = if (openStatus) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (openStatus) "Collapse" else "Expand",
+                    contentDescription = stringResource(
+                        if (openStatus) R.string.loc_collapse else R.string.loc_expand
+                    ),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

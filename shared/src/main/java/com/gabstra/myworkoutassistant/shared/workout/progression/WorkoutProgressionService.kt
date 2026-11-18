@@ -24,6 +24,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set as WorkoutSet
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
+import com.gabstra.myworkoutassistant.shared.utils.PlateauReason
 import com.gabstra.myworkoutassistant.shared.utils.PlateauDetectionHelper
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
@@ -41,7 +42,7 @@ data class SessionDecision(
 
 data class ProgressionGenerationResult(
     val progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
-    val plateauReasonByExerciseId: Map<UUID, String?>
+    val plateauReasonByExerciseId: Map<UUID, PlateauReason?>
 )
 
 class WorkoutProgressionService(
@@ -74,7 +75,7 @@ class WorkoutProgressionService(
         weightsByEquipment: MutableMap<UUID, kotlin.collections.Set<Double>>
     ): ProgressionGenerationResult {
         val progressions = mutableMapOf<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>()
-        val plateauReasons = mutableMapOf<UUID, String?>()
+        val plateauReasons = mutableMapOf<UUID, PlateauReason?>()
         val exercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>() +
             selectedWorkout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
@@ -222,7 +223,7 @@ class WorkoutProgressionService(
         getEquipmentById: (UUID) -> WeightLoadedEquipment?,
         getWeightByEquipment: (WeightLoadedEquipment?) -> kotlin.collections.Set<Double>,
         weightsByEquipment: MutableMap<UUID, kotlin.collections.Set<Double>>,
-        plateauReasonByExerciseId: MutableMap<UUID, String?>
+        plateauReasonByExerciseId: MutableMap<UUID, PlateauReason?>
     ): Pair<DoubleProgressionHelper.Plan, ProgressionState> {
         val repsRange = IntRange(exercise.minReps, exercise.maxReps)
         val baseAvailableWeights = when (exercise.exerciseType) {

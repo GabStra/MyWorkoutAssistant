@@ -14,9 +14,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.notifications.isAppInForeground
 import com.gabstra.myworkoutassistant.notifications.showTimerCompletedNotification
@@ -59,6 +61,11 @@ fun ExerciseDetail(
         isValueEditorVisible = false
         onEditModeDisabled()
     }
+    // Hoisted: the timer-end callbacks below are not composable contexts.
+    val timerFinishedTitle = stringResource(R.string.loc_set_timer_finished)
+    val setFinishedTitle = stringResource(R.string.loc_set_finished)
+    val runFinishedTitle = stringResource(R.string.loc_run_finished)
+    val timeForNextSetMessage = stringResource(R.string.workout_time_for_next_set)
 
     when (updatedState.set) {
         is WeightSet -> {
@@ -143,8 +150,8 @@ fun ExerciseDetail(
                     if (!isAppInForeground()) {
                         showTimerCompletedNotification(
                             context = context,
-                            title = "Set timer finished",
-                            message = "Time for your next set",
+                            title = timerFinishedTitle,
+                            message = timeForNextSetMessage,
                         )
                     }
                     viewModel.storeSetData()
@@ -171,8 +178,8 @@ fun ExerciseDetail(
                 if (!isAppInForeground()) {
                     showTimerCompletedNotification(
                         context = context,
-                        title = "Set finished",
-                        message = "Time for your next set",
+                        title = setFinishedTitle,
+                        message = timeForNextSetMessage,
                     )
                 }
                 viewModel.storeSetData()
@@ -197,8 +204,8 @@ fun ExerciseDetail(
                 if (!isAppInForeground()) {
                     showTimerCompletedNotification(
                         context = context,
-                        title = "Run finished",
-                        message = "Time for your next set",
+                        title = runFinishedTitle,
+                        message = timeForNextSetMessage,
                     )
                 }
                 viewModel.storeSetData()
@@ -223,8 +230,8 @@ fun ExerciseDetail(
                 if (!isAppInForeground()) {
                     showTimerCompletedNotification(
                         context = context,
-                        title = "Set timer finished",
-                        message = "Time for your next set",
+                        title = timerFinishedTitle,
+                        message = timeForNextSetMessage,
                     )
                 }
                 viewModel.storeSetData()
@@ -265,7 +272,7 @@ private fun ExerciseDoneButton(
     ) {
         AppPrimaryButton(
             modifier = Modifier.alpha(if (visible) 1f else 0f),
-            text = "Done",
+            text = stringResource(R.string.loc_done),
             enabled = visible,
             onClick = {
                 hapticsViewModel.doGentleVibration()

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,7 +20,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
@@ -30,11 +33,21 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryOrigin
 import com.gabstra.myworkoutassistant.shared.workout.history.knownDurationSecondsOrNull
 import com.gabstra.myworkoutassistant.shared.workout.history.knownStartTimeOrNull
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.completedWorkoutEndDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+
+@StringRes
+fun WorkoutSessionDisplayLabel.labelRes(): Int = when (this) {
+    WorkoutSessionDisplayLabel.FINISHED_EARLY -> R.string.loc_status_finished_early
+    WorkoutSessionDisplayLabel.IN_PROGRESS -> R.string.loc_status_in_progress
+    WorkoutSessionDisplayLabel.STOPPED_ON_WATCH -> R.string.loc_status_stopped_on_watch
+    WorkoutSessionDisplayLabel.STALE_ON_WATCH -> R.string.loc_status_stale_on_watch
+    WorkoutSessionDisplayLabel.INTERRUPTED -> R.string.loc_status_interrupted
+}
 
 @Composable
 fun WorkoutHistoryCard(
@@ -62,7 +75,7 @@ fun WorkoutHistoryCard(
         ) {
             Icon(
                 imageVector = Icons.Filled.Info,
-                contentDescription = "View details",
+                contentDescription = stringResource(R.string.loc_view_details_cd),
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onBackground
             )
@@ -106,21 +119,21 @@ fun WorkoutHistoryCard(
                 )
                 durationSeconds?.takeIf { startTime == null }?.let { duration ->
                     SessionInfoPill(
-                        text = "Duration ${formatTime(duration)}",
+                        text = stringResource(R.string.loc_duration_value, formatTime(duration)),
                         backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 workoutSessionDisplayLabel(sessionStatus)?.let { label ->
                     SessionInfoPill(
-                        text = label,
+                        text = stringResource(label.labelRes()),
                         backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 completedWorkoutEndDisplayLabel(workoutHistory)?.let { label ->
                     SessionInfoPill(
-                        text = label,
+                        text = stringResource(label.labelRes()),
                         backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -157,8 +170,8 @@ fun WorkoutHistoryOriginDetails(
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SessionInfoPill(
             text = when (workoutHistory.origin) {
-                WorkoutHistoryOrigin.RECORDED -> "Recorded"
-                WorkoutHistoryOrigin.USER_IMPORTED -> "User imported"
+                WorkoutHistoryOrigin.RECORDED -> stringResource(R.string.loc_recorded)
+                WorkoutHistoryOrigin.USER_IMPORTED -> stringResource(R.string.loc_user_imported)
             },
             backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,

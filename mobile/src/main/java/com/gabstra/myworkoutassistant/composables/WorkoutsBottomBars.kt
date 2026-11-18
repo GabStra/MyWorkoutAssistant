@@ -51,9 +51,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Red
@@ -95,6 +97,13 @@ fun WorkoutsBottomBar(
     canManageRecurringSession: Boolean = false,
     onManageRecurringSession: () -> Unit = {},
 ) {
+    val closeLabel = stringResource(R.string.common_close)
+    val selectAllLabel = stringResource(R.string.loc_select_all)
+    val deselectAllLabel = stringResource(R.string.loc_deselect_all)
+    val deleteLabel = stringResource(R.string.common_delete)
+    val cancelLabel = stringResource(R.string.common_cancel)
+    val moveUpLabel = stringResource(R.string.workout_move_up_cd)
+    val moveDownLabel = stringResource(R.string.workout_move_down_cd)
     if (isSelectionModeActive) {
         var showDeleteConfirmation by remember(selectedWorkouts) { mutableStateOf(false) }
         Column {
@@ -130,12 +139,12 @@ fun WorkoutsBottomBar(
                                     }) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Close",
+                                            contentDescription = closeLabel,
                                             tint = Red
                                         )
                                     }
                                     Text(
-                                        "Close",
+                                        closeLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -151,12 +160,12 @@ fun WorkoutsBottomBar(
                                     }) {
                                         Icon(
                                             imageVector = Icons.Filled.CheckBox,
-                                            contentDescription = "Select all",
+                                            contentDescription = selectAllLabel,
                                             tint = MaterialTheme.colorScheme.onBackground
                                         )
                                     }
                                     Text(
-                                        "Select all",
+                                        selectAllLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -172,12 +181,12 @@ fun WorkoutsBottomBar(
                                     }) {
                                         Icon(
                                             imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                            contentDescription = "Deselect all",
+                                            contentDescription = deselectAllLabel,
                                             tint = MaterialTheme.colorScheme.onBackground
                                         )
                                     }
                                     Text(
-                                        "Deselect all",
+                                        deselectAllLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -195,12 +204,12 @@ fun WorkoutsBottomBar(
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Edit,
-                                                contentDescription = "Manage prescriptions",
+                                                contentDescription = stringResource(R.string.loc_manage_prescriptions),
                                                 tint = MaterialTheme.colorScheme.onBackground,
                                             )
                                         }
                                         Text(
-                                            "Manage prescriptions",
+                                            stringResource(R.string.loc_manage_prescriptions),
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center,
                                             maxLines = 2,
@@ -225,12 +234,12 @@ fun WorkoutsBottomBar(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.ArrowUpward,
-                                            contentDescription = "Move Up",
+                                            contentDescription = moveUpLabel,
                                             tint = MaterialTheme.colorScheme.onBackground
                                         )
                                     }
                                     Text(
-                                        "Move Up",
+                                        moveUpLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -251,12 +260,12 @@ fun WorkoutsBottomBar(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.ArrowDownward,
-                                            contentDescription = "Move Down",
+                                            contentDescription = moveDownLabel,
                                             tint = MaterialTheme.colorScheme.onBackground
                                         )
                                     }
                                     Text(
-                                        "Move Down",
+                                        moveDownLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -283,12 +292,12 @@ fun WorkoutsBottomBar(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Delete,
-                                            contentDescription = "Delete",
+                                            contentDescription = deleteLabel,
                                             tint = MaterialTheme.colorScheme.onBackground
                                         )
                                     }
                                     Text(
-                                        "Delete",
+                                        deleteLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -310,11 +319,11 @@ fun WorkoutsBottomBar(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.CheckCircle,
-                                            contentDescription = "Enable",
+                                            contentDescription = stringResource(R.string.loc_enable),
                                         )
                                     }
                                     Text(
-                                        "Enable",
+                                        stringResource(R.string.loc_enable),
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -336,11 +345,11 @@ fun WorkoutsBottomBar(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.Block,
-                                            contentDescription = "Disable",
+                                            contentDescription = stringResource(R.string.loc_disable),
                                         )
                                     }
                                     Text(
-                                        "Disable",
+                                        stringResource(R.string.loc_disable),
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -358,12 +367,12 @@ fun WorkoutsBottomBar(
                                     ) {
                                         Icon(
                                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                            contentDescription = "Move",
+                                            contentDescription = stringResource(R.string.loc_move),
                                             tint = MaterialTheme.colorScheme.onBackground
                                         )
                                     }
                                     Text(
-                                        "Move",
+                                        stringResource(R.string.loc_move),
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -390,7 +399,7 @@ fun WorkoutsBottomBar(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.ChevronRight,
-                                        contentDescription = "Scroll right",
+                                        contentDescription = stringResource(R.string.loc_scroll_right),
                                         tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
@@ -414,7 +423,7 @@ fun WorkoutsBottomBar(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.ChevronLeft,
-                                        contentDescription = "Scroll left",
+                                        contentDescription = stringResource(R.string.loc_scroll_left),
                                         tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
@@ -425,16 +434,16 @@ fun WorkoutsBottomBar(
             ConfirmationDialog(
                 show = showDeleteConfirmation,
                 title = if (selectedWorkouts.size == 1) {
-                    "Delete \"${selectedWorkouts.first().name}\"?"
+                    stringResource(R.string.loc_delete_named, selectedWorkouts.first().name)
                 } else {
-                    "Delete ${selectedWorkouts.size} workouts?"
+                    stringResource(R.string.loc_delete_workouts, selectedWorkouts.size)
                 },
                 message = if (selectedWorkouts.size == 1) {
-                    "This removes the workout and its history from your mobile app. This action cannot be undone."
+                    stringResource(R.string.loc_delete_workout_message)
                 } else {
-                    "This removes the selected workouts and their history from your mobile app. This action cannot be undone."
+                    stringResource(R.string.loc_delete_workouts_message)
                 },
-                confirmText = "Delete",
+                confirmText = deleteLabel,
                 isDestructive = true,
                 onConfirm = {
                     appViewModel.deleteWorkouts(selectedWorkouts.map { it.id }.toSet())
@@ -473,15 +482,18 @@ fun AccessoriesBottomBar(
     onSelectionModeChange: (Boolean) -> Unit,
     isSelectionModeActive: Boolean
 ) {
+    val cancelSelectionLabel = stringResource(R.string.loc_cancel_selection)
+    val selectAllLabel = stringResource(R.string.loc_select_all)
+    val deselectAllLabel = stringResource(R.string.loc_deselect_all)
+    val deleteLabel = stringResource(R.string.common_delete)
+    val cancelLabel = stringResource(R.string.common_cancel)
     if (isSelectionModeActive) {
         var showDeleteConfirmation by remember { mutableStateOf(false) }
         val accessoryToDelete = selectedAccessories.singleOrNull()
-        val deleteMessage = remember(selectedAccessories, appViewModel.workouts) {
-            buildAccessoryDeleteConfirmationMessage(
-                selectedAccessories = selectedAccessories,
-                workouts = appViewModel.workouts
-            )
-        }
+        val deleteMessage = buildAccessoryDeleteConfirmationMessage(
+            selectedAccessories = selectedAccessories,
+            workouts = appViewModel.workouts
+        )
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             BottomAppBar(
@@ -503,12 +515,12 @@ fun AccessoriesBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "Cancel selection",
+                                    contentDescription = cancelSelectionLabel,
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Text(
-                                "Cancel selection",
+                                cancelSelectionLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -522,12 +534,12 @@ fun AccessoriesBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Filled.CheckBox,
-                                    contentDescription = "Select all",
+                                    contentDescription = selectAllLabel,
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Text(
-                                "Select all",
+                                selectAllLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -541,12 +553,12 @@ fun AccessoriesBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                    contentDescription = "Deselect all",
+                                    contentDescription = deselectAllLabel,
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Text(
-                                "Deselect all",
+                                deselectAllLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -571,12 +583,12 @@ fun AccessoriesBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete",
+                                    contentDescription = deleteLabel,
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Text(
-                                "Delete",
+                                deleteLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -587,14 +599,16 @@ fun AccessoriesBottomBar(
             if (showDeleteConfirmation) {
                 StandardDialog(
                     onDismissRequest = { showDeleteConfirmation = false },
-                    title = accessoryToDelete?.let { "Delete Accessory \"${it.name}\"?" } ?: "Delete Accessory",
+                    title = accessoryToDelete?.let {
+                        stringResource(R.string.loc_delete_accessory_named, it.name)
+                    } ?: stringResource(R.string.loc_delete_accessory),
                     body = {
                         Text(
                             text = deleteMessage,
                             style = MaterialTheme.typography.bodyMedium
                         )
                     },
-                    confirmText = "Delete",
+                    confirmText = deleteLabel,
                     onConfirm = {
                         val selectedAccessory = accessoryToDelete ?: return@StandardDialog
                         val newAccessories = accessories.filter { item ->
@@ -605,7 +619,7 @@ fun AccessoriesBottomBar(
                         onSelectionModeChange(false)
                         showDeleteConfirmation = false
                     },
-                    dismissText = "Cancel",
+                    dismissText = cancelLabel,
                     onDismissButton = {
                         showDeleteConfirmation = false
                     }
@@ -625,15 +639,20 @@ fun EquipmentsBottomBar(
     onSelectionModeChange: (Boolean) -> Unit,
     isSelectionModeActive: Boolean
 ) {
+    val closeLabel = stringResource(R.string.common_close)
+    val selectAllLabel = stringResource(R.string.loc_select_all)
+    val deselectAllLabel = stringResource(R.string.loc_deselect_all)
+    val deleteLabel = stringResource(R.string.common_delete)
+    val cancelLabel = stringResource(R.string.common_cancel)
+    val copyLabel = stringResource(R.string.loc_copy)
+    val copySuffix = stringResource(R.string.loc_copy_suffix)
     if (isSelectionModeActive) {
         var showDeleteConfirmation by remember { mutableStateOf(false) }
         val equipmentToDelete = selectedEquipments.singleOrNull()
-        val deleteMessage = remember(selectedEquipments, appViewModel.workouts) {
-            buildEquipmentDeleteConfirmationMessage(
-                selectedEquipments = selectedEquipments,
-                workouts = appViewModel.workouts
-            )
-        }
+        val deleteMessage = buildEquipmentDeleteConfirmationMessage(
+            selectedEquipments = selectedEquipments,
+            workouts = appViewModel.workouts
+        )
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             BottomAppBar(
@@ -655,12 +674,12 @@ fun EquipmentsBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "Close",
+                                    contentDescription = closeLabel,
                                     tint = Red
                                 )
                             }
                             Text(
-                                "Close",
+                                closeLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -674,12 +693,12 @@ fun EquipmentsBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Filled.CheckBox,
-                                    contentDescription = "Select all",
+                                    contentDescription = selectAllLabel,
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Text(
-                                "Select all",
+                                selectAllLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -693,12 +712,12 @@ fun EquipmentsBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                    contentDescription = "Deselect all",
+                                    contentDescription = deselectAllLabel,
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Text(
-                                "Deselect all",
+                                deselectAllLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -722,14 +741,14 @@ fun EquipmentsBottomBar(
                                         EquipmentType.GENERIC -> throw NotImplementedError()
                                         EquipmentType.BARBELL -> Barbell(
                                             id = UUID.randomUUID(),
-                                            name = it.name + " (Copy)",
+                                            name = it.name + copySuffix,
                                             availablePlates = (it as Barbell).availablePlates,
                                             sleeveLength = it.sleeveLength,
                                             barWeight = it.barWeight
                                         )
                                         EquipmentType.DUMBBELLS -> Dumbbells(
                                             UUID.randomUUID(),
-                                            it.name + " (Copy)",
+                                            it.name + copySuffix,
                                             (it as Dumbbells).availableDumbbells,
                                             it.extraWeights,
                                             it.maxExtraWeightsPerLoadingPoint
@@ -740,7 +759,7 @@ fun EquipmentsBottomBar(
                                         EquipmentType.MACHINE -> throw NotImplementedError("Machine equipment copying not yet implemented")
                                         EquipmentType.CARDIO_MACHINE -> CardioMachine(
                                             id = UUID.randomUUID(),
-                                            name = it.name + " (Copy)"
+                                            name = it.name + copySuffix
                                         )
                                         EquipmentType.IRONNECK -> throw NotImplementedError("IronNeck equipment copying not yet implemented")
                                         EquipmentType.ACCESSORY -> throw IllegalArgumentException("Accessories cannot be copied here")
@@ -754,12 +773,12 @@ fun EquipmentsBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy",
+                                    contentDescription = copyLabel,
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Text(
-                                "Copy",
+                                copyLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -775,12 +794,12 @@ fun EquipmentsBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete",
+                                    contentDescription = deleteLabel,
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Text(
-                                "Delete",
+                                deleteLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )
@@ -791,14 +810,16 @@ fun EquipmentsBottomBar(
             if (showDeleteConfirmation) {
                 StandardDialog(
                     onDismissRequest = { showDeleteConfirmation = false },
-                    title = equipmentToDelete?.let { "Delete Equipment \"${it.name}\"?" } ?: "Delete Equipment",
+                    title = equipmentToDelete?.let {
+                        stringResource(R.string.loc_delete_equipment_named, it.name)
+                    } ?: stringResource(R.string.loc_delete_equipment),
                     body = {
                         Text(
                             text = deleteMessage,
                             style = MaterialTheme.typography.bodyMedium
                         )
                     },
-                    confirmText = "Delete",
+                    confirmText = deleteLabel,
                     onConfirm = {
                         val selectedEquipment = equipmentToDelete ?: return@StandardDialog
                         val newEquipments = equipments.filter { item ->
@@ -809,7 +830,7 @@ fun EquipmentsBottomBar(
                         onSelectionModeChange(false)
                         showDeleteConfirmation = false
                     },
-                    dismissText = "Cancel",
+                    dismissText = cancelLabel,
                     onDismissButton = {
                         showDeleteConfirmation = false
                     }
@@ -824,6 +845,7 @@ private data class ExerciseUsage(
     val exerciseName: String
 )
 
+@Composable
 private fun buildAccessoryDeleteConfirmationMessage(
     selectedAccessories: List<AccessoryEquipment>,
     workouts: List<Workout>
@@ -840,14 +862,15 @@ private fun buildAccessoryDeleteConfirmationMessage(
     }
 
     val usageText = if (usageLines.isEmpty()) {
-        "Not currently used in any workout."
+        stringResource(R.string.loc_not_used_in_any_workout)
     } else {
-        "Used by:\n${usageLines.joinToString("\n")}"
+        stringResource(R.string.loc_used_by, usageLines.joinToString("\n"))
     }
 
     return usageText
 }
 
+@Composable
 private fun buildEquipmentDeleteConfirmationMessage(
     selectedEquipments: List<WeightLoadedEquipment>,
     workouts: List<Workout>
@@ -864,9 +887,9 @@ private fun buildEquipmentDeleteConfirmationMessage(
     }
 
     val usageText = if (usageLines.isEmpty()) {
-        "Not currently used in any workout."
+        stringResource(R.string.loc_not_used_in_any_workout)
     } else {
-        "Used by:\n${usageLines.joinToString("\n")}"
+        stringResource(R.string.loc_used_by, usageLines.joinToString("\n"))
     }
 
     return usageText

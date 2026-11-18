@@ -14,6 +14,7 @@ import android.location.LocationManager
 import android.os.SystemClock
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.StringRes
 import androidx.core.app.NotificationCompat
 import androidx.health.services.client.ExerciseClient
 import androidx.health.services.client.ExerciseUpdateCallback
@@ -40,6 +41,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.CopyOnWriteArrayList
 
+enum class RunningTrackingError(@StringRes val messageResId: Int) {
+    HEALTH_SERVICES_REGISTRATION_FAILED(R.string.wear_running_error_health_services_failed),
+    START_FAILED(R.string.wear_running_error_start_failed),
+}
+
 data class RunningTrackingState(
     val running: Boolean = false,
     val paused: Boolean = false,
@@ -48,7 +54,8 @@ data class RunningTrackingState(
     val heartRates: List<Int> = emptyList(),
     val route: List<RunningRoutePoint> = emptyList(),
     val locationAvailable: Boolean = false,
-    val errorMessage: String? = null,
+    val error: RunningTrackingError? = null,
+    val errorDiagnostic: String? = null,
 )
 
 /** Owns the Health Services exercise beyond the lifetime of the workout screen. */
@@ -109,7 +116,10 @@ class RunningTrackingService : Service() {
         override fun onLapSummaryReceived(lapSummary: ExerciseLapSummary) = Unit
         override fun onRegistered() = Unit
         override fun onRegistrationFailed(throwable: Throwable) {
-            _state.value = _state.value.copy(errorMessage = throwable.message ?: getString(R.string.run_health_tracking_failed))
+            _state.value = _state.value.copy(
+                error = RunningTrackingError.HEALTH_SERVICES_REGISTRATION_FAILED,
+                errorDiagnostic = throwable.message,
+            )
         }
         override fun onAvailabilityChanged(dataType: DataType<*, *>, availability: androidx.health.services.client.data.Availability) = Unit
     }
@@ -196,7 +206,11 @@ class RunningTrackingService : Service() {
             _state.value = RunningTrackingState(running = true)
         } catch (exception: Exception) {
             Log.e(TAG, "Unable to start Health Services run", exception)
-            _state.value = _state.value.copy(running = false, errorMessage = exception.message ?: getString(R.string.run_start_tracking_failed))
+            _state.value = _state.value.copy(
+                running = false,
+                error = RunningTrackingError.START_FAILED,
+                errorDiagnostic = exception.message,
+            )
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }

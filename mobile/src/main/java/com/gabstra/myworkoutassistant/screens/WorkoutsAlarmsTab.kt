@@ -21,9 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -107,7 +109,7 @@ fun WorkoutsAlarmsTab(
                 Text(
                     modifier = Modifier
                         .padding(Spacing.md),
-                    text = "No alarms yet.",
+                    text = stringResource(R.string.workout_form_no_alarms_body),
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
                 )
@@ -124,7 +126,10 @@ fun WorkoutsAlarmsTab(
         ) {
             // Bulk toggle button - only show if there are schedules for available workouts
             AppPrimaryButton(
-                text = if (hasBulkDisabledSchedules) "Turn alarms back on" else "Turn off all alarms",
+                text = stringResource(
+                    if (hasBulkDisabledSchedules) R.string.loc_scr_turn_alarms_on
+                    else R.string.loc_scr_turn_alarms_off
+                ),
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
                     scope.launch(Dispatchers.IO) {

@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntSize
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.running.formatRunningMapScaleDistance
 import com.gabstra.myworkoutassistant.shared.running.niceRunningMapScaleDistance
 import com.gabstra.myworkoutassistant.shared.running.RunningRoutePoint
+import com.gabstra.myworkoutassistant.R
 import kotlin.math.cos
 import kotlin.math.floor
 
@@ -57,6 +59,7 @@ fun RunningRouteMap(
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
+    val routeMapDescription = stringResource(R.string.loc_route_map_cd, route.size)
 
     Canvas(
         modifier = modifier
@@ -75,7 +78,7 @@ fun RunningRouteMap(
                 }
             }
             .semantics {
-                contentDescription = "Zoomable GPS route map, ${route.size} points, start and finish marked"
+                contentDescription = routeMapDescription
             }
     ) {
         if (route.size < 2 || mapSize.width <= 0 || mapSize.height <= 0) return@Canvas

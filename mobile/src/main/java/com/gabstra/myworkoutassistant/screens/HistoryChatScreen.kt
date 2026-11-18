@@ -60,7 +60,9 @@ import com.gabstra.myworkoutassistant.insights.InsightTokenCounter
 import com.gabstra.myworkoutassistant.insights.HistoryChatLimits
 import com.gabstra.myworkoutassistant.insights.HistoryChatMessage
 import com.gabstra.myworkoutassistant.insights.HistoryChatMessageRole
+import com.gabstra.myworkoutassistant.insights.WorkoutHistoryChatFailureReason
 import com.gabstra.myworkoutassistant.insights.WorkoutHistoryChatPrepareResult
+import com.gabstra.myworkoutassistant.insights.WorkoutHistoryChatTitle
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsToolContext
 import com.gabstra.myworkoutassistant.insights.prepareExerciseHistoryChatContext
@@ -68,6 +70,7 @@ import com.gabstra.myworkoutassistant.insights.prepareWorkoutSessionHistoryChatC
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightMarkdown
 import com.gabstra.myworkoutassistant.insights.selectConversationWindowMessages
 import com.gabstra.myworkoutassistant.insights.settledMarkdownPrefix
+import com.gabstra.myworkoutassistant.insights.stripAppGeneratedInsightMarkup
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -84,6 +87,7 @@ import java.util.UUID
 /**
  * Debug logs for history chat LLM I/O. Filter: `adb logcat -s HistoryChatScreen`.
  * Only runs when the app is debuggable (typical `debug` install; not Play release).
+ * Prepare failures are diagnostics-only and are also logged in release builds.
  *
  * Each send uses an `id=` short UUID so request chunks and assistant output lines match in logcat.
  */
@@ -128,6 +132,16 @@ private object HistoryChatScreenLog {
         Log.e(TAG, "llm_failure id=$interactionId ${e.javaClass.simpleName}: ${e.message}", e)
     }
 
+    fun prepareFailure(
+        mode: HistoryChatScreenMode,
+        reason: WorkoutHistoryChatFailureReason,
+        diagnostic: String,
+    ) {
+        // Diagnostics-only content (reason plus app-generated detail), safe to keep in
+        // release logs while the user-facing text stays localized.
+        Log.e(TAG, "prepare_failure mode=$mode reason=$reason diagnostic=$diagnostic")
+    }
+
     fun assistantMarkdown(
         appContext: Context,
         interactionId: String,
@@ -136,11 +150,13 @@ private object HistoryChatScreenLog {
         rawMarkdown: String,
     ) {
         if (!isDebuggable(appContext)) return
+        // Logs must stay marker-free even if a display variant ever reaches this boundary.
+        val markdown = rawMarkdown.stripAppGeneratedInsightMarkup()
         Log.d(
             TAG,
-            "assistant_markdown id=$interactionId turn=$turn mode=$mode length=${rawMarkdown.length}",
+            "assistant_markdown id=$interactionId turn=$turn mode=$mode length=${markdown.length}",
         )
-        logChunked("assistant_markdown_raw", interactionId, rawMarkdown)
+        logChunked("assistant_markdown_raw", interactionId, markdown)
     }
 
     private fun logChunked(label: String, interactionId: String, text: String) {
@@ -180,6 +196,26 @@ private sealed class HistoryChatPrepareUi {
     ) : HistoryChatPrepareUi()
 
     data class Error(val message: String) : HistoryChatPrepareUi()
+}
+
+private fun WorkoutHistoryChatTitle.localized(context: Context): String = when (this) {
+    is WorkoutHistoryChatTitle.Exercise ->
+        context.getString(R.string.loc_chat_title_exercise, exerciseName)
+    WorkoutHistoryChatTitle.WorkoutSession ->
+        context.getString(R.string.loc_chat_title_workout_session)
+}
+
+private fun WorkoutHistoryChatFailureReason.localized(context: Context): String = when (this) {
+    WorkoutHistoryChatFailureReason.WORKOUT_NOT_FOUND ->
+        context.getString(R.string.history_workout_not_found)
+    WorkoutHistoryChatFailureReason.EXERCISE_NOT_FOUND ->
+        context.getString(R.string.history_exercise_not_found)
+    WorkoutHistoryChatFailureReason.EXERCISE_HISTORY_UNAVAILABLE ->
+        context.getString(R.string.loc_chat_error_exercise_history_unavailable)
+    WorkoutHistoryChatFailureReason.WORKOUT_SESSION_UNAVAILABLE ->
+        context.getString(R.string.loc_chat_error_workout_session_unavailable)
+    WorkoutHistoryChatFailureReason.CHAT_PREPARATION_FAILED ->
+        context.getString(R.string.loc_chat_error_preparation_failed)
 }
 
 private fun buildHistoryChatIntroMessage(context: Context): HistoryChatMessage =
@@ -265,11 +301,13 @@ fun HistoryChatScreen(
                 is HistoryChatScreenMode.Exercise -> {
                     val workout = workouts.find { it.id == mode.workoutId }
                         ?: return@withContext WorkoutHistoryChatPrepareResult.Failure(
-                            context.getString(R.string.history_workout_not_found)
+                            reason = WorkoutHistoryChatFailureReason.WORKOUT_NOT_FOUND,
+                            diagnostic = "Workout ${mode.workoutId} not found",
                         )
                     val exercise = appViewModel.getExerciseById(workout, mode.exerciseId)
                         ?: return@withContext WorkoutHistoryChatPrepareResult.Failure(
-                            context.getString(R.string.history_exercise_not_found)
+                            reason = WorkoutHistoryChatFailureReason.EXERCISE_NOT_FOUND,
+                            diagnostic = "Exercise ${mode.exerciseId} not found in workout ${mode.workoutId}",
                         )
                     prepareExerciseHistoryChatContext(
                         exercise = exercise,
@@ -295,19 +333,27 @@ fun HistoryChatScreen(
             }
         }
         prepareUi = when (result) {
-            is WorkoutHistoryChatPrepareResult.Failure ->
-                HistoryChatPrepareUi.Error(result.message)
-            is WorkoutHistoryChatPrepareResult.Ready ->
+            is WorkoutHistoryChatPrepareResult.Failure -> {
+                HistoryChatScreenLog.prepareFailure(
+                    mode = mode,
+                    reason = result.reason,
+                    diagnostic = result.diagnostic,
+                )
+                HistoryChatPrepareUi.Error(result.reason.localized(context))
+            }
+            is WorkoutHistoryChatPrepareResult.Ready -> {
+                val localizedTitle = result.title.localized(context)
                 HistoryChatPrepareUi.Ready(
-                    title = result.title,
+                    title = localizedTitle,
                     requestBase = WorkoutInsightsRequest(
-                        title = result.title,
+                        title = localizedTitle,
                         prompt = "",
                         systemPrompt = result.systemPrompt,
                         toolContext = result.toolContext,
                         useTransportToolCalling = true,
                     ),
                 )
+            }
         }
     }
 
@@ -347,12 +393,14 @@ fun HistoryChatScreen(
                 request = request,
             )
             var lastText = ""
+            var lastDisplayText = ""
             try {
                 insightsEngine.generateInsights(request).collect { chunk ->
                     lastText = chunk.text
+                    lastDisplayText = chunk.displayText ?: chunk.text
                     // Reveal only complete markdown lines while streaming; the finished
                     // reply below replaces this with the full post-processed text.
-                    streamedReply = settledMarkdownPrefix(chunk.text)
+                    streamedReply = settledMarkdownPrefix(lastDisplayText)
                 }
                 val reply = lastText.ifBlank { context.getString(R.string.history_no_reply) }
                 HistoryChatScreenLog.assistantMarkdown(
@@ -362,7 +410,15 @@ fun HistoryChatScreen(
                     mode = mode,
                     rawMarkdown = reply,
                 )
-                messages = messages + HistoryChatMessage(role = HistoryChatMessageRole.Assistant, content = reply)
+                // Store the marker-free canonical text for the model boundary; keep the tagged
+                // variant only as an in-memory display hint for this bubble.
+                messages = messages + HistoryChatMessage(
+                    role = HistoryChatMessageRole.Assistant,
+                    content = reply,
+                    displayContent = lastDisplayText.takeIf {
+                        it.isNotBlank() && it != reply
+                    },
+                )
             } catch (e: CancellationException) {
                 val partial = lastText.trim()
                 val stoppedContent = if (partial.isNotBlank()) {
@@ -388,7 +444,7 @@ fun HistoryChatScreen(
                     interactionId = interactionId,
                     e = e,
                 )
-                sendError = e.message ?: context.getString(R.string.history_unable_to_reply)
+                sendError = context.getString(R.string.history_unable_to_reply)
             } finally {
                 isSending = false
                 generationJob = null
@@ -594,7 +650,7 @@ private fun HistoryChatBubble(
                     )
                 } else {
                     WorkoutInsightMarkdown(
-                        markdown = message.content,
+                        markdown = message.displayContent ?: message.content,
                         modifier = Modifier.fillMaxWidth(),
                         baseTypographyStyle = MaterialTheme.typography.bodyLarge,
                     )

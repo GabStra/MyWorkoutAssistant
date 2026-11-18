@@ -70,36 +70,42 @@ fun resolveWorkoutSessionStatus(
     }
 }
 
-/** User-visible strings for compact session labels (Status tab, history headers). */
-object WorkoutSessionDisplayLabels {
-    const val FINISHED_EARLY = "Finished early"
-    const val IN_PROGRESS = "In progress"
-    const val STOPPED_ON_WATCH = "Stopped"
-    /** Watch-owned session with no recent sync (e.g. lost connection or watch idle). */
-    const val STALE_ON_WATCH = "Watch disconnected"
-    const val INTERRUPTED = "Interrupted"
+/**
+ * Locale-independent compact session labels (Status tab, history headers).
+ *
+ * Platform layers own the user-visible text so the same status resolves with the active UI locale.
+ * [STALE_ON_WATCH] describes a watch-owned session with no recent sync (e.g. lost connection or
+ * watch idle).
+ */
+enum class WorkoutSessionDisplayLabel {
+    FINISHED_EARLY,
+    IN_PROGRESS,
+    STOPPED_ON_WATCH,
+    STALE_ON_WATCH,
+    INTERRUPTED,
 }
 
 fun WorkoutHistory.isNormallyCompleted(): Boolean {
     return isDone && endReason == WorkoutSessionEndReason.COMPLETED
 }
 
-fun completedWorkoutEndDisplayLabel(workoutHistory: WorkoutHistory): String? = when {
+fun completedWorkoutEndDisplayLabel(workoutHistory: WorkoutHistory): WorkoutSessionDisplayLabel? = when {
     !workoutHistory.isDone -> null
-    workoutHistory.endReason == WorkoutSessionEndReason.FINISHED_EARLY -> WorkoutSessionDisplayLabels.FINISHED_EARLY
+    workoutHistory.endReason == WorkoutSessionEndReason.FINISHED_EARLY ->
+        WorkoutSessionDisplayLabel.FINISHED_EARLY
     else -> null
 }
 
 /**
- * Short labels for compact UI. [COMPLETED] and null yield no label.
- * Phone and fresh watch sessions share [WorkoutSessionDisplayLabels.IN_PROGRESS];
- * stale watch uses [WorkoutSessionDisplayLabels.STALE_ON_WATCH].
+ * Short labels for compact UI. [WorkoutSessionStatus.COMPLETED] and null yield no label.
+ * Phone and fresh watch sessions share [WorkoutSessionDisplayLabel.IN_PROGRESS];
+ * stale watch uses [WorkoutSessionDisplayLabel.STALE_ON_WATCH].
  */
-fun workoutSessionDisplayLabel(status: WorkoutSessionStatus?): String? = when (status) {
+fun workoutSessionDisplayLabel(status: WorkoutSessionStatus?): WorkoutSessionDisplayLabel? = when (status) {
     null, WorkoutSessionStatus.COMPLETED -> null
     WorkoutSessionStatus.IN_PROGRESS_ON_PHONE, WorkoutSessionStatus.IN_PROGRESS_ON_WEAR ->
-        WorkoutSessionDisplayLabels.IN_PROGRESS
-    WorkoutSessionStatus.STOPPED_ON_WEAR -> WorkoutSessionDisplayLabels.STOPPED_ON_WATCH
-    WorkoutSessionStatus.STALE_ON_WEAR -> WorkoutSessionDisplayLabels.STALE_ON_WATCH
-    WorkoutSessionStatus.INTERRUPTED -> WorkoutSessionDisplayLabels.INTERRUPTED
+        WorkoutSessionDisplayLabel.IN_PROGRESS
+    WorkoutSessionStatus.STOPPED_ON_WEAR -> WorkoutSessionDisplayLabel.STOPPED_ON_WATCH
+    WorkoutSessionStatus.STALE_ON_WEAR -> WorkoutSessionDisplayLabel.STALE_ON_WATCH
+    WorkoutSessionStatus.INTERRUPTED -> WorkoutSessionDisplayLabel.INTERRUPTED
 }

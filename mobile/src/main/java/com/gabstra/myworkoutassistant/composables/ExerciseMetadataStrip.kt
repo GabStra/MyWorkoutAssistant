@@ -14,12 +14,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 
 @Composable
@@ -41,6 +43,8 @@ fun ExerciseMetadataStrip(
     onTap: (() -> Unit)? = null,
 ) {
     var marqueeEnabled by remember { mutableStateOf(false) }
+    val targetRepsTemplate = stringResource(R.string.loc_target_reps_count)
+    val unilateralLabel = stringResource(R.string.loc_unilateral)
 
     val exerciseIndicatorString = remember(supersetExerciseIndex, supersetExerciseTotal) {
         if (supersetExerciseIndex != null && supersetExerciseTotal != null && supersetExerciseTotal > 0) {
@@ -64,9 +68,9 @@ fun ExerciseMetadataStrip(
             supersetExerciseLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
             exerciseIndicatorString?.takeIf { it.isNotBlank() }?.let { add(it) }
             setLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
-            repRange?.takeIf { it.isNotBlank() }?.let { add("Target: $it reps") }
+            repRange?.takeIf { it.isNotBlank() }?.let { add(String.format(targetRepsTemplate, it)) }
             sideIndicator?.takeIf { it.isNotBlank() }?.let { add(it) }
-            if (isUnilateral) add("Unilateral")
+            if (isUnilateral) add(unilateralLabel)
         }
     }
 
@@ -194,6 +198,8 @@ fun EquipmentAccessoryMetadata(
 ) {
     val equipment = equipmentName?.takeIf { it.isNotBlank() }
     val accessories = accessoryNames.filter { it.isNotBlank() }
+    val equipmentLabel = stringResource(R.string.exercise_equipment)
+    val accessoriesLabel = stringResource(R.string.exercise_accessories)
 
     if (equipment == null && accessories.isEmpty()) return
 
@@ -207,7 +213,8 @@ fun EquipmentAccessoryMetadata(
                 modifier = Modifier.fillMaxWidth(),
                 text = buildAnnotatedString {
                     withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                        append("Equipment: ")
+                        append(equipmentLabel)
+                        append(": ")
                     }
                     append(equipment)
                 },
@@ -221,7 +228,8 @@ fun EquipmentAccessoryMetadata(
                 modifier = Modifier.fillMaxWidth(),
                 text = buildAnnotatedString {
                     withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                        append("Accessories: ")
+                        append(accessoriesLabel)
+                        append(": ")
                     }
                     append(accessories.joinToString(" · "))
                 },

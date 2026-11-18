@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -21,6 +22,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.presentation.theme.asNumeral
 import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 
@@ -32,13 +34,19 @@ fun ExerciseMetadataStrip(
     exerciseLabel: String? = null,
     supersetExerciseIndex: Int? = null,
     supersetExerciseTotal: Int? = null,
-    setLabelPrefix: String = "Set",
+    setLabelPrefix: String? = null,
     setLabel: String? = null,
     repRange: String? = null,
     sideIndicator: String? = null,
     currentSideIndex: UInt? = null,
     onTap: (() -> Unit)? = null,
 ) {
+    val resolvedSetLabelPrefix = setLabelPrefix ?: stringResource(R.string.components_label_set)
+    val exerciseLabelText = stringResource(R.string.components_label_exercise)
+    val targetLabelText = stringResource(R.string.components_label_target)
+    val repsSuffix = stringResource(R.string.components_reps_suffix)
+    val leftSideLabel = stringResource(R.string.components_side_left)
+    val rightSideLabel = stringResource(R.string.components_side_right)
     val baseStyle = MaterialTheme.typography.bodySmall.copy(
         lineHeight = MaterialTheme.typography.bodySmall.fontSize,
         platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -72,7 +80,7 @@ fun ExerciseMetadataStrip(
             exerciseLabel?.let {
                 MetadataLineItem {
                     LabeledNumericValue(
-                        label = "Exercise:",
+                        label = exerciseLabelText,
                         value = it,
                         style = baseStyle,
                         color = secondaryTextColor,
@@ -114,7 +122,7 @@ fun ExerciseMetadataStrip(
             setLabel?.let {
                 MetadataLineItem {
                     LabeledNumericValue(
-                        label = "$setLabelPrefix:",
+                        label = "$resolvedSetLabelPrefix:",
                         value = it,
                         style = baseStyle,
                         color = secondaryTextColor,
@@ -125,11 +133,11 @@ fun ExerciseMetadataStrip(
             repRange?.let {
                 MetadataLineItem {
                     LabeledNumericValue(
-                        label = "Target:",
+                        label = targetLabelText,
                         value = it,
                         style = baseStyle,
                         color = secondaryTextColor,
-                        suffix = " reps",
+                        suffix = repsSuffix,
                     )
                 }
             }
@@ -141,13 +149,13 @@ fun ExerciseMetadataStrip(
                     Text(
                         text = buildAnnotatedString {
                             withStyle(baseStyle.toSpanStyle().copy(color = side1Color, fontWeight = FontWeight.Bold)) {
-                                append("L")
+                                append(leftSideLabel)
                             }
                             withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor)) {
                                 append(" / ")
                             }
                             withStyle(baseStyle.toSpanStyle().copy(color = side2Color, fontWeight = FontWeight.Bold)) {
-                                append("R")
+                                append(rightSideLabel)
                             }
                         },
                         style = baseStyle,

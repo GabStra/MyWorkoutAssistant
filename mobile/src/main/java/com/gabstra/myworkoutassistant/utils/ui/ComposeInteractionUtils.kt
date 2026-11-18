@@ -138,6 +138,18 @@ private fun Throwable.toExportToastMessage(
     return "$intro $detail"
 }
 
+/** Display-only label for export ranges; the shared range labels stay English for stable slugs. */
+private fun WorkoutDataExportRange.localizedLabel(context: Context): String =
+    context.getString(
+        when (this) {
+            WorkoutDataExportRange.ALL -> R.string.loc_all_data
+            WorkoutDataExportRange.LAST_WEEK -> R.string.loc_last_week
+            WorkoutDataExportRange.LAST_MONTH -> R.string.loc_last_month
+            WorkoutDataExportRange.LAST_THREE_MONTHS -> R.string.loc_last_3_months
+            is WorkoutDataExportRange.Custom -> R.string.loc_custom_date_range
+        }
+    )
+
 // Default height for the content fade gradient
 private val DEFAULT_CONTENT_FADE_HEIGHT = 10.dp
 
@@ -732,7 +744,10 @@ suspend fun exportExerciseHistoryToMarkdown(
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         context,
-                        "Couldn't export exercise history. ${result.message}",
+                        context.getString(
+                            R.string.loc_couldnt_export_exercise_history_detail,
+                            result.message
+                        ),
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -744,8 +759,8 @@ suspend fun exportExerciseHistoryToMarkdown(
             Toast.makeText(
                 context,
                 e.toExportToastMessage(
-                    intro = "Couldn't export exercise history.",
-                    fallbackDetail = "Please try again."
+                    intro = context.getString(R.string.loc_couldnt_export_exercise_history),
+                    fallbackDetail = context.getString(R.string.loc_please_try_again)
                 ),
                 Toast.LENGTH_SHORT
             ).show()
@@ -784,7 +799,7 @@ suspend fun exportWorkoutSessionToMarkdown(
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         context,
-                        "Couldn't export session. ${result.message}",
+                        context.getString(R.string.loc_couldnt_export_session_detail, result.message),
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -796,8 +811,8 @@ suspend fun exportWorkoutSessionToMarkdown(
             Toast.makeText(
                 context,
                 e.toExportToastMessage(
-                    intro = "Couldn't export workout session.",
-                    fallbackDetail = "Please try again."
+                    intro = context.getString(R.string.loc_couldnt_export_session),
+                    fallbackDetail = context.getString(R.string.loc_please_try_again)
                 ),
                 Toast.LENGTH_SHORT
             ).show()
@@ -821,8 +836,8 @@ suspend fun exportWorkoutPlanToMarkdown(
             Toast.makeText(
                 context,
                 e.toExportToastMessage(
-                    intro = "Couldn't export the workout plan.",
-                    fallbackDetail = "Please try again."
+                    intro = context.getString(R.string.loc_couldnt_export_workout_plan),
+                    fallbackDetail = context.getString(R.string.loc_please_try_again)
                 ),
                 Toast.LENGTH_SHORT
             ).show()
@@ -841,11 +856,13 @@ suspend fun exportAllWorkoutDataToMarkdown(
     onProgress: suspend (String) -> Unit = {},
 ) {
     try {
-        onProgress("Preparing ${exportRange.label.lowercase(Locale.getDefault())} export...")
+        onProgress(
+            context.getString(R.string.loc_preparing_export, exportRange.localizedLabel(context))
+        )
         val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
         val timestamp = sdf.format(Date())
         val filename = "workout_data_llm_export_${exportRange.fileSlug}_$timestamp.md"
-        onProgress("Saving Markdown file to Downloads...")
+        onProgress(context.getString(R.string.loc_saving_markdown_downloads))
         streamMarkdownToDownloadsFolder(context, filename) { appendMarkdown ->
             when (
                 val result = writeWorkoutDataMarkdown(
@@ -866,7 +883,11 @@ suspend fun exportAllWorkoutDataToMarkdown(
         withContext(Dispatchers.Main) {
             Toast.makeText(
                 context,
-                "${exportRange.label} workout data export saved as $filename.",
+                context.getString(
+                    R.string.loc_export_saved_named,
+                    exportRange.localizedLabel(context),
+                    filename
+                ),
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -876,8 +897,8 @@ suspend fun exportAllWorkoutDataToMarkdown(
             Toast.makeText(
                 context,
                 e.toExportToastMessage(
-                    intro = "Couldn't export workout data.",
-                    fallbackDetail = "Please try again."
+                    intro = context.getString(R.string.loc_couldnt_export_workout_data),
+                    fallbackDetail = context.getString(R.string.loc_please_try_again)
                 ),
                 Toast.LENGTH_SHORT
             ).show()

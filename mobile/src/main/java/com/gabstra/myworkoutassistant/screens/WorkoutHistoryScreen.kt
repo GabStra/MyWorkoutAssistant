@@ -94,6 +94,7 @@ import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.formatRestHistoryDisplayLine
 import com.gabstra.myworkoutassistant.composables.historyExerciseNameTextStyle
 import com.gabstra.myworkoutassistant.composables.historyDisplayLabel
+import com.gabstra.myworkoutassistant.composables.labelRes
 import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
 import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibility
 import com.gabstra.myworkoutassistant.heart_rate.HeartRateSessionAnalysis
@@ -200,7 +201,10 @@ private fun RestBetweenWorkoutComponentsBlock(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = formatRestHistoryDisplayLine(history),
+                text = formatRestHistoryDisplayLine(
+                    history = history,
+                    resources = LocalContext.current.resources,
+                ),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -555,6 +559,7 @@ fun WorkoutHistoryScreen(
                     streams = workoutHistory.heartRateStreams,
                     times = workoutHistory.heartRateStreamTimes,
                     activeSource = HeartRateSource.fromName(workoutHistory.heartRateSource),
+                    labelForSource = { source -> source.localizedLabel(context) },
                 ),
             )
 
@@ -779,7 +784,7 @@ fun WorkoutHistoryScreen(
                         workoutSessionStatuses[history.id]
                     )?.let { statusLabel ->
                         Text(
-                            text = statusLabel,
+                            text = stringResource(statusLabel.labelRes()),
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelMedium,
@@ -787,7 +792,7 @@ fun WorkoutHistoryScreen(
                     }
                     completedWorkoutEndDisplayLabel(history)?.let { endLabel ->
                         Text(
-                            text = endLabel,
+                            text = stringResource(endLabel.labelRes()),
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelMedium,
@@ -995,7 +1000,7 @@ fun WorkoutHistoryScreen(
                         skinTempMaxC = selectedWorkoutHistory!!.skinTempMaxC,
                         primarySourceLabel = HeartRateSource
                             .fromName(selectedWorkoutHistory!!.heartRateSource)
-                            ?.displayName(),
+                            ?.localizedLabel(context),
                         showDuration = selectedWorkoutHistory!!.knownDurationSecondsOrNull() != null,
                         onInteractionChange = { isChartInteractionActive = it },
                     )
@@ -1434,7 +1439,9 @@ private fun RunningHistoryCard(
             DistanceUnit.MILES -> meters / 1609.344
         }
     }
-    val unitLabel = if (distanceUnit == DistanceUnit.KILOMETERS) "km" else "mi"
+    val unitLabel = stringResource(
+        if (distanceUnit == DistanceUnit.KILOMETERS) R.string.loc_scr_unit_km else R.string.loc_scr_unit_mi
+    )
     val averagePace = result.averagePaceSecondsPerKilometer?.let {
         val secondsPerUnit = if (distanceUnit == DistanceUnit.KILOMETERS) it else it * 1.609344
         formatTime(secondsPerUnit.toInt())
@@ -1458,7 +1465,7 @@ private fun RunningHistoryCard(
                 RunningHistoryMetric(
                     modifier = Modifier.weight(1f),
                     label = stringResource(R.string.history_running_distance, unitLabel),
-                    value = unitDistance?.let { "%.2f".format(it) } ?: "—",
+                    value = unitDistance?.let { "%.2f".format(it) } ?: stringResource(R.string.loc_scr_none_dash),
                 )
             }
             Row(
@@ -1468,14 +1475,14 @@ private fun RunningHistoryCard(
                 RunningHistoryMetric(
                     modifier = Modifier.weight(1f),
                     label = stringResource(R.string.history_running_avg_pace, unitLabel),
-                    value = averagePace ?: "—",
+                    value = averagePace ?: stringResource(R.string.loc_scr_none_dash),
                 )
                 RunningHistoryMetric(
                     modifier = Modifier.weight(1f),
                     label = stringResource(R.string.history_running_heart_rate),
                     value = result.averageHeartRateBpm?.let { average ->
-                        "$average avg${result.minHeartRateBpm?.let { " · $it–${result.maxHeartRateBpm ?: it}" }.orEmpty()}"
-                    } ?: "—",
+                        "$average ${stringResource(R.string.loc_scr_avg)}${result.minHeartRateBpm?.let { " · $it–${result.maxHeartRateBpm ?: it}" }.orEmpty()}"
+                    } ?: stringResource(R.string.loc_scr_none_dash),
                 )
             }
             Text(stringResource(R.string.history_route_map), style = MaterialTheme.typography.titleSmall)

@@ -61,11 +61,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
@@ -123,7 +125,7 @@ private fun ExerciseDetailMenu(
         IconButton(onClick = { expanded = !expanded }) {
             Icon(
                 imageVector = Icons.Default.MoreVert,
-                contentDescription = "More"
+                contentDescription = stringResource(R.string.history_more_cd)
             )
         }
 
@@ -132,7 +134,7 @@ private fun ExerciseDetailMenu(
             onDismissRequest = { expanded = false }
         ) {
             AppDropdownMenuItem(
-                text = { Text(text = "Edit Exercise", fontWeight = FontWeight.Normal) },
+                text = { Text(text = stringResource(R.string.loc_ex_edit_exercise_menu), fontWeight = FontWeight.Normal) },
                 onClick = {
                     onEditExercise()
                     expanded = false
@@ -142,7 +144,7 @@ private fun ExerciseDetailMenu(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
             )
             AppDropdownMenuItem(
-                text = { Text(text = "Export as .md", fontWeight = FontWeight.Normal) },
+                text = { Text(text = stringResource(R.string.loc_ex_export_md), fontWeight = FontWeight.Normal) },
                 enabled = isExportEnabled,
                 onClick = {
                     onExportExerciseHistory()
@@ -177,7 +179,12 @@ fun ExerciseDetailScreen(
     var showDeleteSetsDialog by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(true) }
     var pendingSetBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
-    val tabTitles = remember { listOf("Overview", "Charts", "Histories") }
+    val overviewTabTitle = stringResource(R.string.loc_scr_tab_overview)
+    val chartsTabTitle = stringResource(R.string.loc_scr_tab_charts)
+    val historiesTabTitle = stringResource(R.string.loc_scr_tab_histories)
+    val tabTitles = remember(overviewTabTitle, chartsTabTitle, historiesTabTitle) {
+        listOf(overviewTabTitle, chartsTabTitle, historiesTabTitle)
+    }
     val historyTabStartIndex = 1
     val historyTabRange = historyTabStartIndex..(historyTabStartIndex + 1)
     var selectedTopTab by remember(exercise.id, initialSelectedTabIndex) {
@@ -223,7 +230,7 @@ fun ExerciseDetailScreen(
                     insightsState = WorkoutInsightsUiState.Idle
                 }.onFailure { error ->
                     insightsState = WorkoutInsightsUiState.Error(
-                        error.message ?: "Unable to import the selected LiteRT-LM model."
+                        error.message ?: context.getString(R.string.loc_ex_unable_import_model)
                     )
                 }
             }
@@ -302,6 +309,7 @@ fun ExerciseDetailScreen(
                     // Holds the full final chunk text (post-processed); Generating.partialText
                     // carries only settled markdown blocks for the streaming reveal.
                     var finalText = ""
+                    var finalDisplayText = ""
                     runCatching {
                         insightsRepository.generateInsights(
                             WorkoutInsightsRequest(
@@ -312,9 +320,11 @@ fun ExerciseDetailScreen(
                                 useTransportToolCalling = true,
                             )
                         ).collectLatest { chunk ->
+                            val displayText = chunk.displayText ?: chunk.text
                             finalText = chunk.text
+                            finalDisplayText = displayText
                             insightsState = WorkoutInsightsUiState.Generating(
-                                partialText = settledMarkdownPrefix(chunk.text),
+                                partialText = settledMarkdownPrefix(displayText),
                                 phase = chunk.phase,
                                 statusText = chunk.statusText
                             )
@@ -322,15 +332,17 @@ fun ExerciseDetailScreen(
                     }.onSuccess {
                         Log.d(
                             INSIGHTS_LOG_TAG,
-                            "exercise_raw_response_start\n${finalText.ifBlank { "No insights were generated." }}\nexercise_raw_response_end"
+                            "exercise_raw_response_start\n${finalText.ifBlank { context.getString(R.string.loc_scr_no_insights_generated) }}\nexercise_raw_response_end"
                         )
                         insightsState = WorkoutInsightsUiState.Success(
                             title = promptResult.title,
-                            text = finalText.ifBlank { "No insights were generated." }
+                            text = finalDisplayText.ifBlank {
+                                context.getString(R.string.loc_scr_no_insights_generated)
+                            }
                         )
                     }.onFailure { error ->
                         insightsState = WorkoutInsightsUiState.Error(
-                            error.message ?: "Unable to generate local insights."
+                            error.message ?: context.getString(R.string.loc_scr_unable_generate_insights)
                         )
                     }
                 }
@@ -382,7 +394,7 @@ fun ExerciseDetailScreen(
                         IconButton(onClick = onGoBack) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
+                                contentDescription = stringResource(R.string.common_back)
                             )
                         }
                     },
@@ -402,7 +414,7 @@ fun ExerciseDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QuestionAnswer,
-                                contentDescription = "Chat with exercise history"
+                                contentDescription = stringResource(R.string.loc_ex_chat_with_history_cd)
                             )
                         }
                         StableHeaderIconButton(
@@ -415,7 +427,7 @@ fun ExerciseDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Insights"
+                                contentDescription = stringResource(R.string.loc_scr_insights_cd)
                             )
                         }
                         ExerciseDetailMenu(
@@ -464,12 +476,12 @@ fun ExerciseDetailScreen(
                                         }) {
                                             Icon(
                                                 imageVector = Icons.Default.Close,
-                                                contentDescription = "Close",
+                                                contentDescription = stringResource(R.string.common_close),
                                                 tint = Red
                                             )
                                         }
                                         Text(
-                                            "Close",
+                                            stringResource(R.string.common_close),
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )
@@ -486,12 +498,12 @@ fun ExerciseDetailScreen(
                                         }) {
                                             Icon(
                                                 imageVector = Icons.Filled.CheckBox,
-                                                contentDescription = "Select all",
+                                                contentDescription = stringResource(R.string.loc_select_all),
                                                 tint = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                         Text(
-                                            "Select all",
+                                            stringResource(R.string.loc_select_all),
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )
@@ -506,12 +518,12 @@ fun ExerciseDetailScreen(
                                         }) {
                                             Icon(
                                                 imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                                contentDescription = "Deselect all",
+                                                contentDescription = stringResource(R.string.loc_deselect_all),
                                                 tint = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                         Text(
-                                            "Deselect all",
+                                            stringResource(R.string.loc_deselect_all),
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )
@@ -584,11 +596,11 @@ fun ExerciseDetailScreen(
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Filled.ArrowUpward,
-                                                    contentDescription = "Move Up",
+                                                    contentDescription = stringResource(R.string.loc_ex_move_up),
                                                 )
                                             }
                                             Text(
-                                                "Move Up",
+                                                stringResource(R.string.loc_ex_move_up),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 textAlign = TextAlign.Center
                                             )
@@ -642,11 +654,11 @@ fun ExerciseDetailScreen(
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Filled.ArrowDownward,
-                                                    contentDescription = "Move Down"
+                                                    contentDescription = stringResource(R.string.loc_ex_move_down)
                                                 )
                                             }
                                             Text(
-                                                "Move Down",
+                                                stringResource(R.string.loc_ex_move_down),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 textAlign = TextAlign.Center
                                             )
@@ -662,12 +674,12 @@ fun ExerciseDetailScreen(
                                         }) {
                                             Icon(
                                                 imageVector = Icons.Default.Delete,
-                                                contentDescription = "Delete",
+                                                contentDescription = stringResource(R.string.common_delete),
                                                 tint = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                         Text(
-                                            "Delete",
+                                            stringResource(R.string.common_delete),
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )
@@ -708,11 +720,11 @@ fun ExerciseDetailScreen(
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.ContentCopy,
-                                                contentDescription = "Copy"
+                                                contentDescription = stringResource(R.string.loc_copy)
                                             )
                                         }
                                         Text(
-                                            "Copy",
+                                            stringResource(R.string.loc_copy),
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )
@@ -828,13 +840,17 @@ fun ExerciseDetailScreen(
         }
         ConfirmationDialog(
             show = showDeleteSetsDialog,
-            title = if (selectedSets.size == 1) "Delete selected set?" else "Delete selected sets?",
-            message = if (selectedSets.size == 1) {
-                "This removes the selected set from the exercise."
+            title = if (selectedSets.size == 1) {
+                stringResource(R.string.loc_ex_delete_selected_set_title)
             } else {
-                "This removes the ${selectedSets.size} selected sets from the exercise."
+                stringResource(R.string.loc_ex_delete_selected_sets_title)
             },
-            confirmText = "Delete",
+            message = if (selectedSets.size == 1) {
+                stringResource(R.string.loc_ex_delete_selected_set_message)
+            } else {
+                stringResource(R.string.loc_ex_delete_selected_sets_message, selectedSets.size)
+            },
+            confirmText = stringResource(R.string.common_delete),
             isDestructive = true,
             onConfirm = {
                 val newSets = sets.filter { set ->
@@ -854,11 +870,14 @@ fun ExerciseDetailScreen(
                 showDeleteSetsDialog = false
             }
         )
-        LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+        LoadingOverlay(
+            isVisible = rememberDebouncedSavingVisible(isSaving),
+            text = stringResource(R.string.common_saving),
+        )
         if (MobileLlmFeatureFlags.isEnabled(context)) {
             WorkoutInsightsDialog(
                 show = showInsightsDialog,
-                title = "Exercise insights",
+                title = stringResource(R.string.loc_ex_insights_title),
                 state = insightsState,
                 configurationState = insightsConfigurationState,
                 onDismiss = { showInsightsDialog = false },

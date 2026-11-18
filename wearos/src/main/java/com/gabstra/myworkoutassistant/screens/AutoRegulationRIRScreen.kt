@@ -15,11 +15,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.pager.rememberPagerState
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
@@ -205,7 +207,7 @@ fun AutoRegulationRIRScreen(
                                 viewModel = viewModel,
                                 exercise = exercise,
                                 equipmentId = state.equipmentId,
-                                status = "Auto-regulation",
+                                status = stringResource(R.string.wear_status_auto_regulation),
                             ),
                         )
                     }

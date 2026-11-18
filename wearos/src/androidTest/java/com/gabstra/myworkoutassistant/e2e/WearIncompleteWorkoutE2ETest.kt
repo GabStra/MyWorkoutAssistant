@@ -152,7 +152,7 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
         completeCurrentSetDeterministically()
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         val restVisible = device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)),
+            Until.hasObject(WearRestScreenSelector.byDescription()),
             5_000
         )
         require(restVisible) { "Rest screen did not appear" }
@@ -168,7 +168,7 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
 
         val resumed = workoutDriver.resumeOrEnterRecoveredWorkoutTimed(
             workoutName = MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(),
-            inWorkoutSelector = By.descContains(SetValueSemantics.RestSetTypeDescription),
+            inWorkoutSelector = WearRestScreenSelector.byDescription(),
             timeoutMs = 20_000,
             useRestartTimer = false
         )
@@ -181,7 +181,7 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
 
         val restVisibleAfterRecovery = device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)),
+            Until.hasObject(WearRestScreenSelector.byDescription()),
             8_000
         )
         require(restVisibleAfterRecovery) { "Rest screen not visible after recovery with Continue timer" }
@@ -297,7 +297,7 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
     }
 
     private fun readRestTimerSecondsFromScreen(): Int? {
-        val root = device.findObject(By.descContains(SetValueSemantics.RestSetTypeDescription)) ?: return null
+        val root = device.findObject(WearRestScreenSelector.byDescription()) ?: return null
         val timerText = findRestTimerText(root) ?: return null
         val parts = timerText.split(":")
         if (parts.size != 2) return null

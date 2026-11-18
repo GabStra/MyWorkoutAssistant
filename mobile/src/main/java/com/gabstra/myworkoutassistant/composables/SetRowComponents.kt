@@ -18,15 +18,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.workout.ScalableText
 import java.util.UUID
+import java.util.regex.Pattern
 
 sealed interface SetTableRowUiModel {
     data class Data(
@@ -72,6 +75,53 @@ private const val SetColumnWeight = 1f
 private const val WeightColumnWeight = 2f
 private const val RepsColumnWeight = 1f
 private const val TimeColumnWeight = 3f
+
+private val RestLinePattern = Pattern.compile("^REST (.+)$")
+private val RestElapsedPattern = Pattern.compile("^REST (\\S+) elapsed$")
+private val RestElapsedPlannedPattern = Pattern.compile("^REST (\\S+) elapsed \\((\\S+) planned\\)$")
+
+@Composable
+internal fun localizedSetRowText(text: String): String {
+    val restLabel = stringResource(R.string.loc_rest_label)
+    RestElapsedPlannedPattern.matcher(text).takeIf { it.matches() }?.let { matcher ->
+        return stringResource(
+            R.string.loc_rest_elapsed_planned,
+            restLabel,
+            matcher.group(1),
+            matcher.group(2),
+        )
+    }
+    RestElapsedPattern.matcher(text).takeIf { it.matches() }?.let { matcher ->
+        return stringResource(
+            R.string.loc_rest_elapsed,
+            restLabel,
+            matcher.group(1),
+        )
+    }
+    RestLinePattern.matcher(text).takeIf { it.matches() }?.let { matcher ->
+        return stringResource(R.string.loc_rest_time, restLabel, matcher.group(1))
+    }
+    return when (text) {
+        "Rest" -> stringResource(R.string.loc_rest_fallback)
+        "BW" -> stringResource(R.string.loc_body_weight_short)
+        "RUN" -> stringResource(R.string.loc_col_run)
+        "TBD" -> stringResource(R.string.loc_calibration_tbd)
+        else -> text
+    }
+}
+
+@Composable
+internal fun localizedSetColumnLabel(label: String): String = when (label) {
+    "SET" -> stringResource(R.string.loc_col_set)
+    "RESULT" -> stringResource(R.string.loc_col_result)
+    "DETAIL" -> stringResource(R.string.loc_col_detail)
+    "LOAD" -> stringResource(R.string.loc_col_load)
+    "REPS" -> stringResource(R.string.loc_col_reps)
+    "DURATION" -> stringResource(R.string.loc_col_duration)
+    "DISTANCE" -> stringResource(R.string.loc_col_distance)
+    "RUN" -> stringResource(R.string.loc_col_run)
+    else -> label
+}
 
 fun inferSetTableHeader(rows: List<SetTableRowUiModel>): SetTableHeaderUiModel {
     val dataRows = rows.filterIsInstance<SetTableRowUiModel.Data>()
@@ -213,7 +263,7 @@ private fun ReviewSetRow(
         )
 
         is SetTableRowUiModel.Rest -> Text(
-            text = row.text,
+            text = localizedSetRowText(row.text),
             modifier = baseModifier.padding(horizontal = 14.dp, vertical = 10.dp),
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -286,14 +336,18 @@ private fun WorkoutSetTableHeaderRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "SET",
+            text = stringResource(R.string.loc_col_set),
             modifier = Modifier.weight(SetColumnWeight),
             style = headerStyle,
             color = headerColor,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = if (hasSecondaryColumn) "WEIGHT (KG)" else "TIME (HH:MM:SS)",
+            text = if (hasSecondaryColumn) {
+                stringResource(R.string.loc_col_weight_kg)
+            } else {
+                stringResource(R.string.loc_col_time_hms)
+            },
             modifier = Modifier.weight(primaryColumnWeight),
             style = headerStyle,
             color = headerColor,
@@ -301,7 +355,7 @@ private fun WorkoutSetTableHeaderRow(
         )
         if (hasSecondaryColumn) {
             Text(
-                text = "REPS",
+                text = stringResource(R.string.loc_col_reps),
                 modifier = Modifier.weight(RepsColumnWeight),
                 style = headerStyle,
                 color = headerColor,
@@ -332,14 +386,14 @@ private fun WorkoutSetDataRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ScalableText(
-            text = row.identifier,
+            text = localizedSetRowText(row.identifier),
             modifier = Modifier.weight(SetColumnWeight),
             style = baseStyle,
             color = textColor,
             textAlign = TextAlign.Center,
         )
         ScalableText(
-            text = row.primaryValue,
+            text = localizedSetRowText(row.primaryValue),
             modifier = Modifier.weight(primaryColumnWeight),
             style = primaryStyle,
             color = textColor,
@@ -347,7 +401,7 @@ private fun WorkoutSetDataRow(
         )
         if (hasSecondaryColumn) {
             ScalableText(
-                text = row.secondaryValue.orEmpty(),
+                text = localizedSetRowText(row.secondaryValue.orEmpty()),
                 modifier = Modifier.weight(RepsColumnWeight),
                 style = baseStyle,
                 color = textColor,
@@ -372,14 +426,14 @@ fun SetTableHeaderRow(
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(
-            text = header.setLabel,
+            text = localizedSetColumnLabel(header.setLabel),
             modifier = Modifier.weight(SetColumnWeight),
             style = labelStyle,
             color = headerColor,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = header.primaryLabel,
+            text = localizedSetColumnLabel(header.primaryLabel),
             modifier = Modifier.weight(primaryColumnWeight),
             style = labelStyle,
             color = headerColor,
@@ -388,7 +442,7 @@ fun SetTableHeaderRow(
         val secondaryLabel = header.secondaryLabel
         if (secondaryLabel != null) {
             Text(
-                text = secondaryLabel,
+                text = localizedSetColumnLabel(secondaryLabel),
                 modifier = Modifier.weight(RepsColumnWeight),
                 style = labelStyle,
                 color = headerColor,
@@ -425,14 +479,14 @@ private fun SetTableDataRow(
     Column(modifier = rowModifier) {
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = row.identifier,
+                text = localizedSetRowText(row.identifier),
                 modifier = Modifier.weight(SetColumnWeight),
                 style = MaterialTheme.typography.bodyLarge,
                 color = textColor,
                 textAlign = TextAlign.Center,
             )
             Text(
-                text = row.primaryValue,
+                text = localizedSetRowText(row.primaryValue),
                 modifier = Modifier.weight(primaryColumnWeight),
                 style = primaryStyle,
                 color = textColor,
@@ -440,7 +494,7 @@ private fun SetTableDataRow(
             )
             if (hasSecondaryColumn) {
                 Text(
-                    text = row.secondaryValue.orEmpty(),
+                    text = localizedSetRowText(row.secondaryValue.orEmpty()),
                     modifier = Modifier.weight(RepsColumnWeight),
                     style = MaterialTheme.typography.bodyLarge,
                     color = textColor,
@@ -458,7 +512,7 @@ private fun SetTableRestRow(
     textColor: androidx.compose.ui.graphics.Color,
 ) {
     Text(
-        text = row.text,
+        text = localizedSetRowText(row.text),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 7.dp),

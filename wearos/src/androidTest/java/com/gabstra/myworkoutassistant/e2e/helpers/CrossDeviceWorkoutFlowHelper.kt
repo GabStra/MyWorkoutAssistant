@@ -12,6 +12,7 @@ import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
+import com.gabstra.myworkoutassistant.e2e.WearRestScreenSelector
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CrossDeviceSyncWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
@@ -348,7 +349,7 @@ class CrossDeviceWorkoutFlowHelper(
 
     private fun isRestScreenVisible(): Boolean {
         return device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)),
+            Until.hasObject(WearRestScreenSelector.byDescription()),
             1_000
         )
     }

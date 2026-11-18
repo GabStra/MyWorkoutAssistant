@@ -12,7 +12,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 
 @Composable
@@ -20,7 +22,7 @@ fun SetHistoryReapplySetting(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    title: String = "Reapply history to future set values",
+    title: String = stringResource(R.string.loc_reapply_history_title),
     subtitle: String,
     enabled: Boolean = true
 ) {

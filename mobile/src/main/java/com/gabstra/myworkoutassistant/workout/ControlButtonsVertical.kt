@@ -24,9 +24,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.repeatActionOnLongPressOrTap
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
@@ -67,7 +69,7 @@ fun SetValueSection(
 @Composable
 fun TargetRepRangeLabel(targetRepRange: String) {
     Text(
-        text = "TARGET REPS: $targetRepRange",
+        text = stringResource(R.string.loc_target_reps_upper, targetRepRange),
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
@@ -122,7 +124,7 @@ fun ControlButtonsVertical(
             ) {
                 ControlButton(
                     icon = Icons.Filled.ArrowDownward,
-                    contentDescription = "Subtract",
+                    contentDescription = stringResource(R.string.loc_subtract_cd),
                     backgroundColor = Red,
                     enabled = isMinusEnabled,
                     onTap = onMinusTap,
@@ -130,7 +132,7 @@ fun ControlButtonsVertical(
                 )
                 ControlButton(
                     icon = Icons.Filled.ArrowUpward,
-                    contentDescription = "Add",
+                    contentDescription = stringResource(R.string.loc_add_cd),
                     backgroundColor = Green,
                     enabled = isPlusEnabled,
                     onTap = onPlusTap,
@@ -147,7 +149,7 @@ fun ControlButtonsVertical(
                     onCloseClick?.let { closeClick ->
                         ControlButton(
                             icon = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.common_back),
                             backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
                             enabled = true,
                             hitBoxSize = SecondaryControlButtonHitBoxSize,
@@ -160,7 +162,7 @@ fun ControlButtonsVertical(
                     onResetClick?.let { resetClick ->
                         ControlButton(
                             icon = Icons.Filled.RestartAlt,
-                            contentDescription = "Reset",
+                            contentDescription = stringResource(R.string.loc_reset_cd),
                             backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
                             enabled = isResetEnabled,
                             hitBoxSize = SecondaryControlButtonHitBoxSize,

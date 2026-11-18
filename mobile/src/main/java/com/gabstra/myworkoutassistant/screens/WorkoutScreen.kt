@@ -513,7 +513,7 @@ fun WorkoutScreen(
                                     Text(
                                         text = stringResource(
                                             R.string.workout_getting_source_ready,
-                                            selectedWorkout.heartRateSource.displayName(),
+                                            selectedWorkout.heartRateSource.localizedLabel(context),
                                         ),
                                         style = MaterialTheme.typography.titleLarge,
                                         textAlign = TextAlign.Center,

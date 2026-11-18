@@ -12,11 +12,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
@@ -62,7 +64,7 @@ fun PageMuscles(
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         Text(
-            text = "Muscle groups",
+            text = stringResource(R.string.loc_muscle_groups),
             modifier = Modifier.fillMaxWidth(),
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
             textAlign = TextAlign.Center,
@@ -70,7 +72,7 @@ fun PageMuscles(
 
         if (muscleGroups.isEmpty() && secondaryMuscleGroups.isEmpty()) {
             Text(
-                text = "No muscle groups",
+                text = stringResource(R.string.loc_no_muscle_groups),
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.tertiaryContent,

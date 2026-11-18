@@ -22,10 +22,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 @Composable
@@ -47,7 +49,7 @@ fun HistoryFiltersBlock(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "History filters",
+                        text = stringResource(R.string.loc_history_filters),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -68,7 +70,10 @@ fun HistoryFiltersBlock(
                 ) {
                     Icon(
                         imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (isExpanded) "Collapse history filters" else "Expand history filters",
+                        contentDescription = stringResource(
+                            if (isExpanded) R.string.loc_collapse_history_filters
+                            else R.string.loc_expand_history_filters
+                        ),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -108,7 +113,10 @@ fun HistoryNavigationCard(
             enabled = canGoBack,
             colors = iconColors,
         ) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous")
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(R.string.loc_previous)
+            )
         }
         Column(
             modifier = Modifier.weight(1f),
@@ -122,7 +130,10 @@ fun HistoryNavigationCard(
             enabled = canGoForward,
             colors = iconColors,
         ) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next")
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = stringResource(R.string.loc_next)
+            )
         }
     }
 }

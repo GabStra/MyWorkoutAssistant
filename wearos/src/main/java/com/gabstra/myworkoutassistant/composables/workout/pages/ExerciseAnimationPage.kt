@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
@@ -38,7 +39,7 @@ fun ExerciseAnimationPage(
     val movementRef = exercise.movementRef
     if (movementRef == null) {
         MovementStatusMessage(
-            text = "No movement",
+            text = stringResource(R.string.components_no_movement),
             modifier = modifier,
         )
         return
@@ -85,7 +86,7 @@ fun ExerciseAnimationPage(
 
         else -> {
             MovementStatusMessage(
-                text = "Movement syncing",
+                text = stringResource(R.string.components_movement_syncing),
                 modifier = modifier,
             )
         }

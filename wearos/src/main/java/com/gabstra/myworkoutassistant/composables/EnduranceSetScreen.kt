@@ -74,6 +74,7 @@ fun EnduranceSetScreen (
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    val enduranceScreenDescription = stringResource(R.string.components_semantics_endurance_set_screen)
     val scope = rememberWearCoroutineScope()
     val equipment = remember(state.equipmentId) { state.equipmentId?.let(viewModel::getEquipmentById) }
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
@@ -629,7 +630,7 @@ fun EnduranceSetScreen (
             modifier = modifier
                 .fillMaxSize()
                 .semantics {
-                contentDescription = SetValueSemantics.EnduranceSetTypeDescription
+                contentDescription = enduranceScreenDescription
             }
         ) {
             if (isWeightInEditMode) {
@@ -656,7 +657,10 @@ fun EnduranceSetScreen (
                     content = {
                         SetValueSection(label = stringResource(R.string.set_label_load), headerStyle = headerStyle) {
                             TightNumericText(
-                                text = currentSet.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" } ?: "-",
+                                text = currentSet.actualWeight?.let {
+                                    equipment?.formatWeight(it)
+                                        ?: stringResource(R.string.components_weight_kg, it)
+                                } ?: "-",
                                 style = itemStyle,
                             )
                         }
@@ -707,7 +711,8 @@ fun EnduranceSetScreen (
                         currentSet.actualWeight?.let { weight ->
                             LabeledNumericValue(
                                 label = stringResource(R.string.set_load_label),
-                                value = equipment?.formatWeight(weight) ?: "${weight} kg",
+                                value = equipment?.formatWeight(weight)
+                                    ?: stringResource(R.string.components_weight_kg, weight),
                                 style = MaterialTheme.typography.labelMedium,
                                 modifier = Modifier.combinedClickable(
                                     onClick = {},

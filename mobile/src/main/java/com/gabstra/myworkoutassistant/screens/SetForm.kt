@@ -33,9 +33,12 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.labelRes
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
 import com.gabstra.myworkoutassistant.composables.EnduranceSetForm
@@ -52,11 +55,8 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
-fun SetType.toReadableString(): String {
-    return this.name.replace('_', ' ').split(' ').joinToString(" ") {
-        it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() }
-    }
-}
+@Composable
+fun SetType.toReadableString(): String = stringResource(labelRes())
 
 fun getSetTypeFromExerciseType(exerciseType: ExerciseType): SetType {
     return when (exerciseType) {
@@ -99,14 +99,14 @@ fun SetForm(
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             color = MaterialTheme.colorScheme.onBackground,
                             textAlign = TextAlign.Center,
-                            text = if (set == null) "Insert Set" else "Edit Set",
+                            text = stringResource(if (set == null) R.string.loc_scr_insert_set else R.string.loc_scr_edit_set),
                         )
                     },
                     navigationIcon = {
                         IconButton(onClick = onCancel, enabled = !isSaving) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
+                                contentDescription = stringResource(R.string.common_back),
                             )
                         }
                     },
@@ -114,7 +114,7 @@ fun SetForm(
                         IconButton(modifier = Modifier.alpha(0f), onClick = { onCancel() }) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
+                                contentDescription = stringResource(R.string.common_back),
                             )
                         }
                     },
@@ -137,11 +137,10 @@ fun SetForm(
                             .fillMaxWidth()
                             .padding(8.dp),
                     ) {
-                        Text(text = "Set Type:")
+                        Text(text = stringResource(R.string.loc_scr_set_type))
                         Box(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = selectedSetType.value.name.replace('_', ' ')
-                                    .replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() },
+                                text = stringResource(selectedSetType.value.labelRes()),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(8.dp),
@@ -157,7 +156,7 @@ fun SetForm(
                             val context = LocalContext.current
                             Toast.makeText(
                                 context,
-                                "Add equipment to this exercise before creating a weight-based set.",
+                                context.getString(R.string.loc_scr_add_equipment_before_weight_set),
                                 Toast.LENGTH_LONG,
                             ).show()
                             onCancel()
@@ -207,7 +206,7 @@ fun SetForm(
                         val context = LocalContext.current
                         Toast.makeText(
                             context,
-                            "Running sets are managed by the exercise's running prescription.",
+                            context.getString(R.string.loc_scr_running_sets_managed),
                             Toast.LENGTH_LONG,
                         ).show()
                         onCancel()
@@ -221,7 +220,7 @@ fun SetForm(
                 isSaving = isSaving,
                 minVisibleMs = 1_000L,
             ),
-            text = "Saving..."
+            text = stringResource(R.string.common_saving)
         )
     }
 }

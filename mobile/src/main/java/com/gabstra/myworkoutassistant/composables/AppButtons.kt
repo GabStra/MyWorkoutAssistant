@@ -20,9 +20,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Red
 
@@ -103,7 +105,7 @@ fun AppAddButton(
     ) {
         Icon(
             imageVector = Icons.Filled.Add,
-            contentDescription = if (label == null) "Add" else null,
+            contentDescription = if (label == null) stringResource(R.string.loc_add_cd) else null,
             modifier = Modifier.size(24.dp),
             tint = MaterialTheme.colorScheme.onPrimary,
         )

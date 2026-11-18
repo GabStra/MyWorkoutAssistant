@@ -192,7 +192,7 @@ class WearBHingeOhpResumeDuplicateHistoryE2ETest : WearBaseE2ETest() {
                 device.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)) ||
                 device.hasObject(By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)) ||
                 device.hasObject(By.descContains(SetValueSemantics.TimedDurationSetTypeDescription)) ||
-                device.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription))
+                device.hasObject(WearRestScreenSelector.byDescription())
             ) {
                 return true
             }

@@ -104,11 +104,62 @@ private data class ExerciseEquipmentGroup(
     val families: List<ExerciseFamily>,
 )
 
-private fun String.toDisplayLabel(): String = lowercase()
-    .split('_')
-    .joinToString(" ") { word -> word.replaceFirstChar { it.titlecase() } }
+internal fun ExerciseType.localizedLabel(context: Context): String = context.getString(
+    when (this) {
+        ExerciseType.WEIGHT -> R.string.loc_ex_type_weight
+        ExerciseType.BODY_WEIGHT -> R.string.loc_ex_type_body_weight
+        ExerciseType.COUNTUP -> R.string.loc_ex_type_count_up
+        ExerciseType.COUNTDOWN -> R.string.loc_ex_type_count_down
+        ExerciseType.RUNNING -> R.string.loc_ex_type_running
+    }
+)
 
-private fun ExerciseDefinition.variationLabel(): String = exerciseType.name.toDisplayLabel()
+private fun ExerciseCategory.localizedLabel(context: Context): String = context.getString(
+    when (this) {
+        ExerciseCategory.HEAVY_COMPOUND -> R.string.loc_ex_category_heavy_compound
+        ExerciseCategory.MODERATE_COMPOUND -> R.string.loc_ex_category_moderate_compound
+        ExerciseCategory.ISOLATION -> R.string.loc_ex_category_isolation
+    }
+)
+
+private fun MuscleGroup.localizedLabel(context: Context): String = context.getString(
+    when (this) {
+        MuscleGroup.FRONT_ABS -> R.string.loc_ex_muscle_front_abs
+        MuscleGroup.FRONT_ADDUCTORS -> R.string.loc_ex_muscle_front_adductors
+        MuscleGroup.FRONT_ANKLES -> R.string.loc_ex_muscle_front_ankles
+        MuscleGroup.FRONT_BICEPS -> R.string.loc_ex_muscle_front_biceps
+        MuscleGroup.FRONT_CALVES -> R.string.loc_ex_muscle_front_calves
+        MuscleGroup.FRONT_CHEST -> R.string.loc_ex_muscle_front_chest
+        MuscleGroup.FRONT_DELTOIDS -> R.string.loc_ex_muscle_front_deltoids
+        MuscleGroup.FRONT_FEET -> R.string.loc_ex_muscle_front_feet
+        MuscleGroup.FRONT_FOREARM -> R.string.loc_ex_muscle_front_forearm
+        MuscleGroup.FRONT_HANDS -> R.string.loc_ex_muscle_front_hands
+        MuscleGroup.FRONT_KNEES -> R.string.loc_ex_muscle_front_knees
+        MuscleGroup.FRONT_NECK -> R.string.loc_ex_muscle_front_neck
+        MuscleGroup.FRONT_OBLIQUES -> R.string.loc_ex_muscle_front_obliques
+        MuscleGroup.FRONT_QUADRICEPS -> R.string.loc_ex_muscle_front_quadriceps
+        MuscleGroup.FRONT_TIBIALIS -> R.string.loc_ex_muscle_front_tibialis
+        MuscleGroup.FRONT_TRAPEZIUS -> R.string.loc_ex_muscle_front_trapezius
+        MuscleGroup.FRONT_TRICEPS -> R.string.loc_ex_muscle_front_triceps
+        MuscleGroup.BACK_ADDUCTORS -> R.string.loc_ex_muscle_back_adductors
+        MuscleGroup.BACK_ANKLES -> R.string.loc_ex_muscle_back_ankles
+        MuscleGroup.BACK_CALVES -> R.string.loc_ex_muscle_back_calves
+        MuscleGroup.BACK_DELTOIDS -> R.string.loc_ex_muscle_back_deltoids
+        MuscleGroup.BACK_FEET -> R.string.loc_ex_muscle_back_feet
+        MuscleGroup.BACK_FOREARM -> R.string.loc_ex_muscle_back_forearm
+        MuscleGroup.BACK_GLUTEAL -> R.string.loc_ex_muscle_back_gluteal
+        MuscleGroup.BACK_HAMSTRING -> R.string.loc_ex_muscle_back_hamstring
+        MuscleGroup.BACK_HANDS -> R.string.loc_ex_muscle_back_hands
+        MuscleGroup.BACK_LOWER_BACK -> R.string.loc_ex_muscle_back_lower_back
+        MuscleGroup.BACK_NECK -> R.string.loc_ex_muscle_back_neck
+        MuscleGroup.BACK_TRAPEZIUS -> R.string.loc_ex_muscle_back_trapezius
+        MuscleGroup.BACK_TRICEPS -> R.string.loc_ex_muscle_back_triceps
+        MuscleGroup.BACK_UPPER_BACK -> R.string.loc_ex_muscle_back_upper_back
+    }
+)
+
+private fun ExerciseDefinition.variationLabel(context: Context): String =
+    exerciseType.localizedLabel(context)
 
 private fun ExerciseDefinition.metaChipLabels(
     context: Context,
@@ -204,7 +255,13 @@ fun ExerciseLibraryScreen(
     }
     val unknownEquipmentLabel = stringResource(R.string.library_unknown_equipment)
     val noEquipmentLabel = stringResource(R.string.library_no_equipment)
-    val equipmentGroups = remember(definitions, equipmentNamesById) {
+    val exerciseTypeLabels = ExerciseType.entries.associateWith { it.localizedLabel(context) }
+    val equipmentGroups = remember(
+        definitions,
+        equipmentNamesById,
+        unknownEquipmentLabel,
+        noEquipmentLabel,
+    ) {
         definitions
             .groupBy { it.equipmentId }
             .map { (equipmentId, equipmentDefinitions) ->
@@ -233,7 +290,7 @@ fun ExerciseLibraryScreen(
                     .thenBy { it.label.lowercase() },
             )
     }
-    val filteredGroups = remember(query, equipmentGroups) {
+    val filteredGroups = remember(query, equipmentGroups, exerciseTypeLabels) {
         val normalizedQuery = query.trim()
         equipmentGroups.mapNotNull { group ->
             val matchingFamilies = if (group.label.contains(normalizedQuery, ignoreCase = true)) {
@@ -242,7 +299,7 @@ fun ExerciseLibraryScreen(
                 group.families.filter { family ->
                     family.name.contains(normalizedQuery, ignoreCase = true) ||
                         family.variations.any { variation ->
-                            variation.exerciseType.name.toDisplayLabel()
+                            exerciseTypeLabels.getValue(variation.exerciseType)
                                 .contains(normalizedQuery, ignoreCase = true)
                         }
                 }
@@ -613,14 +670,14 @@ private fun ExerciseFamilyCard(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = definition.variationLabel(),
+                                        text = definition.variationLabel(context),
                                         modifier = Modifier.weight(1f),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                        contentDescription = stringResource(R.string.library_edit_variation_cd, definition.variationLabel()),
+                                        contentDescription = stringResource(R.string.library_edit_variation_cd, definition.variationLabel(context)),
                                         modifier = Modifier.size(16.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -690,7 +747,7 @@ private fun DetailChipsSection(
     ) {
         category?.let {
             Text(
-                text = it.name.toDisplayLabel(),
+                text = it.localizedLabel(context),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.tertiaryContent,
             )
@@ -700,10 +757,10 @@ private fun DetailChipsSection(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             primaryMuscles.forEach { muscle ->
-                DetailChip(muscle.name.toDisplayLabel(), emphasized = true)
+                DetailChip(muscle.localizedLabel(context), emphasized = true)
             }
             secondaryMuscles.forEach { muscle ->
-                DetailChip(muscle.name.toDisplayLabel(), emphasized = false)
+                DetailChip(muscle.localizedLabel(context), emphasized = false)
             }
             metaLabels.forEach { label ->
                 DetailChip(label, emphasized = false)

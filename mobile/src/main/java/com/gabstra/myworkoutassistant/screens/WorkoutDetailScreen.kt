@@ -75,6 +75,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -118,6 +119,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.FilterRange
 import com.gabstra.myworkoutassistant.shared.filterBy
+import com.gabstra.myworkoutassistant.shared.R as SharedR
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -127,7 +129,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
-import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -138,13 +139,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
+@Composable
 private fun FilterRange.displayLabel(): String = when (this) {
-    FilterRange.LAST_WEEK -> "last week"
-    FilterRange.LAST_7_DAYS -> "the last 7 days"
-    FilterRange.LAST_30_DAYS -> "the last 30 days"
-    FilterRange.THIS_MONTH -> "this month"
-    FilterRange.LAST_3_MONTHS -> "the last 3 months"
-    FilterRange.ALL -> "the full history"
+    FilterRange.LAST_WEEK -> stringResource(R.string.loc_scr_filter_last_week)
+    FilterRange.LAST_7_DAYS -> stringResource(R.string.loc_scr_filter_last_7_days)
+    FilterRange.LAST_30_DAYS -> stringResource(R.string.loc_scr_filter_last_30_days)
+    FilterRange.THIS_MONTH -> stringResource(R.string.loc_scr_filter_this_month)
+    FilterRange.LAST_3_MONTHS -> stringResource(R.string.loc_scr_filter_last_3_months)
+    FilterRange.ALL -> stringResource(R.string.loc_scr_filter_full_history)
 }
 
 @Composable
@@ -167,7 +169,7 @@ fun Menu(
         IconButton(onClick = { expanded = !expanded }) {
             Icon(
                 imageVector = Icons.Default.MoreVert,
-                contentDescription = "More"
+                contentDescription = stringResource(R.string.loc_scr_more_cd)
             )
         }
 
@@ -178,7 +180,7 @@ fun Menu(
             onStartRecurring?.let { startRecurring ->
                 AppDropdownMenuItem(
                     modifier = Modifier.testTag("start_recurring_session"),
-                    text = { Text(text = "Start recurring session", fontWeight = FontWeight.Normal) },
+                    text = { Text(text = stringResource(R.string.loc_scr_start_recurring_session), fontWeight = FontWeight.Normal) },
                     onClick = {
                         startRecurring()
                         expanded = false
@@ -189,7 +191,7 @@ fun Menu(
                 )
             }
             AppDropdownMenuItem(
-                text = { Text(text = "Edit workout", fontWeight = FontWeight.Normal) },
+                text = { Text(text = stringResource(R.string.workout_form_edit_title), fontWeight = FontWeight.Normal) },
                 onClick = {
                     onEditWorkout()
                     expanded = false
@@ -199,7 +201,7 @@ fun Menu(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
             )
             AppDropdownMenuItem(
-                text = { Text(text = "Delete selected session", fontWeight = FontWeight.Normal) },
+                text = { Text(text = stringResource(R.string.loc_scr_delete_selected_session), fontWeight = FontWeight.Normal) },
                 onClick = {
                     onDeleteSelectedSession()
                     expanded = false
@@ -207,7 +209,7 @@ fun Menu(
                 enabled = deleteSelectedSessionEnabled
             )
             AppDropdownMenuItem(
-                text = { Text(text = "Export session as .md", fontWeight = FontWeight.Normal) },
+                text = { Text(text = stringResource(R.string.loc_scr_export_session_md), fontWeight = FontWeight.Normal) },
                 onClick = {
                     onExportSessionAsMarkdown()
                     expanded = false
@@ -215,7 +217,7 @@ fun Menu(
                 enabled = exportSessionAsMarkdownEnabled
             )
             AppDropdownMenuItem(
-                text = { Text(text = "Delete histories in selected interval", fontWeight = FontWeight.Normal) },
+                text = { Text(text = stringResource(R.string.loc_scr_delete_histories_interval), fontWeight = FontWeight.Normal) },
                 onClick = {
                     onDeleteSelectedInterval()
                     expanded = false
@@ -223,7 +225,7 @@ fun Menu(
                 enabled = deleteSelectedIntervalEnabled,
             )
             AppDropdownMenuItem(
-                text = { Text(text = "Clear all histories", fontWeight = FontWeight.Normal) },
+                text = { Text(text = stringResource(R.string.loc_scr_clear_all_histories), fontWeight = FontWeight.Normal) },
                 onClick = {
                     onClearAllHistories()
                     expanded = false
@@ -261,7 +263,7 @@ fun WorkoutComponentRenderer(
             SetRestRowCard(
                 modifier = modifier.fillMaxWidth().then(titleModifier),
                 enabled = workoutComponent.enabled,
-                restText = "REST ${formatTime(workoutComponent.timeInSeconds)}"
+                restText = stringResource(R.string.loc_scr_rest_row, formatTime(workoutComponent.timeInSeconds))
             )
         }
 
@@ -502,7 +504,7 @@ fun WorkoutDetailScreen(
         val historyId = displayedWorkoutHistoryId
         if (historyId == null) {
             insightsState = WorkoutInsightsUiState.Error(
-                "Select a completed session before generating workout insights."
+                context.getString(R.string.loc_scr_select_completed_session)
             )
             showInsightsDialog = true
             return
@@ -530,7 +532,7 @@ fun WorkoutDetailScreen(
                 is WorkoutInsightsPromptResult.Success -> {
                     // Holds the full final chunk text (post-processed); Generating.partialText
                     // carries only settled markdown blocks for the streaming reveal.
-                    var finalText = ""
+                    var finalDisplayText = ""
                     runCatching {
                         insightsRepository.generateInsights(
                             WorkoutInsightsRequest(
@@ -541,9 +543,10 @@ fun WorkoutDetailScreen(
                                 useTransportToolCalling = true,
                             )
                         ).collectLatest { chunk ->
-                            finalText = chunk.text
+                            val displayText = chunk.displayText ?: chunk.text
+                            finalDisplayText = displayText
                             insightsState = WorkoutInsightsUiState.Generating(
-                                partialText = settledMarkdownPrefix(chunk.text),
+                                partialText = settledMarkdownPrefix(displayText),
                                 phase = chunk.phase,
                                 statusText = chunk.statusText
                             )
@@ -551,11 +554,13 @@ fun WorkoutDetailScreen(
                     }.onSuccess {
                         insightsState = WorkoutInsightsUiState.Success(
                             title = promptResult.title,
-                            text = finalText.ifBlank { "No insights were generated." }
+                            text = finalDisplayText.ifBlank {
+                                context.getString(R.string.loc_scr_no_insights_generated)
+                            }
                         )
                     }.onFailure { error ->
                         insightsState = WorkoutInsightsUiState.Error(
-                            error.message ?: "Unable to generate local insights."
+                            error.message ?: context.getString(R.string.loc_scr_unable_generate_insights)
                         )
                     }
                 }
@@ -604,12 +609,12 @@ fun WorkoutDetailScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Close",
+                                contentDescription = stringResource(R.string.common_close),
                                 tint = Red
                             )
                         }
                         Text(
-                            "Close",
+                            stringResource(R.string.common_close),
                             style = MaterialTheme.typography.labelSmall,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
@@ -630,12 +635,12 @@ fun WorkoutDetailScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.CheckBox,
-                                contentDescription = "Select all",
+                                contentDescription = stringResource(R.string.loc_select_all),
                                 tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                         Text(
-                            "Select all",
+                            stringResource(R.string.loc_select_all),
                             style = MaterialTheme.typography.labelSmall,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
@@ -652,12 +657,12 @@ fun WorkoutDetailScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                contentDescription = "Deselect all",
+                                contentDescription = stringResource(R.string.loc_deselect_all),
                                 tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                         Text(
-                            "Deselect all",
+                            stringResource(R.string.loc_deselect_all),
                             style = MaterialTheme.typography.labelSmall,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
@@ -733,11 +738,11 @@ fun WorkoutDetailScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.ArrowUpward,
-                                    contentDescription = "Move Up",
+                                    contentDescription = stringResource(R.string.workout_move_up_cd),
                                 )
                             }
                             Text(
-                                "Move Up",
+                                stringResource(R.string.workout_move_up_cd),
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center,
                                 maxLines = 2,
@@ -785,11 +790,11 @@ fun WorkoutDetailScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.ArrowDownward,
-                                    contentDescription = "Move Down"
+                                    contentDescription = stringResource(R.string.workout_move_down_cd)
                                 )
                             }
                             Text(
-                                "Move Down",
+                                stringResource(R.string.workout_move_down_cd),
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center,
                                 maxLines = 2,
@@ -837,11 +842,11 @@ fun WorkoutDetailScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.CheckCircle,
-                                        contentDescription = "Enable",
+                                        contentDescription = stringResource(R.string.loc_enable),
                                     )
                                 }
                                 Text(
-                                    "Enable",
+                                    stringResource(R.string.loc_enable),
                                     style = MaterialTheme.typography.labelSmall,
                                     textAlign = TextAlign.Center,
                                     maxLines = 2,
@@ -883,11 +888,11 @@ fun WorkoutDetailScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Block,
-                                        contentDescription = "Disable",
+                                        contentDescription = stringResource(R.string.loc_disable),
                                     )
                                 }
                                 Text(
-                                    "Disable",
+                                    stringResource(R.string.loc_disable),
                                     style = MaterialTheme.typography.labelSmall,
                                     textAlign = TextAlign.Center,
                                     maxLines = 2,
@@ -935,11 +940,11 @@ fun WorkoutDetailScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.CheckCircle,
-                                        contentDescription = "Enable",
+                                        contentDescription = stringResource(R.string.loc_enable),
                                     )
                                 }
                                 Text(
-                                    "Enable",
+                                    stringResource(R.string.loc_enable),
                                     style = MaterialTheme.typography.labelSmall,
                                     textAlign = TextAlign.Center,
                                     maxLines = 2,
@@ -981,11 +986,11 @@ fun WorkoutDetailScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Block,
-                                        contentDescription = "Disable",
+                                        contentDescription = stringResource(R.string.loc_disable),
                                     )
                                 }
                                 Text(
-                                    "Disable",
+                                    stringResource(R.string.loc_disable),
                                     style = MaterialTheme.typography.labelSmall,
                                     textAlign = TextAlign.Center,
                                     maxLines = 2,
@@ -1017,11 +1022,11 @@ fun WorkoutDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy",
+                                contentDescription = stringResource(R.string.loc_copy),
                             )
                         }
                         Text(
-                            "Copy",
+                            stringResource(R.string.loc_copy),
                             style = MaterialTheme.typography.labelSmall,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
@@ -1040,11 +1045,11 @@ fun WorkoutDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.MoveDown,
-                                contentDescription = "Move",
+                                contentDescription = stringResource(R.string.loc_move),
                             )
                         }
                         Text(
-                            "Move",
+                            stringResource(R.string.loc_move),
                             style = MaterialTheme.typography.labelSmall,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
@@ -1090,12 +1095,12 @@ fun WorkoutDetailScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
-                                contentDescription = "Delete",
+                                contentDescription = stringResource(R.string.common_delete),
                                 tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                         Text(
-                            "Delete",
+                            stringResource(R.string.common_delete),
                             style = MaterialTheme.typography.labelSmall,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
@@ -1122,7 +1127,7 @@ fun WorkoutDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.ChevronRight,
-                                contentDescription = "Scroll right",
+                                contentDescription = stringResource(R.string.loc_scroll_right),
                                 tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
@@ -1146,7 +1151,7 @@ fun WorkoutDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.ChevronLeft,
-                                contentDescription = "Scroll left",
+                                contentDescription = stringResource(R.string.loc_scroll_left),
                                 tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
@@ -1190,7 +1195,7 @@ fun WorkoutDetailScreen(
                         IconButton(onClick = onGoBack) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
+                                contentDescription = stringResource(R.string.common_back)
                             )
                         }
                     },
@@ -1211,7 +1216,7 @@ fun WorkoutDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QuestionAnswer,
-                                contentDescription = "Chat with session history"
+                                contentDescription = stringResource(R.string.loc_scr_chat_session_history_cd)
                             )
                         }
                         StableHeaderIconButton(
@@ -1224,7 +1229,7 @@ fun WorkoutDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Insights"
+                                contentDescription = stringResource(R.string.loc_scr_insights_cd)
                             )
                         }
                         Menu(
@@ -1238,9 +1243,18 @@ fun WorkoutDetailScreen(
                                     appViewModel.viewModelScope.launch {
                                         runCatching { appViewModel.startRecurringSession(workout.id) }
                                             .onFailure { error ->
+                                                Log.e(
+                                                    "WorkoutDetailScreen",
+                                                    "Could not start recurring session for workout ${workout.id}.",
+                                                    error,
+                                                )
                                                 Toast.makeText(
                                                     context,
-                                                    error.message ?: "Could not start recurring session.",
+                                                    recurringAuthoringErrorMessage(
+                                                        context,
+                                                        error,
+                                                        R.string.loc_scr_could_not_start_recurring,
+                                                    ),
                                                     Toast.LENGTH_LONG,
                                                 ).show()
                                             }
@@ -1302,7 +1316,11 @@ fun WorkoutDetailScreen(
                 verticalArrangement = Arrangement.Top,
             ) {
                 SwipeableTabs(
-                    tabTitles = listOf("Overview", "Charts", "Histories"),
+                    tabTitles = listOf(
+                        stringResource(R.string.loc_scr_tab_overview),
+                        stringResource(R.string.loc_scr_tab_charts),
+                        stringResource(R.string.loc_scr_tab_histories),
+                    ),
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
@@ -1444,7 +1462,7 @@ fun WorkoutDetailScreen(
                                 isSelectionModeActive = false
                                 Toast.makeText(
                                     context,
-                                    "Moved the selected items to ${targetWorkout.name}.",
+                                    context.getString(R.string.loc_scr_moved_items_to, targetWorkout.name),
                                     Toast.LENGTH_SHORT
                                 ).show()
 
@@ -1457,9 +1475,9 @@ fun WorkoutDetailScreen(
 
             ConfirmationDialog(
                 show = showDeleteDialog,
-                title = IncompleteWorkoutStrings.DELETE_TITLE,
-                message = IncompleteWorkoutStrings.DELETE_MESSAGE,
-                confirmText = IncompleteWorkoutStrings.DISCARD_BUTTON,
+                title = stringResource(SharedR.string.incomplete_workout_delete_title),
+                message = stringResource(SharedR.string.incomplete_workout_delete_message),
+                confirmText = stringResource(SharedR.string.incomplete_workout_discard),
                 isDestructive = true,
                 onConfirm = {
                     workoutViewModel.discardIncompleteWorkout()
@@ -1472,9 +1490,9 @@ fun WorkoutDetailScreen(
 
             ConfirmationDialog(
                 show = showStartConfirmationDialog,
-                title = "Start workout from the beginning",
-                message = "This will remove the incomplete session and start the workout from the beginning.",
-                confirmText = "Start over",
+                title = stringResource(R.string.loc_scr_start_beginning_title),
+                message = stringResource(R.string.loc_scr_start_beginning_message),
+                confirmText = stringResource(R.string.loc_scr_start_over),
                 isDestructive = true,
                 onConfirm = {
                     showStartConfirmationDialog = false
@@ -1486,9 +1504,9 @@ fun WorkoutDetailScreen(
             )
             ConfirmationDialog(
                 show = showClearAllIncompleteSessionsDialog,
-                title = IncompleteWorkoutStrings.CLEAR_TITLE,
-                message = IncompleteWorkoutStrings.CLEAR_MESSAGE,
-                confirmText = "Clear",
+                title = stringResource(SharedR.string.incomplete_workout_clear_title),
+                message = stringResource(SharedR.string.incomplete_workout_clear_message),
+                confirmText = stringResource(R.string.loc_scr_clear),
                 isDestructive = true,
                 onConfirm = {
                     onClearAllIncompleteSessions()
@@ -1500,9 +1518,12 @@ fun WorkoutDetailScreen(
             )
             ConfirmationDialog(
                 show = showDeleteSelectedIntervalDialog,
-                title = "Delete selected interval",
-                message = "Delete all saved sessions in ${historyFilterRange.displayLabel()}? This can't be undone.",
-                confirmText = "Delete",
+                title = stringResource(R.string.loc_scr_delete_interval_title),
+                message = stringResource(
+                    R.string.loc_scr_delete_interval_message,
+                    historyFilterRange.displayLabel(),
+                ),
+                confirmText = stringResource(R.string.common_delete),
                 isDestructive = true,
                 onConfirm = {
                     scope.launch {
@@ -1521,7 +1542,7 @@ fun WorkoutDetailScreen(
                                     withContext(Dispatchers.Main) {
                                         Toast.makeText(
                                             context,
-                                            "Couldn't remove some sessions from Health Connect.",
+                                            context.getString(R.string.loc_scr_health_connect_remove_some_error),
                                             Toast.LENGTH_SHORT,
                                         ).show()
                                     }
@@ -1558,9 +1579,13 @@ fun WorkoutDetailScreen(
                                 Toast.makeText(
                                     context,
                                     if (deletedCount == 0) {
-                                        "No histories found in the selected interval."
+                                        context.getString(R.string.loc_scr_no_histories_interval)
                                     } else {
-                                        "$deletedCount ${if (deletedCount == 1) "history" else "histories"} deleted."
+                                        context.resources.getQuantityString(
+                                            R.plurals.loc_scr_histories_deleted,
+                                            deletedCount,
+                                            deletedCount,
+                                        )
                                     },
                                     Toast.LENGTH_SHORT,
                                 ).show()
@@ -1570,7 +1595,7 @@ fun WorkoutDetailScreen(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "Couldn't delete histories in the selected interval.",
+                                    context.getString(R.string.loc_scr_delete_interval_error),
                                     Toast.LENGTH_SHORT,
                                 ).show()
                                 showDeleteSelectedIntervalDialog = false
@@ -1582,9 +1607,9 @@ fun WorkoutDetailScreen(
             )
             ConfirmationDialog(
                 show = showClearAllHistoriesDialog,
-                title = "Clear all histories",
-                message = "Delete all saved sessions for this workout? This can't be undone.",
-                confirmText = "Delete",
+                title = stringResource(R.string.loc_scr_clear_all_histories_title),
+                message = stringResource(R.string.loc_scr_clear_all_histories_message),
+                confirmText = stringResource(R.string.common_delete),
                 isDestructive = true,
                 onConfirm = {
                     scope.launch {
@@ -1606,7 +1631,7 @@ fun WorkoutDetailScreen(
                                     withContext(Dispatchers.Main) {
                                         Toast.makeText(
                                             context,
-                                            "Couldn't remove workout history from Health Connect.",
+                                            context.getString(R.string.loc_scr_health_connect_remove_history_error),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -1643,7 +1668,7 @@ fun WorkoutDetailScreen(
                                 displayedWorkoutHistoryId = null
                                 Toast.makeText(
                                     context,
-                                    "All workout histories cleared.",
+                                    context.getString(R.string.loc_scr_all_histories_cleared),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 showClearAllHistoriesDialog = false
@@ -1652,7 +1677,7 @@ fun WorkoutDetailScreen(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "Couldn't clear workout histories.",
+                                    context.getString(R.string.loc_scr_clear_histories_error),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 showClearAllHistoriesDialog = false
@@ -1666,9 +1691,9 @@ fun WorkoutDetailScreen(
             )
             ConfirmationDialog(
                 show = showDeleteSelectedSessionDialog,
-                title = "Delete selected session",
-                message = "Remove this session from your history? This can't be undone.",
-                confirmText = "Delete",
+                title = stringResource(R.string.loc_scr_delete_session_title),
+                message = stringResource(R.string.loc_scr_delete_session_message),
+                confirmText = stringResource(R.string.common_delete),
                 isDestructive = true,
                 onConfirm = {
                     val historyId = displayedWorkoutHistoryId
@@ -1691,7 +1716,7 @@ fun WorkoutDetailScreen(
                                         withContext(Dispatchers.Main) {
                                             Toast.makeText(
                                                 context,
-                                                "Couldn't remove session from Health Connect.",
+                                                context.getString(R.string.loc_scr_health_connect_remove_session_error),
                                                 Toast.LENGTH_SHORT
                                             ).show()
                                         }
@@ -1724,7 +1749,7 @@ fun WorkoutDetailScreen(
                                 displayedWorkoutHistoryId = null
                                 Toast.makeText(
                                     context,
-                                    "Session deleted.",
+                                    context.getString(R.string.loc_scr_session_deleted),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 showDeleteSelectedSessionDialog = false
@@ -1733,7 +1758,7 @@ fun WorkoutDetailScreen(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "Couldn't delete session.",
+                                    context.getString(R.string.loc_scr_delete_session_error),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 showDeleteSelectedSessionDialog = false
@@ -1745,11 +1770,14 @@ fun WorkoutDetailScreen(
                     showDeleteSelectedSessionDialog = false
                 }
             )
-            LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving changes...")
+            LoadingOverlay(
+                isVisible = rememberDebouncedSavingVisible(isSaving),
+                text = stringResource(R.string.workout_form_saving),
+            )
             if (MobileLlmFeatureFlags.isEnabled(context)) {
                 WorkoutInsightsDialog(
                     show = showInsightsDialog,
-                    title = "Workout insights",
+                    title = stringResource(R.string.loc_scr_workout_insights),
                     state = insightsState,
                     configurationState = insightsConfigurationState,
                     onDismiss = { showInsightsDialog = false },

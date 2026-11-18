@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -44,6 +45,7 @@ import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composables.WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
@@ -57,7 +59,6 @@ import com.gabstra.myworkoutassistant.composables.workout.pages.NotesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.PlatesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.ProgressionComparisonPage
 import com.gabstra.myworkoutassistant.composables.SetTableRow
-import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.composables.SetValueSection
 import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
@@ -308,7 +309,10 @@ private fun RestTimerBlock(
                     hapticsViewModel.doGentleVibration()
                 },
                 content = {
-                    SetValueSection(label = "REST", headerStyle = timerHeaderStyle) {
+                    SetValueSection(
+                        label = stringResource(R.string.wear_rest_label),
+                        headerStyle = timerHeaderStyle,
+                    ) {
                         textComposable(seconds = currentSeconds)
                     }
                 }
@@ -316,10 +320,12 @@ private fun RestTimerBlock(
         }
     }
 
+    val restScreenDescription = stringResource(R.string.wear_rest_screen_description)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .semantics { contentDescription = SetValueSemantics.RestSetTypeDescription },
+            .semantics { contentDescription = restScreenDescription },
         contentAlignment = Alignment.Center
     ) {
         if (!isTimerInEditMode) {
@@ -329,7 +335,7 @@ private fun RestTimerBlock(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "REST",
+                    text = stringResource(R.string.wear_rest_label),
                     style = timerHeaderStyle,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -340,7 +346,7 @@ private fun RestTimerBlock(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         restHrvRmssdMs?.let { hrvMs ->
                             Text(
-                                text = "HRV ${hrvMs.roundToInt()} ms",
+                                text = stringResource(R.string.wear_hrv_value, hrvMs.roundToInt()),
                                 style = timerHeaderStyle,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -350,7 +356,7 @@ private fun RestTimerBlock(
                 }
                 Spacer(modifier = Modifier.height(15.dp))
                 Text(
-                    text = "UP NEXT",
+                    text = stringResource(R.string.page_exercises_up_next),
                     style = timerHeaderStyle,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -659,8 +665,8 @@ fun RestScreen(
 
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
-        title = "Skip rest",
-        message = "Move on to the next set now?",
+        title = stringResource(R.string.wear_skip_rest_title),
+        message = stringResource(R.string.wear_skip_rest_message),
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             skipConfirmAction.value?.invoke()

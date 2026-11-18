@@ -31,11 +31,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.composables.TimedSetExecutionLoadLabel
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -323,7 +325,7 @@ fun TimedDurationSetScreen(
                     verticalArrangement = Arrangement.spacedBy(2.5.dp)
                 ) {
                     Text(
-                        text = "TIMER",
+                        text = stringResource(R.string.loc_timer),
                         style = headerStyle,
                         textAlign = TextAlign.Center,
                     )
@@ -363,7 +365,10 @@ fun TimedDurationSetScreen(
                         Icon(
                             modifier = Modifier.size(35.dp),
                             imageVector = Icons.Default.PlayArrow,
-                            contentDescription = if (showRepeatButton) "Repeat set" else "Start",
+                            contentDescription = stringResource(
+                                if (showRepeatButton) R.string.loc_repeat_set_cd
+                                else R.string.loc_start_cd
+                            ),
                             tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -380,7 +385,7 @@ fun TimedDurationSetScreen(
                         Icon(
                             modifier = Modifier.size(35.dp),
                             imageVector = Icons.Default.Stop,
-                            contentDescription = "Stop",
+                            contentDescription = stringResource(R.string.loc_stop_cd),
                             tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -418,7 +423,10 @@ fun TimedDurationSetScreen(
                         hapticsViewModel.doGentleVibration()
                     },
                     content = {
-                        SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                        SetValueSection(
+                            label = stringResource(R.string.loc_timer),
+                            headerStyle = headerStyle
+                        ) {
                             textComposable()
                         }
                     }
@@ -451,8 +459,8 @@ fun TimedDurationSetScreen(
 
         CustomDialogYesOnLongPress(
             show = showStopDialog,
-            title = "Stop Exercise",
-            message = "Do you want to stop this exercise?",
+            title = stringResource(R.string.loc_stop_exercise_title),
+            message = stringResource(R.string.loc_stop_exercise_message),
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
                 onTimerDisabled()

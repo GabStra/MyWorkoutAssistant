@@ -12,6 +12,8 @@ import androidx.compose.runtime.remember
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -91,6 +93,12 @@ fun PreparingStandardScreen(
     }
 
     FullScreenLoadingIndicator(
-        text = if (watchHeartRateReady) "Getting your workout ready" else "Checking your heart rate"
+        text = stringResource(
+            if (watchHeartRateReady) {
+                R.string.wear_getting_workout_ready
+            } else {
+                R.string.wear_checking_heart_rate
+            }
+        )
     )
 }

@@ -175,10 +175,16 @@ private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modi
         Ternary.BELOW -> Icons.AutoMirrored.Filled.TrendingDown to Red
         Ternary.MIXED -> Icons.Filled.SwapVert to MaterialTheme.colorScheme.tertiary
     }
+    val statusDescription = when (status) {
+        Ternary.ABOVE -> stringResource(R.string.components_trend_above)
+        Ternary.EQUAL -> stringResource(R.string.components_trend_equal)
+        Ternary.BELOW -> stringResource(R.string.components_trend_below)
+        Ternary.MIXED -> stringResource(R.string.components_trend_mixed)
+    }
     Icon(
         modifier = modifier,
         imageVector = icon,
-        contentDescription = "$label:$status",
+        contentDescription = "$label:$statusDescription",
         tint = tint
     )
 }

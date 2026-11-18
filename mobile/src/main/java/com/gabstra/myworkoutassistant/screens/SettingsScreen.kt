@@ -91,6 +91,11 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.util.Calendar
 
+private fun WorkoutInsightsMode.settingsLabelResId(): Int = when (this) {
+    WorkoutInsightsMode.LOCAL -> R.string.settings_insights_mode_local_label
+    WorkoutInsightsMode.REMOTE -> R.string.settings_insights_mode_remote_label
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -947,7 +952,7 @@ fun SettingsScreen(
                                 )
                                 Column(modifier = Modifier.fillMaxWidth()) {
                                     Text(
-                                        text = mode.label,
+                                        text = stringResource(mode.settingsLabelResId()),
                                         style = MaterialTheme.typography.bodyLarge
                                     )
                                     ContentSubtitle(

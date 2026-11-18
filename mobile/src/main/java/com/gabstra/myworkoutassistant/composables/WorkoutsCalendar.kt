@@ -30,8 +30,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.optionalClip
 import com.gabstra.myworkoutassistant.screens.WorkoutCalendarActivityKind
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -297,7 +299,7 @@ fun SimpleCalendarTitle(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Previous Month"
+                        contentDescription = stringResource(R.string.loc_previous_month)
                     )
                 }
             }
@@ -327,7 +329,7 @@ fun SimpleCalendarTitle(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Next Month"
+                        contentDescription = stringResource(R.string.loc_next_month)
                     )
                 }
             }

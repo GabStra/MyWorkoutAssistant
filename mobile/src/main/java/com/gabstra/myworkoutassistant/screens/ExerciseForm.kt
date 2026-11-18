@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -106,18 +107,7 @@ import com.gabstra.myworkoutassistant.shared.zoneRanges
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
 import java.util.UUID
-
-private fun ExerciseType.toReadableString(): String {
-    return name.replace('_', ' ')
-        .lowercase(Locale.ROOT)
-        .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
-}
-
-private fun getExerciseTypeDescriptions(): List<String> {
-    return ExerciseType.values().map { it.toReadableString() }
-}
 
 private fun formatPercentage(value: Double): String {
     val roundedValue = value.round(2)
@@ -214,7 +204,10 @@ fun ExerciseForm(
     }
     val (hours, minutes, seconds) = hms.value
 
-    val exerciseTypeDescriptions = rememberSaveable { getExerciseTypeDescriptions() }
+    val currentLocales = LocalConfiguration.current.locales
+    val exerciseTypeLabels = remember(currentLocales, context) {
+        ExerciseType.entries.associateWith { type -> type.localizedLabel(context) }
+    }
     val selectedExerciseType = rememberSaveable { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
     val recurringContext = recurringWorkout?.takeIf { it.recurringSessionId != null }
     val recurringStateKey = listOf(
@@ -260,11 +253,11 @@ fun ExerciseForm(
             } ?: "30"
         )
     }
-    val exerciseTypeItems = remember(exerciseTypeDescriptions) {
-        ExerciseType.values().zip(exerciseTypeDescriptions).map { (type, label) ->
+    val exerciseTypeItems = remember(exerciseTypeLabels) {
+        ExerciseType.entries.map { type ->
             StandardFilterDropdownItem(
                 value = type,
-                label = label
+                label = exerciseTypeLabels.getValue(type)
             )
         }
     }
@@ -564,7 +557,7 @@ fun ExerciseForm(
                     if (exercise == null) {
                         StandardFilterDropdown(
                             label = stringResource(R.string.exercise_type_label),
-                            selectedText = selectedExerciseType.value.toReadableString(),
+                            selectedText = exerciseTypeLabels.getValue(selectedExerciseType.value),
                             items = exerciseTypeItems,
                             onItemSelected = { type ->
                                 selectedExerciseType.value = type

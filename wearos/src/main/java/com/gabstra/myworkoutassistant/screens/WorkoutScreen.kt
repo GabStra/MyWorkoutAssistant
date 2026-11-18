@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -833,6 +834,7 @@ private fun AmbientWorkoutOverlay(
     viewModel: AppViewModel
 ) {
     val workoutState = screenState.workoutState
+    val context = LocalContext.current
     val exerciseName = remember(workoutState, viewModel.exercisesById) {
         val exerciseId = when (workoutState) {
             is WorkoutState.Set -> workoutState.exerciseId
@@ -844,8 +846,8 @@ private fun AmbientWorkoutOverlay(
         }
         exerciseId?.let { viewModel.exercisesById[it]?.name }
     }
-    val phaseText = remember(workoutState) { ambientPhaseText(workoutState) }
-    val detailText = remember(workoutState) { ambientDetailText(workoutState) }
+    val phaseText = remember(workoutState, context) { ambientPhaseText(context, workoutState) }
+    val detailText = remember(workoutState, context) { ambientDetailText(context, workoutState) }
     val progressText = remember(workoutState, viewModel.allWorkoutStates.size) {
         val stateIndex = viewModel.allWorkoutStates.indexOfFirst { it === workoutState }
         if (stateIndex >= 0 && viewModel.allWorkoutStates.isNotEmpty()) {
@@ -858,10 +860,17 @@ private fun AmbientWorkoutOverlay(
         (workoutState as? WorkoutState.Set)
             ?.let { state ->
                 viewModel.getSetCounterForExercise(state.exerciseId, state)
-                    ?.let { (current, total) -> if (total > 1) "Set $current/$total" else "Set $current" }
+                    ?.let { (current, total) ->
+                        if (total > 1) {
+                            context.getString(R.string.wear_set_counter_with_total, current, total)
+                        } else {
+                            context.getString(R.string.wear_set_counter, current)
+                        }
+                    }
             }
     }
     val overlayModel = ambientOverlayModel(
+        context = context,
         workoutState = workoutState,
         exerciseName = exerciseName,
         metadataText = setCounterText ?: detailText ?: progressText,
@@ -892,6 +901,7 @@ private fun AmbientWorkoutOverlayContent(
     model: AmbientWorkoutOverlayModel,
     timeContent: @Composable () -> Unit
 ) {
+    val context = LocalContext.current
     val offsetDp = (ambientState as? AmbientState.Ambient)
         ?.takeIf { it.burnInProtectionRequired }
         ?.let { (((it.updateTimeMillis / 60_000L) % 3L) - 1L).toInt().dp }
@@ -901,7 +911,9 @@ private fun AmbientWorkoutOverlayContent(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .semantics { contentDescription = "Ambient workout overlay" }
+            .semantics {
+                contentDescription = context.getString(R.string.wear_ambient_overlay_cd)
+            }
             .zIndex(20f),
         contentAlignment = Alignment.TopCenter
     ) {
@@ -924,7 +936,10 @@ private fun AmbientWorkoutOverlayContent(
 
             Text(
                 modifier = Modifier.semantics {
-                    contentDescription = "Ambient workout exercise: ${model.exerciseName.orEmpty()}"
+                    contentDescription = context.getString(
+                        R.string.wear_ambient_exercise_cd,
+                        model.exerciseName.orEmpty(),
+                    )
                 },
                 text = model.exerciseName.orEmpty(),
                 color = Color.White,
@@ -939,7 +954,10 @@ private fun AmbientWorkoutOverlayContent(
                     .fillMaxWidth()
                     .padding(horizontal = 32.dp)
                     .semantics {
-                        contentDescription = "Ambient workout phase: ${model.phaseText}"
+                        contentDescription = context.getString(
+                            R.string.wear_ambient_phase_cd,
+                            model.phaseText,
+                        )
                     },
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
@@ -985,6 +1003,7 @@ private fun AmbientWorkoutOverlayContent(
 
 @Composable
 private fun AmbientWorkoutMetricsRow(metrics: List<AmbientWorkoutMetric>) {
+    val context = LocalContext.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Bottom,
@@ -1004,7 +1023,11 @@ private fun AmbientWorkoutMetricsRow(metrics: List<AmbientWorkoutMetric>) {
                 )
                 TightNumericText(
                     modifier = Modifier.semantics {
-                        contentDescription = "Ambient workout ${metric.label.lowercase()}: ${metric.value}"
+                        contentDescription = context.getString(
+                            R.string.wear_ambient_metric_cd,
+                            metric.label.lowercase(),
+                            metric.value,
+                        )
                     },
                     text = metric.value,
                     color = Color.White,
@@ -1040,6 +1063,7 @@ private data class AmbientWorkoutMetric(
 )
 
 private fun ambientOverlayModel(
+    context: Context,
     workoutState: WorkoutState,
     exerciseName: String?,
     metadataText: String?,
@@ -1047,15 +1071,16 @@ private fun ambientOverlayModel(
     formatWeightForState: (Double, java.util.UUID?) -> String
 ): AmbientWorkoutOverlayModel {
     return AmbientWorkoutOverlayModel(
-        phaseText = ambientPhaseText(workoutState),
-        exerciseName = exerciseName ?: ambientPhaseText(workoutState),
+        phaseText = ambientPhaseText(context, workoutState),
+        exerciseName = exerciseName ?: ambientPhaseText(context, workoutState),
         metadataText = metadataText,
         progressText = progressText,
-        metrics = ambientMetrics(workoutState, formatWeightForState)
+        metrics = ambientMetrics(context, workoutState, formatWeightForState)
     )
 }
 
 private fun ambientMetrics(
+    context: Context,
     workoutState: WorkoutState,
     formatWeightForState: (Double, java.util.UUID?) -> String
 ): List<AmbientWorkoutMetric> {
@@ -1064,75 +1089,119 @@ private fun ambientMetrics(
             when (val setData = workoutState.currentSetData) {
                 is WeightSetData -> listOf(
                     AmbientWorkoutMetric(
-                        label = "WEIGHT (KG)",
+                        label = context.getString(R.string.set_label_weight_kg),
                         value = formatWeightForState(setData.getWeight(), workoutState.equipmentId)
                     ),
-                    AmbientWorkoutMetric(label = "REPS", value = setData.actualReps.toString())
+                    AmbientWorkoutMetric(
+                        label = context.getString(R.string.set_label_reps),
+                        value = setData.actualReps.toString(),
+                    )
                 )
                 is BodyWeightSetData -> listOf(
                     AmbientWorkoutMetric(
-                        label = "WEIGHT (KG)",
+                        label = context.getString(R.string.set_label_weight_kg),
                         value = if (setData.additionalWeight == 0.0) {
-                            "BW"
+                            context.getString(R.string.set_body_weight_abbrev)
                         } else {
                             formatWeightForState(setData.additionalWeight, workoutState.equipmentId)
                         }
                     ),
-                    AmbientWorkoutMetric(label = "REPS", value = setData.actualReps.toString())
+                    AmbientWorkoutMetric(
+                        label = context.getString(R.string.set_label_reps),
+                        value = setData.actualReps.toString(),
+                    )
                 )
                 is TimedDurationSetData -> listOf(
                     AmbientWorkoutMetric(
-                        label = "TIMER",
+                        label = context.getString(R.string.set_label_timer),
                         value = formatWorkoutDurationSecondsForDisplay((setData.endTimer / 1000).coerceAtLeast(0))
                     )
                 )
                 is EnduranceSetData -> listOf(
                     AmbientWorkoutMetric(
-                        label = "TIMER",
+                        label = context.getString(R.string.set_label_timer),
                         value = formatWorkoutDurationSecondsForDisplay((setData.endTimer / 1000).coerceAtLeast(0))
                     )
                 )
-                else -> listOf(AmbientWorkoutMetric(label = "SET", value = (workoutState.setIndex.toInt() + 1).toString()))
+                else -> listOf(
+                    AmbientWorkoutMetric(
+                        label = context.getString(R.string.wear_ambient_label_set),
+                        value = (workoutState.setIndex.toInt() + 1).toString(),
+                    )
+                )
             }
         }
         is WorkoutState.Rest -> {
             val restData = workoutState.currentSetData as? RestSetData
             listOf(
                 AmbientWorkoutMetric(
-                    label = "TIMER",
+                    label = context.getString(R.string.set_label_timer),
                     value = formatWorkoutDurationSecondsForDisplay((restData?.endTimer ?: 0).coerceAtLeast(0))
                 )
             )
         }
-        is WorkoutState.CalibrationLoadSelection -> listOf(AmbientWorkoutMetric(label = "LOAD", value = "Pick"))
-        is WorkoutState.CalibrationRIRSelection -> listOf(AmbientWorkoutMetric(label = "RIR", value = "Log"))
-        is WorkoutState.AutoRegulationRIRSelection -> listOf(AmbientWorkoutMetric(label = "RIR", value = "Log"))
-        is WorkoutState.Preparing -> listOf(AmbientWorkoutMetric(label = "STATUS", value = "Ready"))
-        is WorkoutState.Completed -> listOf(AmbientWorkoutMetric(label = "STATUS", value = "Done"))
+        is WorkoutState.CalibrationLoadSelection -> listOf(
+            AmbientWorkoutMetric(
+                label = context.getString(R.string.wear_ambient_label_load),
+                value = context.getString(R.string.wear_ambient_value_pick),
+            )
+        )
+        is WorkoutState.CalibrationRIRSelection -> listOf(
+            AmbientWorkoutMetric(
+                label = context.getString(R.string.wear_ambient_label_rir),
+                value = context.getString(R.string.wear_ambient_value_log),
+            )
+        )
+        is WorkoutState.AutoRegulationRIRSelection -> listOf(
+            AmbientWorkoutMetric(
+                label = context.getString(R.string.wear_ambient_label_rir),
+                value = context.getString(R.string.wear_ambient_value_log),
+            )
+        )
+        is WorkoutState.Preparing -> listOf(
+            AmbientWorkoutMetric(
+                label = context.getString(R.string.wear_ambient_label_status),
+                value = context.getString(R.string.wear_ambient_value_ready),
+            )
+        )
+        is WorkoutState.Completed -> listOf(
+            AmbientWorkoutMetric(
+                label = context.getString(R.string.wear_ambient_label_status),
+                value = context.getString(R.string.wear_done),
+            )
+        )
     }
 }
 
-private fun ambientPhaseText(workoutState: WorkoutState): String =
+private fun ambientPhaseText(context: Context, workoutState: WorkoutState): String =
     when (workoutState) {
-        is WorkoutState.Preparing -> "Preparing"
-        is WorkoutState.Set -> "Set"
-        is WorkoutState.Rest -> "Rest"
-        is WorkoutState.Completed -> "Complete"
-        is WorkoutState.CalibrationLoadSelection -> "Pick load"
-        is WorkoutState.CalibrationRIRSelection -> "Log RIR"
-        is WorkoutState.AutoRegulationRIRSelection -> "Log RIR"
+        is WorkoutState.Preparing -> context.getString(R.string.wear_phase_preparing)
+        is WorkoutState.Set -> context.getString(R.string.notif_timer_set)
+        is WorkoutState.Rest -> context.getString(R.string.notif_timer_rest)
+        is WorkoutState.Completed -> context.getString(R.string.wear_phase_complete)
+        is WorkoutState.CalibrationLoadSelection -> context.getString(R.string.wear_phase_pick_load)
+        is WorkoutState.CalibrationRIRSelection -> context.getString(R.string.wear_phase_log_rir)
+        is WorkoutState.AutoRegulationRIRSelection -> context.getString(R.string.wear_phase_log_rir)
     }
 
-private fun ambientDetailText(workoutState: WorkoutState): String? =
+private fun ambientDetailText(context: Context, workoutState: WorkoutState): String? =
     when (workoutState) {
         is WorkoutState.Set -> {
             val timerText = when (val setData = workoutState.currentSetData) {
-                is TimedDurationSetData -> "Timer ${formatWorkoutDurationSecondsForDisplay(setData.startTimer / 1000)}"
-                is EnduranceSetData -> "Timer --"
+                is TimedDurationSetData -> context.getString(
+                    R.string.wear_detail_timer,
+                    formatWorkoutDurationSecondsForDisplay(setData.startTimer / 1000),
+                )
+                is EnduranceSetData -> context.getString(R.string.wear_detail_timer_placeholder)
                 else -> null
             }
             buildString {
-                append("Set ${workoutState.setIndex.toInt() + 1}")
+                append(
+                    context.getString(
+                        R.string.wear_detail_set,
+                        workoutState.setIndex.toInt() + 1,
+                    )
+                )
                 if (!timerText.isNullOrBlank()) {
                     append(" ")
                     append(timerText)
@@ -1140,11 +1209,12 @@ private fun ambientDetailText(workoutState: WorkoutState): String? =
             }
         }
         is WorkoutState.Rest -> {
-            "Timer --"
+            context.getString(R.string.wear_detail_timer_placeholder)
         }
-        is WorkoutState.CalibrationLoadSelection -> "Calibration"
-        is WorkoutState.CalibrationRIRSelection -> "Calibration"
-        is WorkoutState.AutoRegulationRIRSelection -> "Auto-regulation"
+        is WorkoutState.CalibrationLoadSelection -> context.getString(R.string.wear_status_calibration)
+        is WorkoutState.CalibrationRIRSelection -> context.getString(R.string.wear_status_calibration)
+        is WorkoutState.AutoRegulationRIRSelection ->
+            context.getString(R.string.wear_status_auto_regulation)
         else -> null
     }
 

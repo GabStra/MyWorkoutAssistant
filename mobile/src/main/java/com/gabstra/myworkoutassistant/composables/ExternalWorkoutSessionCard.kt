@@ -17,10 +17,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.healthconnect.external.ExternalHealthConnectSessionEntity
 import java.time.format.DateTimeFormatter
 
@@ -44,7 +47,7 @@ fun ExternalWorkoutSessionCard(
         ) {
             Icon(
                 imageVector = Icons.Filled.Info,
-                contentDescription = "View details",
+                contentDescription = stringResource(R.string.loc_view_details_cd),
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onBackground,
             )
@@ -56,7 +59,10 @@ fun ExternalWorkoutSessionCard(
         ) {
             Text(
                 modifier = Modifier.fillMaxWidth(),
-                text = session.title ?: session.exerciseTypeLabel,
+                text = session.title
+                    ?: WorkoutTypes.GetStringResourceFromInt(session.exerciseType)
+                        ?.let { stringResource(it) }
+                    ?: session.exerciseTypeLabel,
                 color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.bodyLarge,
             )

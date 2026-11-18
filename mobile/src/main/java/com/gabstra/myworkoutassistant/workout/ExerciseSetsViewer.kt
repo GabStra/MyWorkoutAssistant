@@ -23,12 +23,14 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -42,7 +44,6 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set as WorkoutSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
-import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workout.display.ExerciseSetDisplayRow
 import com.gabstra.myworkoutassistant.shared.workout.display.buildExerciseSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetSetDisplayRows
@@ -130,9 +131,9 @@ fun SetTableRow(
                     val weightSetData = (setState.currentSetData as WeightSetData)
                     val weightText = equipment?.formatWeight(weightSetData.actualWeight) ?: "-"
                     val displayWeightText = when {
-                        shouldHideCalibrationExecutionWeight -> CalibrationUiLabels.Tbd
+                        shouldHideCalibrationExecutionWeight -> stringResource(R.string.loc_calibration_tbd)
                         isCalibrationSet -> weightText
-                        isPendingCalibration -> CalibrationUiLabels.Tbd
+                        isPendingCalibration -> stringResource(R.string.loc_calibration_tbd)
                         else -> weightText
                     }
                     ScalableText(
@@ -156,12 +157,12 @@ fun SetTableRow(
                     val baseWeightText = if (equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         equipment.formatWeight(bodyWeightSetData.additionalWeight)
                     } else {
-                        "BW"
+                        stringResource(R.string.loc_body_weight_short)
                     }
                     val weightText = when {
-                        shouldHideCalibrationExecutionWeight -> CalibrationUiLabels.Tbd
+                        shouldHideCalibrationExecutionWeight -> stringResource(R.string.loc_calibration_tbd)
                         isCalibrationSet && equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> baseWeightText
-                        isPendingCalibration -> CalibrationUiLabels.Tbd
+                        isPendingCalibration -> stringResource(R.string.loc_calibration_tbd)
                         else -> baseWeightText
                     }
 
@@ -400,7 +401,7 @@ fun ExerciseSetsViewer(
                             viewModel = viewModel,
                             exerciseId = displayRow.state.exerciseId,
                         ),
-                        label = "SELECT LOAD",
+                        label = stringResource(R.string.loc_select_load),
                     ),
                     textColor = textColor
                 )
@@ -411,13 +412,16 @@ fun ExerciseSetsViewer(
                             viewModel = viewModel,
                             exerciseId = displayRow.state.exerciseId,
                         ),
-                        label = "SET RIR",
+                        label = stringResource(R.string.loc_set_rir),
                     ),
                     textColor = textColor
                 )
                 is ExerciseSetDisplayRow.RestRow -> CenteredLabelRow(
                     modifier = rowModifier,
-                    text = buildWorkoutRestRowLabel(displayRow.state),
+                    text = buildWorkoutRestRowLabel(
+                        restState = displayRow.state,
+                        labelFormat = stringResource(R.string.loc_scr_rest_row),
+                    ),
                     textColor = textColor
                 )
             }
@@ -441,19 +445,19 @@ fun ExerciseSetsViewer(
             ) {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "SET",
+                    text = stringResource(R.string.loc_col_set),
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )
                 Text(
                     modifier = Modifier.weight(2f),
-                    text = "WEIGHT (KG)",
+                    text = stringResource(R.string.loc_col_weight_kg),
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "REPS",
+                    text = stringResource(R.string.loc_col_reps),
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )
@@ -486,13 +490,13 @@ fun ExerciseSetsViewer(
             ) {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "SET",
+                    text = stringResource(R.string.loc_col_set),
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )
                 Text(
                     modifier = Modifier.weight(3f),
-                    text = "TIME (HH:MM:SS)",
+                    text = stringResource(R.string.loc_col_time_hms),
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )

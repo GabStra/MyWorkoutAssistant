@@ -21,11 +21,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -325,11 +327,17 @@ fun BodyWeightSetScreen(
                 ),
             ) {
                 if(shouldShowWeights) {
-                    SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
+                    SetValueSection(
+                        label = stringResource(R.string.loc_col_weight_kg),
+                        headerStyle = headerStyle
+                    ) {
                         WeightRow(style = itemStyle)
                     }
                 }
-                SetValueSection(label = "REPS", headerStyle = headerStyle) {
+                SetValueSection(
+                    label = stringResource(R.string.loc_col_reps),
+                    headerStyle = headerStyle
+                ) {
                     RepsRow(style = itemStyle)
                 }
             }
@@ -385,12 +393,18 @@ fun BodyWeightSetScreen(
                             horizontalArrangement = Arrangement.spacedBy(15.dp, Alignment.CenterHorizontally)
                         ) {
                             if (isWeightInEditMode) {
-                                SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
+                                SetValueSection(
+                                    label = stringResource(R.string.loc_col_weight_kg),
+                                    headerStyle = headerStyle
+                                ) {
                                     WeightRow(style = itemStyle)
                                 }
                             }
                             if (isRepsInEditMode) {
-                                SetValueSection(label = "REPS", headerStyle = headerStyle) {
+                                SetValueSection(
+                                    label = stringResource(R.string.loc_col_reps),
+                                    headerStyle = headerStyle
+                                ) {
                                     RepsRow(style = itemStyle)
                                 }
                             }
@@ -409,15 +423,28 @@ fun BodyWeightSetScreen(
                         extraInfo(state)
                     }
                     (state.historicalSetData as? BodyWeightSetData)?.let { historical ->
+                        val bodyWeightLabel = stringResource(R.string.loc_body_weight_short)
                         val historicalText = when {
                             historical.relativeBodyWeightInKg == 0.0 && historical.additionalWeight == 0.0 ->
-                                "Last time: ${historical.actualReps} reps"
+                                stringResource(R.string.loc_last_time_reps, historical.actualReps)
                             historical.relativeBodyWeightInKg == 0.0 ->
-                                "Last used: + ${equipment?.formatWeight(historical.additionalWeight) ?: historical.additionalWeight} kg × ${historical.actualReps} reps"
+                                stringResource(
+                                    R.string.loc_last_used_load_reps,
+                                    "+ ${equipment?.formatWeight(historical.additionalWeight) ?: historical.additionalWeight}",
+                                    historical.actualReps,
+                                )
                             historical.additionalWeight == 0.0 ->
-                                "Last used: BW × ${historical.actualReps} reps"
+                                stringResource(
+                                    R.string.loc_last_used_without_load,
+                                    bodyWeightLabel,
+                                    historical.actualReps,
+                                )
                             else ->
-                                "Last used: BW + ${equipment?.formatWeight(historical.additionalWeight) ?: historical.additionalWeight} kg × ${historical.actualReps} reps"
+                                stringResource(
+                                    R.string.loc_last_used_load_reps,
+                                    "$bodyWeightLabel + ${equipment?.formatWeight(historical.additionalWeight) ?: historical.additionalWeight}",
+                                    historical.actualReps,
+                                )
                         }
                         Text(
                             text = historicalText,

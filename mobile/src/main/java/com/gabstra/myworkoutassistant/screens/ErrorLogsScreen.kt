@@ -148,15 +148,15 @@ fun ErrorLogCard(errorLog: ErrorLog) {
     val copyToClipboard = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val fullStackTrace = buildString {
-            appendLine("Exception: ${errorLog.exceptionType}")
-            appendLine("Message: ${errorLog.message}")
-            appendLine("Thread: ${errorLog.threadName}")
-            appendLine("Timestamp: ${errorLog.timestamp.format(dateFormatter)}")
+            appendLine(context.getString(R.string.loc_scr_error_exception, errorLog.exceptionType))
+            appendLine(context.getString(R.string.loc_scr_error_message, errorLog.message.orEmpty()))
+            appendLine(context.getString(R.string.loc_scr_error_thread, errorLog.threadName))
+            appendLine(context.getString(R.string.loc_scr_error_timestamp, errorLog.timestamp.format(dateFormatter)))
             appendLine()
-            appendLine("Stack Trace:")
+            appendLine(context.getString(R.string.loc_scr_error_stack_trace))
             append(errorLog.stackTrace)
         }
-        val clip = ClipData.newPlainText("Stack Trace", fullStackTrace)
+        val clip = ClipData.newPlainText(context.getString(R.string.loc_scr_error_stack_trace_clip), fullStackTrace)
         clipboard.setPrimaryClip(clip)
         Toast.makeText(context, context.getString(R.string.logs_copied), Toast.LENGTH_SHORT).show()
     }

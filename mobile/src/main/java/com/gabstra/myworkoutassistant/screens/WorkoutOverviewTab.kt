@@ -36,11 +36,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
@@ -53,14 +55,16 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.labelRes
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
+import com.gabstra.myworkoutassistant.shared.R as SharedR
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
-import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionDisplayLabels
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
-import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeSetLabel
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeSetType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -136,16 +140,16 @@ fun WorkoutOverviewTab(
             ) {
                 GenericButtonWithMenu(
                     menuItems = listOf(
-                        MenuItem("Add Exercise") {
+                        MenuItem(stringResource(R.string.loc_scr_add_exercise)) {
                             appViewModel.setScreenData(ScreenData.NewExercise(workout.id))
                         },
-                        MenuItem("Add Superset") {
+                        MenuItem(stringResource(R.string.loc_scr_add_superset)) {
                             appViewModel.setScreenData(ScreenData.NewSuperset(workout.id))
                         }
                     ),
                     content = {
                         Text(
-                            "Add a workout item",
+                            stringResource(R.string.loc_scr_add_workout_item),
                             color = MaterialTheme.colorScheme.background,
                             maxLines = 1,
                             modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
@@ -181,7 +185,7 @@ fun WorkoutOverviewTab(
                         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                     ) {
                         Text(
-                            text = "Alarms",
+                            text = stringResource(R.string.workout_form_alarms_title),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground
                         )
@@ -206,14 +210,14 @@ fun WorkoutOverviewTab(
             }
 
             AppListFilterToggle(
-                label = "Show rests",
+                label = stringResource(R.string.loc_scr_show_rests),
                 checked = showRest,
                 onCheckedChange = onShowRestChange,
             )
 
             if (disabledWorkoutComponentCount > 0) {
                 AppListFilterToggle(
-                    label = "Hide disabled",
+                    label = stringResource(R.string.workout_hide_disabled),
                     checked = hideDisabledWorkoutComponents,
                     onCheckedChange = onHideDisabledWorkoutComponentsChange,
                 )
@@ -283,7 +287,7 @@ fun WorkoutOverviewTab(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         AppPrimaryOutlinedButton(
-                                            text = "Add rest",
+                                            text = stringResource(R.string.loc_scr_add_rest),
                                             onClick = {
                                                 appViewModel.setScreenData(
                                                     ScreenData.InsertRestAfter(workout.id, component.id)
@@ -308,23 +312,23 @@ fun WorkoutOverviewTab(
             ) {
                 GenericButtonWithMenu(
                     menuItems = listOf(
-                        MenuItem("Add Exercise") {
+                        MenuItem(stringResource(R.string.loc_scr_add_exercise)) {
                             appViewModel.setScreenData(ScreenData.NewExercise(workout.id))
                         },
                         MenuItem(
-                            label = "Rest between all exercises",
-                            description = "One duration; replaces existing."
+                            label = stringResource(R.string.loc_scr_rest_between_all_exercises),
+                            description = stringResource(R.string.loc_scr_rest_between_all_exercises_desc)
                         ) {
                             appViewModel.setScreenData(ScreenData.NewRest(workout.id, null))
                         },
-                        MenuItem("Add Superset") {
+                        MenuItem(stringResource(R.string.loc_scr_add_superset)) {
                             appViewModel.setScreenData(ScreenData.NewSuperset(workout.id))
                         }
                     ),
                     content = {
                         Icon(
                             imageVector = Icons.Filled.Add,
-                            contentDescription = "Add",
+                            contentDescription = stringResource(R.string.loc_add_cd),
                             tint = MaterialTheme.colorScheme.background,
                         )
                     }
@@ -347,6 +351,8 @@ private fun WorkoutSessionActionCard(
     onSetWatchMotionCaptureEnabled: (Boolean) -> Unit = {}
 ) {
     val sessionStatus = workoutResumeInfo?.sessionStatus
+    val compactSessionLabel = workoutSessionDisplayLabel(sessionStatus)
+    val compactSessionTitle = compactSessionLabel?.let { stringResource(it.labelRes()) }
     val hasResumeAction = when (sessionStatus) {
         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
         WorkoutSessionStatus.STOPPED_ON_WEAR,
@@ -357,26 +363,23 @@ private fun WorkoutSessionActionCard(
         null -> false
     }
     val titleText = when (sessionStatus) {
-        WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "Workout in progress on watch"
-        WorkoutSessionStatus.STOPPED_ON_WEAR ->
-            workoutSessionDisplayLabel(WorkoutSessionStatus.STOPPED_ON_WEAR)
-                ?: WorkoutSessionDisplayLabels.STOPPED_ON_WATCH
-        WorkoutSessionStatus.STALE_ON_WEAR ->
-            workoutSessionDisplayLabel(WorkoutSessionStatus.STALE_ON_WEAR)
-                ?: WorkoutSessionDisplayLabels.STALE_ON_WATCH
-        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> IncompleteWorkoutStrings.SINGULAR
-        WorkoutSessionStatus.INTERRUPTED -> WorkoutSessionDisplayLabels.INTERRUPTED
+        WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> stringResource(R.string.loc_scr_workout_in_progress_on_watch)
+        WorkoutSessionStatus.STOPPED_ON_WEAR,
+        WorkoutSessionStatus.STALE_ON_WEAR,
+        WorkoutSessionStatus.INTERRUPTED ->
+            compactSessionTitle ?: stringResource(SharedR.string.incomplete_workout_singular)
+        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> stringResource(SharedR.string.incomplete_workout_singular)
         WorkoutSessionStatus.COMPLETED,
-        null -> IncompleteWorkoutStrings.SINGULAR
+        null -> stringResource(SharedR.string.incomplete_workout_singular)
     }
     val primaryActionText = when (sessionStatus) {
         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
         WorkoutSessionStatus.STOPPED_ON_WEAR,
-        WorkoutSessionStatus.STALE_ON_WEAR -> "Resume on phone"
-        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "Resume workout"
-        WorkoutSessionStatus.INTERRUPTED -> "Resume workout"
+        WorkoutSessionStatus.STALE_ON_WEAR -> stringResource(R.string.loc_scr_resume_on_phone)
+        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> stringResource(R.string.loc_scr_resume_workout)
+        WorkoutSessionStatus.INTERRUPTED -> stringResource(R.string.loc_scr_resume_workout)
         WorkoutSessionStatus.COMPLETED,
-        null -> "Resume workout"
+        null -> stringResource(R.string.loc_scr_resume_workout)
     }
 
     PrimarySurface(
@@ -412,13 +415,13 @@ private fun WorkoutSessionActionCard(
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                         ) {
                             Text(
-                                text = IncompleteWorkoutStrings.CHECKING_SESSION_PROGRESS,
+                                text = stringResource(SharedR.string.incomplete_workout_checking_session_progress),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = IncompleteWorkoutStrings.CHECKING_SESSION,
+                                text = stringResource(SharedR.string.incomplete_workout_checking_session),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -496,15 +499,15 @@ private fun WorkoutSessionActionCard(
                                 verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                             ) {
                                 Text(
-                                    text = "Record motion",
+                                    text = stringResource(R.string.loc_scr_record_motion),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Text(
                                     text = if (watchMotionEnabled) {
-                                        "On for this workout"
+                                        stringResource(R.string.loc_scr_on_for_this_workout)
                                     } else {
-                                        "Off for this workout"
+                                        stringResource(R.string.loc_scr_off_for_this_workout)
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -519,7 +522,7 @@ private fun WorkoutSessionActionCard(
 
                     AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
-                        text = "Start over",
+                        text = stringResource(R.string.loc_scr_start_over),
                         onClick = onRequestStartWorkout,
                         textAlign = TextAlign.Center
                     )
@@ -531,13 +534,13 @@ private fun WorkoutSessionActionCard(
 
                     AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
-                        text = IncompleteWorkoutStrings.DISCARD_BUTTON,
+                        text = stringResource(SharedR.string.incomplete_workout_discard),
                         onClick = onRequestDeleteIncompleteWorkout,
                         textAlign = TextAlign.Center
                     )
                     AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
-                        text = IncompleteWorkoutStrings.CLEAR_MENU_LABEL,
+                        text = stringResource(SharedR.string.incomplete_workout_clear_menu),
                         onClick = onRequestClearAllIncompleteSessions,
                         textAlign = TextAlign.Center
                     )
@@ -567,13 +570,13 @@ private fun WorkoutSessionActionCard(
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                         ) {
                             Text(
-                                text = "Ready to work out",
+                                text = stringResource(R.string.loc_scr_ready_to_work_out),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = "Start this workout whenever you're ready.",
+                                text = stringResource(R.string.loc_scr_start_workout_hint),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -582,7 +585,7 @@ private fun WorkoutSessionActionCard(
 
                     AppPrimaryButton(
                         modifier = Modifier.fillMaxWidth(),
-                        text = "Start workout",
+                        text = stringResource(R.string.loc_scr_start_workout),
                         onClick = onRequestStartWorkout
                     )
                 }
@@ -611,7 +614,10 @@ private fun WorkoutSessionActionCardPreview() {
                 hasWorkoutRecord = true,
                 workoutResumeInfo = WorkoutResumeInfo(
                     exerciseName = "Barbell bench press",
-                    setLabel = "Work set 2",
+                    setLabel = WorkoutResumeSetLabel(
+                        type = WorkoutResumeSetType.WORK,
+                        setNumber = 2
+                    ),
                     startedAt = LocalDateTime.of(2026, 8, 3, 18, 30),
                     sessionStatus = WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
                     lastActiveSyncAt = null
@@ -626,12 +632,13 @@ private fun WorkoutSessionActionCardPreview() {
     }
 }
 
+@Composable
 private fun buildResumeDescription(
     workoutResumeInfo: WorkoutResumeInfo?,
     timeFormatter: DateTimeFormatter
 ): String {
     if (workoutResumeInfo == null) {
-        return "Resume your in-progress workout."
+        return stringResource(R.string.loc_scr_resume_in_progress)
     }
 
     val sessionTime = workoutResumeInfo.startedAt?.format(timeFormatter)
@@ -640,22 +647,42 @@ private fun buildResumeDescription(
     return buildList {
         add(
             when (workoutResumeInfo.sessionStatus) {
-                WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "This workout is still active on your watch."
-                WorkoutSessionStatus.STOPPED_ON_WEAR -> "This workout was left from the watch home screen."
-                WorkoutSessionStatus.STALE_ON_WEAR -> "The watch has stopped sending workout updates."
+                WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> stringResource(R.string.loc_scr_active_on_watch)
+                WorkoutSessionStatus.STOPPED_ON_WEAR -> stringResource(R.string.loc_scr_left_watch_home)
+                WorkoutSessionStatus.STALE_ON_WEAR -> stringResource(R.string.loc_scr_watch_stopped_updates)
                 WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
                 WorkoutSessionStatus.INTERRUPTED,
-                WorkoutSessionStatus.COMPLETED -> "Continue where you left off."
+                WorkoutSessionStatus.COMPLETED -> stringResource(R.string.loc_scr_continue_where_left)
             }
         )
-        add("Resume from:")
-        add(workoutResumeInfo.exerciseName)
-        add(workoutResumeInfo.setLabel)
+        add(stringResource(R.string.loc_scr_resume_from))
+        add(
+            workoutResumeInfo.exerciseName
+                ?: stringResource(R.string.loc_resume_current_exercise)
+        )
+        add(localizedResumeSetLabel(workoutResumeInfo.setLabel))
         if (sessionTime != null) {
-            add("Started: $sessionTime")
+            add(stringResource(R.string.loc_scr_started_at, sessionTime))
         }
         if (workoutResumeInfo.sessionStatus == WorkoutSessionStatus.STALE_ON_WEAR && staleTime != null) {
-            add("Last watch update: $staleTime")
+            add(stringResource(R.string.loc_scr_last_watch_update, staleTime))
         }
     }.joinToString(separator = "\n")
+}
+
+@Composable
+private fun localizedResumeSetLabel(setLabel: WorkoutResumeSetLabel): String {
+    val typeLabel = stringResource(setLabel.type.labelRes())
+    return setLabel.setNumber?.let { setNumber ->
+        stringResource(R.string.loc_resume_set_numbered, typeLabel, setNumber)
+    } ?: typeLabel
+}
+
+private fun WorkoutResumeSetType.labelRes(): Int = when (this) {
+    WorkoutResumeSetType.WORK -> R.string.loc_resume_set_work
+    WorkoutResumeSetType.WARM_UP -> R.string.loc_resume_set_warm_up
+    WorkoutResumeSetType.BACK_OFF -> R.string.loc_resume_set_back_off
+    WorkoutResumeSetType.REST_PAUSE -> R.string.loc_resume_set_rest_pause
+    WorkoutResumeSetType.CALIBRATION -> R.string.loc_resume_set_calibration
+    WorkoutResumeSetType.REST -> R.string.loc_resume_set_rest
 }

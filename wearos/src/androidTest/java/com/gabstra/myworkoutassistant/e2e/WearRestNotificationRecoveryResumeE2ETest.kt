@@ -173,7 +173,7 @@ class WearRestNotificationRecoveryResumeE2ETest : WearBaseE2ETest() {
 
     private fun waitForActiveWorkoutScreen(timeoutMs: Long): Boolean {
         return device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)),
+            Until.hasObject(WearRestScreenSelector.byDescription()),
             timeoutMs
         ) || device.wait(
             Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),

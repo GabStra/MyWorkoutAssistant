@@ -7,12 +7,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.BreadcrumbTrail
 import com.gabstra.myworkoutassistant.composables.BreadcrumbTrailItem
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.allExercisePrescriptions
-import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import java.util.UUID
 
 private data class BreadcrumbItem(
@@ -27,6 +27,7 @@ fun NavigationBreadcrumbs(
     showOnDefinitionEditor: Boolean = false,
 ) {
     val stack = appViewModel.navigationStack()
+    val context = LocalContext.current
     val currentScreen = stack.lastOrNull()
     if (
         !showOnDefinitionEditor &&
@@ -44,8 +45,8 @@ fun NavigationBreadcrumbs(
             ?.recurringSessionId != null
         else -> false
     }
-    val items = remember(stack, store, showCurrentRecurringPath) {
-        val breadcrumbs = buildBreadcrumbItems(stack, store)
+    val items = remember(context, stack, store, showCurrentRecurringPath) {
+        val breadcrumbs = buildBreadcrumbItems(context, stack, store)
         if (showCurrentRecurringPath) breadcrumbs else breadcrumbs.dropLast(1)
     }
     if (items.isEmpty()) return
@@ -71,6 +72,7 @@ fun NavigationBreadcrumbs(
 }
 
 private fun buildBreadcrumbItems(
+    context: android.content.Context,
     stack: List<ScreenData>,
     store: WorkoutStore,
 ): List<BreadcrumbItem> {
@@ -99,7 +101,7 @@ private fun buildBreadcrumbItems(
             result += BreadcrumbItem(plan.name, planId = plan.id)
             insertedPlanId = plan.id
         }
-        result += BreadcrumbItem(screen.breadcrumbLabel(store, exercises), screen = screen)
+        result += BreadcrumbItem(screen.breadcrumbLabel(context, store, exercises), screen = screen)
     }
     return result
 }
@@ -129,51 +131,71 @@ private fun ScreenData.workoutIdOrNull(): UUID? = when (this) {
 }
 
 private fun ScreenData.breadcrumbLabel(
+    context: android.content.Context,
     store: WorkoutStore,
     exercises: Map<UUID, com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>,
 ): String = when (this) {
-    is ScreenData.Workouts -> listOf("Status", "Workouts", "Exercise Library", "Alarms", "Gear")
-        .getOrElse(selectedTabIndex) { "Home" }
-    is ScreenData.Plans -> "Plans"
+    is ScreenData.Workouts -> listOf(
+        context.getString(R.string.loc_scr_breadcrumb_status),
+        context.getString(R.string.loc_scr_breadcrumb_workouts),
+        context.getString(R.string.loc_scr_breadcrumb_exercise_library),
+        context.getString(R.string.loc_scr_breadcrumb_alarms),
+        context.getString(R.string.loc_scr_breadcrumb_gear),
+    ).getOrElse(selectedTabIndex) { context.getString(R.string.loc_scr_tab_home) }
+    is ScreenData.Plans -> context.getString(R.string.loc_plans)
     is ScreenData.SessionPrescriptions -> store.workouts.firstOrNull {
         it.isActive && it.recurringSessionId == sessionId
-    }?.name ?: "Recurring session"
-    is ScreenData.Settings -> "Settings"
-    is ScreenData.ErrorLogs -> "Error logs"
-    is ScreenData.NewWorkout -> "New workout"
-    is ScreenData.Workout -> store.workouts.firstOrNull { it.id == workoutId }?.name ?: "Workout"
-    is ScreenData.EditWorkout -> "Edit workout"
+    }?.name ?: context.getString(R.string.loc_scr_recurring_session)
+    is ScreenData.Settings -> context.getString(R.string.loc_settings_cd)
+    is ScreenData.ErrorLogs -> context.getString(R.string.loc_scr_error_logs)
+    is ScreenData.NewWorkout -> context.getString(R.string.loc_scr_new_workout)
+    is ScreenData.Workout -> store.workouts.firstOrNull { it.id == workoutId }?.name
+        ?: context.getString(R.string.loc_scr_workout)
+    is ScreenData.EditWorkout -> context.getString(R.string.workout_form_edit_title)
     is ScreenData.WorkoutDetail -> store.workouts.firstOrNull { it.id == workoutId }?.let { workout ->
         if (workout.recurringSessionId != null) {
             workout.prescriptionLabel
-                ?: workout.prescriptionOrdinal?.let { "Prescription $it" }
-                ?: "Prescription"
+                ?: workout.prescriptionOrdinal?.let { context.getString(R.string.loc_scr_prescription_n, it) }
+                ?: context.getString(R.string.prescription)
         } else {
             workout.name
         }
-    } ?: "Workout"
-    is ScreenData.WorkoutHistory -> "History"
-    is ScreenData.ExternalWorkoutSession -> "External session"
-    is ScreenData.SensorSessions -> "Sensor sessions"
-    is ScreenData.SensorSessionDetail -> "Sensor session"
-    is ScreenData.ExerciseDetail -> exercises[selectedExerciseId]?.name ?: "Exercise"
-    is ScreenData.ExerciseHistory -> "History"
-    is ScreenData.HistoryChatExercise, is ScreenData.HistoryChatWorkoutSession -> "History chat"
-    is ScreenData.NewExercise -> if (exerciseDefinitionId == null && !skipLibrary) "Choose exercise" else "Prescription"
-    is ScreenData.EditExercise -> "Edit prescription"
-    is ScreenData.NewExerciseDefinition -> "New definition"
+    } ?: context.getString(R.string.loc_scr_workout)
+    is ScreenData.WorkoutHistory -> context.getString(R.string.loc_scr_history)
+    is ScreenData.ExternalWorkoutSession -> context.getString(R.string.loc_scr_external_session)
+    is ScreenData.SensorSessions -> context.getString(R.string.loc_scr_sensor_sessions)
+    is ScreenData.SensorSessionDetail -> context.getString(R.string.loc_scr_sensor_session)
+    is ScreenData.ExerciseDetail -> exercises[selectedExerciseId]?.name
+        ?: context.getString(R.string.loc_scr_exercise)
+    is ScreenData.ExerciseHistory -> context.getString(R.string.loc_scr_history)
+    is ScreenData.HistoryChatExercise, is ScreenData.HistoryChatWorkoutSession ->
+        context.getString(R.string.loc_scr_history_chat)
+    is ScreenData.NewExercise -> if (exerciseDefinitionId == null && !skipLibrary) {
+        context.getString(R.string.loc_scr_choose_exercise)
+    } else {
+        context.getString(R.string.prescription)
+    }
+    is ScreenData.EditExercise -> context.getString(R.string.loc_scr_edit_prescription)
+    is ScreenData.NewExerciseDefinition -> context.getString(R.string.loc_scr_new_definition)
     is ScreenData.EditExerciseDefinition -> store.exerciseDefinitions
-        .firstOrNull { it.id == exerciseDefinitionId }?.name ?: "Edit definition"
-    is ScreenData.NewSuperset -> "New superset"
-    is ScreenData.EditSuperset -> "Edit superset"
-    is ScreenData.NewRest -> "New rest"
-    is ScreenData.EditRest -> "Edit rest"
-    is ScreenData.NewRestSet -> "New rest set"
-    is ScreenData.EditRestSet -> "Edit rest set"
-    is ScreenData.InsertRestSetAfter -> "Insert rest set"
-    is ScreenData.InsertRestAfter -> "Insert rest"
-    is ScreenData.NewSet -> "New set"
-    is ScreenData.EditSet -> "Edit set"
-    is ScreenData.NewEquipment -> "New ${equipmentType.toDisplayText().lowercase()}"
-    is ScreenData.EditEquipment -> "Edit ${equipmentType.toDisplayText().lowercase()}"
+        .firstOrNull { it.id == exerciseDefinitionId }?.name
+        ?: context.getString(R.string.loc_scr_edit_definition)
+    is ScreenData.NewSuperset -> context.getString(R.string.loc_scr_new_superset)
+    is ScreenData.EditSuperset -> context.getString(R.string.loc_scr_edit_superset)
+    is ScreenData.NewRest -> context.getString(R.string.loc_scr_new_rest)
+    is ScreenData.EditRest -> context.getString(R.string.loc_scr_edit_rest)
+    is ScreenData.NewRestSet -> context.getString(R.string.loc_scr_new_rest_set)
+    is ScreenData.EditRestSet -> context.getString(R.string.loc_scr_edit_rest_set)
+    is ScreenData.InsertRestSetAfter -> context.getString(R.string.loc_scr_insert_rest_set)
+    is ScreenData.InsertRestAfter -> context.getString(R.string.loc_scr_insert_rest)
+    is ScreenData.NewSet -> context.getString(R.string.loc_scr_new_set)
+    is ScreenData.EditSet -> context.getString(R.string.loc_scr_edit_set)
+    is ScreenData.NewEquipment -> context.getString(
+        R.string.loc_scr_new_equipment,
+        equipmentType.localizedLabel(context).lowercase(),
+    )
+    is ScreenData.EditEquipment -> context.getString(
+        R.string.loc_scr_edit_equipment,
+        equipmentType.localizedLabel(context).lowercase(),
+    )
 }

@@ -11,6 +11,7 @@ import androidx.wear.watchface.complications.data.ShortTextComplicationData
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceService
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import com.gabstra.myworkoutassistant.MainActivity
+import com.gabstra.myworkoutassistant.R
 
 /**
  * Exposes the active workout timer as complication data, so any watch face slot can show the
@@ -33,11 +34,13 @@ class WorkoutTimerComplicationService : ComplicationDataSourceService() {
     }
 
     override fun getPreviewData(type: ComplicationType): ComplicationData? =
-        buildData(type, "Set", "12:34")
+        buildData(type, getString(R.string.wear_complication_set), "12:34")
 
     private fun buildData(type: ComplicationType, label: String, value: String): ComplicationData {
         val text = PlainComplicationText.Builder(value).build()
-        val contentDescription = PlainComplicationText.Builder("$label $value").build()
+        val contentDescription = PlainComplicationText.Builder(
+            getString(R.string.wear_complication_cd, label, value)
+        ).build()
         val title = PlainComplicationText.Builder(label).build()
         val tapAction = PendingIntent.getActivity(
             this,

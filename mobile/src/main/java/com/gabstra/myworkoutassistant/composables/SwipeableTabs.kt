@@ -32,11 +32,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 
@@ -127,7 +129,7 @@ fun SwipeableTabs(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Previous tab page",
+                        contentDescription = stringResource(R.string.loc_previous_tab_page),
                         modifier = Modifier.size(20.dp),
                         tint = if (previousTabPageEnabled) contentColor else DisabledContentGray,
                     )
@@ -186,7 +188,7 @@ fun SwipeableTabs(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Next tab page",
+                        contentDescription = stringResource(R.string.loc_next_tab_page),
                         modifier = Modifier.size(20.dp),
                         tint = if (nextTabPageEnabled) contentColor else DisabledContentGray,
                     )

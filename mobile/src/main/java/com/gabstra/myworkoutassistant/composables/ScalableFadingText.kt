@@ -227,7 +227,15 @@ fun ScalableFadingText(
         Modifier.wrapContentWidth(unbounded = true)
     }
 
-    Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
+    // The text is not width-filling (wrapContentWidth stays unbounded under fillMaxWidth),
+    // so textAlign cannot place it: the Box alignment must.
+    val contentAlignment = when (textAlign) {
+        TextAlign.Start, TextAlign.Left -> Alignment.CenterStart
+        TextAlign.End, TextAlign.Right -> Alignment.CenterEnd
+        else -> Alignment.Center
+    }
+
+    Box(modifier = boxModifier, contentAlignment = contentAlignment) {
         ScalableText(
             text = textString,
             modifier = textModifier.fillMaxWidth(),

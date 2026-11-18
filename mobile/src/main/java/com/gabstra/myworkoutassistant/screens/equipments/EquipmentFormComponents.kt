@@ -10,6 +10,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppAddButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
@@ -56,12 +58,12 @@ internal fun EquipmentFormActions(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppSecondaryButton(
-            text = "Cancel",
+            text = stringResource(R.string.common_cancel),
             onClick = onCancel,
             modifier = Modifier.weight(1f),
         )
         AppPrimaryButton(
-            text = "Save",
+            text = stringResource(R.string.common_save),
             onClick = onSave,
             enabled = saveEnabled,
             modifier = Modifier.weight(1f),

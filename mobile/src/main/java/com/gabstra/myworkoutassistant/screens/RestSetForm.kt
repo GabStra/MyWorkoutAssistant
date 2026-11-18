@@ -32,9 +32,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
@@ -82,9 +84,9 @@ fun RestSetForm(
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
                         text = when {
-                            restSet != null -> "Edit Rest"
-                            appliesSameRestBetweenAllSets -> "Rest between all sets"
-                            else -> "Insert Rest"
+                            restSet != null -> stringResource(R.string.loc_scr_edit_rest)
+                            appliesSameRestBetweenAllSets -> stringResource(R.string.loc_scr_rest_between_all_sets)
+                            else -> stringResource(R.string.loc_scr_insert_rest)
                         },
                     )
                 },
@@ -92,7 +94,7 @@ fun RestSetForm(
                     IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
@@ -100,7 +102,7 @@ fun RestSetForm(
                     IconButton(modifier = Modifier.alpha(0f), onClick = { onCancel() }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 }
@@ -125,12 +127,12 @@ fun RestSetForm(
                 verticalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
                 ContentTitle(
-                    text = "Rest between sets",
+                    text = stringResource(R.string.loc_scr_rest_between_sets),
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (appliesSameRestBetweenAllSets && restSet == null) {
                     Text(
-                        text = "Same time between each pair of sets; existing between-set rests are replaced.",
+                        text = stringResource(R.string.loc_scr_rest_between_all_sets_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.tertiaryContent,
                         modifier = Modifier.fillMaxWidth()
@@ -147,7 +149,7 @@ fun RestSetForm(
                 SetHistoryReapplySetting(
                     checked = shouldReapplyHistoryState.value,
                     onCheckedChange = { shouldReapplyHistoryState.value = it },
-                    subtitle = "Rest history is still saved when this is off. Keep this off unless completed rests should overwrite the programmed rest next time."
+                    subtitle = stringResource(R.string.loc_scr_rest_history_reapply_hint)
                 )
             }
 
@@ -161,7 +163,7 @@ fun RestSetForm(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppSecondaryButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     onClick = {
                         onCancel()
                     },
@@ -169,7 +171,7 @@ fun RestSetForm(
                 )
 
                 AppPrimaryButton(
-                    text = "Save",
+                    text = stringResource(R.string.common_save),
                     onClick = {
                         val newRest = RestSet(
                             id = restSet?.id ?: UUID.randomUUID(),
@@ -184,7 +186,7 @@ fun RestSetForm(
             }
         }
     }
-    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = stringResource(R.string.common_saving))
     }
 }
 

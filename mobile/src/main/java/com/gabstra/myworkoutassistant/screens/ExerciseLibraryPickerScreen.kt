@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import com.gabstra.myworkoutassistant.R
@@ -48,6 +49,7 @@ fun ExerciseLibraryPickerScreen(
     onCreate: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     val filtered = remember(query, definitions) {
         definitions.filter { it.name.contains(query.trim(), ignoreCase = true) }
@@ -118,7 +120,7 @@ fun ExerciseLibraryPickerScreen(
                         ) {
                             Column(Modifier.fillMaxWidth().padding(Spacing.md)) {
                                 Text(definition.name, style = MaterialTheme.typography.bodyLarge)
-                                val typeLabel = definition.exerciseType.name.replace('_', ' ').lowercase()
+                                val typeLabel = definition.exerciseType.localizedLabel(context).lowercase()
                                 val equipmentLabel = definition.equipmentId
                                     ?.let { equipmentNameById[it] }
                                     ?.let { " · $it" } ?: stringResource(R.string.library_no_equipment_suffix)

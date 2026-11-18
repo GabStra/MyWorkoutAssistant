@@ -20,10 +20,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.labelRes
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppAddButton
 import com.gabstra.myworkoutassistant.composables.ContentTitle
@@ -35,7 +38,6 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
-import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 
 @Composable
 fun WorkoutsGearTab(
@@ -61,7 +63,7 @@ fun WorkoutsGearTab(
             .padding(horizontal = Spacing.md)
     ) {
         ContentTitle(
-            text = "Equipment",
+            text = stringResource(R.string.exercise_equipment),
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(Spacing.md))
@@ -75,7 +77,12 @@ fun WorkoutsGearTab(
                     menuItems = EquipmentType.entries.filter {
                         it != EquipmentType.GENERIC && it != EquipmentType.ACCESSORY
                     }.map { equipmentType ->
-                        MenuItem("Add ${equipmentType.toDisplayText()}") {
+                        MenuItem(
+                            stringResource(
+                                R.string.loc_scr_add_equipment_named,
+                                stringResource(equipmentType.labelRes()),
+                            )
+                        ) {
                             appViewModel.setScreenData(
                                 ScreenData.NewEquipment(equipmentType)
                             )
@@ -83,7 +90,7 @@ fun WorkoutsGearTab(
                     }.toList(),
                     content = {
                         Text(
-                            "Add Equipment",
+                            stringResource(R.string.loc_scr_add_equipment),
                             color = MaterialTheme.colorScheme.background,
                             maxLines = 1,
                             modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
@@ -145,7 +152,12 @@ fun WorkoutsGearTab(
                     menuItems = EquipmentType.entries.filter {
                         it != EquipmentType.GENERIC && it != EquipmentType.ACCESSORY
                     }.map { equipmentType ->
-                        MenuItem("Add ${equipmentType.toDisplayText()}") {
+                        MenuItem(
+                            stringResource(
+                                R.string.loc_scr_add_equipment_named,
+                                stringResource(equipmentType.labelRes()),
+                            )
+                        ) {
                             appViewModel.setScreenData(
                                 ScreenData.NewEquipment(equipmentType)
                             )
@@ -154,7 +166,7 @@ fun WorkoutsGearTab(
                     content = {
                         Icon(
                             imageVector = Icons.Filled.Add,
-                            contentDescription = "Add",
+                            contentDescription = stringResource(R.string.loc_add_cd),
                             tint = MaterialTheme.colorScheme.background,
                         )
                     }
@@ -166,7 +178,7 @@ fun WorkoutsGearTab(
         SectionDivider()
 
         ContentTitle(
-            text = "Accessories",
+            text = stringResource(R.string.exercise_accessories),
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(Spacing.md))
@@ -178,7 +190,7 @@ fun WorkoutsGearTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppPrimaryButton(
-                    text = "Add Accessory",
+                    text = stringResource(R.string.equipment_create_accessory),
                     onClick = {
                         appViewModel.setScreenData(
                             ScreenData.NewEquipment(EquipmentType.ACCESSORY)

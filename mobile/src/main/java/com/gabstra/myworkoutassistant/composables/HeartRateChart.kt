@@ -18,10 +18,12 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -150,9 +152,17 @@ internal fun SpannableStringBuilder.appendCompat(
     flags: Int,
 ): SpannableStringBuilder = append(text, what, flags)
 
+internal data class CandlestickMarkerLabels(
+    val open: String,
+    val close: String,
+    val low: String,
+    val high: String,
+)
+
 internal class DefaultValueFormatter(
     private val formatter: (Double) -> String,
     private val textColor: Int,
+    private val candlestickMarkerLabels: CandlestickMarkerLabels,
     private val colorCode: Boolean = true,
 ) : DefaultCartesianMarker.ValueFormatter {
     private fun SpannableStringBuilder.appendValue(y: Double, color: Color? = null) {
@@ -173,13 +183,20 @@ internal class DefaultValueFormatter(
                 if (shorten) {
                     appendValue(target.entry.closing, target.closingColor)
                 } else {
-                    append("O ")
+                    append(candlestickMarkerLabels.open)
+                    append(" ")
                     appendValue(target.entry.opening, target.openingColor)
-                    append(", C ")
+                    append(", ")
+                    append(candlestickMarkerLabels.close)
+                    append(" ")
                     appendValue(target.entry.closing, target.closingColor)
-                    append(", L ")
+                    append(", ")
+                    append(candlestickMarkerLabels.low)
+                    append(" ")
                     appendValue(target.entry.low, target.lowColor)
-                    append(", H ")
+                    append(", ")
+                    append(candlestickMarkerLabels.high)
+                    append(" ")
                     appendValue(target.entry.high, target.highColor)
                 }
             }
@@ -224,9 +241,12 @@ internal class DefaultValueFormatter(
                 other is DefaultValueFormatter &&
                 formatter == other.formatter &&
                 textColor == other.textColor &&
+                candlestickMarkerLabels == other.candlestickMarkerLabels &&
                 colorCode == other.colorCode
 
-    override fun hashCode(): Int = 31 * (31 * formatter.hashCode() + textColor.hashCode()) + colorCode.hashCode()
+    override fun hashCode(): Int =
+        31 * (31 * (31 * formatter.hashCode() + textColor.hashCode()) + candlestickMarkerLabels.hashCode()) +
+                colorCode.hashCode()
 }
 
 @Composable
@@ -326,13 +346,21 @@ fun HeartRateChartContent(
     }
 
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb()
+    val candlestickMarkerLabels = CandlestickMarkerLabels(
+        open = stringResource(R.string.loc_chart_marker_open),
+        close = stringResource(R.string.loc_chart_marker_close),
+        low = stringResource(R.string.loc_chart_marker_low),
+        high = stringResource(R.string.loc_chart_marker_high),
+    )
     val shapeComponent = rememberShapeComponent(Fill(Color.White), RoundedCornerShape(percent = 50))
     val markerGuideline = rememberPressedChartGuideline()
     val marker = rememberDefaultCartesianMarker(
-        valueFormatter = remember {
-            DefaultValueFormatter({
-                it.toInt().toString()
-            }, textColor)
+        valueFormatter = remember(textColor, candlestickMarkerLabels) {
+            DefaultValueFormatter(
+                formatter = { it.toInt().toString() },
+                textColor = textColor,
+                candlestickMarkerLabels = candlestickMarkerLabels,
+            )
         },
         label = rememberTextComponent(
             style = TextStyle(color = Color.White, textAlign = TextAlign.Center),

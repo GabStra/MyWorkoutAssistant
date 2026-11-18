@@ -12,6 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
@@ -36,7 +38,7 @@ fun LoadingScreen() {
             AppCircularLoadingIndicator()
             Spacer(Modifier.height(Spacing.md))
             Text(
-                text = "Loading...",
+                text = stringResource(R.string.overlay_loading),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onBackground
             )

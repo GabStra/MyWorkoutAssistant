@@ -18,9 +18,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.heart_rate.HeartRateSessionAnalysis
@@ -54,6 +56,7 @@ fun HeartRateSessionCard(
         measuredMaxHeartRate = measuredMaxHeartRate,
         restingHeartRate = restingHeartRate,
     )
+    val primarySourceName = primarySourceLabel ?: stringResource(R.string.loc_primary_source)
 
     PrimarySurface(modifier = modifier) {
         ExpandableContainer(
@@ -75,7 +78,7 @@ fun HeartRateSessionCard(
                 val showSources = extraSummaries.isNotEmpty()
                 if (showSources) {
                     HeartRateSourceLegend(
-                        labels = listOf(primarySourceLabel ?: "Primary") +
+                        labels = listOf(primarySourceName) +
                             extraSummaries.map { it.label },
                     )
                 }
@@ -115,54 +118,70 @@ fun HeartRateSessionCard(
                     ) {
                         if (showDuration) {
                             Text(
-                                text = "Duration: ${formatTime(analysis.durationSeconds)}",
+                                text = stringResource(
+                                    R.string.sensor_duration_label,
+                                    formatTime(analysis.durationSeconds)
+                                ),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         if (showSources) {
                             Text(
-                                text = "${primarySourceLabel ?: "Primary"}: " +
-                                    "${analysis.averageHeartRate} avg · " +
-                                    "${analysis.minHeartRate}–${analysis.maxHeartRate} bpm",
+                                text = stringResource(
+                                    R.string.loc_hr_source_summary,
+                                    primarySourceName,
+                                    analysis.averageHeartRate,
+                                    analysis.minHeartRate,
+                                    analysis.maxHeartRate
+                                ),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             extraSummaries.forEach { summary ->
                                 Text(
-                                    text = "${summary.label}: " +
-                                        "${summary.averageHeartRate} avg · " +
-                                        "${summary.minHeartRate}–" +
-                                        "${summary.maxHeartRate} bpm",
+                                    text = stringResource(
+                                        R.string.loc_hr_source_summary,
+                                        summary.label,
+                                        summary.averageHeartRate,
+                                        summary.minHeartRate,
+                                        summary.maxHeartRate
+                                    ),
                                     color = MaterialTheme.colorScheme.onBackground,
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                             }
                         } else {
                             Text(
-                                text = "Average: ${analysis.averageHeartRate} bpm",
+                                text = stringResource(
+                                    R.string.loc_average_bpm,
+                                    analysis.averageHeartRate
+                                ),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         sweatLossMl?.let { lossMl ->
                             Text(
-                                text = "Sweat loss: $lossMl ml",
+                                text = stringResource(R.string.loc_sweat_loss, lossMl),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         if (skinTempStartC != null && skinTempMaxC != null) {
                             Text(
-                                text = "Skin temp: ${"%.1f".format(skinTempStartC)} → " +
-                                    "${"%.1f".format(skinTempMaxC)} °C",
+                                text = stringResource(
+                                    R.string.loc_skin_temp,
+                                    "%.1f".format(skinTempStartC),
+                                    "%.1f".format(skinTempMaxC)
+                                ),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         fluidsToReplaceMl?.let { targetMl ->
                             Text(
-                                text = "Fluids to replace: $targetMl ml",
+                                text = stringResource(R.string.loc_fluids_to_replace, targetMl),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
@@ -174,19 +193,25 @@ fun HeartRateSessionCard(
                     ) {
                         if (!showSources) {
                             HeartRateMetricRow(
-                                label = "Min",
+                                label = stringResource(R.string.loc_min),
                                 value = "${analysis.minHeartRate} bpm"
                             )
                             HeartRateMetricRow(
-                                label = "Max",
+                                label = stringResource(R.string.loc_max),
                                 value = "${analysis.maxHeartRate} bpm"
                             )
                         }
                         caloriesBurned?.let { kcal ->
-                            HeartRateMetricRow(label = "Calories", value = kcal.toString())
+                            HeartRateMetricRow(
+                                label = stringResource(R.string.loc_calories),
+                                value = kcal.toString()
+                            )
                         }
                         hrvRmssdMs?.let { hrv ->
-                            HeartRateMetricRow(label = "HRV", value = "${hrv.roundToInt()} ms")
+                            HeartRateMetricRow(
+                                label = stringResource(R.string.loc_hrv),
+                                value = "${hrv.roundToInt()} ms"
+                            )
                         }
                     }
                 }
@@ -206,7 +231,7 @@ fun HeartRateSessionCard(
 
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 Text(
-                                    text = "Zone $zone",
+                                    text = stringResource(R.string.loc_zone_n, zone),
                                     color = MaterialTheme.colorScheme.onBackground,
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
@@ -214,9 +239,16 @@ fun HeartRateSessionCard(
                                 Row(modifier = Modifier.fillMaxWidth()) {
                                     Text(
                                         text = if (zone == 0) {
-                                            "< ${zoneBounds[1].first} bpm"
+                                            stringResource(
+                                                R.string.loc_zone_below_range,
+                                                zoneBounds[1].first
+                                            )
                                         } else {
-                                            "${zoneRange.first} - ${zoneRange.last} bpm"
+                                            stringResource(
+                                                R.string.loc_hr_range_bpm,
+                                                zoneRange.first,
+                                                zoneRange.last
+                                            )
                                         },
                                         modifier = Modifier.weight(1f),
                                         color = MaterialTheme.colorScheme.onBackground,
@@ -224,7 +256,11 @@ fun HeartRateSessionCard(
                                     )
                                     Spacer(Modifier.weight(1f))
                                     Text(
-                                        text = "${(progress * 100).toInt()}% ${formatTime(count.roundToInt())}",
+                                        text = stringResource(
+                                            R.string.loc_progress_time,
+                                            (progress * 100).toInt(),
+                                            formatTime(count.roundToInt())
+                                        ),
                                         modifier = Modifier.weight(1f),
                                         style = MaterialTheme.typography.bodySmall,
                                         textAlign = TextAlign.End,

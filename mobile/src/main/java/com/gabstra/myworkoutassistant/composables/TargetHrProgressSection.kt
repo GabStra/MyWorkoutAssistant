@@ -13,9 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
@@ -42,21 +44,25 @@ fun TargetHrProgressSection(
         val progress = if (rawProgress.isNaN()) 0f else rawProgress
 
         Text(
-            text = "Target HR",
+            text = stringResource(R.string.loc_target_hr),
             color = MaterialTheme.colorScheme.onBackground,
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(5.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
-                "$lowHrBpm - $highHrBpm bpm",
+                stringResource(R.string.loc_hr_range_bpm, lowHrBpm, highHrBpm),
                 Modifier.weight(1f),
                 color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = "${(progress * 100).toInt()}% ${formatTime(targetCounter)}",
+                text = stringResource(
+                    R.string.loc_progress_time,
+                    (progress * 100).toInt(),
+                    formatTime(targetCounter)
+                ),
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.End,

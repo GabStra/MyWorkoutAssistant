@@ -47,8 +47,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.Red
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -79,7 +81,7 @@ fun <T> DetailScreen(
                     IconButton(onClick = onGoBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.common_back),
                             tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -88,7 +90,7 @@ fun <T> DetailScreen(
                     IconButton(onClick = onSettingsClick) {
                         Icon(
                             imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
+                            contentDescription = stringResource(R.string.loc_settings_cd),
                             tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -119,12 +121,12 @@ fun <T> DetailScreen(
                                     }) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Close",
+                                            contentDescription = stringResource(R.string.common_close),
                                             tint = Red
                                         )
                                     }
                                     Text(
-                                        "Close",
+                                        stringResource(R.string.common_close),
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center
                                     )
@@ -137,10 +139,13 @@ fun <T> DetailScreen(
                                     IconButton(onClick = {
                                         selectedItems = items
                                     }) {
-                                        Icon(imageVector = Icons.Filled.CheckBox, contentDescription = "Select all")
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckBox,
+                                            contentDescription = stringResource(R.string.loc_select_all)
+                                        )
                                     }
                                     Text(
-                                        "Select all",
+                                        stringResource(R.string.loc_select_all),
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center
                                     )
@@ -153,10 +158,13 @@ fun <T> DetailScreen(
                                     IconButton(onClick = {
                                         selectedItems = emptyList()
                                     }) {
-                                        Icon(imageVector = Icons.Filled.CheckBoxOutlineBlank, contentDescription = "Deselect all")
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckBoxOutlineBlank,
+                                            contentDescription = stringResource(R.string.loc_deselect_all)
+                                        )
                                     }
                                     Text(
-                                        "Deselect all",
+                                        stringResource(R.string.loc_deselect_all),
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center
                                     )
@@ -181,10 +189,13 @@ fun <T> DetailScreen(
                                             selectedItems = emptyList()
                                             selectionMode = false
                                         }) {
-                                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = stringResource(R.string.common_delete)
+                                            )
                                         }
                                         Text(
-                                            "Delete",
+                                            stringResource(R.string.common_delete),
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )
@@ -213,7 +224,7 @@ fun <T> DetailScreen(
         if (items.isEmpty()) {
             Text(
                 modifier = Modifier.fillMaxSize(),
-                text = "No items available",
+                text = stringResource(R.string.loc_no_items_available),
                 textAlign = TextAlign.Center
             )
         } else {

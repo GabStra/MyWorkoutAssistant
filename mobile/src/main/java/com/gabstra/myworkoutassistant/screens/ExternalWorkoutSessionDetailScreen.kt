@@ -36,10 +36,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.HeartRateSessionCard
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
@@ -115,7 +117,7 @@ fun ExternalWorkoutSessionDetailScreen(
                     Text(
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center,
-                        text = "External session",
+                        text = stringResource(R.string.loc_scr_external_session),
                         maxLines = 2,
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,
@@ -125,7 +127,7 @@ fun ExternalWorkoutSessionDetailScreen(
                     IconButton(onClick = onGoBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.common_back),
                         )
                     }
                 },
@@ -161,7 +163,7 @@ fun ExternalWorkoutSessionDetailScreen(
                     PrimarySurface(modifier = Modifier.padding(Spacing.md)) {
                         Text(
                             modifier = Modifier.padding(Spacing.md),
-                            text = "External session not found.",
+                            text = stringResource(R.string.loc_scr_external_session_not_found),
                             color = MaterialTheme.colorScheme.onBackground,
                             textAlign = TextAlign.Center,
                         )
@@ -171,6 +173,11 @@ fun ExternalWorkoutSessionDetailScreen(
 
             else -> {
                 val currentSession = session!!
+                val exerciseTypeLabel = localizedExternalExerciseTypeLabel(
+                    context = context,
+                    exerciseType = currentSession.exerciseType,
+                    persistedLabel = currentSession.exerciseTypeLabel,
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -198,7 +205,7 @@ fun ExternalWorkoutSessionDetailScreen(
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     Text(
-                                        text = currentSession.title ?: currentSession.exerciseTypeLabel,
+                                        text = currentSession.title ?: exerciseTypeLabel,
                                         color = MaterialTheme.colorScheme.onBackground,
                                         style = MaterialTheme.typography.titleMedium,
                                         maxLines = 2,
@@ -206,7 +213,7 @@ fun ExternalWorkoutSessionDetailScreen(
                                     )
                                     if (currentSession.title != null) {
                                         Text(
-                                            text = currentSession.exerciseTypeLabel,
+                                            text = exerciseTypeLabel,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             style = MaterialTheme.typography.bodyMedium,
                                         )
@@ -229,12 +236,12 @@ fun ExternalWorkoutSessionDetailScreen(
                                 ) {
                                     SessionDetailRow(
                                         modifier = Modifier.weight(1f),
-                                        label = "Date",
+                                        label = stringResource(R.string.workout_form_date_label),
                                         value = currentSession.startTime.format(dateFormatter),
                                     )
                                     SessionDetailRow(
                                         modifier = Modifier.weight(1f),
-                                        label = "Duration",
+                                        label = stringResource(R.string.form_duration),
                                         value = formatTime(currentSession.durationSeconds),
                                     )
                                 }
@@ -245,12 +252,12 @@ fun ExternalWorkoutSessionDetailScreen(
                                 ) {
                                     SessionDetailRow(
                                         modifier = Modifier.weight(1f),
-                                        label = "Start time",
+                                        label = stringResource(R.string.loc_scr_start_time),
                                         value = currentSession.startTime.format(timeFormatter),
                                     )
                                     SessionDetailRow(
                                         modifier = Modifier.weight(1f),
-                                        label = "End time",
+                                        label = stringResource(R.string.loc_scr_end_time),
                                         value = currentSession.endTime.format(timeFormatter),
                                     )
                                 }
@@ -260,7 +267,7 @@ fun ExternalWorkoutSessionDetailScreen(
 
                     if (analysis != null) {
                         HeartRateSessionCard(
-                            title = "Heart rate during workout",
+                            title = stringResource(R.string.history_hr_during_workout),
                             analysis = analysis,
                             userAge = appViewModel.userAge.value,
                             measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate,
@@ -272,7 +279,7 @@ fun ExternalWorkoutSessionDetailScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(Spacing.md),
-                                text = "No heart rate data for this session.",
+                                text = stringResource(R.string.loc_scr_no_heart_rate_data),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center,
@@ -292,7 +299,7 @@ private fun ExternalSessionBadge() {
     SecondarySurface {
         Text(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            text = "Health Connect",
+            text = stringResource(R.string.loc_scr_health_connect),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelMedium,
         )

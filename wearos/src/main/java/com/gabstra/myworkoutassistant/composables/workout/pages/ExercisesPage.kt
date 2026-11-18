@@ -59,6 +59,7 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.ExerciseSetsViewer
+import com.gabstra.myworkoutassistant.composables.ExercisesPageRowLabels
 import com.gabstra.myworkoutassistant.composables.FadingText
 import com.gabstra.myworkoutassistant.composables.PreviousNextNavigationHeader
 import com.gabstra.myworkoutassistant.composables.ProgressState
@@ -520,6 +521,10 @@ private fun RestPageFixedHeader(
     onSelectPrevious: () -> Unit,
     onSelectNext: () -> Unit,
 ) {
+    val nextExerciseDescription = stringResource(
+        R.string.components_rest_next_exercise,
+        pageItem.nextDisplayName.text,
+    )
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -547,9 +552,7 @@ private fun RestPageFixedHeader(
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics {
-                            contentDescription = ExercisesPageRestSemantics.nextExerciseDescription(
-                                pageItem.nextDisplayName.text
-                            )
+                            contentDescription = nextExerciseDescription
                         },
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                     textAlign = TextAlign.Center
@@ -568,6 +571,10 @@ private fun TransformingLazyColumnScope.RestPageContent(
     val formattedRest = FormatTime(restSeconds)
 
     item {
+        val restDurationDescription = stringResource(
+            R.string.components_rest_duration_row,
+            formattedRest,
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -601,7 +608,7 @@ private fun TransformingLazyColumnScope.RestPageContent(
                     .background(backgroundColor, shape)
                     .border(BorderStroke(1.dp, borderColor), shape)
                     .semantics {
-                        contentDescription = ExercisesPageRestSemantics.restDurationRowDescription(formattedRest)
+                        contentDescription = restDurationDescription
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -727,8 +734,17 @@ fun ExercisesPage(
             buildExercisesPageStateMatchKey(selectedSetStateToMatch) to viewModel.allWorkoutStates.size
         )
     }
+    val selectedPageRowLabels = ExercisesPageRowLabels(
+        tbd = stringResource(R.string.components_value_tbd),
+        bodyWeightAbbrev = stringResource(R.string.set_body_weight_abbrev),
+        calibrationWarmupLabel = stringResource(R.string.components_calibration_warmup_label),
+        pendingCalibrationLoad = stringResource(R.string.components_calibration_pending_load),
+        selectLoad = stringResource(R.string.components_row_select_load),
+        setRir = stringResource(R.string.components_row_set_rir),
+    )
     val selectedPagePreparedRows = remember(
-        selectedPagePreparedRowsKey
+        selectedPagePreparedRowsKey,
+        selectedPageRowLabels,
     ) {
         val pageItem = selectedPageItem
         val currentSet = selectedPageCurrentSet
@@ -737,7 +753,8 @@ fun ExercisesPage(
                 viewModel = viewModel,
                 exercise = pageItem.representativeExercise,
                 currentSet = currentSet,
-                stateToMatch = selectedSetStateToMatch
+                stateToMatch = selectedSetStateToMatch,
+                labels = selectedPageRowLabels,
             )
         } else {
             null
@@ -951,6 +968,7 @@ fun ExercisesPage(
                             currentSet = currentSet,
                             transformationSpec = transformationSpec,
                             stateToMatch = selectedSetStateToMatch,
+                            labels = selectedPageRowLabels,
                             progressState = selectedProgressState,
                             preparedRows = selectedPagePreparedRows,
                             fittedRows = fittedRows,

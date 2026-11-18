@@ -27,7 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.motionrenderer.SkeletonMotionPreview
@@ -52,9 +54,10 @@ private sealed interface MovementLoadState {
 fun ExerciseMovementAction(
     exercise: Exercise,
     modifier: Modifier = Modifier,
-    title: String = "Movement",
+    title: String? = null,
 ) {
     val movementRef = exercise.movementRef ?: return
+    val resolvedTitle = title ?: stringResource(R.string.exercise_movement)
     var showPreview by remember(exercise.id) { mutableStateOf(false) }
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -67,19 +70,19 @@ fun ExerciseMovementAction(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = title,
+                    text = resolvedTitle,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = "View movement",
+                    text = stringResource(R.string.library_view_movement),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiaryContent,
                 )
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = "View $title",
+                contentDescription = stringResource(R.string.loc_ex_view_named_cd, resolvedTitle),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -89,7 +92,7 @@ fun ExerciseMovementAction(
     if (showPreview) {
         StandardDialog(
             onDismissRequest = { showPreview = false },
-            title = title,
+            title = resolvedTitle,
             body = {
                 ExerciseMovementPreviewPage(
                     exercise = exercise,
@@ -98,7 +101,7 @@ fun ExerciseMovementAction(
                         .aspectRatio(1f),
                 )
             },
-            dismissText = "Close",
+            dismissText = stringResource(R.string.common_close),
             onDismissButton = { showPreview = false },
             showConfirm = false,
             showDismiss = true,
@@ -126,7 +129,7 @@ fun ExerciseMovementPreviewPage(
 ) {
     if (movementRef == null) {
         MovementStatus(
-            text = "No movement available",
+            text = stringResource(R.string.loc_ex_no_movement_available),
             loading = false,
             compactStatusIcons = compactStatusIcons,
             modifier = modifier,
@@ -153,13 +156,13 @@ fun ExerciseMovementPreviewPage(
     }
     when (val state = movementState) {
         MovementLoadState.Loading -> MovementStatus(
-            text = "Loading movement",
+            text = stringResource(R.string.loc_ex_loading_movement),
             loading = true,
             compactStatusIcons = compactStatusIcons,
             modifier = modifier,
         )
         MovementLoadState.Unavailable -> MovementStatus(
-            text = "Movement unavailable",
+            text = stringResource(R.string.loc_ex_movement_unavailable),
             loading = false,
             compactStatusIcons = compactStatusIcons,
             modifier = modifier,
@@ -223,7 +226,7 @@ fun ExerciseMovementPreviewPage(
         )
     } else {
         MovementStatusMessage(
-            text = "Movement unavailable",
+            text = stringResource(R.string.loc_ex_movement_unavailable),
             modifier = modifier,
         )
     }

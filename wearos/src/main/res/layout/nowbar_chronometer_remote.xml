@@ -9,5 +9,7 @@
     android:layout_gravity="center"
     android:ellipsize="middle"
     android:maxLines="1"
+    android:fontFamily="@font/roboto_medium"
+    android:fontFeatureSettings="tnum"
     android:textColor="#FFFFFFFF"
     android:textSize="13sp" />

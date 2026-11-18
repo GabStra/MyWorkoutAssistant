@@ -54,12 +54,12 @@ import com.gabstra.myworkoutassistant.screens.ExercisePreviewSetType
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.buildExercisePreviewFixture
 import com.gabstra.myworkoutassistant.screens.findFieldRecursively
+import com.gabstra.myworkoutassistant.shared.R as SharedR
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -244,7 +244,7 @@ class WearUiConsistencyE2ETest {
                         composeRule.mainClock.autoAdvance = true
                         composeRule.onNodeWithText("Start new").performScrollTo().performClick()
                         settle()
-                        composeRule.onNodeWithText(IncompleteWorkoutStrings.START_NEW_WORKOUT_TITLE).assertIsDisplayed()
+                        composeRule.onNodeWithText(context.getString(SharedR.string.incomplete_workout_start_new_title)).assertIsDisplayed()
                         composeRule.mainClock.autoAdvance = false
                     }
                     "tutorial" -> {

@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -29,6 +30,7 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -75,10 +77,11 @@ fun TutorialOverlay(
     visible: Boolean,
     steps: List<TutorialStep>,
     onDismiss: () -> Unit,
-    buttonText: String = "Got it",
+    buttonText: String? = null,
     hapticsViewModel: HapticsViewModel? = null,
     onVisibilityChange: (Boolean) -> Unit = {}
 ) {
+    val resolvedButtonText = buttonText ?: stringResource(R.string.components_action_got_it)
     LaunchedEffect(visible) {
         onVisibilityChange(visible)
     }
@@ -142,7 +145,7 @@ fun TutorialOverlay(
                     }
 
                     WearPrimaryButton(
-                        text = buttonText,
+                        text = resolvedButtonText,
                         onClick = {
                             hapticsViewModel?.doGentleVibration()
                             onDismiss()

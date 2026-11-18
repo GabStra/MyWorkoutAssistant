@@ -31,9 +31,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
@@ -106,14 +108,14 @@ fun WorkoutsStatusTab(
     if (showWeeklyProgressDialog) {
         StandardDialog(
             onDismissRequest = { showWeeklyProgressDialog = false },
-            title = "Weekly progress settings",
+            title = stringResource(R.string.loc_scr_weekly_progress_settings),
             body = {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "The workouts you select will count toward weekly progress starting from $selectedWeekLabel until you save a new rule.",
+                        text = stringResource(R.string.loc_scr_weekly_progress_settings_body, selectedWeekLabel),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -121,7 +123,7 @@ fun WorkoutsStatusTab(
                     if (weeklyProgressSnapshot.isOverrideBoundary) {
                         AppSecondaryButton(
                             modifier = Modifier.fillMaxWidth(),
-                            text = "Remove saved start week",
+                            text = stringResource(R.string.loc_scr_remove_saved_start_week),
                             onClick = {
                                 showWeeklyProgressDialog = false
                                 onClearWeeklyProgressSelection()
@@ -132,7 +134,7 @@ fun WorkoutsStatusTab(
 
                     if (weeklyProgressSnapshot.eligibleWorkouts.isEmpty()) {
                         Text(
-                            text = "No workouts with weekly targets are available this week.",
+                            text = stringResource(R.string.loc_scr_no_weekly_target_workouts),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -182,7 +184,10 @@ fun WorkoutsStatusTab(
                                             style = MaterialTheme.typography.bodyLarge,
                                         )
                                         Text(
-                                            text = "Target: ${(workout.timesCompletedInAWeek ?: 0)} per week",
+                                            text = stringResource(
+                                                R.string.loc_scr_weekly_target,
+                                                workout.timesCompletedInAWeek ?: 0
+                                            ),
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             style = MaterialTheme.typography.bodySmall,
                                         )
@@ -193,12 +198,12 @@ fun WorkoutsStatusTab(
                     }
                 }
             },
-            confirmText = "Save",
+            confirmText = stringResource(R.string.common_save),
             onConfirm = {
                 showWeeklyProgressDialog = false
                 onSaveWeeklyProgressSelection(pendingIncludedWorkoutGlobalIds)
             },
-            dismissText = "Cancel",
+            dismissText = stringResource(R.string.common_cancel),
             onDismissButton = { showWeeklyProgressDialog = false },
         )
     }
@@ -257,7 +262,7 @@ fun WorkoutsStatusTab(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Weekly progress ($selectedWeekLabel)",
+                                    text = stringResource(R.string.loc_scr_weekly_progress_title, selectedWeekLabel),
                                     style = MaterialTheme.typography.titleMedium,
                                     textAlign = TextAlign.Start,
                                     color = MaterialTheme.colorScheme.onBackground,
@@ -278,7 +283,7 @@ fun WorkoutsStatusTab(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit weekly progress",
+                                        contentDescription = stringResource(R.string.loc_scr_edit_weekly_progress_cd),
                                         modifier = Modifier.size(18.dp),
                                         tint = MaterialTheme.colorScheme.primary,
                                     )
@@ -320,7 +325,7 @@ fun WorkoutsStatusTab(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(Spacing.md),
-                                            text = "No workouts are selected for weekly progress.",
+                                            text = stringResource(R.string.loc_scr_no_workouts_selected_weekly),
                                             color = MaterialTheme.colorScheme.onBackground,
                                             style = MaterialTheme.typography.bodyMedium,
                                             textAlign = TextAlign.Center,
@@ -377,7 +382,7 @@ fun WorkoutsStatusTab(
 
                         Text(
                             modifier = Modifier.fillMaxWidth(),
-                            text = "Workout history ($currentWeekText)",
+                            text = stringResource(R.string.loc_scr_workout_history_title, currentWeekText),
                             style = MaterialTheme.typography.titleMedium,
                             textAlign = TextAlign.Start,
                             color = MaterialTheme.colorScheme.onBackground
@@ -390,7 +395,7 @@ fun WorkoutsStatusTab(
                             ) {
                                 Text(
                                     modifier = Modifier.padding(vertical = Spacing.sm),
-                                    text = "No workouts recorded this week.",
+                                    text = stringResource(R.string.loc_scr_no_workouts_this_week),
                                     textAlign = TextAlign.Center,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -443,7 +448,11 @@ private fun WorkoutHistoriesByWorkoutGroup(
                     appViewModel = appViewModel,
                     timeFormatter = timeFormatter,
                     sessionStatus = sessionStatusesByHistoryId?.get(dayWorkout.workoutHistory.id),
-                    statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) "Not counted" else null,
+                    statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) {
+                        stringResource(R.string.loc_scr_not_counted)
+                    } else {
+                        null
+                    },
                 )
             }
 

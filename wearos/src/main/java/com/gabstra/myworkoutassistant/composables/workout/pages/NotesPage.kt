@@ -10,10 +10,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 
 @Composable
 fun NotesPage(notes: String) {
@@ -24,7 +26,7 @@ fun NotesPage(notes: String) {
     ) {
         Text(
             modifier = Modifier.fillMaxWidth(),
-            text = "Notes",
+            text = stringResource(R.string.components_notes_title),
             style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )
@@ -36,7 +38,7 @@ fun NotesPage(notes: String) {
                 .verticalScroll(scrollState)
         ) {
             Text(
-                text = notes.ifEmpty { "No notes available." },
+                text = notes.ifEmpty { stringResource(R.string.components_notes_empty) },
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center

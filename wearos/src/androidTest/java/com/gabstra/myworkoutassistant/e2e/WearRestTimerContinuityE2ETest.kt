@@ -1,11 +1,9 @@
 package com.gabstra.myworkoutassistant.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.uiautomator.By
 import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
-import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.MultipleSetsAndRestsWorkoutStoreFixture
 import org.junit.Before
@@ -33,7 +31,7 @@ class WearRestTimerContinuityE2ETest : WearBaseE2ETest() {
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
 
         val restVisible = device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)),
+            Until.hasObject(WearRestScreenSelector.byDescription()),
             5_000
         )
         require(restVisible) { "Rest screen did not appear" }
@@ -80,7 +78,7 @@ class WearRestTimerContinuityE2ETest : WearBaseE2ETest() {
     }
 
     private fun readRestTimerSeconds(): Int? {
-        val root = device.findObject(By.descContains(SetValueSemantics.RestSetTypeDescription)) ?: return null
+        val root = device.findObject(WearRestScreenSelector.byDescription()) ?: return null
         val timerText = findTimerText(root) ?: return null
         return parseTimerTextToSeconds(timerText)
     }

@@ -10,12 +10,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -58,14 +60,14 @@ fun MusclesPage(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 22.5.dp),
-            text = "Muscle groups",
+            text = stringResource(R.string.components_muscle_groups_title),
             style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )
 
         if (muscleGroups.isEmpty() && secondaryMuscleGroups.isEmpty()) {
             Text(
-                text = "No muscle groups",
+                text = stringResource(R.string.components_muscle_groups_empty),
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.tertiaryContent,

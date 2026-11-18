@@ -22,8 +22,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
@@ -164,7 +166,10 @@ fun WorkoutProgressionSummary(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(text = "Progression", style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = stringResource(R.string.loc_progression),
+            style = MaterialTheme.typography.titleMedium
+        )
         when (val rows = progressionInfo) {
             null -> CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
             else -> rows.forEach { info -> ProgressionSummaryRow(info) }
@@ -182,6 +187,13 @@ private fun ProgressionSummaryRow(info: MobileProgressionInfo) {
         Ternary.MIXED -> Icons.Filled.SwapVert to MaterialTheme.colorScheme.tertiary
         null -> null
     }
+    val statusDescription = when (status) {
+        Ternary.ABOVE -> stringResource(R.string.loc_progression_status_cd_above)
+        Ternary.EQUAL -> stringResource(R.string.loc_progression_status_cd_equal)
+        Ternary.BELOW -> stringResource(R.string.loc_progression_status_cd_below)
+        Ternary.MIXED -> stringResource(R.string.loc_progression_status_cd_mixed)
+        null -> ""
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -194,7 +206,11 @@ private fun ProgressionSummaryRow(info: MobileProgressionInfo) {
         } else {
             Icon(
                 imageVector = iconAndColor.first,
-                contentDescription = "${info.exerciseName}: $status",
+                contentDescription = stringResource(
+                    R.string.loc_exercise_status_cd,
+                    info.exerciseName,
+                    statusDescription,
+                ),
                 tint = iconAndColor.second
             )
         }

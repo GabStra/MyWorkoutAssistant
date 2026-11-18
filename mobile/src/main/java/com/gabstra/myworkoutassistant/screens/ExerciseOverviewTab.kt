@@ -25,8 +25,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
@@ -112,7 +114,7 @@ fun ExerciseOverviewTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppPrimaryButton(
-                    text = "Add Set",
+                    text = stringResource(R.string.loc_ex_add_set),
                     onClick = {
                         appViewModel.setScreenData(ScreenData.NewSet(workoutId, exercise.id))
                     },
@@ -120,7 +122,7 @@ fun ExerciseOverviewTab(
             }
         } else {
             AppListFilterToggle(
-                label = "Show rests",
+                label = stringResource(R.string.loc_scr_show_rests),
                 checked = showRest,
                 onCheckedChange = onShowRestChange,
             )
@@ -135,7 +137,7 @@ fun ExerciseOverviewTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Waiting for calibration. Turn off \"Use Calibration mode\" to disable.",
+                        text = stringResource(R.string.loc_ex_waiting_for_calibration),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -143,8 +145,22 @@ fun ExerciseOverviewTab(
             }
 
             val displaySets = if (!showRest) sets.filter { it !is RestSet } else sets
-            val previewItems = remember(displaySets, exercise.id, selectedEquipment?.id) {
-                buildExerciseTemplatePreviewItems(displaySets, exercise, selectedEquipment)
+            val tbdText = stringResource(R.string.loc_calibration_tbd)
+            val restRowFormat = stringResource(R.string.loc_scr_rest_row)
+            val previewItems = remember(
+                displaySets,
+                exercise.id,
+                selectedEquipment?.id,
+                tbdText,
+                restRowFormat,
+            ) {
+                buildExerciseTemplatePreviewItems(
+                    sets = displaySets,
+                    exercise = exercise,
+                    equipment = selectedEquipment,
+                    tbdText = tbdText,
+                    restRowFormat = restRowFormat,
+                )
             }
             val previewItemBySetId = remember(previewItems) { previewItems.associateBy { it.setId } }
             val tableHeader = remember(previewItems) {
@@ -224,7 +240,7 @@ fun ExerciseOverviewTab(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         AppPrimaryOutlinedButton(
-                                            text = "Add Rest",
+                                            text = stringResource(R.string.loc_ex_add_rest),
                                             onClick = {
                                                 appViewModel.setScreenData(
                                                     ScreenData.InsertRestSetAfter(workoutId, exercise.id, set.id)
@@ -249,12 +265,12 @@ fun ExerciseOverviewTab(
             ) {
                 GenericButtonWithMenu(
                     menuItems = listOf(
-                        MenuItem("Add Set") {
+                        MenuItem(stringResource(R.string.loc_ex_add_set)) {
                             appViewModel.setScreenData(ScreenData.NewSet(workoutId, exercise.id))
                         },
                         MenuItem(
-                            label = "Rest between all sets",
-                            description = "One duration; replaces existing."
+                            label = stringResource(R.string.loc_scr_rest_between_all_sets),
+                            description = stringResource(R.string.loc_scr_rest_between_all_exercises_desc)
                         ) {
                             appViewModel.setScreenData(ScreenData.NewRestSet(workoutId, exercise.id))
                         }
@@ -262,7 +278,7 @@ fun ExerciseOverviewTab(
                     content = {
                         Icon(
                             imageVector = Icons.Filled.Add,
-                            contentDescription = "Add",
+                            contentDescription = stringResource(R.string.loc_add_cd),
                             tint = MaterialTheme.colorScheme.background,
                         )
                     }

@@ -47,6 +47,38 @@ data class DurationProgressionSnapshot(
     val qualifyingSessionIds: List<UUID> = emptyList(),
 )
 
+/** Locale-independent identity of an assessed-session reason. */
+enum class DurationSessionAssessmentReasonId {
+    WORK_NOT_COMPLETED_NORMALLY,
+    LOAD_DIFFERS_FROM_PRESCRIPTION,
+    TIMESTAMPS_UNAVAILABLE,
+    WORK_DURATION_SHORTER_THAN_PRESCRIPTION,
+    INSUFFICIENT_HR_COVERAGE,
+    HR_ZONE_BELOW_THRESHOLD,
+    QUALIFYING_WORK,
+}
+
+/**
+ * Locale-independent identity of a progression decision reason plus the arguments the
+ * app needs to render that reason. [DurationProgressionDecision.reason] remains the
+ * canonical English text used by prompts, exports and stored snapshots.
+ */
+data class DurationProgressionReason(
+    val id: DurationProgressionReasonId,
+    val qualifyingSessions: Int = 0,
+    val requiredSessions: Int = 0,
+    val assessmentReasonId: DurationSessionAssessmentReasonId? = null,
+)
+
+enum class DurationProgressionReasonId {
+    CEILING_REACHED,
+    INCREASE_CRITERIA_MET,
+    HOLD_ASSESSMENT,
+    NO_COMPARABLE_SESSIONS,
+    INSUFFICIENT_QUALIFYING_SESSIONS,
+    SESSION_NOT_COMPLETED_NORMALLY,
+}
+
 data class DurationSessionAssessment(
     val sessionId: UUID,
     val prescribedSeconds: Int,
@@ -54,6 +86,7 @@ data class DurationSessionAssessment(
     val zonePercent: Double?,
     val qualifies: Boolean,
     val reason: String,
+    val reasonId: DurationSessionAssessmentReasonId? = null,
 )
 
 data class DurationProgressionDecision(
@@ -65,6 +98,7 @@ data class DurationProgressionDecision(
     val assessments: List<DurationSessionAssessment>,
     val prescription: DurationProgressionSnapshot,
     val reason: String,
+    val reasonDetail: DurationProgressionReason? = null,
 ) {
     fun asFactBlock(): String = buildString {
         appendLine("FACT Duration progression for $exerciseName: current $currentSeconds seconds; next $nextSeconds seconds; $reason")
@@ -100,29 +134,105 @@ fun assessDurationSession(
     val row = rows.singleOrNull()
     val data = row?.setData as? TimedDurationSetData
     val seconds = (data?.startTimer ?: 0) / 1000
-    fun unavailable(reason: String) = DurationSessionAssessment(history.id, seconds, null, null, false, reason)
+    fun unavailable(
+        reasonId: DurationSessionAssessmentReasonId,
+        reason: String,
+    ) = DurationSessionAssessment(history.id, seconds, null, null, false, reason, reasonId)
     if (!history.isNormallyCompleted() || row == null || data == null || rows.any { it.skipped } ||
         !data.hasBeenExecuted || seconds <= 0 || data.endTimer > 0) {
-        return unavailable("prescribed work was not completed normally")
+        return unavailable(
+            DurationSessionAssessmentReasonId.WORK_NOT_COMPLETED_NORMALLY,
+            "prescribed work was not completed normally",
+        )
     }
     if (data.actualWeight != null && data.actualWeight != 0.0) {
-        return unavailable("recorded load differs from the unweighted duration prescription")
+        return unavailable(
+            DurationSessionAssessmentReasonId.LOAD_DIFFERS_FROM_PRESCRIPTION,
+            "recorded load differs from the unweighted duration prescription",
+        )
     }
-    val start = row.startTime ?: return unavailable("work timestamps unavailable")
-    val end = row.endTime ?: return unavailable("work timestamps unavailable")
+    val start = row.startTime ?: return unavailable(
+        DurationSessionAssessmentReasonId.TIMESTAMPS_UNAVAILABLE,
+        "work timestamps unavailable",
+    )
+    val end = row.endTime ?: return unavailable(
+        DurationSessionAssessmentReasonId.TIMESTAMPS_UNAVAILABLE,
+        "work timestamps unavailable",
+    )
     val elapsed = Duration.between(start, end).seconds
-    if (elapsed <= 0) return unavailable("work timestamps unavailable")
-    if (elapsed + 2 < seconds) return unavailable("recorded work duration is shorter than the prescription")
+    if (elapsed <= 0) return unavailable(
+        DurationSessionAssessmentReasonId.TIMESTAMPS_UNAVAILABLE,
+        "work timestamps unavailable",
+    )
+    if (elapsed + 2 < seconds) return unavailable(
+        DurationSessionAssessmentReasonId.WORK_DURATION_SHORTER_THAN_PRESCRIPTION,
+        "recorded work duration is shorter than the prescription",
+    )
     val samples = sliceHeartRateRecords(history.startTime, history.heartBeatRecords, start, end).filter { it > 0 }
     val coverage = (samples.size * 100.0 / elapsed).coerceAtMost(100.0)
     val inZone = if (samples.isEmpty()) null else samples.count { it in zone } * 100.0 / samples.size
-    val reason = when {
-        coverage < config.minimumCoveragePercent -> "insufficient HR coverage; cannot assess"
-        inZone == null || inZone < config.minimumZonePercent -> "work HR zone adherence below configured threshold"
-        else -> "completed work with qualifying HR coverage and zone adherence"
+    val (reasonId, reason) = when {
+        coverage < config.minimumCoveragePercent ->
+            DurationSessionAssessmentReasonId.INSUFFICIENT_HR_COVERAGE to
+                "insufficient HR coverage; cannot assess"
+        inZone == null || inZone < config.minimumZonePercent ->
+            DurationSessionAssessmentReasonId.HR_ZONE_BELOW_THRESHOLD to
+                "work HR zone adherence below configured threshold"
+        else -> DurationSessionAssessmentReasonId.QUALIFYING_WORK to
+            "completed work with qualifying HR coverage and zone adherence"
     }
     return DurationSessionAssessment(history.id, seconds, coverage, inZone,
-        coverage >= config.minimumCoveragePercent && inZone != null && inZone >= config.minimumZonePercent, reason)
+        coverage >= config.minimumCoveragePercent && inZone != null && inZone >= config.minimumZonePercent, reason,
+        reasonId)
+}
+
+internal data class DurationDecisionReasonText(
+    val text: String,
+    val detail: DurationProgressionReason,
+)
+
+/** Single source of truth for the canonical English reason and its structured identity. */
+internal fun resolveDurationDecisionReason(
+    currentSeconds: Int,
+    nextSeconds: Int,
+    successes: Int,
+    config: DurationProgressionConfig,
+    assessments: List<DurationSessionAssessment>,
+): DurationDecisionReasonText = when {
+    currentSeconds >= config.maximumMinutes * 60 -> DurationDecisionReasonText(
+        text = "hold: configured duration ceiling reached",
+        detail = DurationProgressionReason(DurationProgressionReasonId.CEILING_REACHED),
+    )
+    nextSeconds > currentSeconds -> DurationDecisionReasonText(
+        text = "increase: $successes consecutive sessions met the configured criteria",
+        detail = DurationProgressionReason(
+            id = DurationProgressionReasonId.INCREASE_CRITERIA_MET,
+            qualifyingSessions = successes,
+            requiredSessions = config.successfulSessionsRequired,
+        ),
+    )
+    assessments.firstOrNull()?.qualifies == false -> {
+        val assessment = assessments.first()
+        DurationDecisionReasonText(
+            text = "hold: ${assessment.reason}",
+            detail = DurationProgressionReason(
+                id = DurationProgressionReasonId.HOLD_ASSESSMENT,
+                assessmentReasonId = assessment.reasonId,
+            ),
+        )
+    }
+    assessments.isEmpty() -> DurationDecisionReasonText(
+        text = "hold: no comparable sessions recorded under this policy and duration",
+        detail = DurationProgressionReason(DurationProgressionReasonId.NO_COMPARABLE_SESSIONS),
+    )
+    else -> DurationDecisionReasonText(
+        text = "hold: $successes of ${config.successfulSessionsRequired} required consecutive qualifying sessions",
+        detail = DurationProgressionReason(
+            id = DurationProgressionReasonId.INSUFFICIENT_QUALIFYING_SESSIONS,
+            qualifyingSessions = successes,
+            requiredSessions = config.successfulSessionsRequired,
+        ),
+    )
 }
 
 /** Derive from retained prescriptions and execution; repeat calls never consume a success twice. */
@@ -177,16 +287,18 @@ suspend fun calculateDurationProgression(
         minOf(currentSeconds + config.incrementMinutes * 60, config.maximumMinutes * 60)
             .coerceAtLeast(currentSeconds)
     } else currentSeconds
-    val reason = when {
-        currentSeconds >= config.maximumMinutes * 60 -> "hold: configured duration ceiling reached"
-        next > currentSeconds -> "increase: $successes consecutive sessions met the configured criteria"
-        assessments.firstOrNull()?.qualifies == false -> "hold: ${assessments.first().reason}"
-        assessments.isEmpty() -> "hold: no comparable sessions recorded under this policy and duration"
-        else -> "hold: $successes of ${config.successfulSessionsRequired} required consecutive qualifying sessions"
-    }
+    val decisionReason = resolveDurationDecisionReason(
+        currentSeconds = currentSeconds,
+        nextSeconds = next,
+        successes = successes,
+        config = config,
+        assessments = assessments,
+    )
+    val reason = decisionReason.text
     return DurationProgressionDecision(exercise.name, currentSeconds, next, successes, config, assessments,
         snapshot.copy(prescribedSeconds = next, previousSeconds = currentSeconds, decisionReason = reason,
-            qualifyingSessionIds = assessments.filter { it.qualifies }.map { it.sessionId }), reason)
+            qualifyingSessionIds = assessments.filter { it.qualifies }.map { it.sessionId }), reason,
+        decisionReason.detail)
 }
 
 /** Keep old sessions tied to the duration they ran, even after the template advances. */
@@ -224,11 +336,15 @@ suspend fun durationProgressionDecisionsForSession(
                     decisions += decision
                 } else {
                     val reason = "hold: current session was not completed normally"
+                    val reasonDetail = DurationProgressionReason(
+                        DurationProgressionReasonId.SESSION_NOT_COMPLETED_NORMALLY,
+                    )
                     decisions += decision.copy(nextSeconds = decision.currentSeconds, qualifyingSessions = 0,
                         assessments = listOf(assessDurationSession(history, rows,
                             snapshot.lowerHrBpm..snapshot.upperHrBpm, snapshot.config)),
                         prescription = decision.prescription.copy(prescribedSeconds = decision.currentSeconds,
-                            decisionReason = reason, qualifyingSessionIds = emptyList()), reason = reason)
+                            decisionReason = reason, qualifyingSessionIds = emptyList()), reason = reason,
+                        reasonDetail = reasonDetail)
                 }
             }
     }

@@ -111,7 +111,7 @@
     <string name="set_action_edit_reps">Modifica ripetizioni</string>
     <string name="set_action_focus_weight">Seleziona peso</string>
     <string name="set_action_edit_weight">Modifica peso</string>
-    <string name="set_plateau_detected">Plateau Rilevato</string>
+    <string name="set_plateau_detected">Stallo rilevato</string>
     <string name="set_cd_warning">Avviso</string>
     <string name="set_cd_info">Info</string>
     <string name="set_cd_start">Avvia</string>
@@ -185,6 +185,8 @@
     <string name="page_controls_samsung_hr_on">Sensore grezzo tramite Samsung Health</string>
     <string name="page_controls_samsung_hr_off">Sensore standard dell\'orologio</string>
     <string name="page_controls_record_motion">Registra movimento</string>
+    <string name="freeform_capture_record">Registra sessione libera</string>
+    <string name="freeform_capture_recording">Registrazione sensori — tocca per interrompere</string>
     <string name="page_controls_motion_on">Attivo per questo allenamento</string>
     <string name="page_controls_motion_off">Disattivo per questo allenamento</string>
     <string name="page_controls_motion_detail">Dettaglio movimento</string>

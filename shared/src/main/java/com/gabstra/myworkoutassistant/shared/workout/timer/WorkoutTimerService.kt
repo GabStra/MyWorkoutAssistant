@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.shared.workout.timer
 
+import android.content.Context
 import android.os.SystemClock
+import com.gabstra.myworkoutassistant.shared.R
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -19,7 +21,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-fun formatTimerNotificationStatus(timerUiState: WorkoutTimerService.TimerUiState?): String? {
+fun formatTimerNotificationStatus(
+    context: Context,
+    timerUiState: WorkoutTimerService.TimerUiState?,
+): String? {
     timerUiState ?: return null
     val totalSeconds = timerUiState.displaySeconds.coerceAtLeast(0)
     val hours = totalSeconds / 3600
@@ -30,15 +35,22 @@ fun formatTimerNotificationStatus(timerUiState: WorkoutTimerService.TimerUiState
     } else {
         "${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
     }
-    val timerLabel = when (timerUiState.timerType) {
-        WorkoutTimerService.TimerType.REST -> "Rest"
-        WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set"
-        WorkoutTimerService.TimerType.ENDURANCE_SET -> "Set elapsed"
-        WorkoutTimerService.TimerType.SUPERSET_CAP -> "Time left"
-        WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> "Round"
+    val (runningRes, pausedRes) = when (timerUiState.timerType) {
+        WorkoutTimerService.TimerType.REST ->
+            R.string.timer_notification_rest_running to R.string.timer_notification_rest_paused
+        WorkoutTimerService.TimerType.TIMED_DURATION_SET ->
+            R.string.timer_notification_set_running to R.string.timer_notification_set_paused
+        WorkoutTimerService.TimerType.ENDURANCE_SET ->
+            R.string.timer_notification_set_elapsed_running to
+                R.string.timer_notification_set_elapsed_paused
+        WorkoutTimerService.TimerType.SUPERSET_CAP ->
+            R.string.timer_notification_time_left_running to
+                R.string.timer_notification_time_left_paused
+        WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE ->
+            R.string.timer_notification_round_running to R.string.timer_notification_round_paused
     }
-    val pausedSuffix = if (timerUiState.isRunning) "" else " (paused)"
-    return "$timerLabel · $formattedTime$pausedSuffix"
+    val statusRes = if (timerUiState.isRunning) runningRes else pausedRes
+    return context.getString(statusRes, formattedTime)
 }
 
 /**

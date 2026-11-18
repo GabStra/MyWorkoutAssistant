@@ -39,7 +39,7 @@ internal class WearErrorLogSyncReceiver(
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         toastContext,
-                        "Sent ${errorLogs.size} error log(s) to your phone.",
+                        toastContext.getString(R.string.wear_error_logs_sent, errorLogs.size),
                         Toast.LENGTH_SHORT
                     ).show()
                 }

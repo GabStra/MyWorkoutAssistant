@@ -14,8 +14,9 @@ import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
+import com.gabstra.myworkoutassistant.e2e.WearRestScreenSelector
 import com.gabstra.myworkoutassistant.e2e.helpers.WearWorkoutStateMutationHelper
-import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
+import com.gabstra.myworkoutassistant.shared.R as SharedR
 import java.util.regex.Pattern
 
 /**
@@ -263,7 +264,12 @@ class WearWorkoutDriver(
     fun isRecoveryDialogVisible(): Boolean {
         return device.hasObject(By.desc("Recovery resume action")) ||
             device.hasObject(By.desc("Recovery discard action")) ||
-            device.hasObject(By.text(IncompleteWorkoutStrings.RECOVERY_RESUME_OR_DISCARD_BODY))
+            device.hasObject(
+                By.text(
+                    InstrumentationRegistry.getInstrumentation().targetContext
+                        .getString(SharedR.string.recovery_resume_or_discard_body)
+                )
+            )
     }
 
     /**
@@ -607,7 +613,7 @@ class WearWorkoutDriver(
                 device.hasObject(By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)) ||
                 device.hasObject(By.descContains(SetValueSemantics.TimedDurationSetTypeDescription)) ||
                 device.hasObject(By.descContains(SetValueSemantics.EnduranceSetTypeDescription))
-        val restTypeVisible = device.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription))
+        val restTypeVisible = device.hasObject(WearRestScreenSelector.byDescription())
         val debugState = listOf(
             "doneVisible=$doneVisible",
             "skipRestVisible=$skipRestVisible",
@@ -1286,7 +1292,7 @@ class WearWorkoutDriver(
             device.hasObject(By.textContains("Set load")) ||
                 device.hasObject(By.text("0 = Form Breaks"))
         val anyRestScreenVisible =
-            device.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription))
+            device.hasObject(WearRestScreenSelector.byDescription())
         return device.hasObject(inWorkoutSelector) ||
             anySetScreenVisible ||
             anyCalibrationScreenVisible ||

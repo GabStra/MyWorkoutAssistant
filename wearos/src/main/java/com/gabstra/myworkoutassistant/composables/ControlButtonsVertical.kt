@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
@@ -45,6 +46,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.LongPressRepeatSpeedStage
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPressOrTap
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
@@ -94,6 +96,10 @@ fun ControlButtonsVertical(
     BackHandler(enabled = onCloseClick != null) {
         onCloseClick?.invoke()
     }
+    val subtractDescription = stringResource(R.string.components_cd_subtract)
+    val addDescription = stringResource(R.string.components_cd_add)
+    val backDescription = stringResource(R.string.wear_back)
+    val resetDescription = stringResource(R.string.components_cd_reset)
 
     Column(
         modifier = modifier,
@@ -126,7 +132,7 @@ fun ControlButtonsVertical(
             ) {
                 // Tighter hit-box than the standard 62.5dp so the edited value keeps its height.
                 ControlButton(
-                    Icons.Filled.ArrowDownward, "Subtract", Red, isMinusEnabled,
+                    Icons.Filled.ArrowDownward, subtractDescription, Red, isMinusEnabled,
                     onMinusTap, onMinusLongPress, onMinusCoarse,
                     iconTint = Color.White,
                     hitBoxSize = 56.dp,
@@ -134,7 +140,7 @@ fun ControlButtonsVertical(
                     iconSize = WearStandardIconButtonIconSize,
                 )
                 ControlButton(
-                    Icons.Filled.ArrowUpward, "Add", Green, isPlusEnabled,
+                    Icons.Filled.ArrowUpward, addDescription, Green, isPlusEnabled,
                     onPlusTap, onPlusLongPress, onPlusCoarse,
                     iconTint = Color.White,
                     hitBoxSize = 56.dp,
@@ -149,14 +155,14 @@ fun ControlButtonsVertical(
                 ) {
                     onCloseClick?.let { closeClick ->
                         ControlButton(
-                            Icons.Filled.Close, "Back",
+                            Icons.Filled.Close, backDescription,
                             MaterialTheme.colorScheme.surfaceContainerHigh, true,
                             closeClick, closeClick, null,
                         )
                     }
                     onResetClick?.let { resetClick ->
                         HoldToConfirmControlButton(
-                            Icons.Filled.RestartAlt, "Reset",
+                            Icons.Filled.RestartAlt, resetDescription,
                             isResetEnabled,
                             resetClick,
                         )

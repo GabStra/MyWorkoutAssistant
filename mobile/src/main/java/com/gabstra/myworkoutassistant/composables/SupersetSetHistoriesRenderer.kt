@@ -11,9 +11,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.RestHistory
@@ -63,18 +66,27 @@ fun SupersetSetHistoriesRenderer(
         .filter { it.exerciseId != null && it.setData !is RestSetData }
         .groupBy { requireNotNull(it.exerciseId) }
         .mapValues { (_, histories) -> HistoricalSetDisplayIdentifierResolver(histories) }
+    val resources = LocalContext.current.resources
 
     val rows = buildList {
         mergeSessionTimeline(completedSetHistories, restHistories).forEach { item ->
             when (item) {
                 is SessionTimelineItem.RestStep -> {
-                    add(SetTableRowUiModel.Rest(formatRestHistoryDisplayLine(item.history)))
+                    add(
+                        SetTableRowUiModel.Rest(
+                            formatRestHistoryDisplayLine(item.history, resources)
+                        )
+                    )
                 }
 
                 is SessionTimelineItem.SetStep -> {
                     val history = item.history
                     if (history.setData is RestSetData) {
-                        add(SetTableRowUiModel.Rest(formatHistoricalRestValue(history)))
+                        add(
+                            SetTableRowUiModel.Rest(
+                                formatHistoricalRestValue(history, resources)
+                            )
+                        )
                         return@forEach
                     }
 
@@ -141,7 +153,7 @@ fun SupersetSetHistoriesRenderer(
                         )
                         if (exercise.id == focusedExerciseId) {
                             Text(
-                                text = "Selected exercise",
+                                text = stringResource(R.string.loc_selected_exercise),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,
                             )

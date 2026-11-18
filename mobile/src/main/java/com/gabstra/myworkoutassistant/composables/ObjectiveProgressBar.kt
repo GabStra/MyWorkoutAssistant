@@ -14,7 +14,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
@@ -32,7 +34,7 @@ fun CheckboxWithGreenCircle(
     ) {
         Icon(
             imageVector = Icons.Default.Check,
-            contentDescription = "Checkbox",
+            contentDescription = stringResource(R.string.loc_checkbox_cd),
             tint = MaterialTheme.colorScheme.background, // Icon color
             modifier = Modifier.align(Alignment.Center) // Center the icon within the circle
         )

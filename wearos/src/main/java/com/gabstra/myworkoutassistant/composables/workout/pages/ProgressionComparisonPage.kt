@@ -35,11 +35,13 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -170,11 +172,12 @@ fun ProgressionComparisonPage(
     }
 
     val progressionState = progressionData?.second
+    val noChangeText = stringResource(R.string.components_no_change)
     val progressionContextLabel = when (progressionState) {
-        ProgressionState.PROGRESS -> "Progress"
-        ProgressionState.RETRY -> "Repeat"
-        ProgressionState.DELOAD -> "Deload"
-        ProgressionState.FAILED -> "Failed"
+        ProgressionState.PROGRESS -> stringResource(R.string.components_progression_progress)
+        ProgressionState.RETRY -> stringResource(R.string.components_progression_repeat)
+        ProgressionState.DELOAD -> stringResource(R.string.components_progression_deload)
+        ProgressionState.FAILED -> stringResource(R.string.components_progression_failed)
         null -> null
     }
 
@@ -266,7 +269,7 @@ fun ProgressionComparisonPage(
         ) {
             CircularProgressIndicator()
             Spacer(Modifier.height(8.dp))
-            LoadingText(baseText = "Loading")
+            LoadingText(baseText = stringResource(R.string.page_loading))
         }
         return
     }
@@ -281,7 +284,7 @@ fun ProgressionComparisonPage(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 5.dp),
-            text = "Session Comparison",
+            text = stringResource(R.string.components_session_comparison),
             style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )
@@ -306,7 +309,7 @@ fun ProgressionComparisonPage(
                     Spacer(modifier = Modifier.width(5.dp))
                 }
                 LabeledNumericValue(
-                    label = "Set:",
+                    label = "${stringResource(R.string.components_label_set)}:",
                     value = "${currentSetIndex + 1}/$maxSets",
                     style = baseStyle,
                     color = secondaryTextColor,
@@ -383,7 +386,7 @@ fun ProgressionComparisonPage(
                 )
             }
         }
-        val differenceText = setDifference.displayText
+        val differenceText = setDifference.displayText.ifEmpty { noChangeText }
         val comparison = setDifference.comparison
         val hasCompletedCurrentSessionSet =
             currentSetIndex < setIndex || afterSetState?.hasBeenExecuted == true
@@ -422,7 +425,7 @@ fun ProgressionComparisonPage(
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
                     setState = previousSetStates.value[currentSetIndex],
-                    setIdentifier = "LAST",
+                    setIdentifier = stringResource(R.string.page_progression_last),
                     index = currentSetIndex,
                     isCurrentSet = false,
                     itemStyle = comparisonValueStyle,
@@ -433,7 +436,7 @@ fun ProgressionComparisonPage(
                     PlaceholderSetRow(
                         modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 30.dp).padding(2.dp),
                         exercise = exercise,
-                        rowLabel = "LAST",
+                        rowLabel = stringResource(R.string.page_progression_last),
                         textColor = previousRowAccentColor
                     )
                 }
@@ -461,7 +464,7 @@ fun ProgressionComparisonPage(
             }
 
             ScalableText(
-                text = if (hasValidComparison) differenceText else "Not available",
+                text = if (hasValidComparison) differenceText else stringResource(R.string.page_plates_not_available),
                 style = MaterialTheme.typography.bodySmall,
                 color = comparisonColor
             )
@@ -487,7 +490,7 @@ fun ProgressionComparisonPage(
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
                     setState = progressionSetStates[currentSetIndex],
-                    setIdentifier = "NOW",
+                    setIdentifier = stringResource(R.string.run_now_label),
                     index = currentSetIndex,
                     isCurrentSet = false,
                     itemStyle = comparisonValueStyle,
@@ -498,7 +501,7 @@ fun ProgressionComparisonPage(
                     PlaceholderSetRow(
                         modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 30.dp).padding(2.dp),
                         exercise = exercise,
-                        rowLabel = "NOW",
+                        rowLabel = stringResource(R.string.run_now_label),
                         textColor = rowAccentColor
                     )
                 }

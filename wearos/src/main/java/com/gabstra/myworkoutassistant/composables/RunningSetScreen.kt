@@ -71,6 +71,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.presentation.theme.numeralMicro
 import com.gabstra.myworkoutassistant.preview.createPreviewWorkoutStateMachine
 import com.gabstra.myworkoutassistant.screens.setFieldValue
+import com.gabstra.myworkoutassistant.services.RunningTrackingError
 import com.gabstra.myworkoutassistant.services.RunningTrackingService
 import com.gabstra.myworkoutassistant.services.RunningTrackingState
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -109,6 +110,7 @@ internal fun RunningSetScreen(
     val liveTracker by RunningTrackingService.state.collectAsState()
     val runningControlsDialogOpen by viewModel.isRunningControlsDialogOpen.collectAsState()
     val tracker = previewState?.tracker ?: liveTracker
+    val trackingErrorMessage = tracker.error?.let { stringResource(it.messageResId) }
     val showRunningControlsDialog = previewState?.showControlsDialog ?: runningControlsDialogOpen
     val isInspectionMode = LocalInspectionMode.current
     val distanceUnit = if (isInspectionMode) DistanceUnit.KILOMETERS else viewModel.workoutStore.distanceUnit
@@ -438,7 +440,7 @@ internal fun RunningSetScreen(
                     }
                 }
             }
-            tracker.errorMessage?.let {
+            trackingErrorMessage?.let {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -869,7 +871,10 @@ private class RunningSetScreenPreviewProvider : PreviewParameterProvider<Running
             RunningTargetType.DISTANCE,
             5_000.0,
             RunningSetScreenPreviewState(
-                tracker = RunningTrackingState(errorMessage = "Health Services unavailable"),
+                tracker = RunningTrackingState(
+                    error = RunningTrackingError.HEALTH_SERVICES_REGISTRATION_FAILED,
+                    errorDiagnostic = "Health Services unavailable",
+                ),
             ),
         ),
         RunningSetScreenPreviewCase(

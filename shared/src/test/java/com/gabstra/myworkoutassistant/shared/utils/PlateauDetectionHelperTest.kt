@@ -1342,6 +1342,40 @@ class PlateauDetectionHelperTest {
         // Current logic may detect plateau depending on window
         assertTrue("Session 2 should show improvement (new weight bin)", sessionImproved[1])
     }
+
+    @Test
+    fun testPlateauReasonCarriesStructuredProvenance() {
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistories = (0..8).map { offset ->
+            createWorkoutHistory(date = baseDate.plusDays(offset.toLong()))
+        }
+        val reps = listOf(10, 11, 11, 12, 12, 12, 12, 12, 12)
+        val setHistories = workoutHistories.mapIndexed { index, workoutHistory ->
+            createSetHistory(
+                workoutHistoryId = workoutHistory.id,
+                exerciseId = exerciseId,
+                weight = 100.0,
+                reps = reps[index]
+            )
+        }
+
+        val (isPlateau, _, reason) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories.associateBy { it.id }
+        )
+
+        assertTrue("Should detect plateau for stagnant recent sessions", isPlateau)
+        assertTrue("Plateau should carry structured reason", reason != null)
+        val plateauReason = reason!!
+        assertEquals(3, plateauReason.windowSessionCount)
+        assertEquals(3, plateauReason.sessions.size)
+        assertEquals(listOf(1, 2, 3), plateauReason.sessions.map { it.sessionNumber })
+        assertTrue(
+            "Recent sessions should expose the same best weight/reps shown before",
+            plateauReason.sessions.all { it.bestWeightKg == 100.0 && it.bestReps == 12 }
+        )
+    }
 }
 
 
