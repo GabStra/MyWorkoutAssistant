@@ -85,7 +85,7 @@ def build_contact_foot_tracks(rig, keypoints, pinned_mask, *, anchor_ids=None):
 
 
 def native_material_contact_tracks(rig, keypoints, pinned_mask, side_axes, episodes,
-                                   *, anchor_ids=None):
+                                   *, anchor_ids=None, cyclic=False):
     """Build v2 tracks after every active native episode has a bound material point."""
     names = list(rig.names if hasattr(rig, 'names') else rig['jointNames'])
     points = np.asarray(keypoints, dtype=float)
@@ -122,7 +122,97 @@ def native_material_contact_tracks(rig, keypoints, pinned_mask, side_axes, episo
             'episodes': side_episodes,
         }
         _validated_native_side_track(result[side], count, side)
+    if cyclic:
+        reconcile_cyclic_seam_material_targets(result)
     return result
+
+
+def _same_native_material_identity(first, second, tolerance=1e-6):
+    """True only when two episodes describe the same stationary shoe material point."""
+    if str(first.get('mode')) != 'stationary' or str(second.get('mode')) != 'stationary':
+        return False
+    anchor = first.get('anchorId')
+    if anchor is None or anchor != second.get('anchorId'):
+        return False
+    if (first.get('primitiveId') != second.get('primitiveId')
+            or first.get('regionRole') != second.get('regionRole')):
+        return False
+    try:
+        if int(first['triangleIndex']) != int(second['triangleIndex']):
+            return False
+        first_bary = np.asarray(first['barycentric'], dtype=float)
+        second_bary = np.asarray(second['barycentric'], dtype=float)
+        first_offset = np.asarray(first['materialOffsetLocalMeters'], dtype=float)
+        second_offset = np.asarray(second['materialOffsetLocalMeters'], dtype=float)
+        first_reference = float(first['referenceLengthMeters'])
+        second_reference = float(second['referenceLengthMeters'])
+        first_normal = np.asarray(first['surfaceNormal'], dtype=float)
+        second_normal = np.asarray(second['surfaceNormal'], dtype=float)
+        first_plane = float(first['planeOffsetMeters'])
+        second_plane = float(second['planeOffsetMeters'])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    return (first_bary.shape == (3,) and second_bary.shape == (3,)
+            and np.allclose(first_bary, second_bary, atol=tolerance, rtol=0.)
+            # The cached local material offset and its reference bone length
+            # define the physical shoe point; identical triangles/barycentrics
+            # can still describe a different point through these fields.
+            and first_offset.shape == (3,) and second_offset.shape == (3,)
+            and np.allclose(first_offset, second_offset, atol=tolerance, rtol=0.)
+            and np.isfinite(first_reference) and np.isfinite(second_reference)
+            and abs(first_reference - second_reference) <= tolerance
+            and first_normal.shape == (3,) and second_normal.shape == (3,)
+            and np.allclose(first_normal, second_normal, atol=tolerance, rtol=0.)
+            and abs(first_plane - second_plane) <= tolerance)
+
+
+def reconcile_cyclic_seam_material_targets(tracks):
+    """Give one stationary material contact split by the loop seam a single world target.
+
+    A cyclic clip can represent one continuous stationary shoe contact as two
+    episodes: the run ending at the last frame and the run starting at frame 0.
+    Each run is bound independently, so the two halves can derive different
+    ``targetWorld`` anchors for the *same* material point. The loop seam then
+    pins the same material to two world points, and playback interpolation
+    between them registers as a stationary-contact residual.
+
+    This reconciles only the two loop-seam halves of one stationary contact
+    (identical anchor, geometry, plane and material triangle). They are given
+    the midpoint world anchor so the shared material has one target across the
+    seam. Released, sliding, repositioned, full-sole, height-only or otherwise
+    distinct contacts keep their own targets.
+    """
+    if not isinstance(tracks, dict) or tracks.get('version') != 2:
+        return tracks
+    for side in ('left', 'right'):
+        track = tracks.get(side)
+        if not isinstance(track, dict):
+            continue
+        episodes = track.get('episodes')
+        active = track.get('active')
+        if not isinstance(episodes, list) or not isinstance(active, (list, tuple)):
+            continue
+        count = len(active)
+        if count < 2 or not episodes:
+            continue
+        start_episodes = [episode for episode in episodes
+                          if episode.get('startFrame') == 0]
+        end_episodes = [episode for episode in episodes
+                        if episode.get('endFrame') == count - 1]
+        for first in start_episodes:
+            for last in end_episodes:
+                if first is last or not _same_native_material_identity(first, last):
+                    continue
+                first_target = np.asarray(first.get('targetWorld'), dtype=float)
+                last_target = np.asarray(last.get('targetWorld'), dtype=float)
+                if (first_target.shape != (3,) or last_target.shape != (3,)
+                        or not np.isfinite(first_target).all()
+                        or not np.isfinite(last_target).all()):
+                    continue
+                shared = 0.5 * (first_target + last_target)
+                first['targetWorld'] = shared.tolist()
+                last['targetWorld'] = shared.tolist()
+    return tracks
 
 
 def _priority_ordered_native_contacts(contacts, foot_name, count):
@@ -251,7 +341,8 @@ def _native_sole_normal_local(vertices, frames, points, ankle_i, foot_i,
 
 
 def build_native_foot_contact_tracks(rig, keypoints, pinned_mask, side_axes, evidence,
-                                     native_geometry, *, floor=None, rest_pitches=None):
+                                     native_geometry, *, floor=None, rest_pitches=None,
+                                     cyclic=False):
     """Bind one inferred native shoe point per stationary source contact episode."""
     from .body_surface_geometry import (native_shoe_region_candidates,
                                         select_native_shoe_material_point)
@@ -389,7 +480,7 @@ def build_native_foot_contact_tracks(rig, keypoints, pinned_mask, side_axes, evi
             identities[:, names.index(foot_name)] = side_ids
     tracks = native_material_contact_tracks(
         rig, points, owned, side_axes, episodes_by_side,
-        anchor_ids=identities)
+        anchor_ids=identities, cyclic=cyclic)
     for side in ('left', 'right'):
         if side not in tracks:
             continue
@@ -1066,6 +1157,92 @@ def _solve_knee(hip, knee, ankle, target_ankle, thigh_length, shin_length, side)
     return np.where(preserve_degenerate[:, None], knee, solved)
 
 
+def _rotate_about_unit_axis(direction, axis, angle):
+    """Rotate each row of ``direction`` about the matching unit ``axis``."""
+    direction = np.asarray(direction, dtype=float)
+    axis = np.asarray(axis, dtype=float)
+    angle = np.asarray(angle, dtype=float)[:, None]
+    cosine, sine = np.cos(angle), np.sin(angle)
+    cross = np.cross(axis, direction)
+    dot = np.sum(axis * direction, axis=1, keepdims=True)
+    return direction * cosine + cross * sine + axis * dot * (1. - cosine)
+
+
+def _solve_interpolated_contact_leg(hip, knee, source_ankle, ankle, foot, pivot,
+                                    thigh_length, shin_length, side,
+                                    side_axis=None):
+    """Solve an interpolated contact chain, rotating sub-tolerance reach excess.
+
+    Exact keyframe poses are preserved before contact sampling ever reaches this
+    helper. Between keys the contact material track and the hip interpolate
+    independently, so a Hermite sample can place the derived ankle slightly
+    outside the rigid two-bone maximum even though every stored key is
+    reachable. That overshoot is an interpolation property, not an unreachable
+    key pose.
+
+    A rigid foot anchored at ``pivot`` (the contact toe point, or the bound shoe
+    material point in native mode) still has one rotational degree of freedom
+    that can move the ankle without moving the contact. Rotate the whole foot
+    about that pivot by the minimal angle that brings the ankle onto the reach
+    sphere. The contact point and every bone length stay exact, so the playback
+    material gates are unchanged instead of inheriting a translation residual.
+    Only a sub-tolerance upper over-reach is repaired. Larger over-reach and any
+    under-reach still raise the typed ``ContactFootIKUnreachable`` so genuine
+    infeasibility is not hidden.
+    """
+    hip = np.asarray(hip, dtype=float)
+    ankle = np.asarray(ankle, dtype=float)
+    foot = np.asarray(foot, dtype=float)
+    pivot = np.asarray(pivot, dtype=float)
+    reach_axis = None if side_axis is None else np.asarray(side_axis, dtype=float)
+    try:
+        return (_solve_knee(hip, knee, source_ankle, ankle, thigh_length,
+                            shin_length, side), ankle, foot, reach_axis)
+    except ContactFootIKUnreachable as error:
+        from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS
+
+        distance = np.asarray(error.distance, dtype=float)
+        minimum = np.asarray(error.minimum, dtype=float)
+        maximum = np.asarray(error.maximum, dtype=float)
+        lower_deficit = minimum - distance
+        upper_excess = distance - maximum
+        if (np.any(lower_deficit > 1e-8)
+                or not np.isfinite(upper_excess).all()
+                or float(np.max(upper_excess, initial=0.))
+                > PLAYBACK_CONTACT_LIMIT_METERS + 1e-12):
+            raise
+        radius = ankle - pivot
+        radius_length = np.linalg.norm(radius, axis=1)
+        arm = hip - pivot
+        arm_length = np.linalg.norm(arm, axis=1)
+        if (np.any(radius_length <= 1e-9) or np.any(arm_length <= 1e-9)
+                or not np.isfinite(radius_length).all()
+                or not np.isfinite(arm_length).all()):
+            raise
+        target = maximum * (1. - 1e-9)
+        cosine = ((radius_length ** 2 + arm_length ** 2 - target ** 2)
+                  / (2. * radius_length * arm_length))
+        cosine = np.clip(cosine, -1., 1.)
+        current_cosine = np.sum(radius * arm, axis=1) / (radius_length * arm_length)
+        current_cosine = np.clip(current_cosine, -1., 1.)
+        angle = np.arccos(current_cosine) - np.arccos(cosine)
+        angle = np.where(upper_excess > 0., angle, 0.)
+        unit_radius = radius / radius_length[:, None]
+        axis = np.cross(unit_radius, arm)
+        axis_length = np.linalg.norm(axis, axis=1)
+        if np.any(axis_length[angle > 0.] <= 1e-12):
+            raise
+        axis = axis / np.maximum(axis_length, 1e-12)[:, None]
+        rotated_radius = _rotate_about_unit_axis(radius, axis, angle)
+        projected = pivot + rotated_radius
+        projected_foot = pivot + _rotate_about_unit_axis(foot - pivot, axis, angle)
+        if reach_axis is not None:
+            reach_axis = _rotate_about_unit_axis(reach_axis, axis, angle)
+        knee_solution = _solve_knee(
+            hip, knee, source_ankle, projected, thigh_length, shin_length, side)
+        return knee_solution, projected, projected_foot, reach_axis
+
+
 def _unit_row(vector):
     vector = np.asarray(vector, dtype=float)
     length = float(np.linalg.norm(vector))
@@ -1313,11 +1490,12 @@ def sample_contact_foot_tracks(rig, cursors, points, *, wrap=False, preserve_key
             raise ValueError(f'{side} fixed-rig leg lengths are invalid')
         ankle = toe - direction * foot_length
         active_hip = sampled[active_queries, hip_index]
-        knee = _solve_knee(
+        knee, effective_ankle, effective_toe, _ = _solve_interpolated_contact_leg(
             active_hip, sampled[active_queries, knee_index], sampled[active_queries, ankle_index],
-            ankle[active_queries], thigh_length, shin_length, side)
-        sampled[active_queries, toe_index] = toe[active_queries]
-        sampled[active_queries, ankle_index] = ankle[active_queries]
+            ankle[active_queries], toe[active_queries], toe[active_queries],
+            thigh_length, shin_length, side)
+        sampled[active_queries, toe_index] = effective_toe
+        sampled[active_queries, ankle_index] = effective_ankle
         sampled[active_queries, knee_index] = knee
     return (sampled, {}) if return_side_axes else sampled
 
@@ -1476,6 +1654,7 @@ def _sample_native_material_contact_tracks(rig, cursors, points, *, wrap, preser
         forward, lateral = direction, axes
         ankle = sampled[:, ankle_i].copy()
         foot = sampled[:, foot_i].copy()
+        material_pivots = np.zeros_like(ankle)
         # The fitter measures only the unprotected hip-to-ankle branch here.
         # Protected knee/material chains retain their independent hard checks.
         for query in np.flatnonzero(supported_active_queries if not measure_unprotected_reach
@@ -1623,6 +1802,7 @@ def _sample_native_material_contact_tracks(rig, cursors, points, *, wrap, preser
             target = material_point + weight_at_query * (target - material_point)
             ankle[query] = target - material_offset
             foot[query] = ankle[query] + blended_forward * bone_length
+            material_pivots[query] = target
         if np.any(legacy_active_queries):
             if measure_unprotected_reach:
                 side_index = ('left', 'right').index(side)
@@ -1634,13 +1814,17 @@ def _sample_native_material_contact_tracks(rig, cursors, points, *, wrap, preser
                     distance - (thigh_length + shin_length), 0.)
                 reach_active[legacy_active_queries, side_index] = True
                 continue
-            knee = _solve_knee(
+            knee, effective_ankle, effective_foot, effective_axis = _solve_interpolated_contact_leg(
                 sampled[legacy_active_queries, hip_i], sampled[legacy_active_queries, knee_i],
                 sampled[legacy_active_queries, ankle_i], ankle[legacy_active_queries],
-                thigh_length, shin_length, side)
-            sampled[legacy_active_queries, ankle_i] = ankle[legacy_active_queries]
-            sampled[legacy_active_queries, foot_i] = foot[legacy_active_queries]
+                foot[legacy_active_queries], material_pivots[legacy_active_queries],
+                thigh_length, shin_length, side,
+                side_axis=sampled_side_axes[side][legacy_active_queries])
+            sampled[legacy_active_queries, ankle_i] = effective_ankle
+            sampled[legacy_active_queries, foot_i] = effective_foot
             sampled[legacy_active_queries, knee_i] = knee
+            if effective_axis is not None:
+                sampled_side_axes[side][legacy_active_queries] = effective_axis
 
     if measure_unprotected_reach:
         return reach_rows, reach_active

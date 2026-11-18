@@ -5,7 +5,9 @@ Bounded checks retained from the v691 fix set:
    camera-ray-conditioned heading authority as the pre-solve path (the v691
    crash used the name before its later assignment).
 2. Green native-v2 stationary caches may not be reused without the persisted
-   typed exact-key proof (old v140-era caches predate ``contactConstraintEvidence``).
+   typed exact-key and rendered dense-playback proof (old v140-era caches
+   predate ``contactConstraintEvidence``). Active native material without the
+   rendered proof fails closed so the cache is revalidated.
 """
 from __future__ import annotations
 
@@ -16,7 +18,12 @@ import pytest
 
 from exercise_motion_pkg.controlled_motion import (
     REQUIRED_FIT_CHECKS, CONTROLLED_MOTION_STRATEGY,
+    native_material_key_sample_requirements_by_side,
+    native_material_playback_sample_requirements,
     native_typed_material_reuse_proof,
+)
+from exercise_motion_pkg.contact_interpolation import (
+    native_material_key_sample_requirements,
 )
 
 
@@ -149,22 +156,108 @@ def _valid_stationary_metrics():
         'playbackHeightMaximumErrorMeters': 0.,
         'sampleCount': 50,
         'maximumErrorMeters': 8.6e-4,
+        'bySide': {
+            'left': {
+                'keyframeStationarySampleCount': 2,
+                'keyframeStationaryMaximumErrorMeters': 2.48155e-4,
+                'keyframeHeightSampleCount': 0,
+                'keyframeHeightMaximumErrorMeters': 0.,
+            },
+        },
     }
 
 
-def _evidence_for(metrics):
-    return {
+def _raw_key_metrics(tracks):
+    """Minimal passing raw exact-key proof for the retained tracks."""
+    required = native_material_key_sample_requirements(tracks)
+    required_by_side = native_material_key_sample_requirements_by_side(tracks)
+    stationary = int(required['keyframeStationarySampleCount'])
+    height = int(required['keyframeHeightSampleCount'])
+    total = stationary + height
+    metrics = {
+        'available': True,
+        'keyframeStationarySampleCount': stationary,
+        'keyframeStationaryMaximumErrorMeters': 1e-5 if stationary else 0.,
+        'keyframeHeightSampleCount': height,
+        'keyframeHeightMaximumErrorMeters': 1e-5 if height else 0.,
+        'playbackStationarySampleCount': 0,
+        'playbackStationaryMaximumErrorMeters': 0.,
+        'playbackHeightSampleCount': 0,
+        'playbackHeightMaximumErrorMeters': 0.,
+        'sampleCount': total,
+        'maximumErrorMeters': 1e-5 if total else 0.,
+    }
+    metrics['bySide'] = {
+        side: {
+            'keyframeStationarySampleCount':
+                counts['keyframeStationarySampleCount'],
+            'keyframeStationaryMaximumErrorMeters':
+                1e-5 if counts['keyframeStationarySampleCount'] else 0.,
+            'keyframeHeightSampleCount':
+                counts['keyframeHeightSampleCount'],
+            'keyframeHeightMaximumErrorMeters':
+                1e-5 if counts['keyframeHeightSampleCount'] else 0.,
+        }
+        for side, counts in required_by_side.items()
+    }
+    return metrics
+
+
+def _complete_rendered_metrics(tracks):
+    """Dense rendered proof covering every required sample on every side."""
+    frame_count = len(tracks[next(side for side in ('left', 'right')
+                                  if side in tracks)]['active'])
+    interval_count = max(frame_count - 1, 0)
+    cursors = (np.arange(interval_count)[:, None]
+               + np.array([.25, .5, .75])).ravel()
+    required, by_side = native_material_playback_sample_requirements(
+        tracks, cursors, cyclic=False)
+
+    def row(counts, sample_count):
+        stationary = int(counts['playbackStationarySampleCount'])
+        height = int(counts['playbackHeightSampleCount'])
+        return {
+            'sampleCount': sample_count,
+            'playbackStationarySampleCount': stationary,
+            'playbackStationaryMaximumErrorMeters': 1e-5 if stationary else 0.,
+            'playbackHeightSampleCount': height,
+            'playbackHeightMaximumErrorMeters': 1e-5 if height else 0.,
+        }
+
+    total = sum(int(value) for value in required.values())
+    metrics = row(required, total)
+    metrics['available'] = True
+    metrics['maximumErrorMeters'] = 1e-5 if total else 0.
+    metrics['bySide'] = {
+        side: row(counts, sum(int(value) for value in counts.values()))
+        for side, counts in by_side.items()
+    }
+    return metrics
+
+
+def _evidence_for(metrics, *, rendered=None):
+    evidence = {
         'applicable': True, 'status': 'verified', 'passed': True,
         'nativeMaterialActive': True, 'nativeMaterialEvaluated': True,
         'nativeMaterialPlayback': metrics,
         'nativeMaterialRequiredKeySamples': {
-            'keyframeStationarySampleCount': 2, 'keyframeHeightSampleCount': 0},
+            'keyframeStationarySampleCount':
+                int(metrics['keyframeStationarySampleCount']),
+            'keyframeHeightSampleCount':
+                int(metrics['keyframeHeightSampleCount'])},
         'nativeMaterialTypedVerdict': {'available': True, 'passed': True,
                                        'reason': None, 'components': []},
     }
+    if rendered is not None:
+        evidence.update({
+            'nativeMaterialRenderedApplicable': True,
+            'nativeMaterialRenderedEvaluated': True,
+            'nativeMaterialRenderedPlayback': rendered,
+        })
+    return evidence
 
 
-def test_typed_reuse_proof_keeps_non_native_and_height_only_caches_admissible():
+def test_typed_reuse_proof_requires_rendered_proof_for_height_only_cache():
     from test_native_material_authority import _stationary_track
 
     assert native_typed_material_reuse_proof({}) is True
@@ -179,9 +272,21 @@ def test_typed_reuse_proof_keeps_non_native_and_height_only_caches_admissible():
         for episode in (height_only.get(side) or {}).get('episodes') or ():
             episode['mode'] = 'verticalOnly'
             episode.pop('targetWorld', None)
-    # No stationary key demand: the heightOnly proof owns this cache instead.
+    # Active native-v2 height-only material requires both the raw exact-key
+    # proof and the rendered dense proof. A raw-only cache is revalidated.
     assert native_typed_material_reuse_proof(
-        {'fixedRig': {'contactFootTracks': height_only}}) is True
+        {'fixedRig': {'contactFootTracks': height_only}}) is False
+    raw = _raw_key_metrics(height_only)
+    assert native_typed_material_reuse_proof(
+        _stationary_payload(height_only, _evidence_for(raw))) is False
+    rendered = _complete_rendered_metrics(height_only)
+    assert rendered['bySide']
+    assert rendered['playbackHeightSampleCount'] > 0
+    assert all(row['playbackHeightSampleCount'] > 0
+               for row in rendered['bySide'].values())
+    assert native_typed_material_reuse_proof(
+        _stationary_payload(
+            height_only, _evidence_for(raw, rendered=rendered))) is True
 
 
 def test_typed_reuse_proof_fails_closed_for_old_green_cache_without_proof():
@@ -217,20 +322,42 @@ def test_typed_reuse_proof_fails_stationary_key_over_half_millimetre_or_uncovere
         _stationary_payload(tracks, _evidence_for(uncovered))) is False
 
 
-def test_typed_reuse_proof_accepts_current_valid_stationary_key_proof():
+def test_typed_reuse_proof_requires_rendered_proof_for_stationary_key_proof():
     from test_native_material_authority import _stationary_track
 
     tracks = _stationary_track(target_world=[.05, 0., .03])[3]
+    raw = _valid_stationary_metrics()
+    # A valid raw key proof is no longer sufficient on its own: reuse requires
+    # the rendered final-pose proof, so this cache is revalidated.
     assert native_typed_material_reuse_proof(
-        _stationary_payload(tracks, _evidence_for(_valid_stationary_metrics()))) is True
+        _stationary_payload(tracks, _evidence_for(raw))) is False
+
+    rendered = _complete_rendered_metrics(tracks)
+    assert rendered['playbackStationarySampleCount'] > 0
+    assert native_typed_material_reuse_proof(
+        _stationary_payload(
+            tracks, _evidence_for(raw, rendered=rendered))) is True
+
+    # Incomplete per-side coverage must still fail closed.
+    under_sampled = deepcopy(rendered)
+    side = next(iter(under_sampled['bySide']))
+    under_sampled['bySide'][side]['playbackStationarySampleCount'] -= 1
+    assert native_typed_material_reuse_proof(
+        _stationary_payload(
+            tracks, _evidence_for(raw, rendered=under_sampled))) is False
+    missing_side = deepcopy(rendered)
+    missing_side['bySide'].pop(side)
+    assert native_typed_material_reuse_proof(
+        _stationary_payload(
+            tracks, _evidence_for(raw, rendered=missing_side))) is False
 
     # Neither the active nor the evaluated flag may be faked alongside the
-    # metrics: each alone fails closed.
-    inactive = _evidence_for(_valid_stationary_metrics())
+    # rendered proof: each alone fails closed.
+    inactive = _evidence_for(raw, rendered=rendered)
     inactive['nativeMaterialActive'] = False
     assert native_typed_material_reuse_proof(
         _stationary_payload(tracks, inactive)) is False
-    unevaluated = _evidence_for(_valid_stationary_metrics())
+    unevaluated = _evidence_for(raw, rendered=rendered)
     unevaluated['nativeMaterialEvaluated'] = False
     assert native_typed_material_reuse_proof(
         _stationary_payload(tracks, unevaluated)) is False
@@ -251,7 +378,9 @@ def test_can_reuse_consumes_typed_material_proof(monkeypatch):
             'applied': True, 'strategy': CONTROLLED_MOTION_STRATEGY,
             'checks': {key: True for key in REQUIRED_FIT_CHECKS},
             'fitSourceEvidenceDigest': 'digest', 'outputPoseDigest': 'pose',
-            'contactConstraintEvidence': _evidence_for(_valid_stationary_metrics()),
+            'contactConstraintEvidence': _evidence_for(
+                _valid_stationary_metrics(),
+                rendered=_complete_rendered_metrics(tracks)),
         },
     }
     monkeypatch.setattr(contact_constraints, 'source_support_mapping_unresolved',
@@ -279,6 +408,13 @@ def test_can_reuse_consumes_typed_material_proof(monkeypatch):
                         lambda *args, **kwargs: {'passed': True})
 
     assert motion.can_reuse_controlled_motion(payload) is True
+    # The same artifact without its rendered dense proof is revalidated.
+    raw_only = deepcopy(payload)
+    for key in ('nativeMaterialRenderedApplicable',
+                'nativeMaterialRenderedEvaluated',
+                'nativeMaterialRenderedPlayback'):
+        raw_only['controlledMotionFit']['contactConstraintEvidence'].pop(key)
+    assert motion.can_reuse_controlled_motion(raw_only) is False
     stale = deepcopy(payload)
     stale['controlledMotionFit'].pop('contactConstraintEvidence')
     assert motion.can_reuse_controlled_motion(stale) is False

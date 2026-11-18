@@ -2056,6 +2056,7 @@ def materialize_timed_visual_contact_points(evidence, frames=None, joint_names=N
         _indistinguishable_forefoot_patch_at_time,
         _neutral_pitch_forefoot_patch_at_time,
         _source_timeline_mapping_for_payload,
+        observed_full_sole_patch_support_at_time,
     )
     source_timeline_mapping = evidence.get('_fitSourceTimelineMapping')
     if source_timeline_mapping is None:
@@ -2099,12 +2100,15 @@ def materialize_timed_visual_contact_points(evidence, frames=None, joint_names=N
             evidence, source_side, row.get('sourceTimeSec'))
         neutral_pitch_forefoot = _neutral_pitch_forefoot_patch_at_time(
             evidence, source_side, row.get('sourceTimeSec'))
+        patch_support = observed_full_sole_patch_support_at_time(
+            evidence, source_side, row.get('sourceTimeSec'))
         point = {
             'jointName': joint,
             'supportKind': 'exact_timed_visual_contact',
             'contactState': ('full_sole' if row['contactState'] == 'full_sole'
                              and not heel_unobserved and not indistinguishable_forefoot
                              and not neutral_pitch_forefoot
+                             and patch_support != 'toe_only'
                              else 'toe_only'),
             'contactMotion': 'stationary',
             'surfaceKind': row['surface'],

@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from exercise_motion_pkg.contact_interpolation import (
+    ContactFootIKUnreachable,
     build_contact_foot_tracks,
     sample_contact_foot_tracks,
 )
@@ -113,6 +114,57 @@ def _two_bone_frame(toe, pitch, *, hip, thigh, shin, pole):
     bend = pole - axis * np.dot(pole, axis)
     knee = hip + axis * along + bend / np.linalg.norm(bend) * np.sqrt(thigh**2 - along**2)
     return knee, ankle, toe
+
+
+def test_interpolated_contact_projects_sub_tolerance_reach_overflow_only():
+    """Between-key contact targets may overshoot reach by less than the dense gate.
+
+    Stored keys stay exact. The rigid foot rotates about the unchanged contact
+    toe so the ankle reaches the sphere without moving the contact or shortening
+    a bone; the existing playback/material gate then measures only the original
+    interpolation residual. A larger overshoot still raises the typed error.
+    """
+    names = ['pelvis', 'left_hip', 'left_knee', 'left_ankle', 'left_foot']
+    hip = np.array([0., .798, 0.])
+    knee, ankle, toe = _two_bone_frame(
+        [0., 0., .2], 0., hip=hip, thigh=.4, shin=.4, pole=np.array([1., 0., 0.]))
+    keypoints = np.asarray(
+        [[np.zeros(3), hip, knee, ankle, toe]] * 3, dtype=float)
+    pinned = np.zeros((len(keypoints), len(names)), dtype=bool)
+    pinned[:, names.index('left_foot')] = True
+    tracks = build_contact_foot_tracks(
+        type('RigNames', (), {'names': names})(), keypoints, pinned)
+    rig = {
+        'jointNames': names,
+        'coordinates': np.zeros((len(keypoints), 3)),
+        'offsets': np.array([[0., 0., 0.], [0., 0., 0.], [0., -.4, 0.],
+                             [0., -.4, 0.], [0., 0., .2]]),
+        'contactFootTracks': tracks,
+    }
+    hip_i, knee_i = names.index('left_hip'), names.index('left_knee')
+    ankle_i, toe_i = names.index('left_ankle'), names.index('left_foot')
+
+    target_hip_overflow = keypoints[:1].copy()
+    target_hip_overflow[0, hip_i] += [0., .004, 0.]
+    repaired = sample_contact_foot_tracks(rig, [.5], target_hip_overflow)
+    assert np.linalg.norm(repaired[0, ankle_i] - target_hip_overflow[0, hip_i]) \
+        == pytest.approx(.8, abs=1e-9)
+    assert np.linalg.norm(repaired[0, toe_i] - repaired[0, ankle_i]) \
+        == pytest.approx(.2, abs=1e-9)
+    assert np.linalg.norm(repaired[0, toe_i] - keypoints[0, toe_i]) \
+        == pytest.approx(0., abs=1e-9)
+    assert np.linalg.norm(repaired[0, knee_i] - repaired[0, hip_i]) \
+        == pytest.approx(.4, abs=1e-9)
+    assert np.linalg.norm(repaired[0, ankle_i] - repaired[0, knee_i]) \
+        == pytest.approx(.4, abs=1e-9)
+
+    exact_key = sample_contact_foot_tracks(rig, [1.], keypoints[1:2])
+    np.testing.assert_array_equal(exact_key, keypoints[1:2])
+
+    excessive = keypoints[:1].copy()
+    excessive[0, hip_i] += [0., .008, 0.]
+    with pytest.raises(ContactFootIKUnreachable):
+        sample_contact_foot_tracks(rig, [.5], excessive)
 
 
 def test_pose_change_refreshes_track_geometry_without_changing_source_contact():

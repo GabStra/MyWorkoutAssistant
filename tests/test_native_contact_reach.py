@@ -60,7 +60,9 @@ def _fixture(mode='stationary', correction=.0007):
 
 @pytest.mark.parametrize('mode', ['stationary', 'verticalOnly'])
 def test_reach_guard_measures_the_actual_unreachable_playback_target(mode):
-    rig, tracks = _fixture(mode)
+    # The dense playback contact gate is 3 mm. An over-reach beyond that limit
+    # remains a typed unreachable failure and must match the measured guard.
+    rig, tracks = _fixture(mode, correction=.004)
     constraint = NativeContactReachConstraint(rig, tracks, {}, [.5], cyclic=True)
     rows = constraint.residual(rig.initial).reshape(1, 2, 2)
     assert not constraint.unprotected_feasible(rig.initial)
@@ -70,6 +72,18 @@ def test_reach_guard_measures_the_actual_unreachable_playback_target(mode):
     evidence = error.value.evidence()['samples'][0]
     np.testing.assert_allclose(rows[0, 1, 1],
                                evidence['upperReachExcessMeters'], atol=1e-12)
+
+    # A sub-tolerance interpolation overshoot is projected onto the reach
+    # sphere, and the same guard still reports the unresolvable radial excess.
+    rig, tracks = _fixture(mode, correction=.0007)
+    constraint = NativeContactReachConstraint(rig, tracks, {}, [.5], cyclic=True)
+    rows = constraint.residual(rig.initial).reshape(1, 2, 2)
+    assert not constraint.unprotected_feasible(rig.initial)
+    sampling = {**_sampling_payload(rig, rig.initial), 'contactFootTracks': tracks}
+    sampled = sample_rig(sampling, [.5], wrap=True)
+    assert np.isfinite(sampled).all()
+    assert rows[0, 1, 1] > 0.
+
     # A small radial correction has no problem when the target remains reachable;
     # unilateral mirrored playback still owns the opposite leg as before.
     rig, tracks = _fixture(mode, correction=-.001)

@@ -41,6 +41,22 @@ def accepted_payload():
 
 def _native_height_track(frame_count, mode='verticalOnly'):
     anchor = f'native-material:left:0:0:{frame_count - 1}'
+    episode = {
+        'startFrame': 0,
+        'endFrame': frame_count - 1,
+        'anchorId': anchor,
+        'regionRole': 'forefoot',
+        'mode': mode,
+        'primitiveId': 'wearShoe:left_ankle->left_foot',
+        'triangleIndex': 11,
+        'barycentric': [0.2, 0.3, 0.5],
+        'materialOffsetLocalMeters': [0.0, 0.0, 0.0],
+        'referenceLengthMeters': 0.1,
+        'surfaceNormal': [0.0, 1.0, 0.0],
+        'planeOffsetMeters': 0.0,
+    }
+    if mode == 'stationary':
+        episode['targetWorld'] = [0.0, 0.0, 0.0]
     return {
         'version': 2,
         'left': {
@@ -48,20 +64,7 @@ def _native_height_track(frame_count, mode='verticalOnly'):
             'directions': [[0.0, 0.0, 1.0]] * frame_count,
             'sideAxes': [[1.0, 0.0, 0.0]] * frame_count,
             'anchorIds': [anchor] * frame_count,
-            'episodes': [{
-                'startFrame': 0,
-                'endFrame': frame_count - 1,
-                'anchorId': anchor,
-                'regionRole': 'forefoot',
-                'mode': mode,
-                'primitiveId': 'wearShoe:left_ankle->left_foot',
-                'triangleIndex': 11,
-                'barycentric': [0.2, 0.3, 0.5],
-                'materialOffsetLocalMeters': [0.0, 0.0, 0.0],
-                'referenceLengthMeters': 0.1,
-                'surfaceNormal': [0.0, 1.0, 0.0],
-                'planeOffsetMeters': 0.0,
-            }],
+            'episodes': [episode],
         },
     }
 
@@ -69,8 +72,8 @@ def _native_height_track(frame_count, mode='verticalOnly'):
 def _native_height_reuse_payload(mode='verticalOnly', *, proof=None):
     payload = accepted_payload()
     frame_count = len(payload['frames'])
-    payload['fixedRig']['contactFootTracks'] = _native_height_track(
-        frame_count, mode)
+    tracks = _native_height_track(frame_count, mode)
+    payload['fixedRig']['contactFootTracks'] = tracks
     fit = payload['controlledMotionFit']
     fit['checks']['heightOnlyContacts'] = True
     fit['heightOnlyContactConstraint'] = {
@@ -85,10 +88,88 @@ def _native_height_reuse_payload(mode='verticalOnly', *, proof=None):
     if proof is not None:
         fit['heightOnlyContactConstraint'].update(proof['constraint'])
         fit['playback']['nativeHeightOnlyMaterialShoes'] = dict(proof['material'])
+    fit['contactConstraintEvidence'] = _typed_material_evidence(
+        tracks, frame_count, cyclic=payload['loop']['enabled'])
     fit['fitSourceEvidenceDigest'] = (
         controlled_motion_fit_source_evidence_digest(payload))
     fit['outputPoseDigest'] = pose_digest(payload)
     return payload
+
+
+def _typed_material_evidence(tracks, frame_count, *, cyclic):
+    """Persisted typed raw+rendered proof matching the retained track semantics."""
+    from exercise_motion_pkg.contact_interpolation import (
+        native_material_key_sample_requirements)
+    from exercise_motion_pkg.controlled_motion import (
+        native_material_dense_playback_cursors,
+        native_material_key_sample_requirements_by_side,
+        native_material_playback_sample_requirements)
+
+    required = native_material_key_sample_requirements(tracks)
+    required_by_side = native_material_key_sample_requirements_by_side(tracks)
+    raw = {
+        'available': True,
+        'keyframeStationarySampleCount':
+            required['keyframeStationarySampleCount'],
+        'keyframeStationaryMaximumErrorMeters':
+            1e-5 if required['keyframeStationarySampleCount'] else 0.,
+        'keyframeHeightSampleCount': required['keyframeHeightSampleCount'],
+        'keyframeHeightMaximumErrorMeters':
+            1e-5 if required['keyframeHeightSampleCount'] else 0.,
+        'playbackStationarySampleCount': 0,
+        'playbackStationaryMaximumErrorMeters': 0.,
+        'playbackHeightSampleCount': 0,
+        'playbackHeightMaximumErrorMeters': 0.,
+        'sampleCount': sum(int(value) for value in required.values()),
+        'maximumErrorMeters': 1e-5,
+        'bySide': {
+            side: {
+                'keyframeStationarySampleCount':
+                    counts['keyframeStationarySampleCount'],
+                'keyframeStationaryMaximumErrorMeters':
+                    1e-5 if counts['keyframeStationarySampleCount'] else 0.,
+                'keyframeHeightSampleCount':
+                    counts['keyframeHeightSampleCount'],
+                'keyframeHeightMaximumErrorMeters':
+                    1e-5 if counts['keyframeHeightSampleCount'] else 0.,
+            }
+            for side, counts in required_by_side.items()
+        },
+    }
+    cursors = native_material_dense_playback_cursors(
+        frame_count, cyclic=cyclic)
+    playback_required, playback_by_side = (
+        native_material_playback_sample_requirements(
+            tracks, cursors, cyclic=cyclic))
+
+    def row(counts):
+        return {
+            'sampleCount': sum(int(value) for value in counts.values()),
+            'playbackStationarySampleCount':
+                counts['playbackStationarySampleCount'],
+            'playbackStationaryMaximumErrorMeters':
+                1e-5 if counts['playbackStationarySampleCount'] else 0.,
+            'playbackHeightSampleCount':
+                counts['playbackHeightSampleCount'],
+            'playbackHeightMaximumErrorMeters':
+                1e-5 if counts['playbackHeightSampleCount'] else 0.,
+        }
+
+    rendered = {
+        **row(playback_required),
+        'available': True,
+        'maximumErrorMeters': 1e-5,
+        'bySide': {side: row(counts)
+                   for side, counts in playback_by_side.items()},
+    }
+    return {
+        'nativeMaterialActive': True,
+        'nativeMaterialEvaluated': True,
+        'nativeMaterialPlayback': raw,
+        'nativeMaterialRenderedApplicable': True,
+        'nativeMaterialRenderedEvaluated': True,
+        'nativeMaterialRenderedPlayback': rendered,
+    }
 
 
 def _native_material_proof(*, passed, error=0.001, samples=7, **overrides):

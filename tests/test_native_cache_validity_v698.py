@@ -15,7 +15,9 @@ from exercise_motion_pkg.contact_interpolation import (
 from exercise_motion_pkg.controlled_motion import native_typed_material_reuse_proof
 from test_native_material_authority import _stationary_track
 from test_wood_native_integration_v694 import (
+    _complete_rendered_metrics,
     _evidence_for,
+    _raw_key_metrics,
     _stationary_payload,
     _valid_stationary_metrics,
 )
@@ -75,8 +77,16 @@ def test_valid_stationary_track_requires_and_accepts_exact_key_proof():
     # No persisted proof is not "nothing to prove".
     assert native_typed_material_reuse_proof(
         {'fixedRig': {'contactFootTracks': tracks}}) is False
+    # A raw key proof alone is not sufficient: active native material also
+    # requires the rendered dense playback proof and is revalidated without it.
     assert native_typed_material_reuse_proof(
         _stationary_payload(tracks, _evidence_for(_valid_stationary_metrics()))
+    ) is False
+    assert native_typed_material_reuse_proof(
+        _stationary_payload(
+            tracks,
+            _evidence_for(_valid_stationary_metrics(),
+                          rendered=_complete_rendered_metrics(tracks)))
     ) is True
 
     violating = dict(_valid_stationary_metrics(),
@@ -90,7 +100,7 @@ def test_valid_stationary_track_requires_and_accepts_exact_key_proof():
         _stationary_payload(tracks, _evidence_for(uncovered))) is False
 
 
-def test_valid_height_only_and_legacy_nonnative_reuse_stay_admissible():
+def test_valid_height_only_requires_proof_and_legacy_nonnative_stays_admissible():
     assert native_typed_material_reuse_proof({}) is True
     legacy = {'fixedRig': {'contactFootTracks': {'version': 1, 'left': {}}}}
     assert native_typed_material_reuse_proof(legacy) is True
@@ -101,10 +111,16 @@ def test_valid_height_only_and_legacy_nonnative_reuse_stay_admissible():
             height_only[side], len(height_only[side]['active']), side)
     assert native_material_key_sample_requirements(height_only) == {
         'keyframeStationarySampleCount': 0, 'keyframeHeightSampleCount': 4}
-    # The existing height-plane proof owns this cache; typed stationary proof
-    # has no stationary key demand to satisfy.
+    # Active native height-only material also needs its typed raw key proof
+    # and rendered dense proof; an unproven green cache is revalidated.
     assert native_typed_material_reuse_proof(
-        {'fixedRig': {'contactFootTracks': height_only}}) is True
+        {'fixedRig': {'contactFootTracks': height_only}}) is False
+    assert native_typed_material_reuse_proof(
+        _stationary_payload(
+            height_only,
+            _evidence_for(_raw_key_metrics(height_only),
+                          rendered=_complete_rendered_metrics(height_only)))
+    ) is True
 
 
 def test_invalid_height_only_semantics_and_legacy_target_world_fail_closed():

@@ -298,7 +298,7 @@ def merge_native_material_clock_metrics(playback_metrics, keyframe_metrics):
     return merged
 
 
-def native_material_contact_verdict(metrics, required=None):
+def native_material_contact_verdict(metrics, required=None, required_by_side=None):
     """Typed native material contact verdict by measurement clock and mode.
 
     Stationary material XYZ is a keyframe anchor (``KEYFRAME_CONTACT_LIMIT_METERS``
@@ -308,9 +308,15 @@ def native_material_contact_verdict(metrics, required=None):
     (``PLAYBACK_CONTACT_LIMIT_METERS`` = 3 mm). A component is required exactly
     when it has samples or a required count; an active mode with missing
     required proof fails closed instead of passing an empty mask.
+
+    ``required_by_side`` optionally carries per-side expected dense playback
+    sample counts derived from the retained track episodes and the exact
+    playback cursors. When supplied, a missing side row or an under-sampled
+    side fails closed instead of being hidden by an aggregate total.
     """
     metrics = dict(metrics or {})
     required = dict(required or {})
+    required_by_side = dict(required_by_side or {})
 
     def measure(value):
         try:
@@ -319,10 +325,16 @@ def native_material_contact_verdict(metrics, required=None):
             return None
         return value if np.isfinite(value) else None
 
+    def sample_count(value):
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
     components = []
 
     def add(label, error_key, count_key, limit, *, strict, required_count=0):
-        count = int(metrics.get(count_key) or 0)
+        count = sample_count(metrics.get(count_key))
         error = measure(metrics.get(error_key))
         needed = max(count, int(required_count or 0))
         missing = needed > 0 and count < int(required_count or 0)
@@ -353,11 +365,77 @@ def native_material_contact_verdict(metrics, required=None):
     add('playback_stationary_material_xyz',
         'playbackStationaryMaximumErrorMeters',
         'playbackStationarySampleCount', PLAYBACK_CONTACT_LIMIT_METERS,
-        strict=True)
+        strict=True,
+        required_count=int(required.get('playbackStationarySampleCount') or 0))
     add('playback_height_material_plane',
         'playbackHeightMaximumErrorMeters',
         'playbackHeightSampleCount', PLAYBACK_FLOOR_LIMIT_METERS,
-        strict=False)
+        strict=False,
+        required_count=int(required.get('playbackHeightSampleCount') or 0))
+
+    # The aggregate sample count must cover the expected dense playback
+    # samples. This keeps an internally inconsistent report from satisfying
+    # every per-mode row while still declaring ``sampleCount`` zero.
+    required_playback_samples = (
+        int(required.get('playbackStationarySampleCount') or 0)
+        + int(required.get('playbackHeightSampleCount') or 0))
+    if required_playback_samples > 0:
+        reported = sample_count(metrics.get('sampleCount'))
+        components.append({
+            'feature': 'native_material_sample_count',
+            'sampleCount': reported,
+            'requiredSampleCount': required_playback_samples,
+            'maximumErrorMeters': None,
+            'limitMeters': None,
+            'strict': False,
+            'missingProof': reported < required_playback_samples,
+            'passed': reported >= required_playback_samples,
+            'applicable': True,
+        })
+
+    reported_by_side = metrics.get('bySide')
+    reported_by_side = reported_by_side if isinstance(reported_by_side, dict) else {}
+    side_modes = (
+        ('keyframe', 'stationary_xyz', 'keyframeStationarySampleCount',
+         'keyframeStationaryMaximumErrorMeters', KEYFRAME_CONTACT_LIMIT_METERS,
+         True),
+        ('keyframe', 'height_plane', 'keyframeHeightSampleCount',
+         'keyframeHeightMaximumErrorMeters', PLAYBACK_FLOOR_LIMIT_METERS,
+         False),
+        ('playback', 'stationary_xyz', 'playbackStationarySampleCount',
+         'playbackStationaryMaximumErrorMeters', PLAYBACK_CONTACT_LIMIT_METERS,
+         True),
+        ('playback', 'height_plane', 'playbackHeightSampleCount',
+         'playbackHeightMaximumErrorMeters', PLAYBACK_FLOOR_LIMIT_METERS,
+         False),
+    )
+    for side in ('left', 'right'):
+        expected = required_by_side.get(side)
+        if not isinstance(expected, dict):
+            continue
+        row = reported_by_side.get(side)
+        row = row if isinstance(row, dict) else {}
+        for clock, label, count_key, error_key, limit, strict in side_modes:
+            needed = sample_count(expected.get(count_key))
+            if needed <= 0:
+                continue
+            count = sample_count(row.get(count_key))
+            error = measure(row.get(error_key))
+            missing = count < needed
+            within = (error is not None
+                      and ((error < limit) if strict else (error <= limit)))
+            components.append({
+                'feature': (f'{side}_{label}' if clock == 'playback'
+                            else f'{side}_{clock}_{label}'),
+                'sampleCount': count,
+                'requiredSampleCount': needed,
+                'maximumErrorMeters': error,
+                'limitMeters': float(limit),
+                'strict': bool(strict),
+                'missingProof': bool(missing),
+                'passed': bool(not missing and within),
+                'applicable': True,
+            })
     failed = [row for row in components if not row['passed']]
     return {
         'available': True,
@@ -2705,21 +2783,31 @@ def native_height_material_reuse_proof(payload):
 
 
 def native_typed_material_reuse_proof(payload):
-    """Require persisted typed stationary exact-key proof before native-v2 reuse.
+    """Require persisted typed key and rendered proof before native-v2 reuse.
 
-    Complements ``native_height_material_reuse_proof`` (heightOnly planes). This
-    gate is selective: it applies only when persisted native-v2 foot tracks
-    demand stationary keyframe material samples, so non-native and legacy
-    caches keep their previous admission behavior. Green caches from before the
-    exact-key measurement (missing ``contactConstraintEvidence``), caches whose
-    persisted typed metrics are missing/non-finite/failed, and caches whose
-    keyframe stationary coverage cannot meet the recomputed required key
-    samples all fail closed instead of replaying unproven stationary poses.
+    Complements ``native_height_material_reuse_proof`` (heightOnly planes). The
+    gate is selective on active native-v2 material: non-native caches keep
+    their previous admission behavior. Any active native track requires both
+    its persisted key/dense typed metrics and the rendered final-pose proof;
+    green caches without that evidence fail closed and are revalidated rather
+    than replaying raw-only measurements. Keyframe and rendered coverage are
+    recomputed from the retained episodes instead of trusting self-attested
+    counts, and the raw key proof must itself be available with per-side and
+    per-mode coverage. Single-frame native tracks are rejected: the playback
+    sampler cannot render them, so raw-only evidence cannot prove a usable
+    artifact.
     """
     try:
         tracks = (payload.get('fixedRig') or {}).get('contactFootTracks')
         if not (isinstance(tracks, dict) and tracks.get('version') == 2):
             return True
+        # Mirror the renderer's native-v2 schema validation before deriving
+        # requirements: a truthy-but-non-int version or an extra top-level
+        # field would fail at playback, so it must not be reused.
+        if type(tracks.get('version')) is not int:
+            return False
+        if set(tracks) - {'version', 'left', 'right'}:
+            return False
         from .contact_interpolation import (
             _validated_native_side_track,
             native_material_key_sample_requirements,
@@ -2740,9 +2828,19 @@ def native_typed_material_reuse_proof(payload):
                 _validated_native_side_track(side_track, len(active), side)
             except (KeyError, TypeError, ValueError, IndexError):
                 return False
-        required = native_material_key_sample_requirements(tracks)
-        if int(required.get('keyframeStationarySampleCount') or 0) <= 0:
+        if not native_material_tracks_active(tracks):
             return True
+        required = native_material_key_sample_requirements(tracks)
+        if sum(int(value or 0) for value in required.values()) <= 0:
+            return False
+        required_by_side = native_material_key_sample_requirements_by_side(
+            tracks)
+        if not required_by_side:
+            return False
+        for key, total in required.items():
+            if sum(int(row.get(key) or 0)
+                   for row in required_by_side.values()) != int(total or 0):
+                return False
         report = payload.get('controlledMotionFit')
         report = report if isinstance(report, dict) else {}
         evidence = report.get('contactConstraintEvidence')
@@ -2754,11 +2852,57 @@ def native_typed_material_reuse_proof(payload):
         metrics = evidence.get('nativeMaterialPlayback')
         if not isinstance(metrics, dict):
             return False
+        if metrics.get('available') is not True:
+            return False
         # Recompute the verdict from persisted metrics against the required key
-        # sample counts of the retained tracks; a stale or empty-mask proof
-        # cannot self-attest.
-        verdict = native_material_contact_verdict(metrics, required=required)
-        return bool(verdict['available'] is True and verdict['passed'] is True)
+        # sample counts of the retained tracks, including per-side coverage; a
+        # stale, aggregate-only or empty-mask proof cannot self-attest.
+        verdict = native_material_contact_verdict(
+            metrics, required=required, required_by_side=required_by_side)
+        if not (verdict['available'] is True and verdict['passed'] is True):
+            return False
+        # Reconstruct the same quarter-frame playback clock the renderer and
+        # the fresh fit consume, then derive expected dense coverage from the
+        # retained episodes per mode and side. A malformed report with
+        # available=True/sampleCount=0 cannot pass an empty requirement.
+        frame_count = native_material_track_frame_count(tracks)
+        if frame_count is None or frame_count < 2:
+            return False
+        # The retained side-track clock must match every serialized clock the
+        # renderer compares against: fixedRig.coordinates, top-level frames and
+        # materialFrames.referenceCoordinates. This makes reuse admit only
+        # payloads that playback can actually sample.
+        clock_lengths = native_material_serialized_clock_lengths(payload)
+        if clock_lengths is None or any(
+                length != frame_count for length in clock_lengths):
+            return False
+        # Playback interprets the loop flag with ``bool``; reuse must use the
+        # same semantics (e.g. ``enabled=1`` is cyclic) or it validates a
+        # different clock than the renderer.
+        cyclic = bool((payload.get('loop') or {}).get('enabled'))
+        cursors = native_material_dense_playback_cursors(
+            frame_count, cyclic=cyclic)
+        if cursors is None or cursors.size == 0:
+            return False
+        playback_required, playback_by_side = (
+            native_material_playback_sample_requirements(
+                tracks, cursors, cyclic=cyclic))
+        if sum(int(value or 0) for value in playback_required.values()) <= 0:
+            return False
+        # Dense active native material requires the rendered final-pose proof
+        # on reuse. A legacy report that carries only the raw pre-contact-IK
+        # measurement must fail closed and be revalidated; the marker is not an
+        # opt-in escape hatch.
+        rendered = evidence.get('nativeMaterialRenderedPlayback')
+        if (evidence.get('nativeMaterialRenderedEvaluated') is not True
+                or not isinstance(rendered, dict)
+                or rendered.get('available') is not True):
+            return False
+        rendered_verdict = native_material_contact_verdict(
+            rendered, required=playback_required,
+            required_by_side=playback_by_side)
+        return bool(rendered_verdict['available'] is True
+                    and rendered_verdict['passed'] is True)
     except Exception:
         return False
 
@@ -4592,13 +4736,183 @@ def native_material_tracks_active(tracks):
                         for side in ('left', 'right')))
 
 
+def native_material_playback_sample_requirements(tracks, cursors, *, cyclic):
+    """Expected dense playback samples by material mode and side.
+
+    The rendered-pose proof owns the quarter-frame playback clock, and its
+    required coverage depends on where episodes are active in that clock. This
+    asks the production residual sampler for the exact query selection
+    (episode boundaries, contact identity, interpolation envelope and exact-key
+    exclusion) using neutral geometry, so expected counts cannot drift from
+    the metrics they validate. Neutral points only avoid material-frame
+    degeneracy; the returned counts do not depend on their values.
+    """
+    required = {'playbackStationarySampleCount': 0,
+                'playbackHeightSampleCount': 0}
+    by_side = {}
+    if not (isinstance(tracks, dict) and tracks.get('version') == 2):
+        return required, by_side
+    positions = np.asarray(cursors, dtype=float).reshape(-1)
+    if positions.size == 0:
+        return required, by_side
+    if not np.isfinite(positions).all():
+        raise ValueError('native material playback cursors are malformed')
+    sides = [side for side in ('left', 'right') if side in tracks]
+    if not sides:
+        return required, by_side
+    names = [f'{side}_{part}' for side in sides for part in ('ankle', 'foot')]
+    offsets = np.zeros((len(names), 3), dtype=float)
+    points = np.zeros((len(positions), len(names), 3), dtype=float)
+    for index in range(0, len(names), 2):
+        offsets[index + 1] = [0., 0., .1]
+        points[:, index + 1] = [.1, 0., 0.]
+    from .contact_interpolation import native_material_playback_residuals
+    _, metrics = native_material_playback_residuals(
+        points, names, offsets, tracks, positions, wrap=cyclic,
+        interpolation=INTERPOLATION, return_metrics=True)
+    for key in required:
+        required[key] = int(metrics.get(key) or 0)
+    for side, row in (metrics.get('bySide') or {}).items():
+        if not isinstance(row, dict):
+            continue
+        by_side[side] = {key: int(row.get(key) or 0) for key in required}
+    return required, by_side
+
+
+def native_material_dense_playback_cursors(frame_count, *, cyclic):
+    """Renderer quarter-frame clock, or ``None`` when playback cannot sample.
+
+    The native contact sampler rejects rigs with fewer than two frames, so a
+    single-frame native material track has no supported dense playback clock
+    at all (cyclic or not). Callers must fail closed instead of measuring an
+    empty or unsupported clock.
+    """
+    if int(frame_count) < 2:
+        return None
+    interval_count = int(frame_count) if cyclic else int(frame_count) - 1
+    return (np.arange(interval_count)[:, None]
+            + np.array([.25, .5, .75])).ravel()
+
+
+def sample_fresh_fit_subframe_points(rig, playback_rig, cursors, *, cyclic):
+    """Decode fresh-fit quarter-frame points, or an empty block without a clock.
+
+    A single-frame non-cyclic clip has no quarter-frame interval
+    (``count - 1 == 0``), and ``sample_rig_coordinates`` cannot reshape an empty
+    cursor array. Return an empty point block instead of crashing so the native
+    material proof can report the unsupported playback clock as a typed
+    fail-closed verdict.
+    """
+    positions = np.asarray(cursors, dtype=float).reshape(-1)
+    if positions.size == 0:
+        return np.zeros((0, len(rig.names), 3), dtype=float)
+    from .rig_playback import sample_rig_coordinates
+    return rig.decode(sample_rig_coordinates(
+        {**playback_rig, 'coordinates': rig.initial}, positions, wrap=cyclic))
+
+
+def native_material_track_frame_count(tracks):
+    """Shared native-v2 side-track frame count, or ``None`` when inconsistent."""
+    counts = {
+        side: len((tracks.get(side) or {}).get('active') or ())
+        for side in ('left', 'right')
+        if isinstance(tracks.get(side), dict)}
+    if not counts:
+        return None
+    unique = set(counts.values())
+    if len(unique) != 1:
+        return None
+    return next(iter(unique))
+
+
+def native_material_serialized_clock_lengths(payload):
+    """Serialized frame clocks a native-v2 artifact must share, or ``None``.
+
+    Playback validates a native side track against ``fixedRig.coordinates`` and
+    rejects a payload whose ``frames`` or ``materialFrames`` clock differs. Reuse
+    must enforce the same identities from the real artifact instead of deriving
+    the clock only from the side-track ``active`` lengths, otherwise a corrupt
+    cache can be admitted and then crash the renderer. Missing optional clocks
+    are skipped, but a present malformed or empty clock yields ``None`` so the
+    caller fails closed rather than bypassing the proof.
+    """
+    if not isinstance(payload, dict):
+        return None
+    clock_types = (list, tuple, np.ndarray)
+    lengths = []
+    fixed_rig = payload.get('fixedRig')
+    if isinstance(fixed_rig, dict):
+        if 'coordinates' in fixed_rig:
+            coordinates = fixed_rig.get('coordinates')
+            if not isinstance(coordinates, clock_types):
+                return None
+            lengths.append(len(coordinates))
+        if 'materialFrames' in fixed_rig:
+            material = fixed_rig.get('materialFrames')
+            if not isinstance(material, dict) or 'referenceCoordinates' not in material:
+                return None
+            reference = material.get('referenceCoordinates')
+            if not isinstance(reference, clock_types):
+                return None
+            lengths.append(len(reference))
+    if 'frames' in payload:
+        frames = payload.get('frames')
+        if not isinstance(frames, clock_types):
+            return None
+        lengths.append(len(frames))
+    return lengths
+
+
+def native_material_key_sample_requirements_by_side(tracks):
+    """Per-side exact-key counts using the shared episode-key ownership.
+
+    ``native_material_key_sample_requirements`` owns the aggregate contract;
+    this walks the same validated tracks and episode map so per-side coverage
+    cannot drift from the aggregate demand it is checked against.
+    """
+    required_by_side = {}
+    if not (isinstance(tracks, dict) and tracks.get('version') == 2):
+        return required_by_side
+    from .contact_interpolation import (
+        _native_episode_by_frame, _validated_native_side_track)
+    for side in ('left', 'right'):
+        track = tracks.get(side)
+        if not isinstance(track, dict):
+            continue
+        try:
+            active, _, _, _ = _validated_native_side_track(
+                track, len(track.get('active', ())), side)
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        episode_by_frame = _native_episode_by_frame(track)
+        counts = {'keyframeStationarySampleCount': 0,
+                  'keyframeHeightSampleCount': 0}
+        for frame in np.flatnonzero(active):
+            episode = episode_by_frame.get(int(frame))
+            if episode is None:
+                continue
+            mode = str(episode.get('mode'))
+            if mode == 'stationary':
+                counts['keyframeStationarySampleCount'] += 1
+            elif mode == 'verticalOnly':
+                counts['keyframeHeightSampleCount'] += 1
+        required_by_side[side] = counts
+    return required_by_side
+
+
 def native_material_contact_domain(key_points, dense_points, names, offsets, tracks,
                                    dense_cursors, *, cyclic, key_side_axes,
-                                   dense_side_axes, native_geometry, foot_scale):
+                                   dense_side_axes, native_geometry, foot_scale,
+                                   include_keyframe_clock=True):
     """One typed material-contact domain for iterate admission and final checks.
 
     Callers supply the actual stage geometry and its matching material axes;
     this function never substitutes stored joint points or a different q pose.
+
+    ``include_keyframe_clock`` keeps the keyframe proof in the returned metrics
+    and required counts. Rendered-pose evidence disables it because the exact
+    keyframe contract is already measured on the raw candidate; the rendered
+    call then proves only the dense playback clock without conflating the two.
     """
     from .contact_interpolation import (native_material_playback_residuals,
                                         native_material_key_sample_requirements)
@@ -4606,21 +4920,121 @@ def native_material_contact_domain(key_points, dense_points, names, offsets, tra
     metrics = {'available': False, 'sampleCount': 0, 'maximumErrorMeters': 0.,
                'bySide': {}}
     required = {}
+    frame_count = (
+        len(key_points) if key_points is not None
+        else native_material_track_frame_count(tracks))
+    positions = np.asarray(dense_cursors if dense_cursors is not None else (),
+                           dtype=float).reshape(-1)
+    unsupported_clock = bool(
+        active and (frame_count is None or frame_count < 2
+                    or (dense_points is not None and positions.size == 0)))
+    if unsupported_clock:
+        # The production sampler refuses single-frame native tracks, so there
+        # is no dense playback clock to prove. Exact keys are still measured
+        # here so the raw proof stays truthful, but the verdict fails closed
+        # with an explicit reason instead of raising an opaque reshape error.
+        key_metrics = {}
+        if include_keyframe_clock and key_points is not None:
+            _, key_metrics = native_material_playback_residuals(
+                key_points, names, offsets, tracks,
+                np.arange(len(key_points), dtype=float),
+                wrap=False, interpolation=INTERPOLATION, return_metrics=True,
+                key_side_axes=key_side_axes, native_geometry=native_geometry,
+                foot_scale=foot_scale)
+            required = native_material_key_sample_requirements(tracks)
+        metrics = merge_native_material_clock_metrics({}, key_metrics)
+        return active, metrics, required, {
+            'available': bool(metrics.get('available')),
+            'passed': False,
+            'reason': 'native_material_playback_clock_unsupported',
+            'components': [],
+        }
     if active:
-        _, dense_metrics = native_material_playback_residuals(
-            dense_points, names, offsets, tracks, dense_cursors, wrap=cyclic,
-            interpolation=INTERPOLATION, return_metrics=True,
-            fractional_side_axes=dense_side_axes)
-        _, key_metrics = native_material_playback_residuals(
-            key_points, names, offsets, tracks, np.arange(len(key_points), dtype=float),
-            wrap=False, interpolation=INTERPOLATION, return_metrics=True,
-            key_side_axes=key_side_axes, native_geometry=native_geometry,
-            foot_scale=foot_scale)
-        required = native_material_key_sample_requirements(tracks)
+        dense_metrics = {}
+        if dense_points is not None:
+            _, dense_metrics = native_material_playback_residuals(
+                dense_points, names, offsets, tracks, dense_cursors, wrap=cyclic,
+                interpolation=INTERPOLATION, return_metrics=True,
+                fractional_side_axes=dense_side_axes)
+        key_metrics = {}
+        if include_keyframe_clock:
+            _, key_metrics = native_material_playback_residuals(
+                key_points, names, offsets, tracks,
+                np.arange(len(key_points), dtype=float),
+                wrap=False, interpolation=INTERPOLATION, return_metrics=True,
+                key_side_axes=key_side_axes, native_geometry=native_geometry,
+                foot_scale=foot_scale)
+            required = native_material_key_sample_requirements(tracks)
         metrics = merge_native_material_clock_metrics(dense_metrics, key_metrics)
-    verdict = (native_material_contact_verdict(metrics, required=required) if active
+        playback_required = {}
+        playback_by_side = {}
+        if not include_keyframe_clock:
+            try:
+                playback_required, playback_by_side = (
+                    native_material_playback_sample_requirements(
+                        tracks, dense_cursors, cyclic=cyclic))
+            except (KeyError, TypeError, ValueError, IndexError):
+                # The sampling metric above proved the track readable; an
+                # inability to derive expected coverage is missing proof.
+                playback_required = {}
+                playback_by_side = {}
+                playback_requirement_failure = True
+            else:
+                playback_requirement_failure = False
+            required = {**required, **playback_required}
+        else:
+            playback_requirement_failure = False
+    else:
+        playback_requirement_failure = False
+        playback_by_side = {}
+    verdict = (native_material_contact_verdict(
+        metrics, required=required,
+        required_by_side=(playback_by_side if not include_keyframe_clock else None))
+        if active
                else {'available': False, 'passed': True, 'reason': None, 'components': []})
+    if active and not include_keyframe_clock and playback_requirement_failure:
+        verdict = {**verdict, 'passed': False,
+                   'reason': 'native_material_required_proof_missing'}
     return active, metrics, required, verdict
+
+
+def rendered_native_material_contact_domain(
+        names, offsets, tracks, cursors, *, cyclic, sampling_payload,
+        native_geometry, foot_scale):
+    """Measure active material contact on the actual final playback pose.
+
+    ``sample_rig`` applies the same contact-foot IK and returns the side axes of
+    that corrected pose, so this proof uses the candidate coordinates, tracks,
+    wrapping and sample cursors the renderer consumes. Exact keyframes remain
+    owned by the raw candidate domain and are deliberately excluded here.
+    """
+    from .rig_playback import sample_rig
+    sampling = {**sampling_payload, 'contactFootTracks': tracks}
+    active = native_material_tracks_active(tracks)
+    positions = np.asarray(cursors, dtype=float).reshape(-1)
+    coordinates = sampling_payload.get('coordinates')
+    frame_count = (len(coordinates) if coordinates is not None
+                   else native_material_track_frame_count(tracks))
+    if active and (frame_count is None or frame_count < 2
+                   or positions.size == 0):
+        # Match the production sampler's two-frame minimum and never call it
+        # with an unsupported or empty clock. Fail closed, not with an
+        # exception that a caller could mistake for a measurement defect.
+        return active, {'available': False, 'sampleCount': 0,
+                        'maximumErrorMeters': 0., 'bySide': {}}, {}, {
+            'available': False, 'passed': False,
+            'reason': 'native_material_playback_clock_unsupported',
+            'components': [],
+        }
+    dense_points, dense_axes = sample_rig(
+        sampling, cursors, wrap=cyclic,
+        native_foot_geometry=native_geometry, foot_scale=foot_scale,
+        return_side_axes=True)
+    return native_material_contact_domain(
+        None, dense_points, names, offsets, tracks, cursors, cyclic=cyclic,
+        key_side_axes=None, dense_side_axes=dense_axes,
+        native_geometry=native_geometry, foot_scale=foot_scale,
+        include_keyframe_clock=False)
 
 
 def establish_native_playback_contact_binding(rig, coordinates, tracks, evidence, *,
@@ -13593,7 +14007,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 native_foot_tracks, native_foot_owned = build_native_foot_contact_tracks(
                     {'jointNames': names}, points, pinned, side_axes, fit_support_evidence,
                     payload.get('nativeFootGeometry'), floor=payload.get('renderFloorY'),
-                    rest_pitches=payload.get('footRestPitchRadians'))
+                    rest_pitches=payload.get('footRestPitchRadians'),
+                    cyclic=bool((payload.get('loop') or {}).get('enabled')))
             except (KeyError, TypeError, ValueError, IndexError) as error:
                 if 'no authoritative support plane' in str(error):
                     native_foot_binding_pending = True
@@ -13727,7 +14142,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             native_foot_tracks, native_foot_owned = build_native_foot_contact_tracks(
                 {'jointNames': names}, points, pinned, side_axes, fit_support_evidence,
                 payload.get('nativeFootGeometry'), floor=payload.get('renderFloorY'),
-                rest_pitches=payload.get('footRestPitchRadians'))
+                rest_pitches=payload.get('footRestPitchRadians'),
+                cyclic=bool((payload.get('loop') or {}).get('enabled')))
         except (KeyError, TypeError, ValueError, IndexError) as error:
             return payload, {**report, 'reason': 'native_foot_contact_binding_unresolved',
                              'nativeFootContactError': str(error)}
@@ -15491,9 +15907,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         if not isinstance(tracks, dict) or tracks.get('version') != 2:
             return None
         count = len(coordinates)
-        interval_count = count if cyclic else count - 1
-        cursors = (np.arange(interval_count)[:, None]
-                   + np.array([.25, .5, .75])).ravel()
+        cursors = native_material_dense_playback_cursors(count, cyclic=cyclic)
+        if cursors is None:
+            # The playback sampler cannot represent a single-frame native
+            # track; report missing dense evidence rather than raising.
+            return None, {'available': False, 'sampleCount': 0,
+                          'maximumErrorMeters': 0., 'bySide': {}}
         sampling_payload = _sampling_payload(rig, coordinates)
         sampling_payload['contactFootTracks'] = tracks
         sampled, side_axes = sample_rig(
@@ -17686,14 +18105,24 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         fixed_rig_payload['coordinates'] = rig.initial.tolist()
         if (validation_candidate is None and native_foot_tracks is not None
                 and 'supportJointTracks' in fixed_rig_payload):
-            from .supported_contact_rig import project_supported_native_foot_coordinates
+            from .supported_contact_rig import (
+                canonicalize_after_native_foot_projection,
+                mirrored_leg_coupling_authority,
+                project_coupled_native_foot_coordinates,
+            )
             from .support_joint_tracks import validate_support_joint_tracks
             protected_tracks = validate_support_joint_tracks(
                 fixed_rig_payload['supportJointTracks'], names, len(rig.initial))
             current_coordinates = np.asarray(solved.x, dtype=float).reshape(rig.initial.shape)
+            canonical_execution = payload.get('canonicalExecution') or {}
+            leg_authority = mirrored_leg_coupling_authority(
+                rig, current_coordinates, native_foot_tracks,
+                canonical_execution, source_contact_pinned)
             try:
-                projected_coordinates = project_supported_native_foot_coordinates(
-                    rig, current_coordinates, native_foot_tracks, protected_tracks)
+                projected_coordinates = project_coupled_native_foot_coordinates(
+                    rig, current_coordinates, native_foot_tracks, protected_tracks,
+                    execution=canonical_execution,
+                    source_contact_pinned=source_contact_pinned)
             except (TypeError, ValueError, IndexError) as error:
                 return payload, {**report, 'applied': False,
                                  'reason': 'supported_material_projection_unresolved',
@@ -17709,20 +18138,18 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 # optional polish. Restore the canonical representation even
                 # when repairs are disabled so playback sees the same mirrored
                 # key pose as this candidate, without moving the source-owned side.
+                # Leg mirroring is owned by the same coupling decision above so a
+                # declined coupling (bilateral/opposite/anti-phase) is never
+                # re-applied here.
                 try:
-                    from .canonical_rig_projection import exact_canonical_coordinates
                     fixed_rig_payload['coordinates'] = rig.initial.tolist()
-                    canonical_execution = payload.get('canonicalExecution') or {}
-                    rig.initial[:] = exact_canonical_coordinates(
-                        fixed_rig_payload, canonical_execution,
-                        authoritative_sides=authoritative_mirror_sides(
-                            source_contact_pinned, names, canonical_execution))
+                    rig.initial[:] = canonicalize_after_native_foot_projection(
+                        rig, rig.initial, canonical_execution, leg_authority)
                     canonical_projection_applied = True
                 except (ValueError, KeyError) as error:
                     return payload, {**report, 'applied': False,
                                      'reason': 'mirrored_arm_construction_unavailable',
                                      'mirroredArmConstructionError': str(error)}
-                canonical_execution = payload.get('canonicalExecution') or {}
                 if (canonical_execution.get('legs') == 'mirrored'
                         and body_support.get('_nativeFootMirrorRequired') is True):
                     try:
@@ -18050,9 +18477,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 for side, changes in reconstructed_foot_heading.items()
             },
         }
-        fit_subframe_coordinates = sample_rig_coordinates(
-            {**playback_rig, 'coordinates': rig.initial}, subframe_cursors, wrap=cyclic)
-        fit_subframe_points = rig.decode(fit_subframe_coordinates)
+        fit_subframe_points = sample_fresh_fit_subframe_points(
+            rig, playback_rig, subframe_cursors, cyclic=cyclic)
         fit_subframe_directions, fit_subframe_direction_masks = source_foot_direction_targets_at(
             subframe_first, subframe_last, subframe_alpha[:, 0, 0])
         source_foot_direction_evidence = _source_foot_direction_fit_evidence(
@@ -18100,10 +18526,26 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         native_material_required = {}
         native_material_verdict = {'available': False, 'passed': True,
                                    'reason': None, 'components': []}
+        native_material_rendered_metrics = {'available': False, 'sampleCount': 0,
+                                            'maximumErrorMeters': 0., 'bySide': {}}
+        native_material_rendered_required = {}
+        native_material_rendered_verdict = {'available': False, 'passed': True,
+                                            'reason': None, 'components': []}
+        native_material_rendered_error_message = None
+        native_material_rendered_clock_supported = True
         if native_material_active:
-            final_subframe_coordinates = sample_rig_coordinates(
-                {**playback_rig, 'coordinates': rig.initial}, subframe_cursors, wrap=cyclic)
-            final_subframe_points = rig.decode(final_subframe_coordinates)
+            playback_clock = native_material_dense_playback_cursors(
+                count, cyclic=cyclic)
+            playback_supported = playback_clock is not None
+            native_material_rendered_clock_supported = playback_supported
+            final_subframe_coordinates = (
+                sample_rig_coordinates(
+                    {**playback_rig, 'coordinates': rig.initial},
+                    subframe_cursors, wrap=cyclic)
+                if playback_supported else None)
+            final_subframe_points = (
+                rig.decode(final_subframe_coordinates)
+                if final_subframe_coordinates is not None else None)
             key_geometry = material_foot_geometry(result, np.arange(count, dtype=float))
             key_side_axes = {side: values['lateral'] for side, values in key_geometry.items()}
             (native_material_active, native_material_metrics, native_material_required,
@@ -18112,18 +18554,87 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 playback_native_material_tracks, subframe_cursors, cyclic=cyclic,
                 key_side_axes=key_side_axes, dense_side_axes=(
                     current_native_side_axes(final_subframe_coordinates, subframe_cursors)
-                    if getattr(rig, 'material_frames', None) is not None else None),
+                    if (final_subframe_coordinates is not None
+                        and getattr(rig, 'material_frames', None) is not None)
+                    else None),
                 native_geometry=payload.get('nativeFootGeometry'), foot_scale=material_foot_scale)
+            # The raw residual above is a pre-contact-IK proof. Measure the
+            # actual contact-corrected playback pose on the same candidate,
+            # tracks, wrapping and quarter-frame clock the renderer samples.
+            # Missing or invalid rendered proof fails closed; it never falls
+            # back to the already-measured raw metric.
+            try:
+                from .rig_playback import _native_sampling_rig
+                (_, native_material_rendered_metrics,
+                 native_material_rendered_required,
+                 native_material_rendered_verdict) = (
+                    rendered_native_material_contact_domain(
+                        names, rig.offsets, playback_native_material_tracks,
+                        subframe_cursors, cyclic=cyclic,
+                        sampling_payload=_native_sampling_rig(report_foot_payload),
+                        native_geometry=payload.get('nativeFootGeometry'),
+                        foot_scale=material_foot_scale))
+            except (ContactFootIKUnreachable, KeyError, TypeError, ValueError,
+                    IndexError) as error:
+                native_material_rendered_error_message = (
+                    f'{type(error).__name__}: {error}')
+                native_material_rendered_verdict = {
+                    'available': False, 'passed': False,
+                    'reason': 'rendered_material_proof_invalid',
+                    'components': []}
         native_material_error = float(
             native_material_metrics.get('maximumErrorMeters') or 0.)
+        native_material_rendered_error = float(
+            native_material_rendered_metrics.get('maximumErrorMeters') or 0.)
         native_material_evaluated = bool(native_material_metrics.get('available'))
+        native_material_rendered_evaluated = bool(
+            native_material_rendered_metrics.get('available'))
         native_contact_applicable = bool(native_material_active)
+        native_material_rendered_required_samples = sum(
+            int(native_material_rendered_required.get(key) or 0)
+            for key in ('playbackStationarySampleCount',
+                        'playbackHeightSampleCount'))
+        # Applicability follows the known playback clock, not a failed verdict:
+        # a supported dense clock with samples requires the rendered proof,
+        # while an unsupported clock (single-frame native material) must still
+        # be applicable so it fails closed instead of passing on raw evidence.
+        native_material_rendered_applicable = bool(
+            native_contact_applicable
+            and (not native_material_rendered_clock_supported
+                 or native_material_rendered_required_samples > 0))
         native_material_passed = bool(
-            native_material_evaluated and native_material_verdict['passed'])
+            native_material_evaluated and native_material_verdict['passed']
+            and (not native_material_rendered_applicable
+                 or (native_material_rendered_evaluated
+                     and native_material_rendered_verdict['passed'])))
         contact_constraints_applicable = bool(np.any(pinned)) or native_contact_applicable
         contact_constraint_passed = (
             contact_error < KEYFRAME_CONTACT_LIMIT_METERS
             and (not native_contact_applicable or native_material_passed))
+        raw_native_material_metrics = {
+            **native_material_metrics, 'poseProvenance': 'raw_pre_contact_ik'}
+        rendered_native_material_metrics = {
+            **native_material_rendered_metrics,
+            'poseProvenance': 'final_contact_ik_playback'}
+        native_material_proof = {
+            'raw': {
+                'provenance': 'raw_pre_contact_ik',
+                'evaluated': native_material_evaluated,
+                'passed': bool(native_material_verdict['passed']),
+                'metrics': raw_native_material_metrics,
+                'verdict': native_material_verdict,
+            },
+            'rendered': {
+                'provenance': 'final_contact_ik_playback',
+                'applicable': native_material_rendered_applicable,
+                'requiredSampleCount': native_material_rendered_required_samples,
+                'evaluated': native_material_rendered_evaluated,
+                'passed': bool(native_material_rendered_verdict['passed']),
+                'metrics': rendered_native_material_metrics,
+                'verdict': native_material_rendered_verdict,
+                'error': native_material_rendered_error_message,
+            },
+        }
         report['contactConstraintEvidence'] = {
             'applicable': contact_constraints_applicable,
             'status': ('verified' if contact_constraints_applicable
@@ -18136,12 +18647,21 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             'nativeMaterialActive': native_contact_applicable,
             'nativeMaterialEvaluated': native_material_evaluated,
             'nativeMaterialSampleCount': int(native_material_metrics.get('sampleCount') or 0),
-            'nativeMaterialMaximumErrorMeters': native_material_error,
-            'nativeMaterialPlayback': native_material_metrics,
+            'nativeMaterialMaximumErrorMeters': max(
+                native_material_error, native_material_rendered_error),
+            'nativeMaterialPlayback': raw_native_material_metrics,
+            'nativeMaterialRenderedApplicable': native_material_rendered_applicable,
+            'nativeMaterialRenderedRequiredSampleCount':
+                native_material_rendered_required_samples,
+            'nativeMaterialRenderedEvaluated': native_material_rendered_evaluated,
+            'nativeMaterialRenderedPlayback': rendered_native_material_metrics,
+            'nativeMaterialRenderedTypedVerdict': native_material_rendered_verdict,
+            'nativeMaterialProof': native_material_proof,
             'nativeMaterialRequiredKeySamples': native_material_required,
             'nativeMaterialTypedVerdict': native_material_verdict,
             'keyframeMaximumErrorMeters': contact_error,
-            'maximumErrorMeters': max(contact_error, native_material_error),
+            'maximumErrorMeters': max(
+                contact_error, native_material_error, native_material_rendered_error),
         }
         checks = {'anatomy':physical['passed'],
                   'contacts': (not contact_constraints_applicable
@@ -19411,6 +19931,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             fit_context_factory=lambda: rejected_fit_context_factory(
                 candidate, joint_pinned=pinned, joint_targets=contact_targets,
                 stage='unreachable_conflict'))
+        record_rejected_candidate_identity(candidate, payload, report)
         return payload, report
     # Soft solve often overruns into the polish reserve. Cheap Stage-C hard ops
     # (playback plants, jerk smooth) still clear near-misses — run them once
@@ -19931,7 +20452,6 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             leftover = set(failed_check_names(report.get('checks')))
             nested_left = _playback_nested_failures(report.get('playback'))
             play_ok = bool((report.get('playback') or {}).get('passed'))
-        record_rejected_candidate_identity(candidate, payload, report)
             seam_pending = cyclic and play_ok and leftover == {'loopSeam'}
             if seam_pending:
                 # Reserve the bounded 10-second projection plus its before/after
@@ -20876,6 +21396,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             fit_context_factory=lambda: rejected_fit_context_factory(
                 candidate, joint_pinned=pinned, joint_targets=contact_targets,
                 stage='candidate_checks_rejected'))
+        record_rejected_candidate_identity(candidate, payload, report)
         return (candidate if report.get('applied') else payload), report
     # Use leftover outer budget for another full polish block when acceptance is
     # still moving, or a staged near-miss remains.
@@ -21007,6 +21528,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         fit_context_factory=lambda: rejected_fit_context_factory(
             candidate, joint_pinned=pinned, joint_targets=contact_targets,
             stage='final_rejection'))
+    record_rejected_candidate_identity(candidate, payload, report)
     return (candidate if report.get('applied') else payload), report
 
 
@@ -21042,5 +21564,3 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
-        record_rejected_candidate_identity(candidate, payload, report)
-    record_rejected_candidate_identity(candidate, payload, report)

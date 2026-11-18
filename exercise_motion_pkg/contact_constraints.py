@@ -1475,6 +1475,58 @@ def _same_source_time(left, right):
     return np.isfinite(left) and np.isfinite(right) and abs(left - right) <= 1e-6
 
 
+def observed_full_sole_patch_support_at_time(evidence, side, source_time):
+    """Per-frame foot-patch support for an exact full-sole visual review row.
+
+    A sparse visual contact review can label a chunk ``full_sole`` even when the
+    calibrated heel-to-toe patch at that exact frame is unresolved or shows a
+    raised heel. Exact-timed contacts must therefore be corroborated by the
+    producer's own per-frame state before they impose a flat-sole constraint:
+
+    * ``full_sole`` - the patch row at this time is a full sole.
+    * ``toe_only`` - the patch row is a toe pivot, or the row is an isolated
+      ``unknown`` inside an otherwise observed toe-pivot run.
+    * ``unverified`` - the patch has no usable per-frame evidence here.
+
+    Only the retained per-frame states are used; no geometry is invented.
+    """
+    if side not in {'left', 'right'}:
+        return 'unverified'
+    evidence = evidence or {}
+    patch = evidence.get('footPatchEvidence') or {}
+    patch_side = (patch.get('feet') or {}).get(side) or {}
+    times = patch.get('sourceTimesSec')
+    states = patch_side.get('states')
+    if (patch.get('available') is not True or not isinstance(times, list)
+            or not isinstance(states, list) or not times
+            or len(times) != len(states)):
+        return 'unverified'
+    matching = [index for index, timestamp in enumerate(times)
+                if _same_source_time(timestamp, source_time)]
+    if len(matching) != 1:
+        return 'unverified'
+    index = matching[0]
+    state = str(states[index]).casefold()
+    if state == 'full_sole':
+        return 'full_sole'
+    if state == 'toe_only':
+        return 'toe_only'
+    if state not in {'', 'unknown', 'unobserved', 'none'}:
+        return 'unverified'
+    neighbours = [str(states[position]).casefold()
+                  for position in (index - 1, index + 1)
+                  if 0 <= position < len(states)]
+    neighbours = [neighbour for neighbour in neighbours
+                  if neighbour in {'full_sole', 'toe_only'}]
+    if not neighbours:
+        return 'unverified'
+    if all(neighbour == 'toe_only' for neighbour in neighbours):
+        return 'toe_only'
+    if any(neighbour == 'full_sole' for neighbour in neighbours):
+        return 'full_sole'
+    return 'unverified'
+
+
 def _indistinguishable_forefoot_patch_at_time(evidence, side, source_time):
     """Whether a bound patch row supports only forefoot at this exact time.
 

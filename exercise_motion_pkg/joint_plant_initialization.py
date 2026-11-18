@@ -1034,7 +1034,8 @@ def _native_fullsole_solver_constraints(
                         np.asarray(owner_orientation['frames'], dtype=int),
                         np.asarray(owner_orientation['worldRotations'], dtype=float))
                 }
-            rows, inferred_forward, inferred_world = [], [], []
+            inferred_foot_index = rig.names.index(f'{inferred}_foot')
+            rows, inferred_forward, inferred_world, inferred_local_axes = [], [], [], []
             for entry in coverage[owner]:
                 for frame in np.asarray(entry['frames'], dtype=int):
                     if (inferred_active[frame] or pinned[frame, inferred_ankle]
@@ -1044,6 +1045,12 @@ def _native_fullsole_solver_constraints(
                     if owner_rotation is None:
                         continue
                     hip_axis = points[frame, right_hip] - points[frame, left_hip]
+                    # Canonical stance reflection is a vertical sagittal plane,
+                    # matching the level-plane normal used by the support
+                    # residual and _native_fullsole_mirror_pair. Hip height
+                    # asymmetry must not tilt the mirror and leak a vertical
+                    # error into the inferred opposite foot.
+                    hip_axis[1] = 0.
                     hip_length = float(np.linalg.norm(hip_axis))
                     owner_bone = (derived_targets[frame, owner_toe]
                                   - derived_targets[frame, owner_ankle])
@@ -1090,10 +1097,20 @@ def _native_fullsole_solver_constraints(
                     rows.append(int(frame))
                     inferred_forward.append(reflected)
                     inferred_world.append(delta @ current_world[
-                        rig.names.index(f'{inferred}_foot')][frame])
+                        inferred_foot_index][frame])
+                    # Express the source material side axis in the inferred
+                    # foot's local frame so the shared twist encoder can roll
+                    # the mirrored foot onto the reflected lateral target. The
+                    # single-coverage branch must carry this axis; otherwise the
+                    # encoder skips the inferred foot and the source roll leaks
+                    # into the mirror residual.
+                    inferred_local_axes.append(np.einsum(
+                        'ji,j->i', current_world[inferred_foot_index][frame],
+                        current_axes[inferred][frame]))
             if rows:
                 rows = np.asarray(rows, dtype=int)
                 inferred_forward = np.asarray(inferred_forward, dtype=float)
+                inferred_local_axes = np.asarray(inferred_local_axes, dtype=float)
                 toe_target = contact_targets[rows, inferred_toe].copy()
                 ankle_target = toe_target - inferred_forward * np.linalg.norm(
                     points[rows, inferred_toe] - points[rows, inferred_ankle],
@@ -1102,7 +1119,7 @@ def _native_fullsole_solver_constraints(
                 derived_pins[rows, inferred_toe] = True
                 derived_targets[rows, inferred_ankle] = ankle_target
                 derived_targets[rows, inferred_toe] = toe_target
-                inferred_foot = rig.names.index(f'{inferred}_foot')
+                inferred_foot = inferred_foot_index
                 inferred_rotations = np.asarray(inferred_world, dtype=float)
                 if inferred in orientations:
                     old_frames = np.asarray(orientations[inferred]['frames'], dtype=int)
@@ -1111,11 +1128,16 @@ def _native_fullsole_solver_constraints(
                         'worldRotations': np.concatenate((
                             np.asarray(orientations[inferred]['worldRotations'], dtype=float),
                             inferred_rotations), axis=0),
+                        'localMaterialAxes': np.concatenate((
+                            np.asarray(orientations[inferred]['localMaterialAxes'],
+                                       dtype=float),
+                            inferred_local_axes), axis=0),
                     }
                 else:
                     orientations[inferred] = {
                         'frames': rows,
                         'worldRotations': inferred_rotations,
+                        'localMaterialAxes': inferred_local_axes,
                     }
                 mirrored_report = {
                     'ownerSide': owner,
