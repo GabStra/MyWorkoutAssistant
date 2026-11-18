@@ -105,7 +105,7 @@ def placement_notes_text_contract(item, working_set_rir=None):
                     exportMaximumCharacters=_NOTES_SCHEMA['maxLength'] + len(generated))
     repair = 'Use local technique/setup cues only; do not invent a numeric RIR target, trial settings, calibration loads, counts or generatedText. Preserve valid execution and stop rules. Do not change the prescription to make text fit.'
     return {**contract,
-            'purpose': 'Local execution/setup cues only; typed effort acceptance are rendered separately.',
+            'purpose': 'Local execution/setup cues only, on one line, each sentence ending with a period; typed effort acceptance are rendered separately.',
             'repair': repair}
 
 
